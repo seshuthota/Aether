@@ -1,0 +1,7 @@
+# Copy to .cargo/config.toml and set the linker to your own Android NDK path.
+# (config.toml is gitignored because the path is specific to each machine.)
+#
+# aarch64-linux-android31-clang: the "31" is the minimum Android version (12).
+[target.aarch64-linux-android]
+linker = "/path/to/Android/Sdk/ndk/<version>/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang"
+runner = "scripts/adb-run.sh"

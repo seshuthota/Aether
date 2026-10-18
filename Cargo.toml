@@ -1,0 +1,11 @@
+[package]
+name = "aether"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[profile.release]
+debug = true        # keep symbols so simpleperf can show function names
+lto = "fat"         # optimize across the whole program
+codegen-units = 1   # one unit: slower build, better optimization
