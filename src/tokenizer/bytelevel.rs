@@ -115,6 +115,113 @@ pub fn gpt2_split(s: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// Qwen2's pre-tokenizer regex, as byte ranges into `s`:
+///
+/// ```text
+/// (?i:'s|'t|'re|'ve|'m|'ll|'d)      contractions, any case
+/// [^\r\n\p{L}\p{N}]?\p{L}+        letters, with at most one leading char that
+///                                   is not a newline, letter or digit
+/// \p{N}                             one digit
+///  ?[^\s\p{L}\p{N}]+[\r\n]*        symbols (optional space before, newlines after)
+/// \s*[\r\n]+                       whitespace up to and including its last newline
+/// \s+(?!\S) | \s+                  other whitespace, as in GPT-2
+/// ```
+///
+/// Differences from GPT-2: contractions ignore case; a letter run absorbs
+/// one preceding punctuation or space character (`(hello` is one piece);
+/// numbers are always single digits; newline runs are grouped.
+pub fn qwen2_split(s: &str) -> Vec<(usize, usize)> {
+    let cs: Vec<(usize, char)> = s.char_indices().collect();
+    let end = s.len();
+    let at = |i: usize| cs.get(i).map(|&(b, _)| b).unwrap_or(end);
+    let ch = |i: usize| cs.get(i).map(|&(_, c)| c);
+    let run = |mut i: usize, f: &dyn Fn(char) -> bool| {
+        while ch(i).is_some_and(f) {
+            i += 1;
+        }
+        i
+    };
+    let newline = |c: char| c == '\r' || c == '\n';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i].1;
+        // 1. contractions, case-insensitive
+        if c == '\'' {
+            let low = |k: usize| ch(i + k).map(|c| c.to_ascii_lowercase());
+            let len = match (low(1), low(2)) {
+                (Some('r'), Some('e')) | (Some('v'), Some('e')) | (Some('l'), Some('l')) => 3,
+                (Some('s' | 't' | 'm' | 'd'), _) => 2,
+                _ => 0,
+            };
+            if len > 0 {
+                out.push((at(i), at(i + len)));
+                i += len;
+                continue;
+            }
+        }
+        // 2. [^\r\n\p{L}\p{N}]?\p{L}+
+        let lead = !newline(c) && !is_letter(c) && !is_number(c);
+        let letters_from = if is_letter(c) {
+            Some(i)
+        } else if lead && ch(i + 1).is_some_and(is_letter) {
+            Some(i + 1)
+        } else {
+            None
+        };
+        if let Some(j) = letters_from {
+            let e = run(j, &is_letter);
+            out.push((at(i), at(e)));
+            i = e;
+            continue;
+        }
+        // 3. \p{N}: a single digit
+        if is_number(c) {
+            out.push((at(i), at(i + 1)));
+            i += 1;
+            continue;
+        }
+        // 4.  ?[^\s\p{L}\p{N}]+[\r\n]*
+        let sym_from = if is_other(c) {
+            Some(i)
+        } else if c == ' ' && ch(i + 1).is_some_and(is_other) {
+            Some(i + 1)
+        } else {
+            None
+        };
+        if let Some(j) = sym_from {
+            let e = run(run(j, &is_other), &newline);
+            out.push((at(i), at(e)));
+            i = e;
+            continue;
+        }
+        // 5. \s*[\r\n]+: through the last newline of this whitespace run
+        let ws_end = run(i, &|c: char| c.is_whitespace());
+        if let Some(last_nl) = (i..ws_end).rev().find(|&k| newline(cs[k].1)) {
+            out.push((at(i), at(last_nl + 1)));
+            i = last_nl + 1;
+            continue;
+        }
+        // 6-7. \s+(?!\S), \s+
+        let e = if ws_end < cs.len() && ws_end - i > 1 { ws_end - 1 } else { ws_end };
+        out.push((at(i), at(e)));
+        i = e;
+    }
+    out
+}
+
+/// The exact regex Qwen2's tokenizer.json declares (recognised verbatim).
+const QWEN2_REGEX: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
+/// How text is split into words before BPE.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PreTokenizer {
+    /// GPT-2 regex (SmolLM2), optionally with every digit split off first.
+    Gpt2 { split_digits: bool },
+    /// Qwen2 regex.
+    Qwen2,
+}
+
 /// GPT-2's byte → stand-in character table: printable Latin-1 bytes map to
 /// themselves, the other 68 (controls, space, …) to U+0100 onwards.
 fn bytes_to_unicode() -> [char; 256] {
@@ -139,7 +246,9 @@ pub struct Tokenizer {
     merges: HashMap<(usize, usize), (usize, usize)>,
     /// Added tokens matched verbatim before pre-tokenization, longest first.
     added: Vec<(String, usize)>,
-    split_digits: bool,
+    pre: PreTokenizer,
+    /// Apply Unicode NFC first (Qwen2).
+    nfc: bool,
     byte_char: [char; 256],
     char_byte: HashMap<char, u8>,
 }
@@ -192,27 +301,44 @@ impl Tokenizer {
             merges.insert((id(a)?, id(b)?), (rank, id(&format!("{a}{b}"))?));
         }
 
-        // Pre-tokenizer: Digits(individual) + ByteLevel(regex) is what is
-        // supported; anything else is refused rather than silently ignored.
-        let pre = j.get("pre_tokenizer").ok_or_else(|| bad("no pre_tokenizer".into()))?;
-        let steps: Vec<&Json> = match pre.get("type").and_then(Json::as_str) {
-            Some("Sequence") => pre.get("pretokenizers").and_then(Json::as_array).unwrap_or(&[]).iter().collect(),
-            _ => vec![pre],
+        // Normalizer: none, or NFC.
+        let nfc = match j.get("normalizer") {
+            None | Some(Json::Null) => false,
+            Some(n) if n.get("type").and_then(Json::as_str) == Some("NFC") => true,
+            Some(n) => return Err(bad(format!("unsupported normalizer {:?}", n.get("type")))),
         };
-        let mut split_digits = false;
+        // Pre-tokenizers supported: [Digits(individual)] + ByteLevel(regex)
+        // (SmolLM2), or Split(Qwen2 regex) + ByteLevel(no regex) (Qwen2).
+        // Anything else is refused rather than silently tokenized wrongly.
+        let pre_json = j.get("pre_tokenizer").ok_or_else(|| bad("no pre_tokenizer".into()))?;
+        let steps: Vec<&Json> = match pre_json.get("type").and_then(Json::as_str) {
+            Some("Sequence") => pre_json.get("pretokenizers").and_then(Json::as_array).unwrap_or(&[]).iter().collect(),
+            _ => vec![pre_json],
+        };
+        let (mut split_digits, mut gpt2, mut qwen2) = (false, false, false);
         for step in steps {
+            let flag = |k: &str| step.get(k).and_then(Json::as_bool);
             match step.get("type").and_then(Json::as_str) {
-                Some("Digits") if step.get("individual_digits").and_then(Json::as_bool) == Some(true) => split_digits = true,
-                Some("ByteLevel")
-                    if step.get("use_regex").and_then(Json::as_bool) != Some(false)
-                        && step.get("add_prefix_space").and_then(Json::as_bool) != Some(true) => {}
+                Some("Digits") if flag("individual_digits") == Some(true) => split_digits = true,
+                Some("ByteLevel") if flag("add_prefix_space") != Some(true) => gpt2 |= flag("use_regex") != Some(false),
+                Some("Split")
+                    if step.get("pattern").and_then(|p| p.get("Regex")).and_then(Json::as_str) == Some(QWEN2_REGEX)
+                        && step.get("behavior").and_then(Json::as_str) == Some("Isolated") =>
+                {
+                    qwen2 = true
+                }
                 other => return Err(bad(format!("unsupported pre-tokenizer step {other:?}"))),
             }
         }
+        let pre = match (gpt2, qwen2) {
+            (true, false) => PreTokenizer::Gpt2 { split_digits },
+            (false, true) if !split_digits => PreTokenizer::Qwen2,
+            _ => return Err(bad("unsupported combination of pre-tokenizers".into())),
+        };
 
         let byte_char = bytes_to_unicode();
         let char_byte = byte_char.iter().enumerate().map(|(b, &c)| (c, b as u8)).collect();
-        Ok(Tokenizer { id_to_token, vocab, merges, added, split_digits, byte_char, char_byte })
+        Ok(Tokenizer { id_to_token, vocab, merges, added, pre, nfc, byte_char, char_byte })
     }
 
     pub fn vocab_size(&self) -> usize {
@@ -259,9 +385,17 @@ impl Tokenizer {
 
     /// Steps 2–4 for text without special tokens.
     fn encode_plain(&self, text: &str, out: &mut Vec<usize>) {
+        let normalized = if self.nfc { super::nfc::nfc(text) } else { std::borrow::Cow::Borrowed(text) };
+        let text: &str = &normalized;
+        if self.pre == PreTokenizer::Qwen2 {
+            for (a, b) in qwen2_split(text) {
+                self.bpe(&text[a..b], out);
+            }
+            return;
+        }
         // Digits pre-tokenizer: each numeric character becomes its own piece.
         let mut pieces = Vec::new();
-        if self.split_digits {
+        if self.pre == (PreTokenizer::Gpt2 { split_digits: true }) {
             let mut start = 0;
             for (b, c) in text.char_indices() {
                 if c.is_numeric() {
@@ -342,8 +476,23 @@ mod tests {
         assert_eq!(words("'x 'LL"), ["'", "x", " '", "LL"]);
     }
 
-    fn tok() -> Option<Tokenizer> {
-        Some(Tokenizer::load(golden("models/SmolLM2-135M/tokenizer.json")?).unwrap())
+    /// Hand-checked splits of Qwen2's regex.
+    #[test]
+    fn qwen2_regex_cases() {
+        let w = |s: &'static str| qwen2_split(s).into_iter().map(|(a, b)| &s[a..b]).collect::<Vec<_>>();
+        assert_eq!(w("Hello world"), ["Hello", " world"]);
+        assert_eq!(w("(hello) 123"), ["(hello", ")", " ", "1", "2", "3"]);
+        assert_eq!(w("IT'S ok"), ["IT", "'S", " ok"]);
+        assert_eq!(w("a\n\n  b"), ["a", "\n\n", " ", " b"]);
+        assert_eq!(w("x  \n y"), ["x", "  \n", " y"]);
+        assert_eq!(w("!!\n\nz"), ["!!\n\n", "z"]);
+    }
+
+    /// Qwen2.5's tokenizer (NFC + its own regex, 151k vocabulary) against
+    /// HF tokenizers on the same corpus.
+    #[test]
+    fn qwen2_matches_hf_tokenizers_on_corpus() {
+        check_corpus("models/Qwen2.5-0.5B-Instruct/tokenizer.json", "qwen2.5-0.5b");
     }
 
     /// 433 strings (whitespace, Unicode scripts, emoji, code, chat markup
@@ -351,9 +500,16 @@ mod tests {
     /// `tokenizers` produces, and decode to exactly its text.
     #[test]
     fn matches_hf_tokenizers_on_corpus() {
-        let (Some(t), Some(c), Some(e), Some(d)) =
-            (tok(), golden("smollm2-135m/corpus.txt"), golden("smollm2-135m/encoded.txt"), golden("smollm2-135m/decoded.txt"))
-        else {
+        check_corpus("models/SmolLM2-135M/tokenizer.json", "smollm2-135m");
+    }
+
+    fn check_corpus(tokenizer: &str, dir: &str) {
+        let (Some(t), Some(c), Some(e), Some(d)) = (
+            golden(tokenizer).map(|p| Tokenizer::load(p).unwrap()),
+            golden(&format!("{dir}/corpus.txt")),
+            golden(&format!("{dir}/encoded.txt")),
+            golden(&format!("{dir}/decoded.txt")),
+        ) else {
             return;
         };
         let (corpus, enc, dec) = (std::fs::read_to_string(c).unwrap(), std::fs::read_to_string(e).unwrap(), std::fs::read_to_string(d).unwrap());
@@ -370,6 +526,6 @@ mod tests {
             assert_eq!(t.decode(&want), *want_text, "decoding {want:?}");
         }
         assert_eq!(bad, 0, "{bad} of {} strings encode differently from HF", strings.len());
-        println!("{} strings: encode and decode identical to HF tokenizers", strings.len());
+        println!("{tokenizer}: {} strings, encode and decode identical to HF tokenizers", strings.len());
     }
 }

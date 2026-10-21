@@ -75,7 +75,7 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
     let w3 = cursor.take_layers(layers, hidden * dim)?;
     let final_norm = cursor.take(dim)?;
     cursor.skip(c.seq_len * c.head_size())?; // freq_cis_real + freq_cis_imag (each seq_len * head_size/2)
-    let classifier = if shared { None } else { Some(Weight::F32(cursor.take(c.vocab_size * dim)?)) };
+    let classifier = if shared { None } else { Some(Weight::from(cursor.take(c.vocab_size * dim)?)) };
     if cursor.remaining() != 0 {
         return Err(bad(format!("{} unexpected trailing bytes", cursor.remaining())));
     }
@@ -86,18 +86,21 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
             let mut next = |i: usize| per_layer[i].next().unwrap();
             LayerWeights {
                 attn_norm: next(0),
-                wq: Weight::F32(next(1)),
-                wk: Weight::F32(next(2)),
-                wv: Weight::F32(next(3)),
-                wo: Weight::F32(next(4)),
+                wq: Weight::from(next(1)),
+                wk: Weight::from(next(2)),
+                wv: Weight::from(next(3)),
+                wo: Weight::from(next(4)),
+                bq: None,
+                bk: None,
+                bv: None,
                 ffn_norm: next(5),
-                w_gate: Weight::F32(next(6)),
-                w_down: Weight::F32(next(7)),
-                w_up: Weight::F32(next(8)),
+                w_gate: Weight::from(next(6)),
+                w_down: Weight::from(next(7)),
+                w_up: Weight::from(next(8)),
             }
         })
         .collect();
-    Ok((config, Weights { token_embedding: Weight::F32(token_embedding), layers, final_norm, classifier }))
+    Ok((config, Weights { token_embedding: Weight::from(token_embedding), layers, final_norm, classifier }))
 }
 
 struct Cursor<'a> {

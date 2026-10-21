@@ -1,6 +1,6 @@
-//! Loader for Hugging Face Llama-architecture checkpoints (SmolLM2, and
-//! anything else with `"model_type": "llama"`): `config.json` for the
-//! hyperparameters, `model.safetensors` for the weights.
+//! Loader for Hugging Face Llama-architecture checkpoints (`"model_type"`
+//! `"llama"`: SmolLM2; `"qwen2"`: the same plus q/k/v biases):
+//! `config.json` for the hyperparameters, `model.safetensors` for the weights.
 //!
 //! Tensor names follow transformers' `LlamaForCausalLM`:
 //!
@@ -40,8 +40,8 @@ pub fn load_config(dir: &Path, max_seq: usize) -> io::Result<Config> {
     let num = |k: &str| j.get(k).and_then(Json::as_usize).ok_or_else(|| bad(format!("config.json: missing {k}")));
     let float = |k: &str, default: f64| j.get(k).and_then(Json::as_f64).unwrap_or(default) as f32;
     let model_type = j.get("model_type").and_then(Json::as_str).unwrap_or("?");
-    if model_type != "llama" {
-        return Err(bad(format!("model_type {model_type:?} is not supported by this loader (llama only)")));
+    if model_type != "llama" && model_type != "qwen2" {
+        return Err(bad(format!("model_type {model_type:?} is not supported (llama, qwen2)")));
     }
     let n_heads = num("num_attention_heads")?;
     Ok(Config {
@@ -77,7 +77,9 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
         Ok(buf)
     };
 
-    let mat = |name: &str, shape: &[usize]| tensor(name, shape).map(Weight::F32);
+    let mat = |name: &str, shape: &[usize]| tensor(name, shape).map(Weight::from);
+    // A bias vector if the checkpoint has one (Qwen2's q/k/v), else None.
+    let bias = |name: &str, n: usize| -> io::Result<Option<AlignedBuf>> { if st.info(name).is_some() { tensor(name, &[n]).map(Some) } else { Ok(None) } };
     let layers = (0..c.n_layers)
         .map(|l| {
             let p = format!("model.layers.{l}");
@@ -87,6 +89,9 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
                 wk: mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
                 wv: mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
                 wo: mat(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
+                bq: bias(&format!("{p}.self_attn.q_proj.bias"), dim)?,
+                bk: bias(&format!("{p}.self_attn.k_proj.bias"), kv_dim)?,
+                bv: bias(&format!("{p}.self_attn.v_proj.bias"), kv_dim)?,
                 ffn_norm: tensor(&format!("{p}.post_attention_layernorm.weight"), &[dim])?,
                 w_gate: mat(&format!("{p}.mlp.gate_proj.weight"), &[hidden, dim])?,
                 w_up: mat(&format!("{p}.mlp.up_proj.weight"), &[hidden, dim])?,
@@ -145,7 +150,18 @@ mod tests {
     /// prefill, then 48 greedy tokens identical to `generate`.
     #[test]
     fn smollm2_matches_transformers() {
-        let (Some(dir), Some(acts)) = (golden("models/SmolLM2-135M"), golden("smollm2-135m/acts.safetensors")) else { return };
+        check_against_transformers("models/SmolLM2-135M", "smollm2-135m/acts.safetensors");
+    }
+
+    /// Qwen2.5-0.5B: q/k/v biases, 14 query heads sharing 2 K/V heads,
+    /// theta 1e6, eps 1e-6, 151k vocabulary.
+    #[test]
+    fn qwen2_matches_transformers() {
+        check_against_transformers("models/Qwen2.5-0.5B-Instruct", "qwen2.5-0.5b/acts.safetensors");
+    }
+
+    fn check_against_transformers(model: &str, acts: &str) {
+        let (Some(dir), Some(acts)) = (golden(model), golden(acts)) else { return };
         let (config, weights) = load(&dir, 256).unwrap();
         let reference = SafeTensors::open(acts).unwrap();
         let (prompt, greedy) = (ids(&reference, "prompt_ids"), ids(&reference, "greedy_ids"));
@@ -164,7 +180,7 @@ mod tests {
             *w = w.max(rel);
         }
         for (name, rel) in &worst {
-            println!("{name:<12} worst relative error vs transformers {rel:.2e}");
+            println!("{model} {name:<12} worst relative error vs transformers {rel:.2e}");
             assert!(*rel < 1e-3, "{name}: relative error {rel:.2e}");
         }
 
@@ -174,6 +190,6 @@ mod tests {
             assert_eq!(next, want, "greedy token at position {pos}");
             logits.copy_from_slice(t.forward(next, pos));
         }
-        println!("{} greedy tokens identical to transformers.generate", greedy.len() - prompt.len());
+        println!("{model}: {} greedy tokens identical to transformers.generate", greedy.len() - prompt.len());
     }
 }

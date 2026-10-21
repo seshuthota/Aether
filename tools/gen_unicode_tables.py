@@ -1,5 +1,6 @@
 """Generates src/tokenizer/unicode_tables.rs: code-point ranges of Unicode
-general category L (letters: Lu, Ll, Lt, Lm, Lo), i.e. regex `\\p{L}`.
+general category L (letters: Lu, Ll, Lt, Lm, Lo), i.e. regex `\\p{L}`, and
+the data for NFC normalization (Qwen's tokenizer normalizes to NFC).
 
     tools/.venv/bin/python -I tools/gen_unicode_tables.py src/tokenizer/unicode_tables.rs
 
@@ -11,6 +12,32 @@ numbers. The table is taken from Python's `unicodedata`.
 
 import sys
 import unicodedata
+
+
+def nfc_tables():
+    """Data for Unicode NFC (canonical decomposition, then composition):
+    - CCC: canonical combining class of every character that has one (≠ 0);
+    - DECOMP: full canonical decomposition of every character that has one
+      (Hangul syllables excluded: they are decomposed by formula);
+    - COMPOSE: (first, second) → composite for every primary composite, i.e.
+      every two-character canonical decomposition that NFC recomposes (this
+      leaves out the composition exclusions and singletons)."""
+    ccc, decomp, compose = [], [], []
+    for cp in range(0x110000):
+        c = chr(cp)
+        if 0xAC00 <= cp <= 0xD7A3:
+            continue
+        k = unicodedata.combining(c)
+        if k:
+            ccc.append((cp, k))
+        d = unicodedata.decomposition(c)
+        if d and not d.startswith("<"):
+            full = unicodedata.normalize("NFD", c)
+            decomp.append((cp, [ord(x) for x in full]))
+            parts = [int(x, 16) for x in d.split()]
+            if len(parts) == 2 and unicodedata.normalize("NFC", chr(parts[0]) + chr(parts[1])) == c:
+                compose.append((parts[0], parts[1], cp))
+    return ccc, decomp, sorted(compose)
 
 
 def main():
@@ -30,8 +57,17 @@ def main():
     ]
     lines += [f"    (0x{a:04X}, 0x{b:04X})," for a, b in ranges]
     lines += ["];", ""]
+    ccc, decomp, compose = nfc_tables()
+    lines += ["/// (code point, canonical combining class) for every class ≠ 0, sorted.", "pub const CCC: &[(u32, u8)] = &["]
+    lines += [f"    (0x{a:04X}, {k})," for a, k in ccc]
+    lines += ["];", "", "/// (code point, full canonical decomposition), sorted; Hangul excluded.", "pub const DECOMP: &[(u32, &[u32])] = &["]
+    lines += [f"    (0x{a:04X}, &[{', '.join(f'0x{x:04X}' for x in d)}])," for a, d in decomp]
+    lines += ["];", "", "/// (first, second, composite) for every primary composite, sorted.", "pub const COMPOSE: &[(u32, u32, u32)] = &["]
+    lines += [f"    (0x{a:04X}, 0x{b:04X}, 0x{c:04X})," for a, b, c in compose]
+    lines += ["];", ""]
     open(sys.argv[1], "w").write("\n".join(lines))
-    print(f"{len(ranges)} letter ranges (Unicode {unicodedata.unidata_version})")
+    print(f"{len(ranges)} letter ranges, {len(ccc)} combining classes, {len(decomp)} decompositions, "
+          f"{len(compose)} compositions (Unicode {unicodedata.unidata_version})")
 
 
 if __name__ == "__main__":

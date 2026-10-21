@@ -31,6 +31,11 @@ pub struct LayerWeights {
     pub wk: Weight,
     pub wv: Weight,
     pub wo: Weight,
+    /// Biases added after the q / k / v projections (Qwen2 has them;
+    /// Llama-style models do not).
+    pub bq: Option<AlignedBuf>,
+    pub bk: Option<AlignedBuf>,
+    pub bv: Option<AlignedBuf>,
     pub ffn_norm: AlignedBuf,
     /// W1 in llama2.c: the branch that goes through SiLU.
     pub w_gate: Weight,
@@ -65,6 +70,9 @@ impl Weights {
                     wk: l.wk.convert(dim, format),
                     wv: l.wv.convert(dim, format),
                     wo: l.wo.convert(dim, format),
+                    bq: l.bq,
+                    bk: l.bk,
+                    bv: l.bv,
                     ffn_norm: l.ffn_norm,
                     w_gate: l.w_gate.convert(dim, format),
                     w_down: l.w_down.convert(hidden, format),
@@ -84,6 +92,13 @@ impl Weights {
             + self.layers.iter().map(|l| norms(l) + mats(l)).sum::<usize>()
             + self.final_norm.len() * 4
             + self.classifier.as_ref().map_or(0, Weight::bytes)
+    }
+}
+
+/// `x += bias` when the layer has one.
+fn add_bias(x: &mut [f32], bias: Option<&AlignedBuf>) {
+    if let Some(b) = bias {
+        k::add_inplace(x, b);
     }
 }
 
@@ -207,6 +222,9 @@ impl Transformer {
             k::linear_on(pool, &mut s.q, &s.xb, &lw.wq);
             k::linear_on(pool, &mut s.key_cache[at..at + kv_dim], &s.xb, &lw.wk);
             k::linear_on(pool, &mut s.value_cache[at..at + kv_dim], &s.xb, &lw.wv);
+            add_bias(&mut s.q, lw.bq.as_ref());
+            add_bias(&mut s.key_cache[at..at + kv_dim], lw.bk.as_ref());
+            add_bias(&mut s.value_cache[at..at + kv_dim], lw.bv.as_ref());
 
             match c.rope_layout {
                 RopeLayout::AdjacentPairs => {
@@ -314,6 +332,11 @@ impl Transformer {
             k::linear_batch_on(pool, &mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
             k::linear_batch_on(pool, &mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
             k::linear_batch_on(pool, &mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
+            for i in 0..t {
+                add_bias(&mut b.q[i * dim..(i + 1) * dim], lw.bq.as_ref());
+                add_bias(&mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim], lw.bk.as_ref());
+                add_bias(&mut s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim], lw.bv.as_ref());
+            }
             for i in 0..t {
                 let pos = start + i;
                 let (q, kr) = (&mut b.q[i * dim..(i + 1) * dim], &mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);

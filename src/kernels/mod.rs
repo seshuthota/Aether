@@ -324,7 +324,7 @@ mod tests {
                 for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
                     let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
                     buf.copy_from_slice(&w);
-                    let q = Weight::F32(buf).convert(ws[1], format);
+                    let q = Weight::from(buf).convert(ws[1], format);
                     let want = arr(&dir, &format!("out_{name}_b"));
                     for p in [None, Some(&pool)] {
                         let mut out = vec![f32::NAN; ws[0]];

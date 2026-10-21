@@ -5,13 +5,95 @@
 //! (`rows = out.len()`, `cols = x.len()`), as for plain f32 matrices.
 
 use crate::aligned::AlignedBuf;
+use crate::format::mmap::Mmap;
 use crate::quant::{self, BlockQ4_0, BlockQ8_0, QK};
+use std::marker::PhantomData;
+use std::ops::Deref;
+use std::sync::Arc;
+
+/// `len` values of type `T` inside a memory-mapped file, used in place.
+/// Holds a reference to the mapping so it stays alive as long as any view.
+pub struct Mapped<T> {
+    map: Arc<Mmap>,
+    offset: usize,
+    len: usize,
+    _t: PhantomData<T>,
+}
+
+// SAFETY: the mapping is read-only; a Mapped only ever hands out `&[T]`.
+unsafe impl<T: Sync> Send for Mapped<T> {}
+unsafe impl<T: Sync> Sync for Mapped<T> {}
+
+impl<T: Copy> Mapped<T> {
+    /// A view of `len` values at byte `offset`. Fails if the range runs past
+    /// the file or the address is not aligned for `T` (a misaligned `&[T]`
+    /// would be undefined behaviour).
+    pub fn new(map: Arc<Mmap>, offset: usize, len: usize) -> std::io::Result<Mapped<T>> {
+        let bytes = len * std::mem::size_of::<T>();
+        let bad = |m: String| std::io::Error::new(std::io::ErrorKind::InvalidData, m);
+        if offset + bytes > map.len() {
+            return Err(bad(format!("tensor at {offset} (+{bytes} B) beyond the file")));
+        }
+        if (map.as_bytes().as_ptr() as usize + offset) % std::mem::align_of::<T>() != 0 {
+            return Err(bad(format!("tensor at {offset} is not aligned for its type")));
+        }
+        Ok(Mapped { map, offset, len, _t: PhantomData })
+    }
+}
+
+impl<T> Deref for Mapped<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: `new` checked bounds and alignment; T is a plain-old-data
+        // type (f32 or a block of integers) for which any bytes are valid;
+        // the mapping lives as long as `self.map`.
+        unsafe { std::slice::from_raw_parts(self.map.as_bytes().as_ptr().add(self.offset) as *const T, self.len) }
+    }
+}
+
+/// Values owned in memory, or used in place from a mapped file.
+pub enum Store<T> {
+    Owned(Vec<T>),
+    Mapped(Mapped<T>),
+}
+
+impl<T> Deref for Store<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        match self {
+            Store::Owned(v) => v,
+            Store::Mapped(m) => m,
+        }
+    }
+}
+
+/// f32 values: a 64-byte-aligned owned buffer, or used in place.
+pub enum Floats {
+    Buf(AlignedBuf),
+    Mapped(Mapped<f32>),
+}
+
+impl Deref for Floats {
+    type Target = [f32];
+    fn deref(&self) -> &[f32] {
+        match self {
+            Floats::Buf(b) => b,
+            Floats::Mapped(m) => m,
+        }
+    }
+}
 
 pub enum Weight {
-    F32(AlignedBuf),
+    F32(Floats),
     /// Row-major blocks: row `i` is blocks `i·cols/32 .. (i+1)·cols/32`.
-    Q8_0(Vec<BlockQ8_0>),
-    Q4_0(Vec<BlockQ4_0>),
+    Q8_0(Store<BlockQ8_0>),
+    Q4_0(Store<BlockQ4_0>),
+}
+
+impl From<AlignedBuf> for Weight {
+    fn from(b: AlignedBuf) -> Weight {
+        Weight::F32(Floats::Buf(b))
+    }
 }
 
 /// Storage formats a model can be converted to.
@@ -46,8 +128,8 @@ impl Weight {
     pub fn bytes(&self) -> usize {
         match self {
             Weight::F32(b) => b.len() * 4,
-            Weight::Q8_0(b) => std::mem::size_of_val(b.as_slice()),
-            Weight::Q4_0(b) => std::mem::size_of_val(b.as_slice()),
+            Weight::Q8_0(b) => std::mem::size_of_val::<[BlockQ8_0]>(b),
+            Weight::Q4_0(b) => std::mem::size_of_val::<[BlockQ4_0]>(b),
         }
     }
 
@@ -63,12 +145,12 @@ impl Weight {
             Format::Q8_0 => {
                 let mut b = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; f.len() / QK];
                 quant::quantize_q8_0(&f, &mut b);
-                Weight::Q8_0(b)
+                Weight::Q8_0(Store::Owned(b))
             }
             Format::Q4_0 => {
                 let mut b = vec![BlockQ4_0 { d: 0, qs: [0; QK / 2] }; f.len() / QK];
                 quant::quantize_q4_0(&f, &mut b);
-                Weight::Q4_0(b)
+                Weight::Q4_0(Store::Owned(b))
             }
             Format::F32 => unreachable!(),
         }

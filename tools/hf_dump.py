@@ -47,7 +47,13 @@ def main():
     # Generate before attaching hooks: otherwise every generation step would
     # overwrite the prompt's activations.
     with torch.no_grad():
-        greedy = model.generate(torch.tensor([ids]), max_new_tokens=NEW, do_sample=False, min_new_tokens=NEW)[0].tolist()
+        # Plain greedy: the model's generation_config may add a repetition
+        # penalty (Qwen2.5-Instruct sets 1.05), which greedy generate()
+        # still applies; the engine's greedy decoding has none.
+        greedy = model.generate(
+            torch.tensor([ids]), max_new_tokens=NEW, min_new_tokens=NEW, do_sample=False,
+            repetition_penalty=1.0, temperature=None, top_p=None, top_k=None,
+        )[0].tolist()
 
     def save(name):
         def hook(_mod, inputs, output):
