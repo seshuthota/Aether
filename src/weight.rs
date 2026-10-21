@@ -124,6 +124,15 @@ impl Weight {
         }
     }
 
+    /// "f32", "q8_0" or "q4_0".
+    pub fn format_name(&self) -> &'static str {
+        match self {
+            Weight::F32(_) => "f32",
+            Weight::Q8_0(_) => "q8_0",
+            Weight::Q4_0(_) => "q4_0",
+        }
+    }
+
     /// Bytes of storage: what decode has to stream per use.
     pub fn bytes(&self) -> usize {
         match self {

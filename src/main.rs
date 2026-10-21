@@ -26,6 +26,9 @@
 //!   --chunks N    score only the first N chunks (default: all)
 //!   --kl          also load the f32 model and report KL divergence and
 //!                 top-token agreement of the -q model against it
+//!   --base PATH   the reference model for --kl (default: MODEL as f32;
+//!                 give the HF directory or f32 GGUF when MODEL is a
+//!                 quantized GGUF)
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -142,6 +145,7 @@ fn main() {
     let mut format = Format::F32;
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
+    let mut base_path: Option<PathBuf> = None;
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
         if flag == "--kl" || flag == "--chat" {
@@ -159,6 +163,7 @@ fn main() {
             "-i" => prompt = val,
             "--ppl" => ppl_file = Some(val.into()),
             "--system" => system = val,
+            "--base" => base_path = Some(val.into()),
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
@@ -171,7 +176,8 @@ fn main() {
     }
 
     if let Some(file) = ppl_file {
-        return score(&model_path, &tok_path, &file, format, ctx, chunks, kl, cores);
+        let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
+        return score(&model_path, &tok_path, &file, format, ctx, chunks, base, cores);
     }
     let (mut model, text) = load(&model_path, &tok_path, steps, format);
     eprintln!("weights: {format:?}, {:.1} MB", model.weights.bytes() as f64 / 1e6);
@@ -250,9 +256,10 @@ fn peak_rss() -> String {
 /// `--ppl` mode: perplexity (and with `--kl`, KL divergence against the f32
 /// model) over a text file, printed like llama-perplexity.
 #[allow(clippy::too_many_arguments)]
-fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: usize, chunks: usize, kl: bool, cores: Option<Vec<usize>>) {
+fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: usize, chunks: usize, base: Option<PathBuf>, cores: Option<Vec<usize>>) {
     let (mut model, text) = load(model_path, tok_path, ctx, format);
-    let mut base = kl.then(|| load(model_path, tok_path, ctx, Format::F32).0);
+    let kl = base.is_some();
+    let mut base = base.map(|b| load(&b, tok_path, ctx, Format::F32).0);
     if let Some(cores) = &cores {
         model.set_pool(ThreadPool::new(cores).unwrap_or_else(|e| panic!("thread pool on {cores:?}: {e}")));
     }
