@@ -66,7 +66,7 @@ fn main() {
         // linear() (activation quantized to Q8_0 + integer dots, style b),
         // plus the style-a kernels directly. GB/s at the quantized size.
         for format in [Format::Q8_0, Format::Q4_0] {
-            let q = Weight::F32(w.clone_buf()).convert(n, format);
+            let q = Weight::from(w.clone_buf()).convert(n, format);
             let qbytes = q.bytes() as f64;
             let s = bench(3, iters, || aether::kernels::linear_on(None, black_box(&mut out), black_box(&x), black_box(&q)));
             println!("{format:?}_b_sdot,{d},{n},{},{:.1},{:.2},{:.2},{what}", q.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);

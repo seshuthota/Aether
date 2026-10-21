@@ -1,8 +1,9 @@
-//! `aether`: generate text with a llama2.c model file or a Hugging Face
-//! Llama-style checkpoint directory.
+//! `aether`: generate text with a llama2.c model file, a Hugging Face
+//! checkpoint directory (llama / qwen2), or a GGUF file.
 //!
 //!   aether stories15M.bin -i "Once upon a time" -n 256
 //!   aether SmolLM2-135M/ -i "The capital of France is" -t 0
+//!   aether qwen2.5-0.5b-q4_0.gguf --chat -i "Why is the sky blue?" -c 2-7
 //!
 //! Flags follow llama2.c's `run` so the two can be compared directly:
 //!   -z PATH   tokenizer.bin for a .bin model (default: next to the model)
@@ -14,7 +15,10 @@
 //!   -i TEXT   prompt
 //!   -c LIST   cores to run on, one thread each, e.g. 7 or 0-7 (default:
 //!             one unpinned thread)
-//!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0
+//!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0 (GGUF
+//!             files keep the formats they were saved in)
+//!   --chat    wrap the prompt in the ChatML chat template (instruct models)
+//!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
 //!   --ppl FILE    perplexity of the model on the text in FILE
@@ -96,8 +100,20 @@ impl Text {
     }
 }
 
-/// Loads a model directory (Hugging Face) or file (llama2.c).
+/// Loads a model directory (Hugging Face), a .gguf file, or a llama2.c file.
 fn load(model_path: &Path, tok_path: &Path, max_seq: usize, format: Format) -> (Transformer, Text) {
+    if model_path.extension().is_some_and(|e| e == "gguf") {
+        use aether::format::gguf::Value;
+        let (config, weights, g) = aether::model::gguf::load(model_path, max_seq).unwrap_or_else(|e| fail(model_path, e));
+        let tok = bytelevel::Tokenizer::from_gguf(&g).unwrap_or_else(|e| fail(model_path, e));
+        let id = |k: &str| g.get(k).and_then(Value::as_u64).map(|v| v as usize);
+        let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
+        stops.extend(tok.token_id("<|im_end|>"));
+        stops.extend(tok.token_id("<|endoftext|>"));
+        let start = id("tokenizer.ggml.bos_token_id").or(stops.first().copied()).unwrap_or(0);
+        let weights = weights.convert(&config, format);
+        return (Transformer::new(config, weights), Text::Hf { tok: Box::new(tok), start, stops });
+    }
     if model_path.is_dir() {
         let (config, weights) = hf::load(model_path, max_seq).unwrap_or_else(|e| fail(model_path, e));
         let tok_file = model_path.join("tokenizer.json");
@@ -125,10 +141,11 @@ fn main() {
     let mut cores = None;
     let mut format = Format::F32;
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
+    let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" {
-            kl = true;
+        if flag == "--kl" || flag == "--chat" {
+            if flag == "--kl" { kl = true } else { chat = true }
             continue;
         }
         let val = args.next().unwrap_or_else(|| usage());
@@ -141,6 +158,7 @@ fn main() {
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
             "--ppl" => ppl_file = Some(val.into()),
+            "--system" => system = val,
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
@@ -164,6 +182,9 @@ fn main() {
     }
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
 
+    if chat {
+        prompt = aether::chat::chatml(&system, &prompt);
+    }
     let prompt_tokens = text.encode(&prompt);
     let mut out = std::io::stdout().lock();
     out.write_all(&text.first_piece(prompt_tokens[0])).unwrap();
@@ -213,7 +234,17 @@ fn main() {
     if n_dec > 0 {
         eprint!(" | decode: {n_dec} tokens in {:.1} ms ({:.1} tok/s)", decode.as_secs_f64() * 1e3, rate(n_dec, decode));
     }
-    eprintln!();
+    eprintln!(" | peak RSS {}", peak_rss());
+}
+
+/// The process's peak resident memory (`VmHWM` in /proc/self/status): how
+/// much RAM the run actually held at its worst moment. Memory-mapped weight
+/// pages count while resident, but the kernel can drop them again.
+fn peak_rss() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmHWM:")).map(|l| l["VmHWM:".len()..].trim().to_string()))
+        .unwrap_or_else(|| "?".into())
 }
 
 /// `--ppl` mode: perplexity (and with `--kl`, KL divergence against the f32
