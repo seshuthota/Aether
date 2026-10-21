@@ -100,27 +100,26 @@ Rule from the plan, kept throughout: model code calls a small set of op function
 Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 performance 3.53 GHz,
 6–7 prime 4.32 GHz), so "prime vs efficiency" in the plan becomes **prime vs performance**.
 
-- [~] **1.1 AlignedBuf.** Done and Miri clean (slices, `Deref`, `Send`/`Sync`). Remaining: the
-      `CTR_EL0` test (`sys::cpu`) confirming the 64-byte line on the phone.
-- [~] **1.2 Core pinning.** (code + host tests done; phone run pending) `sys::affinity::pin_current_thread(&[cores])`, `current_cpu()` via the
+- [x] **1.1 AlignedBuf.** Done and Miri clean (slices, `Deref`, `Send`/`Sync`); `CTR_EL0` reads 64 B on the phone.
+- [x] **1.2 Core pinning.** `sys::affinity::pin_current_thread(&[cores])`, `current_cpu()` via the
       `libc` crate (first dependency). Test: pin to each core, `sched_getcpu` agrees (phone).
-- [~] **1.3 sysfs readers.** (code + host tests done; phone inventory pending) cpufreq cur/max per core, thermal zones (type + temp, m°C),
+- [x] **1.3 sysfs readers.** cpufreq cur/max per core, thermal zones (type + temp, m°C),
       battery `current_now`/`voltage_now` with unit/sign detection, charging status. Missing or
       unreadable files are reported, not fatal (phone).
-- [~] **1.4 Sampler.** (`src/monitor.rs`, host-tested; phone pending) Background thread, ~100 ms period, stop flag; returns traces + average power,
+- [x] **1.4 Sampler.** (battery via Android's battery service + charge counter: sysfs battery is SELinux-denied; see results/phase-1.md) Background thread, ~100 ms period, stop flag; returns traces + average power,
       energy (J), min/max freq, max temp. CSV output (phone).
 - [x] **1.5 Bandwidth kernels.** (`src/membench.rs`) read (NEON, 4–8 independent accumulators — the Phase 0 sum was a
       latency-bound dependency chain, not bandwidth), copy, scale, add; bytes counted per kernel.
       Aligned vs +4-byte-shifted read comparison.
-- [~] **1.6 Working-set sweep** `examples/bw_sweep.rs` (host-tested; runs: `scripts/phase1-runs.sh sweeps`): 4 KB → 256 MB log-spaced, fixed total bytes per point,
+- [x] **1.6 Working-set sweep** `examples/bw_sweep.rs`: 4 KB → 256 MB log-spaced, fixed total bytes per point,
       `--cores` flag: one prime (7), one performance (0), all 6 performance, all 8 in parallel with
       scoped threads each on its own pinned chunk. CSV with a conditions header (phone).
 - [x] **1.7 Plot** `tools/plot_sweep.py` (log x axis, cache cliffs annotated).
-- [~] **1.8 Sustained run** (`examples/bw_sustained.rs`; `scripts/phase1-runs.sh sustained`) ≥5 min all-core read with the sampler: bandwidth, freq, temp over time
+- [x] **1.8 Sustained run** (`examples/bw_sustained.rs`; `scripts/phase1-runs.sh sustained`) ≥5 min all-core read with the sampler: bandwidth, freq, temp over time
       (phone).
-- [~] **1.9 Energy per GB** (`bw_sustained --idle-s`; `scripts/phase1-runs.sh energy`), prime vs performance core (phone, unplugged — adb over Wi-Fi; USB
+- [x] **1.9 Energy per GB** (`bw_sustained --idle-s`; `scripts/phase1-runs.sh energy`), prime vs performance core (phone, unplugged — adb over Wi-Fi; USB
       charging makes `current_now` meaningless).
-- [ ] **1.10 `results/phase-1.md`**: L1/L2/SLC effective GB/s, single-core DRAM read, all-core
+- [x] **1.10 `results/phase-1.md`**: L1/L2/SLC effective GB/s, single-core DRAM read, all-core
       DRAM read, throttled sustained, J/GB per core class, conditions.
 
 ## Phase 2 — Scalar end-to-end on stories15M
@@ -148,59 +147,59 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 ## Phase 3 — NEON f32 kernels
 
-- [ ] **3.1 Kernel golden generator** `tools/gen_kernels.py`: random inputs + numpy outputs for
+- [x] **3.1 Kernel golden generator** `tools/gen_kernels.py`: random inputs + numpy outputs for
       square, tall, wide, GEMV-shaped and odd sizes (tails).
-- [ ] **3.2 NEON GEMV**: 4-wide → 4–8 accumulators → unrolled; tail handling. GB/s as % of
+- [x] **3.2 NEON GEMV**: 4-wide → 4–8 accumulators → unrolled; tail handling. GB/s as % of
       Phase 1 single-core read.
-- [ ] **3.3 Batched forward for prefill**: process T prompt tokens at once (the Phase 2 loop is one
+- [x] **3.3 Batched forward for prefill**: process T prompt tokens at once (the Phase 2 loop is one
       token at a time), so prefill becomes GEMM.
-- [ ] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
+- [x] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
       theoretical peak FMA.
-- [ ] **3.5 NEON vector ops** where the profile says so: rmsnorm, softmax (needs a vector exp),
+- [~] **3.5 NEON vector ops** (not needed yet: the profile is all matmul) where the profile says so: rmsnorm, softmax (needs a vector exp),
       silu/swiglu, rope.
-- [ ] **3.6 Dispatch**: `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
+- [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
       (decides nightly vs `asm!` for Phase 6).
-- [ ] **3.7 Swap in, re-verify**: stories15M tokens still identical; speedup + profile →
+- [~] **3.7 Swap in, re-verify** (verified: tokens identical; results/phase-3.md pending): stories15M tokens still identical; speedup + profile →
       `results/phase-3.md` (phone).
 
 ## Phase 4 — Threading & core placement
 
-- [ ] **4.1 Thread pool** `pool.rs`: persistent workers pinned to a core set, epoch counter,
+- [x] **4.1 Thread pool** `pool.rs`: persistent workers pinned to a core set, epoch counter,
       spin-then-park, cache-line-padded per-worker state; scoped job submission.
-- [ ] **4.2 Parallel GEMV** by output rows (chunks aligned to 64 B), parallel GEMM, attention
+- [x] **4.2 Parallel GEMV** (attention heads not yet parallel) by output rows (chunks aligned to 64 B), parallel GEMM, attention
       heads in parallel.
-- [ ] **4.3 Flags**: `--threads`, `--cores`. Results bit-identical to single-thread (test).
-- [ ] **4.4 Sweeps**: tok/s vs threads and core sets; multi-thread GEMV GB/s as % of Phase 1
+- [x] **4.3 Flags** (`-c LIST`: one thread per listed core): `--threads`, `--cores`. Results bit-identical to single-thread (test).
+- [~] **4.4 Sweeps** (running: scripts/model-speed.sh): tok/s vs threads and core sets; multi-thread GEMV GB/s as % of Phase 1
       all-core; J/token per core set (unplugged) → `results/phase-4.md`. Optional: rayon baseline.
 
 ## Phase 5 — SmolLM2 (GQA, safetensors, byte-level BPE)
 
-- [ ] **5.1 mmap** (`libc::mmap`, read-only) + **safetensors parser** (8-byte len, JSON header,
+- [x] **5.1 mmap** (`libc::mmap`, read-only) + **safetensors parser** (8-byte len, JSON header,
       data); bf16 → f32.
-- [ ] **5.2 JSON**: minimal hand-written parser for `config.json`, safetensors headers,
+- [x] **5.2 JSON**: minimal hand-written parser for `config.json`, safetensors headers,
       `tokenizer.json` (decision: hand-written, unless you prefer `serde_json`).
-- [ ] **5.3 Config-driven model**: one code path for stories15M and SmolLM2 (GQA head mapping,
+- [x] **5.3 Config-driven model**: one code path for stories15M and SmolLM2 (GQA head mapping,
       tied embeddings, rope theta, norm eps, rope layout = rotate_half for HF).
-- [ ] **5.4 Byte-level BPE** from `tokenizer.json`: byte↔unicode map, pre-tokenizer as declared
+- [x] **5.4 Byte-level BPE** from `tokenizer.json`: byte↔unicode map, pre-tokenizer as declared
       there, merge ranks, special tokens, decode.
-- [ ] **5.5 HF goldens** `tools/hf_dump.py`: forward hooks → `.safetensors` per-layer dumps (read
+- [x] **5.5 HF goldens** `tools/hf_dump.py`: forward hooks → `.safetensors` per-layer dumps (read
       by our own parser), greedy `generate(do_sample=False)` tokens, tokenizer corpus (Unicode,
       emoji, code, odd whitespace) → `testdata/smollm2/`.
-- [ ] **5.6 Verify** 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
+- [~] **5.6 Verify** (135M done on host and phone; 360M not yet) 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
       tok/s → `results/phase-5.md` (phone).
 
 ## Phase 6 — Quantization
 
-- [ ] **6.1 Block formats** Q8_0 (32×i8 + f16 scale = 34 B) and Q4_0 (32×4-bit + f16 scale =
+- [x] **6.1 Block formats** (byte-identical to llama.cpp via the `gguf` package; tools/gen_quant.py) Q8_0 (32×i8 + f16 scale = 34 B) and Q4_0 (32×4-bit + f16 scale =
       18 B, value = (q−8)·d), byte-identical to llama.cpp's reference quantizers.
-- [ ] **6.2 `quantize` tool** (Rust binary): safetensors → our quantized weights.
-- [ ] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
+- [~] **6.2 `quantize` tool** (changed: models are quantized in memory at load, `-q q8_0|q4_0`, like `llama-quantize --pure`; a file writer comes with GGUF in Phase 7) (Rust binary): safetensors → our quantized weights.
+- [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
-- [ ] **6.4 Q4_0 GEMV**: NEON nibble unpack + `sdot`.
-- [ ] **6.5 Quantized GEMM** for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
-- [ ] **6.6 Perplexity + KL mode** over wikitext-2 test (cached), with f32 logits as base.
-- [ ] **6.7 Verify**: kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
+- [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
+- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla not yet) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
+- [~] **6.7 Verify** (f32 and Q8_0 match llama.cpp; Q4_0 running): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →
       `results/phase-6.md` (phone).
 

@@ -1,0 +1,13 @@
+# model-speed 2026-10-21T22:50:20+05:30, commit 3788a28
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 78
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1017600 kHz
+stories15M f32 cores 7 | prefill: 5 tokens in 4.3 ms (1151.1 tok/s) | decode: 217 tokens in 513.9 ms (422.3 tok/s)
+SmolLM2-135M f32 cores 7 | prefill: 65 tokens in 280.4 ms (231.8 tok/s) | decode: 191 tokens in 4877.7 ms (39.2 tok/s)
+stories15M f32 cores 6-7 | prefill: 5 tokens in 4.0 ms (1241.5 tok/s) | decode: 217 tokens in 325.3 ms (667.1 tok/s)
+SmolLM2-135M f32 cores 6-7 | prefill: 65 tokens in 257.6 ms (252.3 tok/s) | decode: 191 tokens in 2918.6 ms (65.4 tok/s)
