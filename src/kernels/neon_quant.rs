@@ -58,7 +58,7 @@ pub fn dot_q8_0_f32(row: &[BlockQ8_0], x: &[f32]) -> f32 {
     assert_eq!(x.len(), row.len() * QK);
     // SAFETY: register-only NEON op (AArch64 baseline).
     let mut acc = unsafe { vdupq_n_f32(0.0) };
-    for (blk, xs) in row.iter().zip(x.chunks_exact(QK)) {
+    for (blk, xs) in row.iter().zip(x.as_chunks::<QK>().0) {
         // SAFETY: each block holds 32 int8s; `xs` holds 32 floats.
         unsafe {
             let q0 = vld1q_s8(blk.qs.as_ptr());
@@ -76,7 +76,7 @@ pub fn dot_q4_0_f32(row: &[BlockQ4_0], x: &[f32]) -> f32 {
     assert_eq!(x.len(), row.len() * QK);
     // SAFETY: register-only NEON op (AArch64 baseline).
     let mut acc = unsafe { vdupq_n_f32(0.0) };
-    for (blk, xs) in row.iter().zip(x.chunks_exact(QK)) {
+    for (blk, xs) in row.iter().zip(x.as_chunks::<QK>().0) {
         // SAFETY: 16 bytes of nibbles per block; `xs` holds 32 floats.
         unsafe {
             let (lo, hi) = unpack_q4(vld1q_u8(blk.qs.as_ptr()));

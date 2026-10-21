@@ -127,9 +127,9 @@ pub fn gemv(out: &mut [f32], x: &[f32], w: &[f32]) {
             }
         }
     }
-    for i in d4..d {
+    for (i, o) in out.iter_mut().enumerate().skip(d4) {
         // SAFETY: row i holds n floats, x holds n floats.
-        out[i] = unsafe { dot_row(w.as_ptr().add(i * n), xp, n) };
+        *o = unsafe { dot_row(w.as_ptr().add(i * n), xp, n) };
     }
 }
 
@@ -216,6 +216,54 @@ pub unsafe fn gemm_rows(out: *mut f32, d: usize, rows: std::ops::Range<usize>, x
             // SAFETY: row i and token tt each hold n floats; the write is in
             // this call's rows.
             unsafe { *out.add(tt * d + i) = dot_row(wp.add(i * n), xp.add(tt * n), n) };
+        }
+    }
+}
+
+/// Attention of one query head over positions `0..=pos`; same contract as
+/// [`super::scalar::attention_head`].
+///
+/// The scalar version's score loop is one long chain of dependent adds per
+/// key (the compiler may not reorder float sums, so it cannot vectorize it):
+/// at depth 512 that chain dominated Qwen2.5's decode step. Here each score
+/// is [`dot_row`] (four independent 4-lane chains), and the weighted sum of
+/// values adds 4 lanes of `out` per FMA. Softmax stays scalar (`exp`).
+#[inline(never)] // keep a separate symbol so profiles attribute time per kernel
+pub fn attention_head<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    scores: &mut [f32],
+) {
+    let hs = q.len();
+    assert_eq!(out.len(), hs);
+    let scores = &mut scores[..=pos];
+    let scale = 1.0 / (hs as f32).sqrt();
+    for (t, s) in scores.iter_mut().enumerate() {
+        let k = keys(t);
+        assert_eq!(k.len(), hs);
+        // SAFETY: k and q both hold hs floats (checked).
+        *s = unsafe { dot_row(k.as_ptr(), q.as_ptr(), hs) } * scale;
+    }
+    super::scalar::softmax(scores);
+    out.fill(0.0);
+    let hs4 = hs / 4 * 4;
+    let op = out.as_mut_ptr();
+    for (t, &a) in scores.iter().enumerate() {
+        let v = values(t);
+        assert_eq!(v.len(), hs);
+        // SAFETY: out and v hold hs floats (checked); vector accesses stay
+        // below hs4 <= hs.
+        unsafe {
+            let av = vdupq_n_f32(a);
+            for j in (0..hs4).step_by(4) {
+                vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+            }
+        }
+        for j in hs4..hs {
+            out[j] += a * v[j];
         }
     }
 }

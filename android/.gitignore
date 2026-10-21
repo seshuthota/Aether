@@ -1,0 +1,6 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+# Built by scripts/android-native.sh
+app/src/main/jniLibs/

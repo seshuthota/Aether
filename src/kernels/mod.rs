@@ -14,7 +14,7 @@ pub mod scalar;
 use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
-pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
+pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
 
 /// `out = W · x`, `W` row-major `[out.len(), x.len()]`.
 #[inline]
@@ -33,6 +33,23 @@ pub fn matmul_batch(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
     neon::gemm(out, x, w, t);
     #[cfg(not(target_arch = "aarch64"))]
     scalar::matmul_batch(out, x, w, t);
+}
+
+/// Attention of one query head over positions `0..=pos` (see
+/// [`scalar::attention_head`] for the contract).
+#[inline]
+pub fn attention_head<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    scores: &mut [f32],
+) {
+    #[cfg(target_arch = "aarch64")]
+    neon::attention_head(out, q, keys, values, pos, scores);
+    #[cfg(not(target_arch = "aarch64"))]
+    scalar::attention_head(out, q, keys, values, pos, scores);
 }
 
 /// Output rows per block when splitting across threads: whole 4-row tiles,
@@ -349,6 +366,36 @@ mod tests {
             let (_, rel) = max_errors(&g, &want);
             assert!(rel < 1e-6, "{}: rel {rel:.2e}", dir.display());
         }
+    }
+
+    /// One head over n positions (`attention_<n>x<hs>` cases), scalar and
+    /// dispatched. The output is a weighted average of values, so its error
+    /// is that of the scores (dot products of length hs) plus the softmax
+    /// sum over n terms.
+    #[test]
+    fn attention_matches_numpy() {
+        let cs = cases("attention_");
+        assert!(!cs.is_empty());
+        let mut worst: f32 = 0.0;
+        for dir in &cs {
+            let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
+            let hs = q.len();
+            let n = k.len() / hs;
+            let bound = 2e-6 * ((hs as f32).sqrt() + (n as f32).sqrt()).max(4.0);
+            type Head = for<'a> fn(&mut [f32], &[f32], &dyn Fn(usize) -> &'a [f32], &dyn Fn(usize) -> &'a [f32], usize, &mut [f32]);
+            let fs: [(&str, Head); 2] = [
+                ("dispatched", |o, q, k, v, p, s| attention_head(o, q, k, v, p, s)),
+                ("scalar", |o, q, k, v, p, s| scalar::attention_head(o, q, k, v, p, s)),
+            ];
+            for (label, f) in fs {
+                let (mut out, mut scores) = (vec![f32::NAN; hs], vec![f32::NAN; n + 3]);
+                f(&mut out, &q, &|t| &k[t * hs..(t + 1) * hs], &|t| &v[t * hs..(t + 1) * hs], n - 1, &mut scores);
+                let (_, rel) = max_errors(&out, &want);
+                assert!(rel <= bound, "{label} {}: rel {rel:.2e} > {bound:.2e}", dir.display());
+                worst = worst.max(rel);
+            }
+        }
+        println!("attention: {} cases vs numpy, worst relative error {worst:.2e}", cs.len());
     }
 
     /// The angle `pos * freq` is rounded to f32 before sin/cos (as llama2.c

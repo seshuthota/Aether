@@ -12,6 +12,8 @@ computed in float64 from those exact float32 inputs, then stored as float32):
   swiglu_<n>/            gate, up, out                          silu(gate) * up
   rope_<heads>x<hs>_p<pos>/  x, out (adjacent pairs, theta 1e4)
   rope_halves_<heads>x<hs>_p<pos>/  x, out (rotate_half layout, theta 1e4)
+  attention_<n>x<hs>/    q [hs], k [n, hs], v [n, hs], out [hs]
+                         out = softmax(k @ q / sqrt(hs)) @ v   (one head, n positions)
 
 Sizes include 1, values just around multiples of 4/8/16/32 (NEON width and
 unroll factors: tail bugs live there), and the real stories15M / SmolLM2 /
@@ -87,6 +89,12 @@ def main():
             x = f32(heads * hs)
             save(root, f"rope_{heads}x{hs}_p{pos}", x=x, out=rope_ref(x, pos, hs, 10000.0, False))
             save(root, f"rope_halves_{heads}x{hs}_p{pos}", x=x, out=rope_ref(x, pos, hs, 10000.0, True))
+    for hs in (2, 5, 8, 17, 64, 128):
+        for n in (1, 2, 7, 64, 257, 1024):
+            q, k, v = f32(hs), f32(n, hs), f32(n, hs)
+            sc = k.astype(np.float64) @ q.astype(np.float64) / np.sqrt(hs)
+            e = np.exp(sc - sc.max())
+            save(root, f"attention_{n}x{hs}", q=q, k=k, v=v, out=(e / e.sum()) @ v.astype(np.float64))
     print(f"wrote {len(list(root.iterdir()))} cases to {root}")
 
 
