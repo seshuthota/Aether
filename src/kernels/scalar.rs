@@ -29,6 +29,16 @@ pub fn matmul(out: &mut [f32], x: &[f32], w: &[f32]) {
     }
 }
 
+/// Batched [`matmul`]: `out[t] = W · x[t]` for `t` tokens, `x` `[t, n]`,
+/// `out` `[t, d]`. The scalar version simply runs one matmul per token.
+pub fn matmul_batch(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
+    let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
+    assert_eq!((x.len(), out.len()), (t * n, t * d));
+    for (o, xi) in out.chunks_exact_mut(d).zip(x.chunks_exact(n)) {
+        matmul(o, xi, w);
+    }
+}
+
 /// RMSNorm: `out = weight * x / sqrt(mean(x²) + eps)`.
 ///
 /// Unlike LayerNorm there is no mean subtraction: it only rescales the vector

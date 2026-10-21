@@ -70,3 +70,24 @@ pub fn max_errors(ours: &[f32], reference: &[f32]) -> (f32, f32) {
     let abs = ours.iter().zip(reference).fold(0.0f32, |m, (&a, &r)| m.max((a - r).abs()));
     (abs, if scale > 0.0 { abs / scale } else { abs })
 }
+
+/// Reads a little-endian float32, C-order `.npy` file (numpy's own format:
+/// magic `\x93NUMPY`, version, header length, a Python-dict header with
+/// `descr`, `fortran_order` and `shape`, then the raw data). Returns the
+/// shape and the flat data.
+pub fn read_npy(path: &std::path::Path) -> (Vec<usize>, Vec<f32>) {
+    let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(&b[..6], b"\x93NUMPY", "{}: not an .npy file", path.display());
+    let (header_len, start) = match b[6] {
+        1 => (u16::from_le_bytes([b[8], b[9]]) as usize, 10),
+        _ => (u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize, 12),
+    };
+    let header = std::str::from_utf8(&b[start..start + header_len]).unwrap();
+    assert!(header.contains("'descr': '<f4'"), "{}: only little-endian f32 supported: {header}", path.display());
+    assert!(header.contains("'fortran_order': False"), "{}: only C order supported", path.display());
+    let shape_txt = header.split("'shape': (").nth(1).unwrap().split(')').next().unwrap();
+    let shape: Vec<usize> = shape_txt.split(',').map(str::trim).filter(|s| !s.is_empty()).map(|s| s.parse().unwrap()).collect();
+    let data: Vec<f32> = b[start + header_len..].as_chunks::<4>().0.iter().map(|&c| f32::from_le_bytes(c)).collect();
+    assert_eq!(data.len(), shape.iter().product::<usize>(), "{}: size does not match shape", path.display());
+    (shape, data)
+}

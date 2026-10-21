@@ -12,8 +12,9 @@
 //!   -i TEXT   prompt
 //!   -c LIST   pin to these cores, e.g. 7 or 0-5 (default: no pinning)
 //!
-//! After the text, a timing line goes to stderr: prompt positions per second
-//! and generated tokens per second, measured separately.
+//! After the text, a timing line goes to stderr: prefill (the whole prompt
+//! in one batched pass) and decode (one forward pass per token), measured
+//! separately.
 
 use aether::model::Transformer;
 use aether::model::llama2c;
@@ -57,44 +58,54 @@ fn main() {
 
     let prompt_tokens = tokenizer.encode(&prompt, true, false);
     let mut out = std::io::stdout().lock();
-    let start = Instant::now();
-    // Prompt positions only feed the cache (their next token is given), so
-    // they are timed separately from positions that generate a token.
-    let mut prompt_time = Duration::ZERO;
-    let (mut token, mut pos) = (prompt_tokens[0], 0);
-    while pos < steps {
-        let logits = model.forward(token, pos);
-        let next = if pos + 1 < prompt_tokens.len() {
-            prompt_tokens[pos + 1] // still inside the prompt: the next token is given
-        } else {
-            let mut logits = logits.to_vec();
-            sampler.sample(&mut logits)
-        };
-        pos += 1;
-        if pos + 1 == prompt_tokens.len() {
-            prompt_time = start.elapsed();
-        }
-        if next == BOS {
-            break; // BOS starts a new story: this one is over
-        }
-        let piece = tokenizer.decode(token, next);
-        // Like llama2.c's safe_printf: skip lone non-printable bytes.
+    // Like llama2.c's safe_printf: skip lone non-printable bytes.
+    let mut print = |prev: usize, next: usize| {
+        let piece = tokenizer.decode(prev, next);
         if !(piece.len() == 1 && !(piece[0].is_ascii_graphic() || piece[0].is_ascii_whitespace())) {
             out.write_all(&piece).unwrap();
             out.flush().unwrap();
         }
-        token = next;
+    };
+
+    // Prefill: the whole prompt in one batched pass (GEMM). Its logits are
+    // those after the last prompt token, so they already give the first
+    // generated token: time-to-first-token is the prefill time.
+    let np = prompt_tokens.len().min(steps);
+    let t0 = Instant::now();
+    let mut logits = model.forward_batch(&prompt_tokens[..np], 0).to_vec();
+    let prefill = t0.elapsed();
+    for p in 0..np - 1 {
+        print(prompt_tokens[p], prompt_tokens[p + 1]);
     }
+
+    // Decode: one forward pass per new token, until `steps` positions or BOS.
+    let t1 = Instant::now();
+    let mut pos = np;
+    if np == prompt_tokens.len() {
+        let mut token = prompt_tokens[np - 1];
+        loop {
+            let next = sampler.sample(&mut logits);
+            if next == BOS {
+                break; // BOS starts a new story: this one is over
+            }
+            print(token, next);
+            token = next;
+            if pos >= steps {
+                break;
+            }
+            logits.copy_from_slice(model.forward(token, pos));
+            pos += 1;
+        }
+    }
+    let decode = t1.elapsed();
+    drop(print); // ends the closure's borrow of `out`
     writeln!(out).unwrap();
 
-    let total = start.elapsed();
-    let n_prompt = (prompt_tokens.len() - 1).min(pos);
-    let n_gen = pos - n_prompt;
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
-    eprint!("prompt: {n_prompt} positions in {:.1} ms ({:.1} tok/s)", prompt_time.as_secs_f64() * 1e3, rate(n_prompt, prompt_time));
-    if n_gen > 0 {
-        let t_gen = total - prompt_time;
-        eprint!(" | generated: {n_gen} tokens in {:.1} ms ({:.1} tok/s)", t_gen.as_secs_f64() * 1e3, rate(n_gen, t_gen));
+    eprint!("prefill: {np} tokens in {:.1} ms ({:.1} tok/s)", prefill.as_secs_f64() * 1e3, rate(np, prefill));
+    let n_dec = pos - np;
+    if n_dec > 0 {
+        eprint!(" | decode: {n_dec} tokens in {:.1} ms ({:.1} tok/s)", decode.as_secs_f64() * 1e3, rate(n_dec, decode));
     }
     eprintln!();
 }

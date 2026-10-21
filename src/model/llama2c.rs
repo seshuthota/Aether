@@ -205,6 +205,47 @@ mod tests {
         }
     }
 
+    /// Prefill in batches through `forward_batch` (GEMM path), then decode
+    /// one token at a time. Batch sizes 5, 12, 13 are deliberately not
+    /// multiples of the 4×4 GEMM tile. Every activation at every position is
+    /// compared with llama2.c's, and every greedy token must match.
+    #[test]
+    fn batched_prefill_matches_llama2c() {
+        let (Some(mut t), Some(path)) = (model(), golden("stories15M/greedy.dump")) else { return };
+        let (reference, _) = read_dump(&path);
+        let get = |name: &str, pos: usize| reference.get(&(name.to_string(), -1, pos)).map(|v| v[0] as usize);
+        let prompt: Vec<usize> = (0..).map_while(|i| get("prompt", i)).collect();
+        // The full token sequence llama2.c fed itself: prompt, then its picks.
+        let seq: Vec<usize> = (0..64).map(|p| if p < prompt.len() { prompt[p] } else { get("next", p - 1).unwrap() }).collect();
+
+        let mut obs = Collect::default();
+        let mut start = 0;
+        for len in [5, 12, 13] {
+            let logits = t.forward_batch_traced(&seq[start..start + len], start, &mut obs).to_vec();
+            start += len;
+            assert_eq!(crate::kernels::argmax(&logits), seq[start], "token after batch ending at {start}");
+        }
+        for pos in start..63 {
+            let logits = t.forward_traced(seq[pos], pos, &mut obs).to_vec();
+            assert_eq!(crate::kernels::argmax(&logits), seq[pos + 1], "token at position {}", pos + 1);
+        }
+        let mut worst: f32 = 0.0;
+        for (key, r) in &reference {
+            if key.0 == "prompt" || key.0 == "next" || key.2 >= 63 {
+                continue;
+            }
+            // A batch reports final_norm/logits only for its last position.
+            let Some(o) = obs.0.get(key) else {
+                assert!(key.0 == "final_norm" || key.0 == "logits", "missing {key:?}");
+                continue;
+            };
+            let (_, rel) = max_errors(o, r);
+            assert!(rel < 1e-4, "{key:?}: relative error {rel:.3e} vs llama2.c");
+            worst = worst.max(rel);
+        }
+        println!("batched prefill (5+12+13) then decode: tokens identical, worst relative error {worst:.2e}");
+    }
+
     /// Temperature 0.8, top-p 0.9, seed 42: the same xorshift stream and the
     /// same nucleus procedure must pick the same tokens as `run -s 42`.
     #[test]

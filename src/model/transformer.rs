@@ -19,7 +19,7 @@
 
 use super::config::{Config, RopeLayout};
 use crate::aligned::AlignedBuf;
-use crate::kernels::scalar as k;
+use crate::kernels as k;
 
 /// One layer's weights. Matrices are row-major `[out, in]`.
 pub struct LayerWeights {
@@ -78,10 +78,30 @@ struct State {
     value_cache: AlignedBuf,
 }
 
+/// Buffers for [`Transformer::forward_batch`]: the single-token buffers,
+/// one row per token. Grown on demand to the largest batch seen.
+struct Batch {
+    cap: usize,
+    x: AlignedBuf,   // [cap, dim]
+    xb: AlignedBuf,  // [cap, dim]
+    xb2: AlignedBuf, // [cap, dim]
+    q: AlignedBuf,   // [cap, dim]
+    hb: AlignedBuf,  // [cap, hidden]
+    hb2: AlignedBuf, // [cap, hidden]
+}
+
+impl Batch {
+    fn new(c: &Config, cap: usize) -> Batch {
+        let z = |n: usize| AlignedBuf::zeros(cap * n);
+        Batch { cap, x: z(c.dim), xb: z(c.dim), xb2: z(c.dim), q: z(c.dim), hb: z(c.hidden_dim), hb2: z(c.hidden_dim) }
+    }
+}
+
 pub struct Transformer {
     pub config: Config,
     pub weights: Weights,
     state: State,
+    batch: Batch,
 }
 
 impl Transformer {
@@ -100,7 +120,8 @@ impl Transformer {
             key_cache: AlignedBuf::zeros(cache),
             value_cache: AlignedBuf::zeros(cache),
         };
-        Transformer { config, weights, state }
+        let batch = Batch::new(&config, 0);
+        Transformer { config, weights, state, batch }
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
@@ -178,6 +199,120 @@ impl Transformer {
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
         k::matmul(&mut s.logits, &s.x, cls);
         obs.tap("logits", None, pos, &s.logits);
+        &s.logits
+    }
+
+    /// Runs `tokens` at positions `start .. start + tokens.len()` in one pass
+    /// (prefill) and returns the logits after the last one. Equivalent to
+    /// calling [`Transformer::forward`] once per token, but every weight
+    /// matrix is multiplied by all the tokens at once (GEMM), so each weight
+    /// is fetched once per batch instead of once per token.
+    pub fn forward_batch(&mut self, tokens: &[usize], start: usize) -> &[f32] {
+        self.forward_batch_traced(tokens, start, &mut NoTrace)
+    }
+
+    /// [`Transformer::forward_batch`] reporting every intermediate to `obs`,
+    /// one call per token, with the same names and positions as
+    /// [`Transformer::forward_traced`].
+    pub fn forward_batch_traced<O: Observer>(&mut self, tokens: &[usize], start: usize, obs: &mut O) -> &[f32] {
+        let t = tokens.len();
+        assert!(t > 0, "empty batch");
+        assert!(start + t <= self.config.seq_len, "positions {start}..{} beyond seq_len {}", start + t, self.config.seq_len);
+        if self.batch.cap < t {
+            self.batch = Batch::new(&self.config, t);
+        }
+        let c = &self.config;
+        let w = &self.weights;
+        let (s, b) = (&mut self.state, &mut self.batch);
+        let (dim, hidden, hs, kv_dim, group) = (c.dim, c.hidden_dim, c.head_size(), c.kv_dim(), c.kv_group());
+
+        for (i, &tok) in tokens.iter().enumerate() {
+            assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
+            b.x[i * dim..(i + 1) * dim].copy_from_slice(&w.token_embedding[tok * dim..(tok + 1) * dim]);
+            obs.tap("embed", None, start + i, &b.x[i * dim..(i + 1) * dim]);
+        }
+
+        for (l, lw) in w.layers.iter().enumerate() {
+            // --- attention ---
+            for i in 0..t {
+                k::rmsnorm(&mut b.xb[i * dim..(i + 1) * dim], &b.x[i * dim..(i + 1) * dim], &lw.attn_norm, c.norm_eps);
+                obs.tap("attn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+            }
+            // K and V for positions start..start+t are consecutive rows of
+            // this layer's cache, so the GEMM writes them in place.
+            let layer_off = l * c.seq_len * kv_dim;
+            let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
+            k::matmul_batch(&mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
+            k::matmul_batch(&mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
+            k::matmul_batch(&mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
+            for i in 0..t {
+                let pos = start + i;
+                let (q, kr) = (&mut b.q[i * dim..(i + 1) * dim], &mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                match c.rope_layout {
+                    RopeLayout::AdjacentPairs => {
+                        k::rope_adjacent(q, pos, hs, c.rope_theta);
+                        k::rope_adjacent(kr, pos, hs, c.rope_theta);
+                    }
+                    RopeLayout::Halves => unimplemented!("rotate_half RoPE arrives with SmolLM2 (Phase 5)"),
+                }
+                obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
+                obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                obs.tap("v", Some(l), pos, &s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+            }
+
+            // Causal attention: token i (position start+i) sees 0..=start+i.
+            let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
+            for i in 0..t {
+                let pos = start + i;
+                let xb = &mut b.xb[i * dim..(i + 1) * dim];
+                for (h, (out, scores)) in xb.chunks_exact_mut(hs).zip(s.att.chunks_exact_mut(c.seq_len)).enumerate() {
+                    let q = &b.q[i * dim + h * hs..i * dim + (h + 1) * hs];
+                    let kv_off = (h / group) * hs;
+                    let keys = |p: usize| &kc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
+                    let values = |p: usize| &vc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
+                    k::attention_head(out, q, keys, values, pos, scores);
+                }
+                obs.tap("attn", Some(l), pos, &b.xb[i * dim..(i + 1) * dim]);
+            }
+
+            k::matmul_batch(&mut b.xb2[..t * dim], &b.xb[..t * dim], &lw.wo, t);
+            for i in 0..t {
+                obs.tap("attn_out", Some(l), start + i, &b.xb2[i * dim..(i + 1) * dim]);
+            }
+            k::add_inplace(&mut b.x[..t * dim], &b.xb2[..t * dim]);
+            for i in 0..t {
+                obs.tap("resid_attn", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
+            }
+
+            // --- MLP ---
+            for i in 0..t {
+                k::rmsnorm(&mut b.xb[i * dim..(i + 1) * dim], &b.x[i * dim..(i + 1) * dim], &lw.ffn_norm, c.norm_eps);
+                obs.tap("ffn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+            }
+            k::matmul_batch(&mut b.hb[..t * hidden], &b.xb[..t * dim], &lw.w_gate, t);
+            k::matmul_batch(&mut b.hb2[..t * hidden], &b.xb[..t * dim], &lw.w_up, t);
+            k::swiglu(&mut b.hb[..t * hidden], &b.hb2[..t * hidden]);
+            for i in 0..t {
+                obs.tap("swiglu", Some(l), start + i, &b.hb[i * hidden..(i + 1) * hidden]);
+            }
+            k::matmul_batch(&mut b.xb[..t * dim], &b.hb[..t * hidden], &lw.w_down, t);
+            for i in 0..t {
+                obs.tap("ffn_out", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+            }
+            k::add_inplace(&mut b.x[..t * dim], &b.xb[..t * dim]);
+            for i in 0..t {
+                obs.tap("resid_ffn", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
+            }
+        }
+
+        // Only the last token's logits are needed to continue generating.
+        let last = &b.x[(t - 1) * dim..t * dim];
+        s.x.copy_from_slice(last);
+        k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
+        obs.tap("final_norm", None, start + t - 1, &s.x);
+        let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
+        k::matmul(&mut s.logits, &s.x, cls);
+        obs.tap("logits", None, start + t - 1, &s.logits);
         &s.logits
     }
 }
