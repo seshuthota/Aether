@@ -115,81 +115,29 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Observer, Transformer};
-    use crate::testutil::{golden, max_errors};
-    use std::collections::{BTreeMap, HashMap};
+    use crate::model::Transformer;
+    use crate::model::reference::check_against_transformers;
+    use crate::testutil::golden;
 
-    /// Activations keyed by (name, layer or -1, position).
-    #[derive(Default)]
-    struct Collect(HashMap<(String, i32, usize), Vec<f32>>);
-
-    impl Observer for Collect {
-        fn tap(&mut self, name: &str, layer: Option<usize>, pos: usize, data: &[f32]) {
-            self.0.insert((name.to_string(), layer.map_or(-1, |l| l as i32), pos), data.to_vec());
-        }
+    fn model(dir: &str) -> Option<Transformer> {
+        let (config, weights) = load(golden(dir)?, 256).unwrap();
+        Some(Transformer::new(config, weights))
     }
 
-    /// Row `pos` of a [T, width] reference tensor.
-    fn row(st: &SafeTensors, name: &str, pos: usize) -> Vec<f32> {
-        let v = st.get(name).unwrap_or_else(|| panic!("reference has no {name}"));
-        let width = v.shape[1];
-        let mut all = vec![0.0; v.numel()];
-        v.to_f32(&mut all);
-        all[pos * width..(pos + 1) * width].to_vec()
-    }
-
-    fn ids(st: &SafeTensors, name: &str) -> Vec<usize> {
-        let v = st.get(name).unwrap();
-        let mut f = vec![0.0; v.numel()];
-        v.to_f32(&mut f);
-        f.into_iter().map(|x| x as usize).collect()
-    }
-
-    /// SmolLM2-135M against Hugging Face transformers (tools/hf_dump.py):
-    /// every layer boundary at every prompt position after a batched
-    /// prefill, then 48 greedy tokens identical to `generate`.
+    /// SmolLM2-135M from its HF safetensors.
     #[test]
     fn smollm2_matches_transformers() {
-        check_against_transformers("models/SmolLM2-135M", "smollm2-135m/acts.safetensors");
+        if let Some(mut t) = model("models/SmolLM2-135M") {
+            check_against_transformers(&mut t, "smollm2-135m/acts.safetensors", "SmolLM2 (safetensors)");
+        }
     }
 
     /// Qwen2.5-0.5B: q/k/v biases, 14 query heads sharing 2 K/V heads,
     /// theta 1e6, eps 1e-6, 151k vocabulary.
     #[test]
     fn qwen2_matches_transformers() {
-        check_against_transformers("models/Qwen2.5-0.5B-Instruct", "qwen2.5-0.5b/acts.safetensors");
-    }
-
-    fn check_against_transformers(model: &str, acts: &str) {
-        let (Some(dir), Some(acts)) = (golden(model), golden(acts)) else { return };
-        let (config, weights) = load(&dir, 256).unwrap();
-        let reference = SafeTensors::open(acts).unwrap();
-        let (prompt, greedy) = (ids(&reference, "prompt_ids"), ids(&reference, "greedy_ids"));
-        let mut t = Transformer::new(config, weights);
-
-        let mut obs = Collect::default();
-        let mut logits = t.forward_batch_traced(&prompt, 0, &mut obs).to_vec();
-        let mut worst: BTreeMap<String, f32> = BTreeMap::new();
-        for ((name, layer, pos), ours) in &obs.0 {
-            let key = if *layer < 0 { name.clone() } else { format!("L{layer}.{name}") };
-            if matches!(name.as_str(), "q" | "k" | "attn" | "swiglu") {
-                continue; // not hooked on the HF side (q/k are pre-RoPE there)
-            }
-            let (_, rel) = max_errors(ours, &row(&reference, &key, *pos));
-            let w = worst.entry(name.clone()).or_default();
-            *w = w.max(rel);
+        if let Some(mut t) = model("models/Qwen2.5-0.5B-Instruct") {
+            check_against_transformers(&mut t, "qwen2.5-0.5b/acts.safetensors", "Qwen2.5 (safetensors)");
         }
-        for (name, rel) in &worst {
-            println!("{model} {name:<12} worst relative error vs transformers {rel:.2e}");
-            assert!(*rel < 1e-3, "{name}: relative error {rel:.2e}");
-        }
-
-        // Greedy continuation, one token at a time.
-        for (pos, &want) in greedy.iter().enumerate().skip(prompt.len()) {
-            let next = crate::kernels::argmax(&logits);
-            assert_eq!(next, want, "greedy token at position {pos}");
-            logits.copy_from_slice(t.forward(next, pos));
-        }
-        println!("{model}: {} greedy tokens identical to transformers.generate", greedy.len() - prompt.len());
     }
 }

@@ -11,3 +11,4 @@
 # Host-side reference tooling (regenerated, never committed)
 /tools/.venv/
 /third_party/
+/hostdata/

@@ -26,6 +26,19 @@ pub fn golden(rel: &str) -> Option<PathBuf> {
     }
 }
 
+/// `hostdata/<rel>` if it exists: large reference files that only host
+/// tests use (f32 GGUF conversions), kept out of `testdata/` so the cargo
+/// runner does not copy them to the phone.
+pub fn host_golden(rel: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("hostdata").join(rel);
+    if p.exists() && std::env::var_os("AETHER_TESTDATA").is_none() {
+        Some(p)
+    } else {
+        eprintln!("SKIP: host-only {} not available here", p.display());
+        None
+    }
+}
+
 /// Key of one activation record: (name, layer or -1, position).
 pub type Key = (String, i32, usize);
 

@@ -257,6 +257,12 @@ fn bad(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg)
 }
 
+/// Merge list (in priority order) → (left id, right id) → (rank, merged id).
+fn merge_ranks(vocab: &HashMap<String, usize>, list: &[(String, String)]) -> io::Result<HashMap<(usize, usize), (usize, usize)>> {
+    let id = |s: &str| vocab.get(s).copied().ok_or_else(|| bad(format!("merge uses unknown token {s:?}")));
+    list.iter().enumerate().map(|(rank, (a, b))| Ok(((id(a)?, id(b)?), (rank, id(&format!("{a}{b}"))?)))).collect()
+}
+
 impl Tokenizer {
     pub fn load(path: impl AsRef<Path>) -> io::Result<Tokenizer> {
         let text = std::fs::read_to_string(path.as_ref())?;
@@ -290,16 +296,15 @@ impl Tokenizer {
         added.sort_by_key(|(s, _)| std::cmp::Reverse(s.len()));
 
         // Merges are "a b" strings (older files) or ["a", "b"] pairs (newer).
-        let mut merges = HashMap::new();
-        for (rank, m) in model.get("merges").and_then(Json::as_array).unwrap_or(&[]).iter().enumerate() {
-            let (a, b) = match m {
-                Json::Str(s) => s.split_once(' ').ok_or_else(|| bad(format!("bad merge {s:?}")))?,
-                Json::Arr(p) if p.len() == 2 => (p[0].as_str().unwrap_or(""), p[1].as_str().unwrap_or("")),
+        let mut merge_list = Vec::new();
+        for m in model.get("merges").and_then(Json::as_array).unwrap_or(&[]) {
+            merge_list.push(match m {
+                Json::Str(s) => s.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| bad(format!("bad merge {s:?}")))?,
+                Json::Arr(p) if p.len() == 2 => (p[0].as_str().unwrap_or("").to_string(), p[1].as_str().unwrap_or("").to_string()),
                 _ => return Err(bad("bad merge entry".into())),
-            };
-            let id = |s: &str| vocab.get(s).copied().ok_or_else(|| bad(format!("merge uses unknown token {s:?}")));
-            merges.insert((id(a)?, id(b)?), (rank, id(&format!("{a}{b}"))?));
+            });
         }
+        let merges = merge_ranks(&vocab, &merge_list)?;
 
         // Normalizer: none, or NFC.
         let nfc = match j.get("normalizer") {
@@ -336,9 +341,51 @@ impl Tokenizer {
             _ => return Err(bad("unsupported combination of pre-tokenizers".into())),
         };
 
+        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc))
+    }
+
+    /// The tokenizer embedded in a GGUF file (`tokenizer.ggml.*` keys), so a
+    /// `.gguf` is self-contained as it is for llama.cpp. The pre-tokenizer
+    /// comes from `tokenizer.ggml.pre`: `smollm` (digits split, GPT-2 regex),
+    /// `qwen2` (Qwen2 regex, plus the NFC normalisation Hugging Face applies),
+    /// `gpt-2`.
+    pub fn from_gguf(g: &crate::format::gguf::Gguf) -> io::Result<Tokenizer> {
+        use crate::format::gguf::Value;
+        let arr = |k: &str| g.get(k).and_then(Value::as_array).ok_or_else(|| bad(format!("GGUF has no {k}")));
+        if g.get("tokenizer.ggml.model").and_then(Value::as_str) != Some("gpt2") {
+            return Err(bad("only GGUF tokenizers of type gpt2 (byte-level BPE) are supported".into()));
+        }
+        let id_to_token: Vec<String> = arr("tokenizer.ggml.tokens")?.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
+        let types: Vec<u64> = arr("tokenizer.ggml.token_type")?.iter().map(|v| v.as_u64().unwrap_or(1)).collect();
+        let vocab: HashMap<String, usize> = id_to_token.iter().enumerate().map(|(i, t)| (t.clone(), i)).collect();
+        // Control (3) and user-defined (4) tokens are matched verbatim.
+        let mut added: Vec<(String, usize)> = types.iter().enumerate().filter(|&(_, &t)| t == 3 || t == 4).map(|(i, _)| (id_to_token[i].clone(), i)).collect();
+        added.sort_by_key(|(s, _)| std::cmp::Reverse(s.len()));
+        let merge_list: Vec<(String, String)> = arr("tokenizer.ggml.merges")?
+            .iter()
+            .map(|v| v.as_str().and_then(|s| s.split_once(' ')).map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| bad("bad merge".into())))
+            .collect::<io::Result<_>>()?;
+        let merges = merge_ranks(&vocab, &merge_list)?;
+        let (pre, nfc) = match g.get("tokenizer.ggml.pre").and_then(Value::as_str).unwrap_or("default") {
+            "smollm" => (PreTokenizer::Gpt2 { split_digits: true }, false),
+            "qwen2" => (PreTokenizer::Qwen2, true),
+            "gpt-2" | "default" => (PreTokenizer::Gpt2 { split_digits: false }, false),
+            other => return Err(bad(format!("GGUF pre-tokenizer {other:?} is not supported"))),
+        };
+        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc))
+    }
+
+    fn assemble(
+        id_to_token: Vec<String>,
+        vocab: HashMap<String, usize>,
+        merges: HashMap<(usize, usize), (usize, usize)>,
+        added: Vec<(String, usize)>,
+        pre: PreTokenizer,
+        nfc: bool,
+    ) -> Tokenizer {
         let byte_char = bytes_to_unicode();
         let char_byte = byte_char.iter().enumerate().map(|(b, &c)| (c, b as u8)).collect();
-        Ok(Tokenizer { id_to_token, vocab, merges, added, pre, nfc, byte_char, char_byte })
+        Tokenizer { id_to_token, vocab, merges, added, pre, nfc, byte_char, char_byte }
     }
 
     pub fn vocab_size(&self) -> usize {
@@ -503,9 +550,24 @@ mod tests {
         check_corpus("models/SmolLM2-135M/tokenizer.json", "smollm2-135m");
     }
 
+    /// The tokenizer embedded in llama.cpp's GGUF conversion of SmolLM2
+    /// must behave exactly like HF's tokenizer.json.
+    #[test]
+    fn gguf_tokenizer_matches_hf_tokenizers() {
+        check_corpus("gguf/smollm2-135m-q8_0.gguf", "smollm2-135m");
+        check_corpus("gguf/qwen2.5-0.5b-q8_0.gguf", "qwen2.5-0.5b");
+    }
+
     fn check_corpus(tokenizer: &str, dir: &str) {
+        let load = |p: std::path::PathBuf| {
+            if p.extension().is_some_and(|e| e == "gguf") {
+                Tokenizer::from_gguf(&crate::format::gguf::Gguf::open(p).unwrap()).unwrap()
+            } else {
+                Tokenizer::load(p).unwrap()
+            }
+        };
         let (Some(t), Some(c), Some(e), Some(d)) = (
-            golden(tokenizer).map(|p| Tokenizer::load(p).unwrap()),
+            golden(tokenizer).map(load),
             golden(&format!("{dir}/corpus.txt")),
             golden(&format!("{dir}/encoded.txt")),
             golden(&format!("{dir}/decoded.txt")),
