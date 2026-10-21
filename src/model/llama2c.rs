@@ -163,8 +163,16 @@ mod tests {
     /// our activations and the reference dump.
     type Activations = HashMap<Key, Vec<f32>>;
 
-    fn replay(dump: &str, mut sampler: Sampler) -> Option<(Activations, Activations)> {
+    fn replay(dump: &str, sampler: Sampler) -> Option<(Activations, Activations)> {
+        replay_on(dump, sampler, None)
+    }
+
+    /// [`replay`] with the matrix products split across threads on `cores`.
+    fn replay_on(dump: &str, mut sampler: Sampler, cores: Option<&[usize]>) -> Option<(Activations, Activations)> {
         let mut t = model()?;
+        if let Some(cores) = cores {
+            t.set_pool(crate::pool::ThreadPool::new(cores).unwrap());
+        }
         let (reference, _) = read_dump(&golden(dump)?);
         let prompt: Vec<usize> = (0..).map_while(|i| reference.get(&("prompt".into(), -1, i))).map(|v| v[0] as usize).collect();
         assert!(!prompt.is_empty(), "dump has no prompt tokens");
@@ -244,6 +252,24 @@ mod tests {
             worst = worst.max(rel);
         }
         println!("batched prefill (5+12+13) then decode: tokens identical, worst relative error {worst:.2e}");
+    }
+
+    /// Four threads: every activation still within tolerance of llama2.c and
+    /// every greedy token identical (threading splits rows, not sums).
+    #[test]
+    fn threaded_greedy_matches_llama2c() {
+        std::thread::spawn(|| {
+            let cores: Vec<usize> = crate::sys::affinity::online_cpus().unwrap().into_iter().take(4).collect();
+            let Some((ours, reference)) = replay_on("stories15M/greedy.dump", Sampler::new(0.0, 0.9, 0, 0), Some(&cores)) else { return };
+            for (key, r) in &reference {
+                if key.0 != "prompt" && key.0 != "next" {
+                    let (_, rel) = max_errors(&ours[key], r);
+                    assert!(rel < 1e-4, "{key:?}: relative error {rel:.3e} vs llama2.c");
+                }
+            }
+        })
+        .join()
+        .unwrap();
     }
 
     /// Temperature 0.8, top-p 0.9, seed 42: the same xorshift stream and the

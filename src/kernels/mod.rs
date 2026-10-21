@@ -9,6 +9,7 @@
 pub mod neon;
 pub mod scalar;
 
+use crate::pool::ThreadPool;
 pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, softmax, swiglu};
 
 /// `out = W · x`, `W` row-major `[out.len(), x.len()]`.
@@ -28,6 +29,65 @@ pub fn matmul_batch(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
     neon::gemm(out, x, w, t);
     #[cfg(not(target_arch = "aarch64"))]
     scalar::matmul_batch(out, x, w, t);
+}
+
+/// A raw pointer that may be shared between the pool's threads. Each thread
+/// turns it back into a slice of its own, disjoint range.
+#[derive(Clone, Copy)]
+struct SharedOut(*mut f32);
+// SAFETY: only used to give threads disjoint ranges of one buffer (see the
+// callers); no element is ever accessed by two threads.
+unsafe impl Send for SharedOut {}
+unsafe impl Sync for SharedOut {}
+
+impl SharedOut {
+    /// A method (not `.0`) so closures capture the whole `Sync` wrapper,
+    /// not just its raw-pointer field, which is not `Sync`.
+    fn ptr(self) -> *mut f32 {
+        self.0
+    }
+}
+
+/// Output rows per block when splitting across threads: whole 4-row tiles,
+/// and 16 floats = one 64-byte line, so threads never write the same line.
+const ROW_BLOCK: usize = 16;
+
+/// [`matmul`] split by output rows across `pool` (or on this thread when
+/// `pool` is `None` or has one thread). Each row's sum is computed exactly
+/// as in the single-threaded kernel, so the result is bit-identical.
+pub fn matmul_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &[f32]) {
+    let Some(pool) = pool.filter(|p| p.threads() > 1) else { return matmul(out, x, w) };
+    let n = x.len();
+    assert_eq!(w.len(), out.len() * n, "W must be out.len() x x.len()");
+    let o = SharedOut(out.as_mut_ptr());
+    pool.for_ranges(out.len(), ROW_BLOCK, &|r| {
+        // SAFETY: `for_ranges` gives each thread a disjoint range of rows.
+        let mine = unsafe { std::slice::from_raw_parts_mut(o.ptr().add(r.start), r.len()) };
+        matmul(mine, x, &w[r.start * n..r.end * n]);
+    });
+}
+
+/// [`matmul_batch`] split by output rows (all tokens per thread) across
+/// `pool`. Bit-identical to the single-threaded call.
+pub fn matmul_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
+    let Some(pool) = pool.filter(|p| p.threads() > 1) else { return matmul_batch(out, x, w, t) };
+    let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
+    assert_eq!((x.len(), out.len(), w.len()), (t * n, t * d, d * n), "shapes");
+    let o = SharedOut(out.as_mut_ptr());
+    pool.for_ranges(d, ROW_BLOCK, &|r| {
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: shapes checked above; rows are disjoint per thread.
+        unsafe {
+            neon::gemm_rows(o.ptr(), d, r, x, w, t)
+        };
+        #[cfg(not(target_arch = "aarch64"))]
+        for tt in 0..t {
+            // SAFETY: token tt's outputs for these rows are contiguous and
+            // belong to this thread only.
+            let mine = unsafe { std::slice::from_raw_parts_mut(o.ptr().add(tt * d + r.start), r.len()) };
+            scalar::matmul(mine, &x[tt * n..(tt + 1) * n], &w[r.start * n..r.end * n]);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -99,6 +159,37 @@ mod tests {
             worst = worst.max(rel);
         }
         println!("matmul_batch: {} cases vs numpy, worst relative error {worst:.2e}", cs.len());
+    }
+
+    /// Row-split threading must not change a single bit: each output row is
+    /// still one thread's sum in the same order. Checked on the golden
+    /// shapes, 1 to 8 threads.
+    #[test]
+    fn threaded_matmuls_are_bit_identical() {
+        std::thread::spawn(|| {
+            let online = crate::sys::affinity::online_cpus().unwrap();
+            for threads in [2, 3, 8] {
+                let pool = ThreadPool::new(&online[..threads.min(online.len())]).unwrap();
+                for dir in cases("matmul_").iter().chain(&cases("gemm_")) {
+                    let (w, (xs, x)) = (arr(dir, "w"), read_npy(&dir.join("x.npy")));
+                    let t = if xs.len() == 2 { xs[0] } else { 1 };
+                    let d = w.len() / (x.len() / t);
+                    let (mut one, mut many) = (vec![0.0; t * d], vec![1.0; t * d]);
+                    matmul_batch(&mut one, &x, &w, t);
+                    matmul_batch_on(Some(&pool), &mut many, &x, &w, t);
+                    assert_eq!(one, many, "{} with {threads} threads", dir.display());
+                    if t == 1 {
+                        let mut gemv = vec![2.0; d];
+                        matmul_on(Some(&pool), &mut gemv, &x, &w);
+                        let mut single = vec![0.0; d];
+                        matmul(&mut single, &x, &w);
+                        assert_eq!(single, gemv, "{} with {threads} threads", dir.display());
+                    }
+                }
+            }
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

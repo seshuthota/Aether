@@ -10,7 +10,8 @@
 //!   -s N      random seed (default: from the clock)
 //!   -n N      positions to run, prompt included (default 256, capped at seq_len)
 //!   -i TEXT   prompt
-//!   -c LIST   pin to these cores, e.g. 7 or 0-5 (default: no pinning)
+//!   -c LIST   cores to run on, one thread each, e.g. 7 or 0-7 (default:
+//!             one unpinned thread)
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -19,6 +20,7 @@
 use aether::model::Transformer;
 use aether::model::llama2c;
 use aether::model::sampler::Sampler;
+use aether::pool::ThreadPool;
 use aether::tokenizer::llama2c::{BOS, Tokenizer};
 use std::io::Write;
 use std::path::PathBuf;
@@ -28,6 +30,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let model_path = PathBuf::from(args.next().unwrap_or_else(|| usage()));
     let mut tok_path = model_path.with_file_name("tokenizer.bin");
+    let mut cores = None;
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
         let val = args.next().unwrap_or_else(|| usage());
@@ -39,10 +42,7 @@ fn main() {
             "-s" => seed = val.parse().unwrap_or_else(|_| usage()),
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
-            "-c" => {
-                let cores = aether::sys::affinity::parse_cpu_list(&val).unwrap_or_else(|e| panic!("{e}"));
-                aether::sys::affinity::pin_current_thread(&cores).unwrap_or_else(|e| panic!("pinning to {cores:?}: {e}"));
-            }
+            "-c" => cores = Some(aether::sys::affinity::parse_cpu_list(&val).unwrap_or_else(|e| panic!("{e}"))),
             _ => usage(),
         }
     }
@@ -54,6 +54,10 @@ fn main() {
     let tokenizer = Tokenizer::load(&tok_path, config.vocab_size).unwrap_or_else(|e| fail(&tok_path, e));
     let steps = steps.min(config.seq_len);
     let mut model = Transformer::new(config, weights);
+    if let Some(cores) = cores {
+        // One thread per core; this thread becomes the first of them.
+        model.set_pool(ThreadPool::new(&cores).unwrap_or_else(|e| panic!("thread pool on {cores:?}: {e}")));
+    }
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
 
     let prompt_tokens = tokenizer.encode(&prompt, true, false);

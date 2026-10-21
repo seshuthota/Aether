@@ -154,13 +154,30 @@ pub fn gemm(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
     let d = out.len() / t.max(1);
     assert_eq!(out.len(), t * d, "out must be t x d");
     assert_eq!(w.len(), d * n, "W must be d x n");
-    let (d4, t4, n4) = (d / 4 * 4, t / 4 * 4, n / 4 * 4);
+    // SAFETY: `out` holds t·d floats and nothing else can access it.
+    unsafe { gemm_rows(out.as_mut_ptr(), d, 0..d, x, w, t) }
+}
+
+/// [`gemm`] restricted to output rows `rows` (all tokens): writes
+/// `out[tt·d + i]` for `i` in `rows`. Threads given disjoint row ranges
+/// can run it on the same `out` at once.
+///
+/// # Safety
+/// `out` must be valid for `t·d` floats, `x` must be `t × n` and `w`
+/// `d × n` with `rows.end <= d`, and no other thread may access the
+/// elements this call writes while it runs.
+pub unsafe fn gemm_rows(out: *mut f32, d: usize, rows: std::ops::Range<usize>, x: &[f32], w: &[f32], t: usize) {
+    let n = x.len() / t.max(1);
+    assert!(rows.end <= d && w.len() == d * n);
+    let (r0, k) = (rows.start, rows.len());
+    let (k4, t4, n4) = (k / 4 * 4, t / 4 * 4, n / 4 * 4);
     let (wp, xp) = (w.as_ptr(), x.as_ptr());
 
-    for i in (0..d4).step_by(4) {
+    for i in (r0..r0 + k4).step_by(4) {
         for tt in (0..t4).step_by(4) {
-            // SAFETY: rows i..i+4 < d and tokens tt..tt+4 < t exist; every
-            // vector load reads 4 floats at j + 4 <= n4 <= n inside a row.
+            // SAFETY: rows i..i+4 < rows.end <= d and tokens tt..tt+4 <= t
+            // exist; every vector load reads 4 floats at j + 4 <= n4 <= n;
+            // the writes are inside out's t·d floats, in this call's rows.
             unsafe {
                 let wr = [0, 1, 2, 3].map(|k| wp.add((i + k) * n));
                 let xr = [0, 1, 2, 3].map(|k| xp.add((tt + k) * n));
@@ -180,21 +197,25 @@ pub fn gemm(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
                         for j in n4..n {
                             s += *wr[r].add(j) * *xr[c].add(j);
                         }
-                        out[(tt + c) * d + i + r] = s;
+                        *out.add((tt + c) * d + i + r) = s;
                     }
                 }
             }
         }
     }
-    // Tokens outside whole tiles: one GEMV each over the tiled rows.
+    // Tokens outside whole tiles: one GEMV each over the tiled rows (their
+    // outputs are contiguous within that token's row of `out`).
     for tt in t4..t {
-        gemv(&mut out[tt * d..tt * d + d4], &x[tt * n..(tt + 1) * n], &w[..d4 * n]);
+        // SAFETY: the k4 floats from out[tt·d + r0] are this call's rows.
+        let o = unsafe { std::slice::from_raw_parts_mut(out.add(tt * d + r0), k4) };
+        gemv(o, &x[tt * n..(tt + 1) * n], &w[r0 * n..(r0 + k4) * n]);
     }
     // Rows outside whole tiles: one dot product per (row, token).
-    for i in d4..d {
+    for i in r0 + k4..rows.end {
         for tt in 0..t {
-            // SAFETY: row i and token tt each hold n floats.
-            out[tt * d + i] = unsafe { dot_row(wp.add(i * n), xp.add(tt * n), n) };
+            // SAFETY: row i and token tt each hold n floats; the write is in
+            // this call's rows.
+            unsafe { *out.add(tt * d + i) = dot_row(wp.add(i * n), xp.add(tt * n), n) };
         }
     }
 }

@@ -4,6 +4,7 @@ pub mod kernels;
 pub mod membench;
 pub mod model;
 pub mod monitor;
+pub mod pool;
 pub mod sys;
 pub mod tensor;
 pub mod tokenizer;
