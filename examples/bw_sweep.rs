@@ -152,8 +152,12 @@ fn measure(a: &Args, threads: &[Vec<usize>], n: usize, reps: usize) -> Vec<Durat
                     affinity::pin_current_thread(cores).expect("pin failed");
                     let mut arr = Arrays::new(a.kernel, n, a.offset);
                     if a.kernel == Kernel::Read {
+                        // Every element is 1.0, so the sum is n. Above 2^24 an f32
+                        // cannot hold every integer and combining the partial sums
+                        // rounds, so allow a relative error far below one element
+                        // in a thousand (a skipped chunk would be 32 elements).
                         let sum = membench::read_sum(&arr.bufs[0][a.offset..a.offset + n]);
-                        assert_eq!(sum, n as f32, "read_sum missed elements");
+                        assert!((sum - n as f32).abs() <= n as f32 * 1e-5, "read_sum missed elements: {sum} vs {n}");
                     }
                     for _ in 0..reps.clamp(1, 3) {
                         arr.pass(a.kernel); // warm-up: caches, TLB, clocks
@@ -206,9 +210,11 @@ fn print_conditions(a: &Args, threads: &[Vec<usize>]) {
             sysfs::cpu_max_freq_khz(c).map_or("?".into(), |v| v.to_string()),
         );
     }
-    let temps: Vec<i64> = sysfs::thermal_zones().iter().filter_map(|z| z.temp_millic().ok()).collect();
+    // CPU sensors only: the phone also has PMIC zones that idle above 50 °C.
+    let temps: Vec<i64> =
+        sysfs::thermal_zones().iter().filter(|z| z.kind.starts_with("cpu")).filter_map(|z| z.temp_millic().ok()).collect();
     if let Some(max) = temps.iter().max() {
-        println!("# start: max thermal zone {:.1} °C over {} zones", *max as f64 / 1000.0, temps.len());
+        println!("# start: hottest CPU zone {:.1} °C ({} CPU zones)", *max as f64 / 1000.0, temps.len());
     }
     if let Some(b) = sysfs::Battery::find() {
         println!("# battery: {}", b.status().unwrap_or_else(|e| e.to_string()));

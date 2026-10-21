@@ -44,9 +44,11 @@ trap 'kill $KEEPALIVE 2>/dev/null' EXIT
 conditions() {
   {
     echo "# host time $(date -Iseconds), commit $(git rev-parse --short HEAD)"
-    adb shell dumpsys power 2>/dev/null | grep -m1 -E 'mWakefulness=' | sed 's/^ */# /'
-    adb shell 'for c in 0 6; do echo "# cpu$c cap $(cat /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq) kHz"; done'
-    adb shell dumpsys battery | grep -E 'powered|status|level|temperature' | sed 's/^ */# /'
+    # `|| true`: grep -m1 closes the pipe early, which pipefail would treat
+    # as a failure of the whole script.
+    adb shell dumpsys power 2>/dev/null | grep -m1 -E 'mWakefulness=' | sed 's/^ */# /' || true
+    adb shell 'for c in 0 6; do echo "# cpu$c cap $(cat /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq) kHz"; done' || true
+    adb shell dumpsys battery | grep -E 'powered|status|level|temperature' | sed 's/^ */# /' || true
   } | tr -d '\r'
 }
 
