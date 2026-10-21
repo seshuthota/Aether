@@ -3,6 +3,11 @@ name = "aether"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+# rlib for the aether binary, examples and tests; cdylib = libaether.so for
+# C callers (include/aether.h) such as the Android app's JNI shim.
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 libc = "0.2.191"
 

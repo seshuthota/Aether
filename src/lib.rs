@@ -2,6 +2,7 @@ pub mod aligned;
 pub mod bench;
 pub mod chat;
 pub mod eval;
+pub mod ffi;
 pub mod format;
 pub mod kernels;
 pub mod membench;
