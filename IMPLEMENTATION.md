@@ -100,25 +100,25 @@ Rule from the plan, kept throughout: model code calls a small set of op function
 Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 performance 3.53 GHz,
 6–7 prime 4.32 GHz), so "prime vs efficiency" in the plan becomes **prime vs performance**.
 
-- [~] **1.1 AlignedBuf.** Piece 1 (alloc/drop/empty) done. Then `as_slice`/`as_mut_slice`, and
-      read `CTR_EL0` (inline `mrs`) to confirm the 64-byte line (phone).
-- [ ] **1.2 Core pinning.** `sys::affinity::pin_current_thread(&[cores])`, `current_cpu()` via the
+- [~] **1.1 AlignedBuf.** Done and Miri clean (slices, `Deref`, `Send`/`Sync`). Remaining: the
+      `CTR_EL0` test (`sys::cpu`) confirming the 64-byte line on the phone.
+- [~] **1.2 Core pinning.** (code + host tests done; phone run pending) `sys::affinity::pin_current_thread(&[cores])`, `current_cpu()` via the
       `libc` crate (first dependency). Test: pin to each core, `sched_getcpu` agrees (phone).
-- [ ] **1.3 sysfs readers.** cpufreq cur/max per core, thermal zones (type + temp, m°C),
+- [~] **1.3 sysfs readers.** (code + host tests done; phone inventory pending) cpufreq cur/max per core, thermal zones (type + temp, m°C),
       battery `current_now`/`voltage_now` with unit/sign detection, charging status. Missing or
       unreadable files are reported, not fatal (phone).
-- [ ] **1.4 Sampler.** Background thread, ~100 ms period, stop flag; returns traces + average power,
+- [~] **1.4 Sampler.** (`src/monitor.rs`, host-tested; phone pending) Background thread, ~100 ms period, stop flag; returns traces + average power,
       energy (J), min/max freq, max temp. CSV output (phone).
-- [ ] **1.5 Bandwidth kernels.** read (NEON, 4–8 independent accumulators — the Phase 0 sum was a
+- [x] **1.5 Bandwidth kernels.** (`src/membench.rs`) read (NEON, 4–8 independent accumulators — the Phase 0 sum was a
       latency-bound dependency chain, not bandwidth), copy, scale, add; bytes counted per kernel.
       Aligned vs +4-byte-shifted read comparison.
-- [ ] **1.6 Working-set sweep** `bw_sweep`: 4 KB → 256 MB log-spaced, fixed total bytes per point,
+- [~] **1.6 Working-set sweep** `examples/bw_sweep.rs` (host-tested; runs: `scripts/phase1-runs.sh sweeps`): 4 KB → 256 MB log-spaced, fixed total bytes per point,
       `--cores` flag: one prime (7), one performance (0), all 6 performance, all 8 in parallel with
       scoped threads each on its own pinned chunk. CSV with a conditions header (phone).
-- [ ] **1.7 Plot** `tools/plot_sweep.py` (log x axis, cache cliffs annotated).
-- [ ] **1.8 Sustained run** ≥5 min all-core read with the sampler: bandwidth, freq, temp over time
+- [x] **1.7 Plot** `tools/plot_sweep.py` (log x axis, cache cliffs annotated).
+- [~] **1.8 Sustained run** (`examples/bw_sustained.rs`; `scripts/phase1-runs.sh sustained`) ≥5 min all-core read with the sampler: bandwidth, freq, temp over time
       (phone).
-- [ ] **1.9 Energy per GB**, prime vs performance core (phone, unplugged — adb over Wi-Fi; USB
+- [~] **1.9 Energy per GB** (`bw_sustained --idle-s`; `scripts/phase1-runs.sh energy`), prime vs performance core (phone, unplugged — adb over Wi-Fi; USB
       charging makes `current_now` meaningless).
 - [ ] **1.10 `results/phase-1.md`**: L1/L2/SLC effective GB/s, single-core DRAM read, all-core
       DRAM read, throttled sustained, J/GB per core class, conditions.

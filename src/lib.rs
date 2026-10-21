@@ -1,5 +1,7 @@
 pub mod aligned;
 pub mod bench;
+pub mod membench;
+pub mod monitor;
 pub mod sys;
 pub mod tensor;
 
