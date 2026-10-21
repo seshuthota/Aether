@@ -87,7 +87,48 @@ impl AlignedBuf {
     pub fn as_ptr(&self) -> *const f32 {
         self.ptr.as_ptr()
     }
+
+    /// The elements as an ordinary slice. The borrow is tied to `&self`, so
+    /// the compiler refuses any use of it after the buffer is dropped.
+    pub fn as_slice(&self) -> &[f32] {
+        // SAFETY: `ptr` is valid for `len` initialised, aligned f32s (zeroed
+        // at allocation; dangling-but-aligned when len is 0, which a slice
+        // allows), and the shared borrow of `self` rules out writers.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// The elements as a mutable slice. Takes `&mut self` so that while this
+    /// slice exists, no other slice of the same buffer can.
+    pub fn as_mut_slice(&mut self) -> &mut [f32] {
+        // SAFETY: as in `as_slice`; `&mut self` guarantees this is the only
+        // live view of the memory.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
 }
+
+// `Deref` lets a buffer be used wherever a slice is expected: `buf[3]`,
+// `buf.iter()`, `&buf[a..b]`, `buf.len()`.
+impl std::ops::Deref for AlignedBuf {
+    type Target = [f32];
+    fn deref(&self) -> &[f32] {
+        self.as_slice()
+    }
+}
+
+impl std::ops::DerefMut for AlignedBuf {
+    fn deref_mut(&mut self) -> &mut [f32] {
+        self.as_mut_slice()
+    }
+}
+
+// A raw pointer makes the compiler assume the type cannot cross threads. This
+// one owns its memory exclusively, exactly like `Vec<f32>`, and only hands out
+// access through `&self` / `&mut self`, so the borrow rules that make `Vec`
+// thread-safe apply unchanged.
+// SAFETY: no shared mutable state exists outside those borrows.
+unsafe impl Send for AlignedBuf {}
+// SAFETY: `&AlignedBuf` only gives out `&[f32]`, which is `Sync`.
+unsafe impl Sync for AlignedBuf {}
 
 impl Drop for AlignedBuf {
     /// Gives the memory back. Rust calls this exactly once, when the buffer
@@ -127,6 +168,41 @@ mod tests {
         assert!(b.is_empty());
         assert_eq!(b.as_ptr() as usize % ALIGN, 0);
         drop(b);
+    }
+
+    /// `alloc_zeroed` means every element reads as 0.0 before any write; a
+    /// write through the mutable view is seen by the shared view.
+    #[test]
+    fn starts_zeroed_and_writes_are_visible() {
+        let mut b = AlignedBuf::zeros(37);
+        assert!(b.iter().all(|&x| x == 0.0));
+        b[36] = 2.5;
+        b.as_mut_slice()[0] = -1.0;
+        assert_eq!((b.as_slice()[0], b[36]), (-1.0, 2.5));
+    }
+
+    /// An empty buffer still yields a valid empty slice.
+    #[test]
+    fn empty_buffer_gives_empty_slice() {
+        let mut b = AlignedBuf::zeros(0);
+        assert!(b.as_slice().is_empty());
+        assert!(b.as_mut_slice().is_empty());
+    }
+
+    /// Scoped threads can each fill their own chunk and then all read the
+    /// whole buffer: this is how the parallel bandwidth sweep uses it.
+    #[test]
+    fn chunks_can_be_shared_across_threads() {
+        let mut b = AlignedBuf::zeros(64);
+        std::thread::scope(|s| {
+            for (i, chunk) in b.chunks_mut(16).enumerate() {
+                s.spawn(move || chunk.fill(i as f32));
+            }
+        });
+        let shared = &b;
+        std::thread::scope(|s| {
+            s.spawn(move || assert_eq!(shared[63], 3.0));
+        });
     }
 
     /// usize::MAX floats is far more than any address space; the size

@@ -1,5 +1,6 @@
 pub mod aligned;
 pub mod bench;
+pub mod sys;
 pub mod tensor;
 
 /// Placeholder so the library crate exists. The Tensor goes here later.
