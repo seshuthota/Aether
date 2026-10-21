@@ -10,7 +10,7 @@ pub mod neon;
 pub mod scalar;
 
 use crate::pool::ThreadPool;
-pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, softmax, swiglu};
+pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
 
 /// `out = W · x`, `W` row-major `[out.len(), x.len()]`.
 #[inline]
@@ -226,14 +226,17 @@ mod tests {
     #[test]
     fn rope_matches_numpy() {
         for dir in cases("rope_") {
-            if dir.file_name().unwrap().to_str().unwrap().starts_with("rope_halves") {
-                continue; // rotate_half arrives with SmolLM2 (Phase 5)
-            }
             let (mut x, want) = (arr(&dir, "x"), arr(&dir, "out"));
             let name = dir.file_name().unwrap().to_str().unwrap().to_string();
-            let hs: usize = name.split(['x', '_']).nth(2).unwrap().parse().unwrap();
+            let halves = name.starts_with("rope_halves_");
+            let shape = name.trim_start_matches("rope_halves_").trim_start_matches("rope_");
+            let hs: usize = shape.split(['x', '_']).nth(1).unwrap().parse().unwrap();
             let pos: usize = name.rsplit("_p").next().unwrap().parse().unwrap();
-            rope_adjacent(&mut x, pos, hs, 10000.0);
+            if halves {
+                rope_halves(&mut x, pos, hs, 10000.0);
+            } else {
+                rope_adjacent(&mut x, pos, hs, 10000.0);
+            }
             let (_, rel) = max_errors(&x, &want);
             let bound = 2e-6 + 2.0 * pos as f32 * f32::EPSILON;
             assert!(rel < bound, "{name}: rel {rel:.2e}");

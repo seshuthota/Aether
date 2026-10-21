@@ -171,7 +171,10 @@ impl Transformer {
                     k::rope_adjacent(&mut s.q, pos, hs, c.rope_theta);
                     k::rope_adjacent(&mut s.key_cache[at..at + kv_dim], pos, hs, c.rope_theta);
                 }
-                RopeLayout::Halves => unimplemented!("rotate_half RoPE arrives with SmolLM2 (Phase 5)"),
+                RopeLayout::Halves => {
+                    k::rope_halves(&mut s.q, pos, hs, c.rope_theta);
+                    k::rope_halves(&mut s.key_cache[at..at + kv_dim], pos, hs, c.rope_theta);
+                }
             }
             obs.tap("q", Some(l), pos, &s.q);
             obs.tap("k", Some(l), pos, &s.key_cache[at..at + kv_dim]);
@@ -264,7 +267,10 @@ impl Transformer {
                         k::rope_adjacent(q, pos, hs, c.rope_theta);
                         k::rope_adjacent(kr, pos, hs, c.rope_theta);
                     }
-                    RopeLayout::Halves => unimplemented!("rotate_half RoPE arrives with SmolLM2 (Phase 5)"),
+                    RopeLayout::Halves => {
+                        k::rope_halves(q, pos, hs, c.rope_theta);
+                        k::rope_halves(kr, pos, hs, c.rope_theta);
+                    }
                 }
                 obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
                 obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);

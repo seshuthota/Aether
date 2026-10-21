@@ -1,5 +1,6 @@
 pub mod aligned;
 pub mod bench;
+pub mod format;
 pub mod kernels;
 pub mod membench;
 pub mod model;

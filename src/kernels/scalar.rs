@@ -112,6 +112,27 @@ pub fn rope_adjacent(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
     }
 }
 
+/// Rotary position embedding, **halves** layout ("rotate_half", Hugging Face
+/// transformers and Qwen2-style GGUF): within each head, element `i` is
+/// paired with element `i + head_size/2`, and pair `i` rotates by angle
+/// `pos · θ^(−2i/head_size)`. Same rotation as [`rope_adjacent`], applied to
+/// a different pairing of the elements — mixing the two up still runs, and
+/// produces garbage.
+pub fn rope_halves(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
+    assert_eq!(v.len() % head_size, 0);
+    let half = head_size / 2;
+    for head in v.chunks_exact_mut(head_size) {
+        for i in 0..half {
+            let freq = 1.0 / theta.powf((2 * i) as f32 / head_size as f32);
+            let angle = pos as f32 * freq;
+            let (sin, cos) = (angle.sin(), angle.cos());
+            let (v0, v1) = (head[i], head[i + half]);
+            head[i] = v0 * cos - v1 * sin;
+            head[i + half] = v0 * sin + v1 * cos;
+        }
+    }
+}
+
 /// SwiGLU in place: `gate_i = silu(gate_i) * up_i`, where
 /// `silu(x) = x · sigmoid(x) = x / (1 + e^(−x))`.
 ///
