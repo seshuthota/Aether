@@ -7,9 +7,13 @@
 
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
+#[cfg(target_arch = "aarch64")]
+pub mod neon_quant;
 pub mod scalar;
 
 use crate::pool::ThreadPool;
+use crate::quant::{BlockQ4_0, BlockQ8_0, QK};
+use crate::weight::Weight;
 pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
 
 /// `out = W · x`, `W` row-major `[out.len(), x.len()]`.
@@ -88,6 +92,78 @@ pub fn matmul_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
             scalar::matmul(mine, &x[tt * n..(tt + 1) * n], &w[r.start * n..r.end * n]);
         }
     });
+}
+
+/// Quantizes one activation vector (a multiple of 32 long) to Q8_0 for the
+/// integer dot-product kernels.
+fn quantize_activation(x: &[f32]) -> Vec<BlockQ8_0> {
+    let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
+    crate::quant::quantize_q8_0(x, &mut q);
+    q
+}
+
+#[inline]
+fn dot_q8(row: &[BlockQ8_0], x: &[BlockQ8_0]) -> f32 {
+    #[cfg(target_arch = "aarch64")]
+    return neon_quant::dot_q8_0_q8_0(row, x);
+    #[cfg(not(target_arch = "aarch64"))]
+    return crate::quant::scalar::dot_q8_0_q8_0(row, x);
+}
+
+#[inline]
+fn dot_q4(row: &[BlockQ4_0], x: &[BlockQ8_0]) -> f32 {
+    #[cfg(target_arch = "aarch64")]
+    return neon_quant::dot_q4_0_q8_0(row, x);
+    #[cfg(not(target_arch = "aarch64"))]
+    return crate::quant::scalar::dot_q4_0_q8_0(row, x);
+}
+
+/// `out[i] = row_i(W) · x` for quantized W, rows `r` of all `t` tokens,
+/// with the activations already quantized (`xq` is `[t, nb]` blocks).
+/// Each weight row is used for every token while it is in L1.
+///
+/// # Safety
+/// `out` must be valid for `t·d` floats and no other thread may write
+/// rows `r` of it during the call.
+unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], t: usize) {
+    let nb = xq.len() / t;
+    for i in r {
+        for tt in 0..t {
+            let x = &xq[tt * nb..(tt + 1) * nb];
+            let v = match w {
+                Weight::Q8_0(b) => dot_q8(&b[i * nb..(i + 1) * nb], x),
+                Weight::Q4_0(b) => dot_q4(&b[i * nb..(i + 1) * nb], x),
+                Weight::F32(_) => unreachable!(),
+            };
+            // SAFETY: element (tt, i) lies in this call's rows (caller's contract).
+            unsafe { *out.ptr().add(tt * d + i) = v };
+        }
+    }
+}
+
+/// `out[t] = W · x[t]` for `t` tokens and any storage format of W, split by
+/// rows across `pool`. Quantized formats quantize the activations to Q8_0
+/// once, then use integer dot products (llama.cpp's approach).
+pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &Weight, t: usize) {
+    let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
+    let Weight::F32(f) = w else {
+        assert_eq!((x.len(), out.len()), (t * n, t * d), "shapes");
+        let xq: Vec<BlockQ8_0> = x.chunks_exact(n).flat_map(quantize_activation).collect();
+        let o = SharedOut(out.as_mut_ptr());
+        match pool.filter(|p| p.threads() > 1) {
+            // SAFETY: each thread writes only its own rows of `out`.
+            Some(p) => p.for_ranges(d, ROW_BLOCK, &|r| unsafe { quant_rows(o, d, r, w, &xq, t) }),
+            // SAFETY: single thread, all rows.
+            None => unsafe { quant_rows(o, d, 0..d, w, &xq, t) },
+        }
+        return;
+    };
+    if t == 1 { matmul_on(pool, out, x, f) } else { matmul_batch_on(pool, out, x, f, t) }
+}
+
+/// `out = W · x` for any storage format of W.
+pub fn linear_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &Weight) {
+    linear_batch_on(pool, out, x, w, 1)
 }
 
 #[cfg(test)]

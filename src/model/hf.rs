@@ -23,6 +23,7 @@ use super::transformer::{LayerWeights, Weights};
 use crate::aligned::AlignedBuf;
 use crate::format::json::Json;
 use crate::format::safetensors::SafeTensors;
+use crate::weight::Weight;
 use std::io;
 use std::path::Path;
 
@@ -76,28 +77,29 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
         Ok(buf)
     };
 
+    let mat = |name: &str, shape: &[usize]| tensor(name, shape).map(Weight::F32);
     let layers = (0..c.n_layers)
         .map(|l| {
             let p = format!("model.layers.{l}");
             Ok(LayerWeights {
                 attn_norm: tensor(&format!("{p}.input_layernorm.weight"), &[dim])?,
-                wq: tensor(&format!("{p}.self_attn.q_proj.weight"), &[dim, dim])?,
-                wk: tensor(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
-                wv: tensor(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
-                wo: tensor(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
+                wq: mat(&format!("{p}.self_attn.q_proj.weight"), &[dim, dim])?,
+                wk: mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
+                wv: mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
+                wo: mat(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
                 ffn_norm: tensor(&format!("{p}.post_attention_layernorm.weight"), &[dim])?,
-                w_gate: tensor(&format!("{p}.mlp.gate_proj.weight"), &[hidden, dim])?,
-                w_up: tensor(&format!("{p}.mlp.up_proj.weight"), &[hidden, dim])?,
-                w_down: tensor(&format!("{p}.mlp.down_proj.weight"), &[dim, hidden])?,
+                w_gate: mat(&format!("{p}.mlp.gate_proj.weight"), &[hidden, dim])?,
+                w_up: mat(&format!("{p}.mlp.up_proj.weight"), &[hidden, dim])?,
+                w_down: mat(&format!("{p}.mlp.down_proj.weight"), &[dim, hidden])?,
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
     let classifier = match st.info("lm_head.weight") {
-        Some(_) => Some(tensor("lm_head.weight", &[c.vocab_size, dim])?),
+        Some(_) => Some(mat("lm_head.weight", &[c.vocab_size, dim])?),
         None => None, // tied: the classifier reuses the embedding table
     };
     let weights = Weights {
-        token_embedding: tensor("model.embed_tokens.weight", &[c.vocab_size, dim])?,
+        token_embedding: mat("model.embed_tokens.weight", &[c.vocab_size, dim])?,
         layers,
         final_norm: tensor("model.norm.weight", &[dim])?,
         classifier,

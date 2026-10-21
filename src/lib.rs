@@ -6,9 +6,11 @@ pub mod membench;
 pub mod model;
 pub mod monitor;
 pub mod pool;
+pub mod quant;
 pub mod sys;
 pub mod tensor;
 pub mod tokenizer;
+pub mod weight;
 
 #[cfg(test)]
 pub(crate) mod testutil;

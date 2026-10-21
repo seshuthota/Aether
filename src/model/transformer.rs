@@ -21,30 +21,70 @@ use super::config::{Config, RopeLayout};
 use crate::aligned::AlignedBuf;
 use crate::kernels as k;
 use crate::pool::ThreadPool;
+use crate::weight::{Format, Weight};
 
-/// One layer's weights. Matrices are row-major `[out, in]`.
+/// One layer's weights. Matrices are row-major `[out, in]`, in any storage
+/// format; norm gains are always f32.
 pub struct LayerWeights {
     pub attn_norm: AlignedBuf,
-    pub wq: AlignedBuf,
-    pub wk: AlignedBuf,
-    pub wv: AlignedBuf,
-    pub wo: AlignedBuf,
+    pub wq: Weight,
+    pub wk: Weight,
+    pub wv: Weight,
+    pub wo: Weight,
     pub ffn_norm: AlignedBuf,
     /// W1 in llama2.c: the branch that goes through SiLU.
-    pub w_gate: AlignedBuf,
+    pub w_gate: Weight,
     /// W2: projects the MLP back to `dim`.
-    pub w_down: AlignedBuf,
+    pub w_down: Weight,
     /// W3: the branch multiplied by the gate.
-    pub w_up: AlignedBuf,
+    pub w_up: Weight,
 }
 
 pub struct Weights {
     /// `[vocab, dim]`: row `t` is token `t`'s embedding.
-    pub token_embedding: AlignedBuf,
+    pub token_embedding: Weight,
     pub layers: Vec<LayerWeights>,
     pub final_norm: AlignedBuf,
     /// `[vocab, dim]`, or `None` when tied to `token_embedding`.
-    pub classifier: Option<AlignedBuf>,
+    pub classifier: Option<Weight>,
+}
+
+impl Weights {
+    /// Converts every matrix (not the norms) to `format`, as llama.cpp's
+    /// `llama-quantize --pure` does: the embedding/classifier included.
+    pub fn convert(self, c: &Config, format: Format) -> Weights {
+        let (dim, hidden) = (c.dim, c.hidden_dim);
+        Weights {
+            token_embedding: self.token_embedding.convert(dim, format),
+            layers: self
+                .layers
+                .into_iter()
+                .map(|l| LayerWeights {
+                    attn_norm: l.attn_norm,
+                    wq: l.wq.convert(dim, format),
+                    wk: l.wk.convert(dim, format),
+                    wv: l.wv.convert(dim, format),
+                    wo: l.wo.convert(dim, format),
+                    ffn_norm: l.ffn_norm,
+                    w_gate: l.w_gate.convert(dim, format),
+                    w_down: l.w_down.convert(hidden, format),
+                    w_up: l.w_up.convert(dim, format),
+                })
+                .collect(),
+            final_norm: self.final_norm,
+            classifier: self.classifier.map(|w| w.convert(dim, format)),
+        }
+    }
+
+    /// Bytes of all matrices and norms: what one decode step streams.
+    pub fn bytes(&self) -> usize {
+        let norms = |l: &LayerWeights| (l.attn_norm.len() + l.ffn_norm.len()) * 4;
+        let mats = |l: &LayerWeights| [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_down, &l.w_up].iter().map(|w| w.bytes()).sum::<usize>();
+        self.token_embedding.bytes()
+            + self.layers.iter().map(|l| norms(l) + mats(l)).sum::<usize>()
+            + self.final_norm.len() * 4
+            + self.classifier.as_ref().map_or(0, Weight::bytes)
+    }
 }
 
 /// Receives intermediate activations as the forward pass produces them.
@@ -147,11 +187,11 @@ impl Transformer {
         let w = &self.weights;
         let s = &mut self.state;
         let pool = self.pool.as_ref();
-        let (dim, hs, kv_dim, group) = (c.dim, c.head_size(), c.kv_dim(), c.kv_group());
+        let (hs, kv_dim, group) = (c.head_size(), c.kv_dim(), c.kv_group());
         assert!(pos < c.seq_len, "position {pos} beyond seq_len {}", c.seq_len);
         assert!(token < c.vocab_size, "token {token} beyond vocab {}", c.vocab_size);
 
-        s.x.copy_from_slice(&w.token_embedding[token * dim..(token + 1) * dim]);
+        w.token_embedding.row_f32(token, &mut s.x);
         obs.tap("embed", None, pos, &s.x);
 
         for (l, lw) in w.layers.iter().enumerate() {
@@ -162,9 +202,9 @@ impl Transformer {
             // This position's k and v go straight into the cache.
             let layer_off = l * c.seq_len * kv_dim;
             let at = layer_off + pos * kv_dim;
-            k::matmul_on(pool, &mut s.q, &s.xb, &lw.wq);
-            k::matmul_on(pool, &mut s.key_cache[at..at + kv_dim], &s.xb, &lw.wk);
-            k::matmul_on(pool, &mut s.value_cache[at..at + kv_dim], &s.xb, &lw.wv);
+            k::linear_on(pool, &mut s.q, &s.xb, &lw.wq);
+            k::linear_on(pool, &mut s.key_cache[at..at + kv_dim], &s.xb, &lw.wk);
+            k::linear_on(pool, &mut s.value_cache[at..at + kv_dim], &s.xb, &lw.wv);
 
             match c.rope_layout {
                 RopeLayout::AdjacentPairs => {
@@ -190,7 +230,7 @@ impl Transformer {
             }
             obs.tap("attn", Some(l), pos, &s.xb);
 
-            k::matmul_on(pool, &mut s.xb2, &s.xb, &lw.wo);
+            k::linear_on(pool, &mut s.xb2, &s.xb, &lw.wo);
             obs.tap("attn_out", Some(l), pos, &s.xb2);
             k::add_inplace(&mut s.x, &s.xb2);
             obs.tap("resid_attn", Some(l), pos, &s.x);
@@ -198,11 +238,11 @@ impl Transformer {
             // --- MLP ---
             k::rmsnorm(&mut s.xb, &s.x, &lw.ffn_norm, c.norm_eps);
             obs.tap("ffn_norm", Some(l), pos, &s.xb);
-            k::matmul_on(pool, &mut s.hb, &s.xb, &lw.w_gate);
-            k::matmul_on(pool, &mut s.hb2, &s.xb, &lw.w_up);
+            k::linear_on(pool, &mut s.hb, &s.xb, &lw.w_gate);
+            k::linear_on(pool, &mut s.hb2, &s.xb, &lw.w_up);
             k::swiglu(&mut s.hb, &s.hb2);
             obs.tap("swiglu", Some(l), pos, &s.hb);
-            k::matmul_on(pool, &mut s.xb, &s.hb, &lw.w_down);
+            k::linear_on(pool, &mut s.xb, &s.hb, &lw.w_down);
             obs.tap("ffn_out", Some(l), pos, &s.xb);
             k::add_inplace(&mut s.x, &s.xb);
             obs.tap("resid_ffn", Some(l), pos, &s.x);
@@ -211,7 +251,7 @@ impl Transformer {
         k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
         obs.tap("final_norm", None, pos, &s.x);
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
-        k::matmul_on(pool, &mut s.logits, &s.x, cls);
+        k::linear_on(pool, &mut s.logits, &s.x, cls);
         obs.tap("logits", None, pos, &s.logits);
         &s.logits
     }
@@ -242,7 +282,7 @@ impl Transformer {
 
         for (i, &tok) in tokens.iter().enumerate() {
             assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
-            b.x[i * dim..(i + 1) * dim].copy_from_slice(&w.token_embedding[tok * dim..(tok + 1) * dim]);
+            w.token_embedding.row_f32(tok, &mut b.x[i * dim..(i + 1) * dim]);
             obs.tap("embed", None, start + i, &b.x[i * dim..(i + 1) * dim]);
         }
 
@@ -256,9 +296,9 @@ impl Transformer {
             // this layer's cache, so the GEMM writes them in place.
             let layer_off = l * c.seq_len * kv_dim;
             let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
-            k::matmul_batch_on(pool, &mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
-            k::matmul_batch_on(pool, &mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
-            k::matmul_batch_on(pool, &mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
+            k::linear_batch_on(pool, &mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
+            k::linear_batch_on(pool, &mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
+            k::linear_batch_on(pool, &mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
             for i in 0..t {
                 let pos = start + i;
                 let (q, kr) = (&mut b.q[i * dim..(i + 1) * dim], &mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
@@ -292,7 +332,7 @@ impl Transformer {
                 obs.tap("attn", Some(l), pos, &b.xb[i * dim..(i + 1) * dim]);
             }
 
-            k::matmul_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &lw.wo, t);
+            k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &lw.wo, t);
             for i in 0..t {
                 obs.tap("attn_out", Some(l), start + i, &b.xb2[i * dim..(i + 1) * dim]);
             }
@@ -306,13 +346,13 @@ impl Transformer {
                 k::rmsnorm(&mut b.xb[i * dim..(i + 1) * dim], &b.x[i * dim..(i + 1) * dim], &lw.ffn_norm, c.norm_eps);
                 obs.tap("ffn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
-            k::matmul_batch_on(pool, &mut b.hb[..t * hidden], &b.xb[..t * dim], &lw.w_gate, t);
-            k::matmul_batch_on(pool, &mut b.hb2[..t * hidden], &b.xb[..t * dim], &lw.w_up, t);
+            k::linear_batch_on(pool, &mut b.hb[..t * hidden], &b.xb[..t * dim], &lw.w_gate, t);
+            k::linear_batch_on(pool, &mut b.hb2[..t * hidden], &b.xb[..t * dim], &lw.w_up, t);
             k::swiglu(&mut b.hb[..t * hidden], &b.hb2[..t * hidden]);
             for i in 0..t {
                 obs.tap("swiglu", Some(l), start + i, &b.hb[i * hidden..(i + 1) * hidden]);
             }
-            k::matmul_batch_on(pool, &mut b.xb[..t * dim], &b.hb[..t * hidden], &lw.w_down, t);
+            k::linear_batch_on(pool, &mut b.xb[..t * dim], &b.hb[..t * hidden], &lw.w_down, t);
             for i in 0..t {
                 obs.tap("ffn_out", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
@@ -328,7 +368,7 @@ impl Transformer {
         k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
         obs.tap("final_norm", None, start + t - 1, &s.x);
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
-        k::matmul_on(pool, &mut s.logits, &s.x, cls);
+        k::linear_on(pool, &mut s.logits, &s.x, cls);
         obs.tap("logits", None, start + t - 1, &s.logits);
         &s.logits
     }

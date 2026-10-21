@@ -14,6 +14,7 @@
 //!   -i TEXT   prompt
 //!   -c LIST   cores to run on, one thread each, e.g. 7 or 0-7 (default:
 //!             one unpinned thread)
+//!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -23,6 +24,7 @@ use aether::model::sampler::Sampler;
 use aether::model::{Transformer, hf, llama2c};
 use aether::pool::ThreadPool;
 use aether::tokenizer::{bytelevel, llama2c as l2c_tok};
+use aether::weight::Format;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -78,7 +80,7 @@ impl Text {
 }
 
 /// Loads a model directory (Hugging Face) or file (llama2.c).
-fn load(model_path: &Path, tok_path: &Path, max_seq: usize) -> (Transformer, Text) {
+fn load(model_path: &Path, tok_path: &Path, max_seq: usize, format: Format) -> (Transformer, Text) {
     if model_path.is_dir() {
         let (config, weights) = hf::load(model_path, max_seq).unwrap_or_else(|e| fail(model_path, e));
         let tok_file = model_path.join("tokenizer.json");
@@ -89,10 +91,12 @@ fn load(model_path: &Path, tok_path: &Path, max_seq: usize) -> (Transformer, Tex
         let mut stops: Vec<usize> = id("eos_token_id").into_iter().collect();
         stops.extend(tok.token_id("<|im_end|>"));
         let start = id("bos_token_id").or(stops.first().copied()).unwrap_or(0);
+        let weights = weights.convert(&config, format);
         (Transformer::new(config, weights), Text::Hf { tok: Box::new(tok), start, stops })
     } else {
         let (config, weights) = llama2c::load(model_path).unwrap_or_else(|e| fail(model_path, e));
         let tok = l2c_tok::Tokenizer::load(tok_path, config.vocab_size).unwrap_or_else(|e| fail(tok_path, e));
+        let weights = weights.convert(&config, format);
         (Transformer::new(config, weights), Text::Llama2c(tok))
     }
 }
@@ -102,6 +106,7 @@ fn main() {
     let model_path = PathBuf::from(args.next().unwrap_or_else(|| usage()));
     let mut tok_path = model_path.with_file_name("tokenizer.bin");
     let mut cores = None;
+    let mut format = Format::F32;
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
         let val = args.next().unwrap_or_else(|| usage());
@@ -113,6 +118,7 @@ fn main() {
             "-s" => seed = val.parse().unwrap_or_else(|_| usage()),
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
+            "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
             "-c" => cores = Some(aether::sys::affinity::parse_cpu_list(&val).unwrap_or_else(|e| panic!("{e}"))),
             _ => usage(),
         }
@@ -121,7 +127,8 @@ fn main() {
         seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     }
 
-    let (mut model, text) = load(&model_path, &tok_path, steps);
+    let (mut model, text) = load(&model_path, &tok_path, steps, format);
+    eprintln!("weights: {format:?}, {:.1} MB", model.weights.bytes() as f64 / 1e6);
     let steps = steps.min(model.config.seq_len);
     if let Some(cores) = cores {
         // One thread per core; this thread becomes the first of them.
@@ -182,7 +189,7 @@ fn main() {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: aether (MODEL.bin | HF_MODEL_DIR) [-z tokenizer.bin] [-t temp] [-p top_p] [-k top_k] [-s seed] [-n steps] [-i prompt] [-c cores]");
+    eprintln!("usage: aether (MODEL.bin | HF_MODEL_DIR) [-z tokenizer.bin] [-t temp] [-p top_p] [-k top_k] [-s seed] [-n steps] [-i prompt] [-c cores] [-q f32|q8_0|q4_0]");
     std::process::exit(2)
 }
 
