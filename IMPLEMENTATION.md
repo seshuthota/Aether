@@ -21,7 +21,7 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started · `(phone)`
 | `.cargo/config.toml` (NDK 27.3 clang, API 31) + `scripts/adb-run.sh` runner | done |
 | `src/bench.rs` — warm-up, per-call timing, min/median/mean/max | done |
 | `src/tensor.rs` — row-major f32, shape + strides, no arithmetic | done |
-| `src/aligned.rs` — `AlignedBuf`: alloc/drop/zero-length (piece 1 of 3) | uncommitted |
+| `src/aligned.rs` — `AlignedBuf`: alloc/drop/zero-length (piece 1 of 3) | done, Miri clean |
 | `examples/timing.rs`, `examples/bench_sum.rs` — Phase 0 experiments | done |
 | `tools/`, `testdata/`, `results/`, `notes/` | empty |
 | `site/` notes for Phase 0 + Phase 1 reading, 5 Phase 1 films | uncommitted |
@@ -37,18 +37,18 @@ build, stories15M, HF safetensors models. **Disk: 14 GB free** — budget below.
 
 ## S. Setup (before or alongside Phase 1)
 
-- [ ] **S1. Serialize phone access.** `flock` in `scripts/adb-run.sh` so two instances never run on
+- [x] **S1. Serialize phone access.** `flock` in `scripts/adb-run.sh` so two instances never run on
       the phone at once (they would corrupt each other's timings and heat the SoC).
-- [ ] **S2. Python reference env.** `tools/requirements.txt` + `uv venv tools/.venv` (gitignored):
+- [x] **S2. Python reference env.** `tools/requirements.txt` + `uv venv tools/.venv` (gitignored):
       numpy, torch (CPU wheel), transformers, safetensors, tokenizers, gguf, matplotlib. ~2 GB.
-- [ ] **S3. llama2.c.** Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
+- [~] **S3. llama2.c.** (cloned `350e04f`, builds, greedy works; dump patch pending) Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
       `tools/llama2c-dump.patch` (fwrite of per-layer activations + logits as raw f32).
-- [ ] **S4. Model fetch script.** `tools/fetch_models.sh` → `testdata/models/` (gitignored):
+- [~] **S4. Model fetch script.** (stories15M + tokenizer.bin downloaded; script pending) `tools/fetch_models.sh` → `testdata/models/` (gitignored):
       stories15M.bin + tokenizer.bin (~60 MB), SmolLM2-135M (~270 MB), SmolLM2-360M (~720 MB),
       Qwen2.5-0.5B (~1 GB), each only when its phase starts.
 - [ ] **S5. llama.cpp for Android.** Cross-build `llama-bench`, `llama-cli`, `llama-perplexity`
       with the same NDK (needed from Phase 6; build when Phase 6 starts).
-- [ ] **S6. Miri** (`rustup component add --toolchain nightly miri`) to check every `unsafe` module
+- [x] **S6. Miri** (`rustup component add --toolchain nightly miri`) to check every `unsafe` module
       on the host.
 - [ ] **S7. Golden-file format.** One tiny shared format for kernel/activation dumps until the
       safetensors parser exists: raw little-endian f32 + a `.json`/text sidecar with shape. Readers in

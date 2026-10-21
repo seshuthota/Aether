@@ -1,0 +1,11 @@
+# Host-side reference tooling. Not part of the engine.
+# Install:  uv venv tools/.venv && uv pip install --python tools/.venv \
+#             --index-url https://download.pytorch.org/whl/cpu torch \
+#           && uv pip install --python tools/.venv -r tools/requirements.txt
+numpy
+safetensors
+tokenizers
+transformers
+gguf
+sentencepiece
+matplotlib
