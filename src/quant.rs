@@ -71,7 +71,7 @@ pub fn f32_to_f16(x: f32) -> u16 {
     // Normal: keep the top 10 mantissa bits; subnormal (e <= 0): shift the
     // full 24-bit significand down into f16's 2^-24 units. Either way round
     // the dropped bits to nearest, ties to even.
-    let (kept, dropped_bits) = if e > 0 { (((e as u32) << 10) | (man >> 13), 13) } else { (0, 14 - e as u32) };
+    let (kept, dropped_bits) = if e > 0 { (((e as u32) << 10) | (man >> 13), 13) } else { (0, (14 - e) as u32) };
     let (h, rem, half) = if e > 0 {
         (kept, man & 0x1FFF, 0x1000)
     } else if dropped_bits > 24 {
