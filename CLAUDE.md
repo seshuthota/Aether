@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Aether is a from-scratch LLM inference engine in Rust for Snapdragon Android phones (CPU / ARM NEON first). `From_Scratch_Android_Inference_Engine_Plan.md` is the source of truth for scope, phase order, and success criteria — read the relevant phase before working on anything.
 
-**Current state:** Phase 0 nearly done. The Cargo project (lib `aether` + bin), on-device test runner, timing harness (`src/bench.rs`) and `Tensor` (`src/tensor.rs`, f32 row-major) exist. Folders `tools/`, `testdata/`, `results/`, `notes/` exist (empty). Still to do: first commit and `notes/phase-0.md`.
+**Current state:** Phase 0 done (Cargo project, on-device test runner, `src/bench.rs`, `src/tensor.rs`); `notes/phase-0.md` is still the user's to write. Phase 1 started: `src/aligned.rs` (`AlignedBuf`, piece 1). Build order and per-item status: `IMPLEMENTATION.md`.
+
+## Two tracks (agreed 2026-10-21)
+
+- **Implementation track** builds the engine ahead, whole phases at a time, in the git worktree `../Aether-impl` on branch `impl`. It follows `IMPLEMENTATION.md`, keeps its status boxes current, verifies every phase against the external references, and writes `results/phase-N.md`. A phase is merged into `master` only after its verification passes.
+- **Learning track** works on `master` with the user: explains concepts, walks through the verified code and the measured numbers, runs and modifies experiments, and keeps `site/` and `videos/` up to date. It does not rewrite engine code the implementation track has built, and does not edit the `impl` branch.
+- One phone: `scripts/adb-run.sh` serializes runs. Check the SoC temperature before trusting a benchmark; the other track may just have heated it.
+
+`site/` is a static learning-notes site (no build step; see `site/README.md`). Pages are listed once in `site/js/pages.js` (menu, breadcrumb, prev/next and home cards are generated from it) and glossary terms live in `site/js/glossary.js`. When a concept is taught, add or update its page so it stays useful to a complete beginner.
+
+Explainer films live in `videos/<phase>-<topic>/` and are copied to the page's folder in `site/` as `<topic>.mp4` + poster `.jpg`. Plan every film with the `3b1b-explainer` skill (puzzle first, picture before the name, one new element per line, motion while its line is spoken, animated recap), then build it with the `manimgx` skill. Films are narrated, with no on-screen captions: `SCRIPT` in `scene.py` is the voice-over, `self.vo("id")` / `self.hold()` from `videos/narrate.py` make each beat last as long as its recorded clip in `audio/<id>.wav` (estimated from word count until recorded), and `narrate.py` mixes the clips in (`mux`), writes subtitles (`vtt`) and checks clips against the script with Whisper on Groq (`check`, keys in `.env`). Write voice lines to be heard: numbers spelled as spoken, "D-RAM" not "DRAM". Anything that is not a measurement from this phone is labelled as an illustration on screen. `videos/phase-1-bandwidth/` is the reference film.
 
 ## Commands
 
@@ -27,7 +37,7 @@ cargo run --release --target aarch64-linux-android --example bench_sum
 ## How to work in this repo
 
 - **This is a learning project.** The user is building it to understand inference deeply; a fast engine is a bonus, not the goal. Performance numbers are things to measure and explain, not gates to pass.
-- **Step by step, concept by concept.** Never one-shot a feature or a phase. Explain the concept first, check understanding, then implement one small piece at a time with the user. Don't jump ahead of the current phase.
+- **Step by step, concept by concept** (learning track). Explain the concept first, check understanding, then go through one small piece at a time with the user. Don't jump ahead of the phase being learned. The implementation track builds ahead in small, verified commits, one `IMPLEMENTATION.md` item each.
 - **Engine code is written from scratch** — no existing inference engine for core logic.
 - **No duplicate implementations for testing.** Correctness comes from external references only (see the plan's "Correctness Strategy"): numpy/PyTorch for kernels, llama2.c for stories15M, HF `transformers`/`tokenizers` for SmolLM2/Qwen, llama.cpp for quantization formats, perplexity/KL, and `llama-bench`. Never propose writing a second implementation of our own as a test oracle.
 - **Mobile constraints drive design:** memory bandwidth, small shared RAM, thermals, energy per token, heterogeneous (prime/performance/efficiency) cores.

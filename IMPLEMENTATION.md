@@ -1,0 +1,252 @@
+# Implementation track
+
+The plan (`From_Scratch_Android_Inference_Engine_Plan.md`) says *what* to build and why.
+This file is the build order: every concrete piece, where it lives, what checks it, and its status.
+It is written for two parallel tracks:
+
+- **Implementation track** — builds the engine ahead, phase by phase, on branch `impl`.
+- **Learning track** — goes through the concepts at its own pace on `master`, using the
+  finished, verified code and measured numbers as material.
+
+Status legend: `[x]` done · `[~]` in progress · `[ ]` not started · `(phone)` needs the device ·
+`(unplugged)` needs the phone off USB power (adb over Wi-Fi).
+
+---
+
+## 0. Where the repo is today (2026-10-21)
+
+| Piece | State |
+| --- | --- |
+| Cargo project, lib `aether` + bin, release profile with symbols | done |
+| `.cargo/config.toml` (NDK 27.3 clang, API 31) + `scripts/adb-run.sh` runner | done |
+| `src/bench.rs` — warm-up, per-call timing, min/median/mean/max | done |
+| `src/tensor.rs` — row-major f32, shape + strides, no arithmetic | done |
+| `src/aligned.rs` — `AlignedBuf`: alloc/drop/zero-length (piece 1 of 3) | uncommitted |
+| `examples/timing.rs`, `examples/bench_sum.rs` — Phase 0 experiments | done |
+| `tools/`, `testdata/`, `results/`, `notes/` | empty |
+| `site/` notes for Phase 0 + Phase 1 reading, 5 Phase 1 films | uncommitted |
+
+Phase 0 success criterion (tests run on the phone) is met. Phase 1 has no code beyond `AlignedBuf`.
+
+Host tooling found: numpy 2.4, safetensors, tokenizers, matplotlib, uv, cmake; llama.cpp host build at
+`~/llama.cpp` (`d00685831`, Apr 2026) with `llama-bench`, `llama-perplexity`, `llama-quantize`;
+wikitext in the HF cache. **Missing:** torch, transformers, `gguf` (py), llama2.c, llama.cpp Android
+build, stories15M, HF safetensors models. **Disk: 14 GB free** — budget below.
+
+---
+
+## S. Setup (before or alongside Phase 1)
+
+- [ ] **S1. Serialize phone access.** `flock` in `scripts/adb-run.sh` so two instances never run on
+      the phone at once (they would corrupt each other's timings and heat the SoC).
+- [ ] **S2. Python reference env.** `tools/requirements.txt` + `uv venv tools/.venv` (gitignored):
+      numpy, torch (CPU wheel), transformers, safetensors, tokenizers, gguf, matplotlib. ~2 GB.
+- [ ] **S3. llama2.c.** Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
+      `tools/llama2c-dump.patch` (fwrite of per-layer activations + logits as raw f32).
+- [ ] **S4. Model fetch script.** `tools/fetch_models.sh` → `testdata/models/` (gitignored):
+      stories15M.bin + tokenizer.bin (~60 MB), SmolLM2-135M (~270 MB), SmolLM2-360M (~720 MB),
+      Qwen2.5-0.5B (~1 GB), each only when its phase starts.
+- [ ] **S5. llama.cpp for Android.** Cross-build `llama-bench`, `llama-cli`, `llama-perplexity`
+      with the same NDK (needed from Phase 6; build when Phase 6 starts).
+- [ ] **S6. Miri** (`rustup component add --toolchain nightly miri`) to check every `unsafe` module
+      on the host.
+- [ ] **S7. Golden-file format.** One tiny shared format for kernel/activation dumps until the
+      safetensors parser exists: raw little-endian f32 + a `.json`/text sidecar with shape. Readers in
+      `src/testutil.rs` (test-only).
+
+Disk budget: env 2 GB + models ~2.5 GB (f32/bf16) + GGUFs ~1.5 GB + llama.cpp Android build ~0.5 GB
++ golden dumps <1 GB ≈ 7.5 GB of the 14 GB free.
+
+---
+
+## Target code layout
+
+Grows phase by phase; nothing is created before its phase.
+
+```
+src/
+  aligned.rs          AlignedBuf (64-byte aligned f32 storage)                      P1
+  bench.rs            timing harness                                                 P0
+  tensor.rs           shape/strides                                                  P0
+  sys/                affinity.rs (sched_setaffinity, sched_getcpu)                  P1
+                      sysfs.rs (cpufreq, thermal zones, battery current/voltage)     P1
+                      cpu.rs (CTR_EL0 cache-line size, feature detection)            P1/P3
+  monitor.rs          background power/thermal sampler → joules, traces             P1
+  kernels/            scalar.rs (matmul, rmsnorm, softmax, rope, silu)               P2
+                      neon.rs (gemv, gemm, vector ops)                               P3
+                      quant.rs (Q8_0, Q4_0 blocks; dequant, sdot, smmla kernels)     P6
+  pool.rs             persistent pinned thread pool                                  P4
+  model/              config.rs, transformer.rs (forward), kv_cache.rs, sampler.rs   P2→P5
+                      llama2c.rs (loader)                                            P2
+  format/             mmap.rs, json.rs, safetensors.rs                               P5
+                      gguf.rs                                                        P7
+  tokenizer/          llama2c.rs (score-based BPE)                                   P2
+                      bytelevel.rs (GPT-2 byte-level BPE from tokenizer.json)        P5
+                      pretok.rs + unicode tables (Qwen regex, hand-written)          P7
+  ffi.rs              C ABI (cdylib)                                                 P8
+src/bin/ or examples/ bw_sweep, generate, quantize, perplexity, bench_suite
+tools/                Python golden generators, llama2.c patch, plotting, fetch
+android/              Kotlin app + JNI                                               P8
+results/phase-N.md    numbers + conditions, committed with the code that made them
+```
+
+Rule from the plan, kept throughout: model code calls a small set of op functions
+(`matmul`, `rmsnorm`, `rope`, `attention`, `softmax`, `swiglu`); kernels never know about models.
+
+---
+
+## Phase 1 — Hardware & memory model
+
+Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 performance 3.53 GHz,
+6–7 prime 4.32 GHz), so "prime vs efficiency" in the plan becomes **prime vs performance**.
+
+- [~] **1.1 AlignedBuf.** Piece 1 (alloc/drop/empty) done. Then `as_slice`/`as_mut_slice`, and
+      read `CTR_EL0` (inline `mrs`) to confirm the 64-byte line (phone).
+- [ ] **1.2 Core pinning.** `sys::affinity::pin_current_thread(&[cores])`, `current_cpu()` via the
+      `libc` crate (first dependency). Test: pin to each core, `sched_getcpu` agrees (phone).
+- [ ] **1.3 sysfs readers.** cpufreq cur/max per core, thermal zones (type + temp, m°C),
+      battery `current_now`/`voltage_now` with unit/sign detection, charging status. Missing or
+      unreadable files are reported, not fatal (phone).
+- [ ] **1.4 Sampler.** Background thread, ~100 ms period, stop flag; returns traces + average power,
+      energy (J), min/max freq, max temp. CSV output (phone).
+- [ ] **1.5 Bandwidth kernels.** read (NEON, 4–8 independent accumulators — the Phase 0 sum was a
+      latency-bound dependency chain, not bandwidth), copy, scale, add; bytes counted per kernel.
+      Aligned vs +4-byte-shifted read comparison.
+- [ ] **1.6 Working-set sweep** `bw_sweep`: 4 KB → 256 MB log-spaced, fixed total bytes per point,
+      `--cores` flag: one prime (7), one performance (0), all 6 performance, all 8 in parallel with
+      scoped threads each on its own pinned chunk. CSV with a conditions header (phone).
+- [ ] **1.7 Plot** `tools/plot_sweep.py` (log x axis, cache cliffs annotated).
+- [ ] **1.8 Sustained run** ≥5 min all-core read with the sampler: bandwidth, freq, temp over time
+      (phone).
+- [ ] **1.9 Energy per GB**, prime vs performance core (phone, unplugged — adb over Wi-Fi; USB
+      charging makes `current_now` meaningless).
+- [ ] **1.10 `results/phase-1.md`**: L1/L2/SLC effective GB/s, single-core DRAM read, all-core
+      DRAM read, throttled sustained, J/GB per core class, conditions.
+
+## Phase 2 — Scalar end-to-end on stories15M
+
+- [ ] **2.1 References.** S3 + S4: llama2.c built and patched; dumps for a fixed prompt
+      (embedding, each norm, attention out, MLP out, logits per position) → `testdata/stories15M/`.
+- [ ] **2.2 Loader** `model/llama2c.rs`: 7×i32 header (dim, hidden_dim, n_layers, n_heads,
+      n_kv_heads, vocab_size — negative means unshared classifier — seq_len), then weights in
+      llama2.c order.
+- [ ] **2.3 Tokenizer** `tokenizer/llama2c.rs`: tokenizer.bin (max len, then score/len/bytes per
+      token), score-based merges, byte fallback `<0xNN>`, BOS, leading-space rule as in `run.c`.
+- [ ] **2.4 Scalar ops** `kernels/scalar.rs`: matmul (W·x), rmsnorm, softmax (max-subtracted),
+      rope (adjacent pairs, llama2.c), silu/swiglu; checked against numpy goldens (S7).
+- [ ] **2.5 Forward pass** + preallocated KV cache (`[layer][pos][kv_dim]`), run-state buffers
+      allocated once.
+- [ ] **2.6 Sampler**: argmax, temperature, top-p, top-k; xorshift RNG identical to llama2.c so
+      seeded sampling can match too.
+- [ ] **2.7 `generate` CLI**: `--model --tokenizer --prompt --steps --temp --topp --seed`, prints
+      tok/s.
+- [ ] **2.8 Correctness**: per-layer vs dumps (~1e-5 rel), greedy tokens identical for the full
+      run, tokenizer identical on a test corpus (encode via a tiny C harness around llama2.c's
+      `encode`).
+- [ ] **2.9 Baseline**: scalar single-thread tok/s on the phone + `simpleperf` profile →
+      `results/phase-2.md` (phone).
+
+## Phase 3 — NEON f32 kernels
+
+- [ ] **3.1 Kernel golden generator** `tools/gen_kernels.py`: random inputs + numpy outputs for
+      square, tall, wide, GEMV-shaped and odd sizes (tails).
+- [ ] **3.2 NEON GEMV**: 4-wide → 4–8 accumulators → unrolled; tail handling. GB/s as % of
+      Phase 1 single-core read.
+- [ ] **3.3 Batched forward for prefill**: process T prompt tokens at once (the Phase 2 loop is one
+      token at a time), so prefill becomes GEMM.
+- [ ] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
+      theoretical peak FMA.
+- [ ] **3.5 NEON vector ops** where the profile says so: rmsnorm, softmax (needs a vector exp),
+      silu/swiglu, rope.
+- [ ] **3.6 Dispatch**: `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
+      the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
+      (decides nightly vs `asm!` for Phase 6).
+- [ ] **3.7 Swap in, re-verify**: stories15M tokens still identical; speedup + profile →
+      `results/phase-3.md` (phone).
+
+## Phase 4 — Threading & core placement
+
+- [ ] **4.1 Thread pool** `pool.rs`: persistent workers pinned to a core set, epoch counter,
+      spin-then-park, cache-line-padded per-worker state; scoped job submission.
+- [ ] **4.2 Parallel GEMV** by output rows (chunks aligned to 64 B), parallel GEMM, attention
+      heads in parallel.
+- [ ] **4.3 Flags**: `--threads`, `--cores`. Results bit-identical to single-thread (test).
+- [ ] **4.4 Sweeps**: tok/s vs threads and core sets; multi-thread GEMV GB/s as % of Phase 1
+      all-core; J/token per core set (unplugged) → `results/phase-4.md`. Optional: rayon baseline.
+
+## Phase 5 — SmolLM2 (GQA, safetensors, byte-level BPE)
+
+- [ ] **5.1 mmap** (`libc::mmap`, read-only) + **safetensors parser** (8-byte len, JSON header,
+      data); bf16 → f32.
+- [ ] **5.2 JSON**: minimal hand-written parser for `config.json`, safetensors headers,
+      `tokenizer.json` (decision: hand-written, unless you prefer `serde_json`).
+- [ ] **5.3 Config-driven model**: one code path for stories15M and SmolLM2 (GQA head mapping,
+      tied embeddings, rope theta, norm eps, rope layout = rotate_half for HF).
+- [ ] **5.4 Byte-level BPE** from `tokenizer.json`: byte↔unicode map, pre-tokenizer as declared
+      there, merge ranks, special tokens, decode.
+- [ ] **5.5 HF goldens** `tools/hf_dump.py`: forward hooks → `.safetensors` per-layer dumps (read
+      by our own parser), greedy `generate(do_sample=False)` tokens, tokenizer corpus (Unicode,
+      emoji, code, odd whitespace) → `testdata/smollm2/`.
+- [ ] **5.6 Verify** 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
+      tok/s → `results/phase-5.md` (phone).
+
+## Phase 6 — Quantization
+
+- [ ] **6.1 Block formats** Q8_0 (32×i8 + f16 scale = 34 B) and Q4_0 (32×4-bit + f16 scale =
+      18 B, value = (q−8)·d), byte-identical to llama.cpp's reference quantizers.
+- [ ] **6.2 `quantize` tool** (Rust binary): safetensors → our quantized weights.
+- [ ] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
+      fly + `sdot` (`vdotq_s32`).
+- [ ] **6.4 Q4_0 GEMV**: NEON nibble unpack + `sdot`.
+- [ ] **6.5 Quantized GEMM** for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [ ] **6.6 Perplexity + KL mode** over wikitext-2 test (cached), with f32 logits as base.
+- [ ] **6.7 Verify**: kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
+      --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →
+      `results/phase-6.md` (phone).
+
+## Phase 7 — Qwen2.5-0.5B + GGUF
+
+- [ ] **7.1 GGUF parser** (header, typed KV metadata, tensor infos, alignment, data) + mmap;
+      F32/F16/BF16/Q8_0/Q4_0 tensors. Files from llama.cpp's `convert_hf_to_gguf.py` +
+      `llama-quantize`, so both engines read the same bytes.
+- [ ] **7.2 Architecture from metadata**: llama (Q/K permuted by converter → adjacent-pair RoPE)
+      vs qwen2 (NeoX/rotate_half), QKV bias, rope theta 1e6, tied embeddings.
+- [ ] **7.3 Qwen tokenizer**: ~151k byte-level BPE; hand-written pre-tokenizer equivalent to the
+      Qwen2 regex, with Unicode category tables generated by `tools/gen_unicode_tables.py`;
+      special tokens; ChatML chat template.
+- [ ] **7.4 Benchmark suite**: prefill tok/s at several prompt lengths, decode tok/s at several
+      context lengths, TTFT, peak RSS (`VmHWM`), J/token, 5-minute sustained tok/s trace.
+- [ ] **7.5 Verify**: HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
+      tokenizer exact vs HF; `llama-bench` on the phone under the same conditions →
+      `results/phase-7.md` with a written account of where time and energy go (phone).
+
+## Phase 8 — Android app
+
+- [ ] **8.1 cdylib + C ABI** `ffi.rs`: opaque handle, create/load/generate(callback)/free, error
+      codes, `catch_unwind` at every boundary.
+- [ ] **8.2 JNI + Kotlin app** in `android/`: load Qwen2.5-0.5B Q4_0 from app storage, generate off
+      the main thread, stream tokens to the UI.
+- [ ] **8.3 Verify**: installable APK; tok/s matches the CLI.
+
+---
+
+## How the two tracks share one repo and one phone
+
+- Implementation works in a git worktree on branch `impl` (`../Aether-impl`), so it never touches
+  the learning track's working tree. A phase is merged to `master` only when its verification
+  items pass and its `results/phase-N.md` exists.
+- One phone: `adb-run.sh` takes a lock (S1). Benchmarks record conditions (cores, screen, charging,
+  start temperature) and wait for the SoC to cool between runs.
+- The learning track owns `site/`, `videos/`, and `notes/phase-N.md` (the user's journal). The
+  implementation track owns `results/` and the engine code; the site cites `results/` numbers.
+- Every number in `results/` is tied to the commit that produced it.
+
+## Risks known now
+
+- **Disk** (14 GB free) — fetch models per phase, delete superseded dumps.
+- **Energy needs adb over Wi-Fi**, phone unplugged; plugged-in current readings are charging current.
+- **Shared phone** — a benchmark during the other track's run is invalid; the lock handles
+  overlap, not heat. Check temperature at start.
+- **dotprod/i8mm intrinsics** may still need nightly or `asm!` — checked in 3.6, before Phase 6.
+- **Qwen pre-tokenizer** needs Unicode category tables — a sub-project inside Phase 7.
+- **Prefill needs a batched forward** — a structural change to the Phase 2 engine in 3.3.
