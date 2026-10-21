@@ -35,6 +35,8 @@ pub struct Sample {
     pub temp_millic: Vec<Option<i64>>,
     pub current_ua: Option<i64>,
     pub voltage_uv: Option<i64>,
+    /// Remaining battery charge, µAh (falls while discharging).
+    pub counter_uah: Option<i64>,
 }
 
 impl Sample {
@@ -79,6 +81,7 @@ fn read_sample(start: Instant, cpus: &[usize], zones: &[ThermalZone], battery: O
         temp_millic: zones.iter().map(|z| z.temp_millic().ok()).collect(),
         current_ua: battery.and_then(|b| b.current_ua().ok()),
         voltage_uv: battery.and_then(|b| b.voltage_uv().ok()),
+        counter_uah: battery.and_then(|b| b.counter_uah().ok()),
     }
 }
 
@@ -182,6 +185,40 @@ impl Report {
         if d > 0.0 { Some(self.energy_j()? / d) } else { None }
     }
 
+    /// Energy from the battery's charge counter: `(joules, window_s)`.
+    ///
+    /// Where the current reading is slow or missing (Android's battery
+    /// service refreshes about once a minute) the counter is the better
+    /// source. It changes in steps, at the moments the service refreshes, so
+    /// the charge drawn is known exactly between the first and the last step
+    /// seen during the run: `ΔQ = c(first step) − c(last step)` over that
+    /// window. Energy = ΔQ × average voltage (1 µAh = 3.6 mC). `None` until
+    /// the counter has stepped at least twice.
+    pub fn counter_energy_j(&self) -> Option<(f64, f64)> {
+        let pts: Vec<(f64, i64)> = self.samples.iter().filter_map(|s| Some((s.t_s, s.counter_uah?))).collect();
+        let steps: Vec<(f64, i64)> = pts.windows(2).filter(|w| w[1].1 != w[0].1).map(|w| w[1]).collect();
+        let (&(t_a, c_a), &(t_b, c_b)) = (steps.first()?, steps.last()?);
+        if steps.len() < 2 || t_b <= t_a {
+            return None;
+        }
+        let volts: Vec<f64> = self.samples.iter().filter_map(|s| Some(s.voltage_uv? as f64 * 1e-6)).collect();
+        if volts.is_empty() {
+            return None;
+        }
+        let v_avg = volts.iter().sum::<f64>() / volts.len() as f64;
+        Some(((c_a - c_b) as f64 * 3.6e-3 * v_avg, t_b - t_a))
+    }
+
+    /// Best available average power, in watts, and which source gave it:
+    /// the charge counter when it stepped at least twice, else the
+    /// integrated current × voltage.
+    pub fn best_avg_power_w(&self) -> Option<(f64, &'static str)> {
+        if let Some((e, window)) = self.counter_energy_j() {
+            return Some((e / window, "charge counter"));
+        }
+        self.avg_power_w().map(|p| (p, "current x voltage"))
+    }
+
     /// Hottest reading of any sampled zone, in °C.
     pub fn max_temp_c(&self) -> Option<f64> {
         self.samples.iter().flat_map(|s| s.temp_millic.iter().flatten()).max().map(|&m| m as f64 / 1000.0)
@@ -206,6 +243,9 @@ impl Report {
             (Some(e), Some(p)) => s += &format!(", energy {e:.2} J, avg power {p:.2} W"),
             _ => s += ", no battery power readings",
         }
+        if let Some((e, window)) = self.counter_energy_j() {
+            s += &format!(", charge counter: {e:.1} J over a {window:.0} s window = {:.2} W", e / window);
+        }
         let status = self.battery_status.as_deref().unwrap_or("unknown");
         if status != "Discharging" {
             s += &format!(" (battery {status}: energy is NOT the run's consumption)");
@@ -219,7 +259,7 @@ impl Report {
         let mut header = vec!["t_s".to_string()];
         header.extend(self.cpus.iter().map(|c| format!("cpu{c}_khz")));
         header.extend(self.zones.iter().map(|z| format!("tz{}_{}_mc", z.index, z.kind)));
-        header.extend(["current_ua", "voltage_uv", "power_w"].map(String::from));
+        header.extend(["current_ua", "voltage_uv", "counter_uah", "power_w"].map(String::from));
         writeln!(w, "{}", header.join(","))?;
         let cell = |v: Option<String>| v.unwrap_or_default();
         for s in &self.samples {
@@ -228,6 +268,7 @@ impl Report {
             row.extend(s.temp_millic.iter().map(|v| cell(v.map(|x| x.to_string()))));
             row.push(cell(s.current_ua.map(|x| x.to_string())));
             row.push(cell(s.voltage_uv.map(|x| x.to_string())));
+            row.push(cell(s.counter_uah.map(|x| x.to_string())));
             row.push(cell(s.power_w().map(|x| format!("{x:.4}"))));
             writeln!(w, "{}", row.join(","))?;
         }
@@ -240,7 +281,7 @@ mod tests {
     use super::*;
 
     fn sample(t_s: f64, current_ua: i64, voltage_uv: i64) -> Sample {
-        Sample { t_s, freq_khz: vec![], temp_millic: vec![], current_ua: Some(current_ua), voltage_uv: Some(voltage_uv) }
+        Sample { t_s, freq_khz: vec![], temp_millic: vec![], current_ua: Some(current_ua), voltage_uv: Some(voltage_uv), counter_uah: None }
     }
 
     fn report(samples: Vec<Sample>) -> Report {
@@ -262,6 +303,22 @@ mod tests {
     fn trapezoid_is_exact_for_a_ramp() {
         let r = report(vec![sample(0.0, 0, 4_000_000), sample(1.0, 500_000, 4_000_000)]);
         assert!((r.energy_j().unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    /// Counter steps at t = 10 s and t = 70 s: 10 000 µAh in 60 s is 600 mA;
+    /// at 4 V that is 2.4 W, 144 J. Samples before the first step and after
+    /// the last are outside the known window and must not count.
+    #[test]
+    fn counter_energy_uses_the_window_between_steps() {
+        let mut samples = Vec::new();
+        for t in 0..90 {
+            let c = if t < 10 { 1_000_000 } else if t < 70 { 990_000 } else { 980_000 };
+            samples.push(Sample { counter_uah: Some(c), ..sample(t as f64, 0, 4_000_000) });
+        }
+        let r = report(samples);
+        let (e, window) = r.counter_energy_j().unwrap();
+        assert!((window - 60.0).abs() < 1e-9 && (e - 144.0).abs() < 1e-9, "{e} J over {window} s");
+        assert_eq!(r.best_avg_power_w().unwrap().1, "charge counter");
     }
 
     /// The real thread: it samples on its grid, stops promptly, and the CSV

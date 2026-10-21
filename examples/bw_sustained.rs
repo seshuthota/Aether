@@ -94,15 +94,17 @@ fn main() {
     let total = bytes.load(Ordering::Relaxed) as f64;
     println!("# total {:.1} GB in {:.1} s = {:.2} GB/s average", total / 1e9, elapsed.as_secs_f64(), total / elapsed.as_nanos() as f64);
     println!("# {}", report.summary());
-    if let (Some(e), Some(idle)) = (report.energy_j(), idle.as_ref()) {
-        println!("# idle baseline: {}", idle.summary());
-        println!("# energy per GB: {:.3} J/GB total", e / (total / 1e9));
-        if let Some(p_idle) = idle.avg_power_w() {
-            let above = e - p_idle * report.duration_s();
-            println!("# energy per GB above idle ({p_idle:.2} W): {:.3} J/GB", above / (total / 1e9));
+    // Energy per GB = average power / bandwidth. Power comes from whichever
+    // battery source is better on this device (see Report::best_avg_power_w).
+    let gbps = total / elapsed.as_nanos() as f64;
+    if let Some((p, source)) = report.best_avg_power_w() {
+        println!("# run power {p:.3} W ({source}) -> {:.3} J/GB total", p / gbps);
+        if let Some((p_idle, _)) = idle.as_ref().and_then(|r| r.best_avg_power_w()) {
+            println!("# idle baseline: {}", idle.as_ref().unwrap().summary());
+            println!("# idle power {p_idle:.3} W -> {:.3} J/GB above idle", (p - p_idle) / gbps);
         }
-    } else if let Some(e) = report.energy_j() {
-        println!("# energy per GB: {:.3} J/GB total (no idle baseline)", e / (total / 1e9));
+    } else {
+        println!("# no usable battery power reading (run longer: the charge counter must step twice)");
     }
     println!("# monitor csv");
     report.write_csv(std::io::stdout().lock()).unwrap();

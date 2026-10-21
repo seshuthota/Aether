@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 OUT=results/phase-1/raw
 mkdir -p "$OUT"
-COOL_C=${COOL_C:-40}
+COOL_C=${COOL_C:-44}   # this phone idles at ~41 °C on its CPU zones
 RUN=(cargo run -q --release --target aarch64-linux-android --example)
 
 # Waits until every readable CPU thermal zone is below COOL_C degrees.
@@ -30,11 +30,22 @@ wait_cool() {
   done
 }
 
+# The vendor lowers the clock caps when the screen is off (1.0/1.8 GHz instead
+# of 2.4 GHz on battery), so runs keep the screen on: wake it now, then send a
+# key that does nothing (left Shift) every minute, which counts as user
+# activity and restarts the screen timeout. No phone setting is changed. The
+# key event runs on core 3, away from the single-core runs on 0 and 7.
+adb shell input keyevent KEYCODE_WAKEUP
+( while :; do sleep 60; adb shell taskset 8 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
+KEEPALIVE=$!
+trap 'kill $KEEPALIVE 2>/dev/null' EXIT
+
 # Records what the binary cannot see: screen, charging, the full battery dump.
 conditions() {
   {
     echo "# host time $(date -Iseconds), commit $(git rev-parse --short HEAD)"
-    adb shell dumpsys power | grep -m1 -E 'mWakefulness=' | sed 's/^ */# /'
+    adb shell dumpsys power 2>/dev/null | grep -m1 -E 'mWakefulness=' | sed 's/^ */# /'
+    adb shell 'for c in 0 6; do echo "# cpu$c cap $(cat /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq) kHz"; done'
     adb shell dumpsys battery | grep -E 'powered|status|level|temperature' | sed 's/^ */# /'
   } | tr -d '\r'
 }
@@ -63,9 +74,11 @@ case "${1:-}" in
     run sustained-all8 bw_sustained --cores 0-7 --parallel --seconds 300
     ;;
   energy)
-    adb shell dumpsys battery | grep -q 'USB powered: true' && { echo "phone is on USB power: unplug and use adb over Wi-Fi"; exit 1; }
-    run energy-core7 bw_sustained --cores 7 --seconds 30 --idle-s 30
-    run energy-core0 bw_sustained --cores 0 --seconds 30 --idle-s 30
+    adb shell dumpsys battery | grep -qE '(AC|USB|Wireless) powered: true' && { echo "phone is on USB power: unplug and use adb over Wi-Fi"; exit 1; }
+    # The battery service refreshes about once a minute, so each phase must
+    # last minutes for the charge counter to step several times.
+    run energy-core7 bw_sustained --cores 7 --seconds 300 --idle-s 300
+    run energy-core0 bw_sustained --cores 0 --seconds 300 --idle-s 300
     ;;
   *) echo "usage: $0 sweeps|sustained|energy"; exit 2 ;;
 esac
