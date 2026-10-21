@@ -104,8 +104,16 @@ impl Monitor {
             let start = Instant::now();
             let mut samples = Vec::new();
             let mut next = start;
+            // Android's battery service costs a subprocess per read and only
+            // refreshes every ~minute: poll it every 5 s, not every sample.
+            let slow_period = Duration::from_secs(5);
+            let mut last_battery: Option<Instant> = None;
             loop {
-                samples.push(read_sample(start, &t_cpus, &t_zones, battery.as_ref()));
+                let due = battery.as_ref().is_some_and(|b| b.is_fast() || last_battery.is_none_or(|t| t.elapsed() >= slow_period));
+                if due {
+                    last_battery = Some(Instant::now());
+                }
+                samples.push(read_sample(start, &t_cpus, &t_zones, if due { battery.as_ref() } else { None }));
                 if t_stop.load(Ordering::Acquire) {
                     return samples; // the last sample is taken after `stop`
                 }

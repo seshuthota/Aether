@@ -92,41 +92,115 @@ pub fn thermal_zones() -> Vec<ThermalZone> {
     zones
 }
 
-/// The device's battery, found as the entry of `/sys/class/power_supply`
-/// whose `type` is `Battery` (`battery` on the phone, `BAT0` on a laptop).
+/// Where battery readings come from.
+///
+/// - `Sysfs`: the entry of `/sys/class/power_supply` whose `type` is
+///   `Battery` (`BAT0` on a laptop, `battery` on most phones). Fresh values,
+///   cheap to read.
+/// - `AndroidService`: Android's battery service, through the `cmd battery`
+///   and `dumpsys battery` commands. Used when SELinux denies the shell user
+///   the sysfs files, as on the iQOO 13. Each read starts a subprocess
+///   (~14 ms), and on that phone the service refreshes its values only every
+///   45–85 s (measured, `results/phase-1/raw/battery-counter-cadence.csv`).
 #[derive(Debug, Clone)]
-pub struct Battery {
-    pub dir: PathBuf,
+pub enum Battery {
+    Sysfs(PathBuf),
+    AndroidService,
+}
+
+/// Runs a shell command and returns its trimmed stdout.
+fn command_output(program: &str, args: &[&str]) -> io::Result<String> {
+    let out = std::process::Command::new(program).args(args).output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!("{program} {args:?} failed: {}", out.status)));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The number after `key` in `dumpsys battery` output (`  voltage: 4258`).
+fn dumpsys_battery_field(key: &str) -> io::Result<i64> {
+    let text = command_output("dumpsys", &["battery"])?;
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix(key)?.trim().parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("no `{key}` in dumpsys battery")))
+}
+
+fn cmd_battery_get(what: &str) -> io::Result<i64> {
+    let s = command_output("cmd", &["battery", "get", what])?;
+    s.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("cmd battery get {what}: {s:?}")))
 }
 
 impl Battery {
-    /// The first power supply of type `Battery`, if any.
+    /// A readable sysfs battery if there is one; otherwise Android's battery
+    /// service if this is Android; otherwise `None`.
     pub fn find() -> Option<Battery> {
-        let mut dirs: Vec<PathBuf> = fs::read_dir("/sys/class/power_supply").ok()?.filter_map(|e| Some(e.ok()?.path())).collect();
-        dirs.sort();
-        dirs.into_iter()
-            .find(|d| read_trimmed(d.join("type")).is_ok_and(|t| t == "Battery"))
-            .map(|dir| Battery { dir })
+        let dirs = fs::read_dir("/sys/class/power_supply").ok().map(|d| {
+            let mut v: Vec<PathBuf> = d.filter_map(|e| Some(e.ok()?.path())).collect();
+            v.sort();
+            v
+        });
+        let sysfs = dirs.into_iter().flatten().find(|d| read_trimmed(d.join("type")).is_ok_and(|t| t == "Battery"));
+        match sysfs {
+            Some(dir) => Some(Battery::Sysfs(dir)),
+            None if Path::new("/system/bin/cmd").exists() => Some(Battery::AndroidService),
+            None => None,
+        }
+    }
+
+    /// True when every read is cheap and fresh (sysfs); false when reads cost
+    /// a subprocess and values lag (Android service).
+    pub fn is_fast(&self) -> bool {
+        matches!(self, Battery::Sysfs(_))
     }
 
     /// Current flowing out of (or into) the battery, in microamps, as the
-    /// driver reports it. The sign convention is the driver's choice: many
-    /// Qualcomm phones report discharge as positive, others as negative, and
-    /// while charging the value is the charge current. Use [`Battery::status`]
-    /// to know which situation a reading came from.
+    /// driver reports it. The sign convention is the driver's choice (the
+    /// iQOO 13 reports discharge as negative), and while charging the value is
+    /// the charge current. Use [`Battery::status`] to know which situation a
+    /// reading came from.
     pub fn current_ua(&self) -> io::Result<i64> {
-        read_num(self.dir.join("current_now"))
+        match self {
+            Battery::Sysfs(dir) => read_num(dir.join("current_now")),
+            // The iQOO 13's service reports mA here (−475 under an all-core
+            // load, while the charge counter fell at 477 mA): convert.
+            Battery::AndroidService => cmd_battery_get("current_now").map(|ma| ma * 1000),
+        }
     }
 
     /// Battery terminal voltage, in microvolts (`4123000` = 4.123 V).
     pub fn voltage_uv(&self) -> io::Result<i64> {
-        read_num(self.dir.join("voltage_now"))
+        match self {
+            Battery::Sysfs(dir) => read_num(dir.join("voltage_now")),
+            Battery::AndroidService => dumpsys_battery_field("voltage:").map(|mv| mv * 1000),
+        }
+    }
+
+    /// Remaining charge, in microamp-hours ("charge counter"). Falls as the
+    /// battery discharges; the difference over a run is the charge it drew.
+    pub fn counter_uah(&self) -> io::Result<i64> {
+        match self {
+            Battery::Sysfs(dir) => read_num(dir.join("charge_counter")),
+            Battery::AndroidService => cmd_battery_get("counter"),
+        }
     }
 
     /// `Charging`, `Discharging`, `Full` or `Not charging`. Energy readings
     /// mean something only while `Discharging`.
     pub fn status(&self) -> io::Result<String> {
-        read_trimmed(self.dir.join("status"))
+        match self {
+            Battery::Sysfs(dir) => read_trimmed(dir.join("status")),
+            // BatteryManager.BATTERY_STATUS_* codes.
+            Battery::AndroidService => dumpsys_battery_field("status:").map(|code| {
+                match code {
+                    2 => "Charging",
+                    3 => "Discharging",
+                    4 => "Not charging",
+                    5 => "Full",
+                    _ => "Unknown",
+                }
+                .to_string()
+            }),
+        }
     }
 }
 
@@ -157,11 +231,11 @@ mod tests {
         }
         match Battery::find() {
             Some(b) => println!(
-                "battery {}: status {:?}, current {:?} uA, voltage {:?} uV",
-                b.dir.display(),
+                "battery {b:?}: status {:?}, current {:?} uA, voltage {:?} uV, counter {:?} uAh",
                 b.status().ok(),
                 b.current_ua().ok(),
-                b.voltage_uv().ok()
+                b.voltage_uv().ok(),
+                b.counter_uah().ok()
             ),
             None => println!("no battery"),
         }
