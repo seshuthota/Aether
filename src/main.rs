@@ -84,7 +84,7 @@ fn main() {
         return score(&model_path, &tok_path, &file, format, ctx, chunks, base, cores);
     }
     let mut session = Session::open(&model_path, Some(&tok_path), steps, format, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
-    eprintln!("weights: {format:?}, {:.1} MB", session.model.weights.bytes() as f64 / 1e6);
+    eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
         prompt = aether::chat::chatml(&system, &prompt);
@@ -125,7 +125,7 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: u
     let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
     let t0 = Instant::now();
     let tokens = text.encode(&raw);
-    eprintln!("{}: {} tokens (tokenized in {:.0} ms), weights {format:?} {:.1} MB", file.display(), tokens.len(), t0.elapsed().as_secs_f64() * 1e3, model.weights.bytes() as f64 / 1e6);
+    eprintln!("{}: {} tokens (tokenized in {:.0} ms), weights {} {:.1} MB", file.display(), tokens.len(), t0.elapsed().as_secs_f64() * 1e3, model.weights.layers[0].wq.format_name(), model.weights.bytes() as f64 / 1e6);
     let t1 = Instant::now();
     let s = aether::eval::perplexity(&mut model, base.as_mut(), &tokens, text.chunk_bos(), ctx, chunks, |i, s| {
         eprint!("[{i}]{:.4},", s.ppl());

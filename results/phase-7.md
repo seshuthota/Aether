@@ -25,11 +25,18 @@ scores were a scalar loop). The re-run with NEON attention is pending.
   like `apply_chat_template`.
 - Perplexity/KL against llama.cpp (wikitext-2, 20 × 512, base = f32 GGUF):
 
-| Format | PPL llama.cpp | Mean KLD llama.cpp | Same top llama.cpp | ours |
-| --- | --- | --- | --- | --- |
-| f32 | 16.2744 ± 0.667 | — | — | pending (host run) |
-| Q8_0 | 16.3425 ± 0.671 | 0.002368 | 96.88 % | pending (host run) |
-| Q4_0 | 19.7283 ± 0.836 | 0.181010 | 76.98 % | pending (host run) |
+| Format | PPL ours | PPL llama.cpp | Mean KLD ours | Mean KLD llama.cpp | Same top ours / llama.cpp |
+| --- | --- | --- | --- | --- | --- |
+| f32 | 16.2745 | 16.2744 ± 0.667 | — | — | — |
+| Q8_0 | 16.3404 ± 0.670 | 16.3425 ± 0.671 | 0.002366 | 0.002368 ± 0.000032 | 96.51 % / 96.88 ± 0.24 % |
+| Q4_0 | 19.7441 ± 0.837 | 19.7283 ± 0.836 | 0.180924 | 0.181010 ± 0.002752 | 77.18 % / 76.98 ± 0.59 % |
+
+Ours: `aether-host-qwen-{q8_0,q4_0}-ppl.txt`, run on the host (x86, so the
+scalar kernels; accuracy does not depend on the machine) with `--kl --base
+hostdata/gguf/qwen2.5-0.5b-f32.gguf`, the same base file llama.cpp used.
+Every number agrees within llama.cpp's error bar except Q8_0's same-top rate
+(1.5 of its standard errors apart, from tokens where two candidates are
+nearly tied and summation order decides).
 
 Qwen2.5-0.5B loses far less to Q4_0 than SmolLM2-135M did (PPL ×1.22 and
 KLD 0.18 here, against ×1.41 and 0.34 in `results/phase-6.md`).
@@ -110,5 +117,3 @@ back to back for 5 minutes.
 
 - Re-run the speed tables with NEON attention (expect depth 512 to close most
   of the gap to depth 0).
-- Our Q8_0/Q4_0 PPL and KLD (host run of `aether --ppl ... --kl --base
-  hostdata/gguf/qwen2.5-0.5b-f32.gguf`).

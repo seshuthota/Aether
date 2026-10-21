@@ -215,7 +215,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       special tokens; ChatML chat template.
 - [x] **7.4 Benchmark suite** (`scripts/phase7-bench.sh`): prefill tok/s at several prompt lengths, decode tok/s at several
       context lengths, TTFT, peak RSS (`VmHWM`), J/token, 5-minute sustained tok/s trace.
-- [~] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; llama.cpp PPL/KL references taken; our phone PPL and results/phase-7.md pending): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
+- [~] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; PPL/KLD for f32, Q8_0, Q4_0 match llama.cpp; results/phase-7.md written; speed re-run with NEON attention pending): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
       tokenizer exact vs HF; `llama-bench` on the phone under the same conditions →
       `results/phase-7.md` with a written account of where time and energy go (phone).
 
