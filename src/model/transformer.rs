@@ -20,7 +20,7 @@
 use super::config::{Config, RopeLayout};
 use crate::aligned::AlignedBuf;
 use crate::kernels as k;
-use crate::pool::ThreadPool;
+use crate::pool::{SharedOut, ThreadPool};
 use crate::weight::{Format, Weight};
 
 /// One layer's weights. Matrices are row-major `[out, in]`, in any storage
@@ -92,6 +92,43 @@ impl Weights {
             + self.layers.iter().map(|l| norms(l) + mats(l)).sum::<usize>()
             + self.final_norm.len() * 4
             + self.classifier.as_ref().map_or(0, Weight::bytes)
+    }
+}
+
+/// All query heads of one token: `out[h] = attention(q[h], cache, pos)`.
+/// Heads are independent (each writes its own slice of `out` and its own
+/// row of `scores`), so with a pool they run in parallel, one thread per
+/// head at a time.
+#[allow(clippy::too_many_arguments)]
+fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
+    let (hs, kv_dim, group, seq) = (c.head_size(), c.kv_dim(), c.kv_group(), c.seq_len);
+    let head = |h: usize, out_h: &mut [f32], scores_h: &mut [f32]| {
+        let kv_off = (h / group) * hs; // which K/V head this query head reads
+        let keys = |t: usize| &kc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
+        let values = |t: usize| &vc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
+        k::attention_head(out_h, &q[h * hs..(h + 1) * hs], keys, values, pos, scores_h);
+    };
+    match pool.filter(|p| p.threads() > 1) {
+        None => {
+            for (h, (o, sc)) in out.chunks_exact_mut(hs).zip(scores.chunks_exact_mut(seq)).enumerate() {
+                head(h, o, sc);
+            }
+        }
+        Some(p) => {
+            assert!(out.len() >= c.n_heads * hs && scores.len() >= c.n_heads * seq);
+            let (o, sc) = (SharedOut(out.as_mut_ptr()), SharedOut(scores.as_mut_ptr()));
+            p.for_blocks(c.n_heads, 1, &|r| {
+                for h in r {
+                    // SAFETY: head h is handed to exactly one thread, and its
+                    // output slice and score row are disjoint from every other
+                    // head's (both lengths checked above).
+                    let (oh, sh) = unsafe {
+                        (std::slice::from_raw_parts_mut(o.ptr().add(h * hs), hs), std::slice::from_raw_parts_mut(sc.ptr().add(h * seq), seq))
+                    };
+                    head(h, oh, sh);
+                }
+            });
+        }
     }
 }
 
@@ -204,7 +241,7 @@ impl Transformer {
         let w = &self.weights;
         let s = &mut self.state;
         let pool = self.pool.as_ref();
-        let (hs, kv_dim, group) = (c.head_size(), c.kv_dim(), c.kv_group());
+        let (hs, kv_dim) = (c.head_size(), c.kv_dim());
         assert!(pos < c.seq_len, "position {pos} beyond seq_len {}", c.seq_len);
         assert!(token < c.vocab_size, "token {token} beyond vocab {}", c.vocab_size);
 
@@ -241,13 +278,7 @@ impl Transformer {
             obs.tap("v", Some(l), pos, &s.value_cache[at..at + kv_dim]);
 
             let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
-            for (h, (out, scores)) in s.xb.chunks_exact_mut(hs).zip(s.att.chunks_exact_mut(c.seq_len)).enumerate() {
-                let q = &s.q[h * hs..(h + 1) * hs];
-                let kv_off = (h / group) * hs; // which K/V head this query head reads
-                let keys = |t: usize| &kc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
-                let values = |t: usize| &vc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
-                k::attention_head(out, q, keys, values, pos, scores);
-            }
+            attention(pool, c, &mut s.xb, &s.q, kc, vc, &mut s.att, pos);
             obs.tap("attn", Some(l), pos, &s.xb);
 
             k::linear_on(pool, &mut s.xb2, &s.xb, &lw.wo);
@@ -311,7 +342,7 @@ impl Transformer {
         let c = &self.config;
         let w = &self.weights;
         let (s, b, pool) = (&mut self.state, &mut self.batch, self.pool.as_ref());
-        let (dim, hidden, hs, kv_dim, group) = (c.dim, c.hidden_dim, c.head_size(), c.kv_dim(), c.kv_group());
+        let (dim, hidden, hs, kv_dim) = (c.dim, c.hidden_dim, c.head_size(), c.kv_dim());
 
         for (i, &tok) in tokens.iter().enumerate() {
             assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
@@ -359,14 +390,7 @@ impl Transformer {
             let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
             for i in 0..t {
                 let pos = start + i;
-                let xb = &mut b.xb[i * dim..(i + 1) * dim];
-                for (h, (out, scores)) in xb.chunks_exact_mut(hs).zip(s.att.chunks_exact_mut(c.seq_len)).enumerate() {
-                    let q = &b.q[i * dim + h * hs..i * dim + (h + 1) * hs];
-                    let kv_off = (h / group) * hs;
-                    let keys = |p: usize| &kc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
-                    let values = |p: usize| &vc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
-                    k::attention_head(out, q, keys, values, pos, scores);
-                }
+                attention(pool, c, &mut b.xb[i * dim..(i + 1) * dim], &b.q[i * dim..(i + 1) * dim], kc, vc, &mut s.att, pos);
                 obs.tap("attn", Some(l), pos, &b.xb[i * dim..(i + 1) * dim]);
             }
 

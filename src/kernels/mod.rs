@@ -11,7 +11,7 @@ pub mod neon;
 pub mod neon_quant;
 pub mod scalar;
 
-use crate::pool::ThreadPool;
+use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
 pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
@@ -35,23 +35,6 @@ pub fn matmul_batch(out: &mut [f32], x: &[f32], w: &[f32], t: usize) {
     scalar::matmul_batch(out, x, w, t);
 }
 
-/// A raw pointer that may be shared between the pool's threads. Each thread
-/// turns it back into a slice of its own, disjoint range.
-#[derive(Clone, Copy)]
-struct SharedOut(*mut f32);
-// SAFETY: only used to give threads disjoint ranges of one buffer (see the
-// callers); no element is ever accessed by two threads.
-unsafe impl Send for SharedOut {}
-unsafe impl Sync for SharedOut {}
-
-impl SharedOut {
-    /// A method (not `.0`) so closures capture the whole `Sync` wrapper,
-    /// not just its raw-pointer field, which is not `Sync`.
-    fn ptr(self) -> *mut f32 {
-        self.0
-    }
-}
-
 /// Output rows per block when splitting across threads: whole 4-row tiles,
 /// and 16 floats = one 64-byte line, so threads never write the same line.
 const ROW_BLOCK: usize = 16;
@@ -64,8 +47,9 @@ pub fn matmul_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &[f32
     let n = x.len();
     assert_eq!(w.len(), out.len() * n, "W must be out.len() x x.len()");
     let o = SharedOut(out.as_mut_ptr());
-    pool.for_ranges(out.len(), ROW_BLOCK, &|r| {
-        // SAFETY: `for_ranges` gives each thread a disjoint range of rows.
+    let block = crate::pool::block_size(out.len(), pool.threads(), ROW_BLOCK);
+    pool.for_blocks(out.len(), block, &|r| {
+        // SAFETY: `for_blocks` hands each block of rows to exactly one thread.
         let mine = unsafe { std::slice::from_raw_parts_mut(o.ptr().add(r.start), r.len()) };
         matmul(mine, x, &w[r.start * n..r.end * n]);
     });
@@ -78,9 +62,9 @@ pub fn matmul_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
     assert_eq!((x.len(), out.len(), w.len()), (t * n, t * d, d * n), "shapes");
     let o = SharedOut(out.as_mut_ptr());
-    pool.for_ranges(d, ROW_BLOCK, &|r| {
+    pool.for_blocks(d, crate::pool::block_size(d, pool.threads(), ROW_BLOCK), &|r| {
         #[cfg(target_arch = "aarch64")]
-        // SAFETY: shapes checked above; rows are disjoint per thread.
+        // SAFETY: shapes checked above; each block of rows goes to one thread.
         unsafe {
             neon::gemm_rows(o.ptr(), d, r, x, w, t)
         };
@@ -193,7 +177,7 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
         let o = SharedOut(out.as_mut_ptr());
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
-            Some(p) => p.for_ranges(d, ROW_BLOCK, &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, t) }),
+            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, t) }),
             // SAFETY: single thread, all rows.
             None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, t) },
         }

@@ -34,7 +34,7 @@ impl<T: Copy> Mapped<T> {
         if offset + bytes > map.len() {
             return Err(bad(format!("tensor at {offset} (+{bytes} B) beyond the file")));
         }
-        if (map.as_bytes().as_ptr() as usize + offset) % std::mem::align_of::<T>() != 0 {
+        if !(map.as_bytes().as_ptr() as usize + offset).is_multiple_of(std::mem::align_of::<T>()) {
             return Err(bad(format!("tensor at {offset} is not aligned for its type")));
         }
         Ok(Mapped { map, offset, len, _t: PhantomData })

@@ -40,7 +40,7 @@ fn decompose(c: u32, out: &mut Vec<u32>) {
         let s = c - S_BASE;
         out.push(L_BASE + s / N_COUNT);
         out.push(V_BASE + (s % N_COUNT) / T_COUNT);
-        if s % T_COUNT != 0 {
+        if !s.is_multiple_of(T_COUNT) {
             out.push(T_BASE + s % T_COUNT);
         }
         return;
@@ -56,7 +56,7 @@ fn compose_pair(a: u32, b: u32) -> Option<u32> {
     if (L_BASE..L_BASE + L_COUNT).contains(&a) && (V_BASE..V_BASE + V_COUNT).contains(&b) {
         return Some(S_BASE + ((a - L_BASE) * V_COUNT + (b - V_BASE)) * T_COUNT);
     }
-    if (S_BASE..S_BASE + S_COUNT).contains(&a) && (a - S_BASE) % T_COUNT == 0 && (T_BASE + 1..T_BASE + T_COUNT).contains(&b) {
+    if (S_BASE..S_BASE + S_COUNT).contains(&a) && (a - S_BASE).is_multiple_of(T_COUNT) && (T_BASE + 1..T_BASE + T_COUNT).contains(&b) {
         return Some(a + (b - T_BASE));
     }
     COMPOSE.binary_search_by_key(&(a, b), |&(x, y, _)| (x, y)).ok().map(|i| COMPOSE[i].2)

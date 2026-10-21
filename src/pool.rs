@@ -30,6 +30,25 @@ use std::thread::{self, JoinHandle};
 /// Polls before a waiting worker parks. ~tens of microseconds of spinning.
 const SPIN: u32 = 20_000;
 
+/// A raw pointer that may be shared between the pool's threads, for jobs in
+/// which each thread writes its own disjoint part of one buffer (rows of a
+/// matmul output, heads of an attention output). Whoever turns it back into
+/// a slice promises that no two threads touch the same elements.
+#[derive(Clone, Copy)]
+pub struct SharedOut(pub *mut f32);
+
+// SAFETY: only used to hand threads disjoint parts of a buffer (see above).
+unsafe impl Send for SharedOut {}
+unsafe impl Sync for SharedOut {}
+
+impl SharedOut {
+    /// A method (not `.0`) so closures capture the whole `Sync` wrapper,
+    /// not just its raw-pointer field, which is not `Sync`.
+    pub fn ptr(self) -> *mut f32 {
+        self.0
+    }
+}
+
 /// Pads a value to its own 64-byte cache line.
 #[repr(align(64))]
 struct Line<T>(T);
@@ -58,9 +77,16 @@ pub struct ThreadPool {
 
 impl ThreadPool {
     /// One thread per entry of `cores`, each pinned to that core. The
-    /// calling thread becomes share 0 and is pinned to `cores[0]`.
+    /// calling thread becomes share 0 and is pinned to the **fastest** of
+    /// the cores (highest maximum clock): it also runs everything between
+    /// parallel ops (attention bookkeeping, norms, sampling), so on a phone
+    /// with prime and performance cores it must not land on a slow one.
     pub fn new(cores: &[usize]) -> std::io::Result<ThreadPool> {
         assert!(!cores.is_empty(), "a pool needs at least one core");
+        let mut cores = cores.to_vec();
+        // Stable: equal-speed cores keep the order they were given in.
+        cores.sort_by_key(|&c| std::cmp::Reverse(crate::sys::sysfs::cpu_max_freq_khz(c).unwrap_or(0)));
+        let cores = &cores[..];
         affinity::pin_current_thread(&cores[..1])?;
         let shared = Arc::new(Shared {
             epoch: Line(AtomicU64::new(0)),
@@ -141,6 +167,36 @@ impl ThreadPool {
     }
 }
 
+impl ThreadPool {
+    /// Runs `f` on blocks of `block` items covering `0..len`, handed out
+    /// one at a time from a shared counter: a thread that finishes early
+    /// takes the next block. On a phone with fast and slow cores this
+    /// matters — an even split makes every fast core wait for the slowest
+    /// one at the end of every op, while dynamic blocks let the fast cores
+    /// simply do more of them. Which thread computes a block does not change
+    /// the block's result.
+    pub fn for_blocks(&self, len: usize, block: usize, f: &(dyn Fn(std::ops::Range<usize>) + Sync)) {
+        let next = AtomicUsize::new(0);
+        self.run(&|_, _| {
+            loop {
+                let b = next.fetch_add(1, Ordering::Relaxed);
+                let start = b * block;
+                if start >= len {
+                    break;
+                }
+                f(start..(start + block).min(len));
+            }
+        });
+    }
+}
+
+/// Block size for [`ThreadPool::for_blocks`] over `len` rows: about eight
+/// blocks per thread (few counter operations, room to rebalance), in whole
+/// multiples of `align`.
+pub fn block_size(len: usize, threads: usize, align: usize) -> usize {
+    (len / (threads * 8)).div_ceil(align).max(1) * align
+}
+
 /// Share `share` of `n` of `0..len`, in blocks of `align`: blocks are dealt
 /// out evenly, the first `blocks % n` shares getting one extra block.
 pub fn split(len: usize, align: usize, share: usize, n: usize) -> std::ops::Range<usize> {
@@ -201,6 +257,21 @@ mod tests {
 
     fn cores(n: usize) -> Vec<usize> {
         affinity::online_cpus().unwrap().into_iter().take(n).collect()
+    }
+
+    /// Dynamic blocks cover every item exactly once, across many jobs.
+    #[test]
+    fn dynamic_blocks_cover_everything_once() {
+        thread::spawn(|| {
+            let pool = ThreadPool::new(&cores(4)).unwrap();
+            for len in [0, 1, 15, 16, 17, 1000, 4865] {
+                let seen: Vec<AtomicUsize> = (0..len).map(|_| AtomicUsize::new(0)).collect();
+                pool.for_blocks(len, block_size(len, 4, 16), &|r| r.for_each(|i| _ = seen[i].fetch_add(1, Ordering::Relaxed)));
+                assert!(seen.iter().all(|c| c.load(Ordering::Relaxed) == 1), "len {len}");
+            }
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

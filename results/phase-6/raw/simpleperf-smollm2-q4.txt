@@ -1,0 +1,37 @@
+
+Overhead  Symbol
+58.34%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#0}::{closure#0}, ()>
+26.13%    aether::kernels::neon_quant::dot4_q4_0_q8_0
+4.22%     aether::kernels::scalar::attention_head::<<aether::model::transformer::Transformer>::forward_traced<aether::model::transformer::NoTrace>::{c
+2.49%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+2.24%     <aether::weight::Weight>::convert
+1.68%     <aether::pool::ThreadPool>::run
+1.31%     aether::kernels::quant_rows
+0.69%     aether::quant::quantize_q8_0
+0.51%     expf
+0.28%     aether::model::hf::load::<&std::path::Path>::{closure#0}
+0.24%     powf
+0.20%     aether::main
+0.17%     sincosf
+0.13%     <core::iter::adapters::flatten::FlatMap<core::slice::iter::ChunksExact<f32>, alloc::vec::Vec<aether::quant::BlockQ8_0>, aether::kernels::qua
+0.13%     aether::kernels::scalar::rope_halves
+0.13%     aether::kernels::scalar::swiglu
+0.12%     aether::kernels::scalar::rmsnorm
+0.11%     scudo::HybridMutex::tryLock()
+0.11%     @plt
+===2prime
+
+Overhead  Symbol
+49.30%    aether::kernels::neon_quant::dot4_q4_0_q8_0
+17.52%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#0}::{closure#0}, ()>
+10.57%    aether::kernels::scalar::attention_head::<<aether::model::transformer::Transformer>::forward_traced<aether::model::transformer::NoTrace>::{c
+9.15%     <aether::weight::Weight>::convert
+2.96%     aether::kernels::quant_rows
+1.87%     aether::quant::quantize_q8_0
+1.00%     expf
+1.00%     aether::model::hf::load::<&std::path::Path>::{closure#0}
+0.89%     <aether::pool::ThreadPool>::run
+0.77%     aether::kernels::scalar::rope_halves
+0.48%     powf
+0.43%     aether::kernels::scalar::rmsnorm
+0.41%     scudo::HybridMutex::tryLock()
