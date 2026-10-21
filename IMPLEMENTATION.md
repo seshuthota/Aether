@@ -41,7 +41,7 @@ build, stories15M, HF safetensors models. **Disk: 14 GB free** — budget below.
       the phone at once (they would corrupt each other's timings and heat the SoC).
 - [x] **S2. Python reference env.** `tools/requirements.txt` + `uv venv tools/.venv` (gitignored):
       numpy, torch (CPU wheel), transformers, safetensors, tokenizers, gguf, matplotlib. ~2 GB.
-- [~] **S3. llama2.c.** (cloned `350e04f`, builds, greedy works; dump patch pending) Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
+- [x] **S3. llama2.c.** (cloned `350e04f`; `tools/stories15m_goldens.sh` applies the patch and regenerates goldens) Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
       `tools/llama2c-dump.patch` (fwrite of per-layer activations + logits as raw f32).
 - [~] **S4. Model fetch script.** (stories15M + tokenizer.bin downloaded; script pending) `tools/fetch_models.sh` → `testdata/models/` (gitignored):
       stories15M.bin + tokenizer.bin (~60 MB), SmolLM2-135M (~270 MB), SmolLM2-360M (~720 MB),
@@ -50,7 +50,7 @@ build, stories15M, HF safetensors models. **Disk: 14 GB free** — budget below.
       with the same NDK (needed from Phase 6; build when Phase 6 starts).
 - [x] **S6. Miri** (`rustup component add --toolchain nightly miri`) to check every `unsafe` module
       on the host.
-- [ ] **S7. Golden-file format.** One tiny shared format for kernel/activation dumps until the
+- [x] **S7. Golden-file format.** (llama2.c record dumps + `src/testutil.rs`; runner syncs `testdata/` to the phone) One tiny shared format for kernel/activation dumps until the
       safetensors parser exists: raw little-endian f32 + a `.json`/text sidecar with shape. Readers in
       `src/testutil.rs` (test-only).
 
@@ -125,25 +125,25 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 ## Phase 2 — Scalar end-to-end on stories15M
 
-- [ ] **2.1 References.** S3 + S4: llama2.c built and patched; dumps for a fixed prompt
+- [x] **2.1 References.** S3 + S4: llama2.c built and patched; dumps for a fixed prompt
       (embedding, each norm, attention out, MLP out, logits per position) → `testdata/stories15M/`.
-- [ ] **2.2 Loader** `model/llama2c.rs`: 7×i32 header (dim, hidden_dim, n_layers, n_heads,
+- [x] **2.2 Loader** `model/llama2c.rs`: 7×i32 header (dim, hidden_dim, n_layers, n_heads,
       n_kv_heads, vocab_size — negative means unshared classifier — seq_len), then weights in
       llama2.c order.
-- [ ] **2.3 Tokenizer** `tokenizer/llama2c.rs`: tokenizer.bin (max len, then score/len/bytes per
+- [x] **2.3 Tokenizer** `tokenizer/llama2c.rs`: tokenizer.bin (max len, then score/len/bytes per
       token), score-based merges, byte fallback `<0xNN>`, BOS, leading-space rule as in `run.c`.
-- [ ] **2.4 Scalar ops** `kernels/scalar.rs`: matmul (W·x), rmsnorm, softmax (max-subtracted),
+- [x] **2.4 Scalar ops** (checked through the layer dumps; numpy kernel goldens come with 3.1) `kernels/scalar.rs`: matmul (W·x), rmsnorm, softmax (max-subtracted),
       rope (adjacent pairs, llama2.c), silu/swiglu; checked against numpy goldens (S7).
-- [ ] **2.5 Forward pass** + preallocated KV cache (`[layer][pos][kv_dim]`), run-state buffers
+- [x] **2.5 Forward pass** + preallocated KV cache (`[layer][pos][kv_dim]`), run-state buffers
       allocated once.
-- [ ] **2.6 Sampler**: argmax, temperature, top-p, top-k; xorshift RNG identical to llama2.c so
+- [x] **2.6 Sampler**: argmax, temperature, top-p, top-k; xorshift RNG identical to llama2.c so
       seeded sampling can match too.
-- [ ] **2.7 `generate` CLI**: `--model --tokenizer --prompt --steps --temp --topp --seed`, prints
+- [x] **2.7 `generate` CLI** (the `aether` binary, plus `-c CORES`): `--model --tokenizer --prompt --steps --temp --topp --seed`, prints
       tok/s.
-- [ ] **2.8 Correctness**: per-layer vs dumps (~1e-5 rel), greedy tokens identical for the full
+- [x] **2.8 Correctness** (bit-identical on host and phone; `results/phase-2.md`): per-layer vs dumps (~1e-5 rel), greedy tokens identical for the full
       run, tokenizer identical on a test corpus (encode via a tiny C harness around llama2.c's
       `encode`).
-- [ ] **2.9 Baseline**: scalar single-thread tok/s on the phone + `simpleperf` profile →
+- [x] **2.9 Baseline** (88.6 tok/s prime / 58.4 perf, on battery caps): scalar single-thread tok/s on the phone + `simpleperf` profile →
       `results/phase-2.md` (phone).
 
 ## Phase 3 — NEON f32 kernels

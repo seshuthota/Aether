@@ -1,0 +1,24 @@
+== aether core 7 run 1
+prompt: 4 positions in 44.7 ms (89.5 tok/s) | generated: 218 tokens in 2468.6 ms (88.3 tok/s)
+== llama2.c core 7 run 1
+achieved tok/s: 84.934666
+== aether core 7 run 2
+prompt: 4 positions in 44.4 ms (90.1 tok/s) | generated: 218 tokens in 2455.5 ms (88.8 tok/s)
+== llama2.c core 7 run 2
+achieved tok/s: 84.739264
+== aether core 7 run 3
+prompt: 4 positions in 44.4 ms (90.0 tok/s) | generated: 218 tokens in 2459.3 ms (88.6 tok/s)
+== llama2.c core 7 run 3
+achieved tok/s: 84.641900
+== aether core 0 run 1
+prompt: 4 positions in 67.8 ms (59.0 tok/s) | generated: 218 tokens in 3722.7 ms (58.6 tok/s)
+== llama2.c core 0 run 1
+achieved tok/s: 58.142594
+== aether core 0 run 2
+prompt: 4 positions in 69.1 ms (57.9 tok/s) | generated: 218 tokens in 3734.0 ms (58.4 tok/s)
+== llama2.c core 0 run 2
+achieved tok/s: 58.112017
+== aether core 0 run 3
+prompt: 4 positions in 68.1 ms (58.8 tok/s) | generated: 218 tokens in 3740.0 ms (58.3 tok/s)
+== llama2.c core 0 run 3
+achieved tok/s: 57.402597

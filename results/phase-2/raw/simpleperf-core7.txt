@@ -1,0 +1,22 @@
+
+Overhead  Symbol
+97.62%    aether::kernels::scalar::matmul
+1.11%     aether::kernels::scalar::attention_head::<<aether::model::transformer::Transformer>::forward_traced<aether::model::transformer::NoTrace>::{closure#0}, <aether::model::transformer::Transformer>::forward_traced<aether::model::transformer::NoTrace>::{closure#1}>
+0.33%     <aether::model::sampler::Sampler>::sample
+0.14%     expf
+0.11%     scudo::HybridMutex::tryLock()
+0.09%     <aether::model::llama2c::Cursor>::take
+0.07%     powf
+0.06%     @plt
+0.05%     aether::kernels::scalar::rmsnorm
+prompt: 4 positions in 44.5 ms (89.8 tok/s) | generated: 218 tokens in 2457.0 ms (88.7 tok/s)
+Performance counter statistics:
+
+#         count  event_name                 # count / runtime
+  6,104,281,522  cpu-cycles:u               # 2.376474 GHz 
+  9,984,557,754  instructions:u             # 3.887 G/sec  
+      5,444,058  L1-dcache-load-misses:u    # 2.119 M/sec  
+  2,342,799,170  L1-dcache-loads:u          # 912.081 M/sec
+    218,898,658  stalled-cycles-backend:u   # 85.220 M/sec 
+
+Total test time: 2.572554 seconds.

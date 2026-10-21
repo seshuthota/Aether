@@ -22,12 +22,19 @@ REMOTE_BIN="$REMOTE_DIR/$(basename "$BIN")"
 adb shell "mkdir -p $REMOTE_DIR"
 adb push "$BIN" "$REMOTE_BIN" >/dev/null
 
+# Golden files and models for on-device tests. --sync copies only files that
+# changed since the last push, so after the first run this costs almost nothing.
+TESTDATA="$(dirname "$0")/../testdata"
+if [ -d "$TESTDATA" ]; then
+  adb push --sync "$TESTDATA/." "$REMOTE_DIR/testdata/" >/dev/null
+fi
+
 # 2. Run it. adb shell glues its arguments into one string for the phone's shell,
 #    so we quote each argument first (printf %q) to keep spaces and special
 #    characters intact. set +e stops the script from exiting immediately if the
 #    run fails, because we still want to clean up first.
 set +e
-adb shell "chmod +x $REMOTE_BIN && $REMOTE_BIN $(printf '%q ' "$@")"
+adb shell "chmod +x $REMOTE_BIN && cd $REMOTE_DIR && AETHER_TESTDATA=$REMOTE_DIR/testdata $REMOTE_BIN $(printf '%q ' "$@")"
 STATUS=$?
 set -e
 
