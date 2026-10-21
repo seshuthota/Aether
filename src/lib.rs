@@ -9,6 +9,7 @@ pub mod model;
 pub mod monitor;
 pub mod pool;
 pub mod quant;
+pub mod session;
 pub mod sys;
 pub mod tensor;
 pub mod tokenizer;

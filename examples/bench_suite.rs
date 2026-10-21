@@ -83,8 +83,8 @@ fn main() {
                     model.forward_batch(&tokens[..d], 0); // fill the cache (untimed)
                 }
                 let t = Instant::now();
-                for pos in d..d + tg {
-                    model.forward(tokens[pos], pos);
+                for (pos, &tok) in tokens.iter().enumerate().skip(d).take(tg) {
+                    model.forward(tok, pos);
                 }
                 t.elapsed().as_secs_f64()
             })
@@ -109,8 +109,8 @@ fn main() {
         let (mut total, mut window_tokens, mut window_start) = (0u64, 0u64, Instant::now());
         println!("sustain_t_s,tok_per_s");
         while start.elapsed() < Duration::from_secs(sustain) {
-            for pos in 0..tg {
-                model.forward(tokens[pos], pos);
+            for (pos, &tok) in tokens.iter().enumerate().take(tg) {
+                model.forward(tok, pos);
             }
             total += tg as u64;
             window_tokens += tg as u64;
