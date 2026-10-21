@@ -4,6 +4,13 @@
 # We copy the binary to the phone, run it there, and return its exit code.
 set -euo pipefail
 
+# One phone, possibly several cargo processes (two worktrees, two Claude
+# sessions). Take an exclusive lock for the whole run so their binaries never
+# run at the same time: concurrent runs would distort each other's timings.
+# The lock is released automatically when this script exits.
+exec 9>/tmp/aether-phone.lock   # fixed path: every session must see the same file
+flock 9
+
 BIN="$1"      # path of the binary Cargo just built
 shift         # what's left in "$@" are the arguments meant for that binary
 
