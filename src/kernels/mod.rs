@@ -12,7 +12,7 @@ pub mod neon_quant;
 pub mod scalar;
 
 use crate::pool::ThreadPool;
-use crate::quant::{BlockQ4_0, BlockQ8_0, QK};
+use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
 pub use scalar::{add_inplace, argmax, attention_head, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
 
@@ -102,42 +102,81 @@ fn quantize_activation(x: &[f32]) -> Vec<BlockQ8_0> {
     q
 }
 
+/// One row's dot product with one quantized activation (any CPU).
 #[inline]
-fn dot_q8(row: &[BlockQ8_0], x: &[BlockQ8_0]) -> f32 {
-    #[cfg(target_arch = "aarch64")]
-    return neon_quant::dot_q8_0_q8_0(row, x);
-    #[cfg(not(target_arch = "aarch64"))]
-    return crate::quant::scalar::dot_q8_0_q8_0(row, x);
+fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
+    let nb = x.len();
+    match w {
+        #[cfg(target_arch = "aarch64")]
+        Weight::Q8_0(b) => neon_quant::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(target_arch = "aarch64")]
+        Weight::Q4_0(b) => neon_quant::dot_q4_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(not(target_arch = "aarch64"))]
+        Weight::Q8_0(b) => crate::quant::scalar::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(not(target_arch = "aarch64"))]
+        Weight::Q4_0(b) => crate::quant::scalar::dot_q4_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        Weight::F32(_) => unreachable!(),
+    }
 }
 
-#[inline]
-fn dot_q4(row: &[BlockQ4_0], x: &[BlockQ8_0]) -> f32 {
+/// True when the 4-row integer kernels can run (AArch64 with `sdot`).
+fn has_dot4() -> bool {
     #[cfg(target_arch = "aarch64")]
-    return neon_quant::dot_q4_0_q8_0(row, x);
+    return neon_quant::has_dotprod();
     #[cfg(not(target_arch = "aarch64"))]
-    return crate::quant::scalar::dot_q4_0_q8_0(row, x);
+    return false;
+}
+
+/// Rows `i..i+4` · one quantized activation. Only called when
+/// [`has_dot4`] is true.
+#[inline]
+#[allow(unused_variables)]
+fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let nb = x.len();
+        let rows = |k: usize| (i + k) * nb..(i + k + 1) * nb;
+        // SAFETY: callers check has_dot4 (dotprod present); every row slice
+        // has nb blocks.
+        unsafe {
+            match w {
+                Weight::Q8_0(b) => neon_quant::dot4_q8_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
+                Weight::Q4_0(b) => neon_quant::dot4_q4_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
+                Weight::F32(_) => unreachable!(),
+            }
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    unreachable!("dot4 needs the AArch64 sdot kernels")
 }
 
 /// `out[i] = row_i(W) · x` for quantized W, rows `r` of all `t` tokens,
-/// with the activations already quantized (`xq` is `[t, nb]` blocks).
-/// Each weight row is used for every token while it is in L1.
+/// with the activations already quantized (`xq` is `[t, nb]` blocks, `xd`
+/// their scales as f32). Rows go four at a time where possible (each
+/// activation block loaded once for four rows); each group of weight rows
+/// stays in L1 across tokens.
 ///
 /// # Safety
 /// `out` must be valid for `t·d` floats and no other thread may write
 /// rows `r` of it during the call.
-unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], t: usize) {
+unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], t: usize) {
     let nb = xq.len() / t;
-    for i in r {
+    let fast = has_dot4();
+    let mut i = r.start;
+    while i < r.end {
+        let step = if fast && i + 4 <= r.end { 4 } else { 1 };
         for tt in 0..t {
-            let x = &xq[tt * nb..(tt + 1) * nb];
-            let v = match w {
-                Weight::Q8_0(b) => dot_q8(&b[i * nb..(i + 1) * nb], x),
-                Weight::Q4_0(b) => dot_q4(&b[i * nb..(i + 1) * nb], x),
-                Weight::F32(_) => unreachable!(),
-            };
-            // SAFETY: element (tt, i) lies in this call's rows (caller's contract).
-            unsafe { *out.ptr().add(tt * d + i) = v };
+            let (x, s) = (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]);
+            if step == 4 {
+                let v = dot4(w, i, x, s);
+                // SAFETY: elements (tt, i..i+4) lie in this call's rows.
+                (0..4).for_each(|k| unsafe { *out.ptr().add(tt * d + i + k) = v[k] });
+            } else {
+                // SAFETY: element (tt, i) lies in this call's rows.
+                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, x) };
+            }
         }
+        i += step;
     }
 }
 
@@ -149,12 +188,14 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     let Weight::F32(f) = w else {
         assert_eq!((x.len(), out.len()), (t * n, t * d), "shapes");
         let xq: Vec<BlockQ8_0> = x.chunks_exact(n).flat_map(quantize_activation).collect();
+        // The activation's scales as f32, converted once rather than per row.
+        let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
         let o = SharedOut(out.as_mut_ptr());
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
-            Some(p) => p.for_ranges(d, ROW_BLOCK, &|r| unsafe { quant_rows(o, d, r, w, &xq, t) }),
+            Some(p) => p.for_ranges(d, ROW_BLOCK, &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, t) }),
             // SAFETY: single thread, all rows.
-            None => unsafe { quant_rows(o, d, 0..d, w, &xq, t) },
+            None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, t) },
         }
         return;
     };
@@ -260,6 +301,36 @@ mod tests {
                         let mut single = vec![0.0; d];
                         matmul(&mut single, &x, &w);
                         assert_eq!(single, gemv, "{} with {threads} threads", dir.display());
+                    }
+                }
+            }
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// The model's quantized path (`linear_on`: activation quantized to
+    /// Q8_0, 4-row integer kernels plus single-row tails, threaded) against
+    /// the "b" reference built from llama.cpp's quantizers. Row counts 1, 3,
+    /// 5, 17 and 130 exercise the tails.
+    #[test]
+    fn quantized_linear_matches_reference() {
+        let Some(root) = golden("quant") else { return };
+        std::thread::spawn(move || {
+            let online = crate::sys::affinity::online_cpus().unwrap();
+            let pool = ThreadPool::new(&online[..3.min(online.len())]).unwrap();
+            for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+                let ((ws, w), x) = (read_npy(&dir.join("w.npy")), arr(&dir, "x"));
+                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
+                    let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
+                    buf.copy_from_slice(&w);
+                    let q = Weight::F32(buf).convert(ws[1], format);
+                    let want = arr(&dir, &format!("out_{name}_b"));
+                    for p in [None, Some(&pool)] {
+                        let mut out = vec![f32::NAN; ws[0]];
+                        linear_on(p, &mut out, &x, &q);
+                        let (_, rel) = max_errors(&out, &want);
+                        assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} {name}: rel {rel:.2e}", dir.display());
                     }
                 }
             }

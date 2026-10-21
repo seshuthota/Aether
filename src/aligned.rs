@@ -83,6 +83,13 @@ impl AlignedBuf {
         self.len == 0
     }
 
+    /// A new buffer with the same contents (a deep copy).
+    pub fn clone_buf(&self) -> AlignedBuf {
+        let mut b = AlignedBuf::zeros(self.len);
+        b.copy_from_slice(self);
+        b
+    }
+
     /// Address of element 0. Always a multiple of [`ALIGN`].
     pub fn as_ptr(&self) -> *const f32 {
         self.ptr.as_ptr()

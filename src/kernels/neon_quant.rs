@@ -164,3 +164,79 @@ unsafe fn dot_q4_0_q8_0_sdot(row: &[BlockQ4_0], x: &[BlockQ8_0]) -> f32 {
     }
     vaddvq_f32(vaddq_f32(acc0, acc1))
 }
+
+/// Four f16 values (raw bits) → four f32 with one `fcvtl` instruction
+/// (base ARMv8 NEON; no fp16 extension needed).
+#[inline(always)]
+fn f16x4_to_f32(h: [u16; 4]) -> float32x4_t {
+    let r: float32x4_t;
+    // SAFETY: a register-to-register conversion; touches no memory.
+    unsafe {
+        let v = vld1_u16(h.as_ptr());
+        std::arch::asm!("fcvtl {0:v}.4s, {1:v}.4h", out(vreg) r, in(vreg) v, options(pure, nomem, nostack));
+    }
+    r
+}
+
+/// Folds one block's four integer dot products into the four row
+/// accumulators, each scaled by its lane of `scales`.
+#[inline(always)]
+fn fold4(acc: &mut [float32x4_t; 4], d: [int32x4_t; 4], scales: float32x4_t) {
+    // SAFETY: register-only NEON ops.
+    unsafe {
+        acc[0] = vfmaq_laneq_f32::<0>(acc[0], vcvtq_f32_s32(d[0]), scales);
+        acc[1] = vfmaq_laneq_f32::<1>(acc[1], vcvtq_f32_s32(d[1]), scales);
+        acc[2] = vfmaq_laneq_f32::<2>(acc[2], vcvtq_f32_s32(d[2]), scales);
+        acc[3] = vfmaq_laneq_f32::<3>(acc[3], vcvtq_f32_s32(d[3]), scales);
+    }
+}
+
+/// Four Q8_0 rows · one Q8_0 activation at once (style b, `sdot`). `xd`
+/// holds the activation's block scales already converted to f32. Each
+/// activation block is loaded once for the four rows; the four rows' scales
+/// are converted together; each row's 32-wide integer dot is two `sdot`s.
+///
+/// # Safety
+/// The CPU must have `dotprod`; every row must have `x.len()` blocks.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q8_0_q8_0(rows: [&[BlockQ8_0]; 4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+    let mut acc = [vdupq_n_f32(0.0); 4];
+    for (b, (xb, &dx)) in x.iter().zip(xd).enumerate() {
+        // SAFETY: each block holds 32 int8s; rows have x.len() blocks.
+        unsafe {
+            let (xl, xh) = (vld1q_s8(xb.qs.as_ptr()), vld1q_s8(xb.qs.as_ptr().add(16)));
+            let z = vdupq_n_s32(0);
+            let d = rows.map(|r| {
+                let w = r.get_unchecked(b);
+                vdotq_s32(vdotq_s32(z, vld1q_s8(w.qs.as_ptr()), xl), vld1q_s8(w.qs.as_ptr().add(16)), xh)
+            });
+            let scales = vmulq_n_f32(f16x4_to_f32(rows.map(|r| r.get_unchecked(b).d)), dx);
+            fold4(&mut acc, d, scales);
+        }
+    }
+    acc.map(|a| vaddvq_f32(a))
+}
+
+/// [`dot4_q8_0_q8_0`] for Q4_0 rows.
+///
+/// # Safety
+/// The CPU must have `dotprod`; every row must have `x.len()` blocks.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q4_0_q8_0(rows: [&[BlockQ4_0]; 4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+    let mut acc = [vdupq_n_f32(0.0); 4];
+    for (b, (xb, &dx)) in x.iter().zip(xd).enumerate() {
+        // SAFETY: 16 bytes of nibbles / 32 int8s per block; rows have
+        // x.len() blocks.
+        unsafe {
+            let (xl, xh) = (vld1q_s8(xb.qs.as_ptr()), vld1q_s8(xb.qs.as_ptr().add(16)));
+            let z = vdupq_n_s32(0);
+            let d = rows.map(|r| {
+                let (lo, hi) = unpack_q4(vld1q_u8(r.get_unchecked(b).qs.as_ptr()));
+                vdotq_s32(vdotq_s32(z, lo, xl), hi, xh)
+            });
+            let scales = vmulq_n_f32(f16x4_to_f32(rows.map(|r| r.get_unchecked(b).d)), dx);
+            fold4(&mut acc, d, scales);
+        }
+    }
+    acc.map(|a| vaddvq_f32(a))
+}

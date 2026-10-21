@@ -123,6 +123,8 @@ struct State {
 /// one row per token. Grown on demand to the largest batch seen.
 struct Batch {
     cap: usize,
+    /// Logits of several positions, `[k, vocab]` (perplexity evaluation).
+    logits: Vec<f32>,
     x: AlignedBuf,   // [cap, dim]
     xb: AlignedBuf,  // [cap, dim]
     xb2: AlignedBuf, // [cap, dim]
@@ -134,7 +136,7 @@ struct Batch {
 impl Batch {
     fn new(c: &Config, cap: usize) -> Batch {
         let z = |n: usize| AlignedBuf::zeros(cap * n);
-        Batch { cap, x: z(c.dim), xb: z(c.dim), xb2: z(c.dim), q: z(c.dim), hb: z(c.hidden_dim), hb2: z(c.hidden_dim) }
+        Batch { cap, logits: Vec::new(), x: z(c.dim), xb: z(c.dim), xb2: z(c.dim), q: z(c.dim), hb: z(c.hidden_dim), hb2: z(c.hidden_dim) }
     }
 }
 
@@ -269,6 +271,19 @@ impl Transformer {
     /// one call per token, with the same names and positions as
     /// [`Transformer::forward_traced`].
     pub fn forward_batch_traced<O: Observer>(&mut self, tokens: &[usize], start: usize, obs: &mut O) -> &[f32] {
+        self.batch_impl(tokens, start, tokens.len() - 1, obs)
+    }
+
+    /// Runs `tokens` at positions `start ..` and returns the logits of every
+    /// token from index `from` on, `[tokens.len() - from, vocab]` row-major
+    /// (row `r` predicts the token after `tokens[from + r]`). Used to score
+    /// text: perplexity needs a prediction at every position.
+    pub fn forward_batch_logits(&mut self, tokens: &[usize], start: usize, from: usize) -> &[f32] {
+        assert!(from < tokens.len());
+        self.batch_impl(tokens, start, from, &mut NoTrace)
+    }
+
+    fn batch_impl<O: Observer>(&mut self, tokens: &[usize], start: usize, logits_from: usize, obs: &mut O) -> &[f32] {
         let t = tokens.len();
         assert!(t > 0, "empty batch");
         assert!(start + t <= self.config.seq_len, "positions {start}..{} beyond seq_len {}", start + t, self.config.seq_len);
@@ -362,14 +377,25 @@ impl Transformer {
             }
         }
 
-        // Only the last token's logits are needed to continue generating.
-        let last = &b.x[(t - 1) * dim..t * dim];
-        s.x.copy_from_slice(last);
-        k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
-        obs.tap("final_norm", None, start + t - 1, &s.x);
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
-        k::linear_on(pool, &mut s.logits, &s.x, cls);
-        obs.tap("logits", None, start + t - 1, &s.logits);
-        &s.logits
+        if logits_from + 1 == t {
+            // Only the last token's logits are needed to continue generating.
+            let last = &b.x[(t - 1) * dim..t * dim];
+            s.x.copy_from_slice(last);
+            k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
+            obs.tap("final_norm", None, start + t - 1, &s.x);
+            k::linear_on(pool, &mut s.logits, &s.x, cls);
+            obs.tap("logits", None, start + t - 1, &s.logits);
+            return &s.logits;
+        }
+        // Several positions: normalise those rows in place and run the
+        // classifier over all of them as one batched product.
+        let rows = t - logits_from;
+        for i in logits_from..t {
+            k::rmsnorm_inplace(&mut b.x[i * dim..(i + 1) * dim], &w.final_norm, c.norm_eps);
+        }
+        b.logits.resize(rows * c.vocab_size, 0.0);
+        k::linear_batch_on(pool, &mut b.logits, &b.x[logits_from * dim..t * dim], cls, rows);
+        &b.logits
     }
 }

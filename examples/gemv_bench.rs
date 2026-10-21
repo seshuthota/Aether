@@ -11,6 +11,7 @@ use aether::aligned::AlignedBuf;
 use aether::bench::bench;
 use aether::kernels::scalar;
 use aether::sys::affinity;
+use aether::weight::{Format, Weight};
 use std::hint::black_box;
 
 type Kernel = fn(&mut [f32], &[f32], &[f32]);
@@ -60,6 +61,26 @@ fn main() {
         for (name, k) in &kernels {
             let s = bench(3, iters, || k(black_box(&mut out), black_box(&x), black_box(&w)));
             println!("{name},{d},{n},{},{:.1},{:.2},{:.2},{what}", d * n * 4, s.median / 1e3, bytes / s.median, bytes / s.min);
+        }
+        // Quantized versions of the same matrix, through the engine's
+        // linear() (activation quantized to Q8_0 + integer dots, style b),
+        // plus the style-a kernels directly. GB/s at the quantized size.
+        for format in [Format::Q8_0, Format::Q4_0] {
+            let q = Weight::F32(w.clone_buf()).convert(n, format);
+            let qbytes = q.bytes() as f64;
+            let s = bench(3, iters, || aether::kernels::linear_on(None, black_box(&mut out), black_box(&x), black_box(&q)));
+            println!("{format:?}_b_sdot,{d},{n},{},{:.1},{:.2},{:.2},{what}", q.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
+            #[cfg(target_arch = "aarch64")]
+            {
+                use aether::kernels::neon_quant as nq;
+                let nb = n / 32;
+                let s = bench(3, iters, || match &q {
+                    Weight::Q8_0(b) => out.iter_mut().enumerate().for_each(|(i, o)| *o = nq::dot_q8_0_f32(black_box(&b[i * nb..(i + 1) * nb]), &x)),
+                    Weight::Q4_0(b) => out.iter_mut().enumerate().for_each(|(i, o)| *o = nq::dot_q4_0_f32(black_box(&b[i * nb..(i + 1) * nb]), &x)),
+                    Weight::F32(_) => unreachable!(),
+                });
+                println!("{format:?}_a_dequant,{d},{n},{},{:.1},{:.2},{:.2},{what}", q.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
+            }
         }
     }
 }

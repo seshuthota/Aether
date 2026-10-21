@@ -16,6 +16,13 @@
 //!             one unpinned thread)
 //!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0
 //!
+//! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
+//!   --ppl FILE    perplexity of the model on the text in FILE
+//!   --ctx N       chunk length (default 512)
+//!   --chunks N    score only the first N chunks (default: all)
+//!   --kl          also load the f32 model and report KL divergence and
+//!                 top-token agreement of the -q model against it
+//!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
 //! separately.
@@ -71,6 +78,16 @@ impl Text {
         }
     }
 
+    /// The token llama.cpp puts at the start of each perplexity chunk, if
+    /// the tokenizer adds one: BOS for llama2.c, none for SmolLM2 (its GGUF
+    /// has add_bos_token = false).
+    fn chunk_bos(&self) -> Option<usize> {
+        match self {
+            Text::Llama2c(_) => Some(l2c_tok::BOS),
+            Text::Hf { .. } => None,
+        }
+    }
+
     fn is_stop(&self, id: usize) -> bool {
         match self {
             Text::Llama2c(_) => id == l2c_tok::BOS,
@@ -107,8 +124,13 @@ fn main() {
     let mut tok_path = model_path.with_file_name("tokenizer.bin");
     let mut cores = None;
     let mut format = Format::F32;
+    let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
+        if flag == "--kl" {
+            kl = true;
+            continue;
+        }
         let val = args.next().unwrap_or_else(|| usage());
         match flag.as_str() {
             "-z" => tok_path = val.into(),
@@ -118,6 +140,9 @@ fn main() {
             "-s" => seed = val.parse().unwrap_or_else(|_| usage()),
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
+            "--ppl" => ppl_file = Some(val.into()),
+            "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
+            "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
             "-c" => cores = Some(aether::sys::affinity::parse_cpu_list(&val).unwrap_or_else(|e| panic!("{e}"))),
             _ => usage(),
@@ -127,6 +152,9 @@ fn main() {
         seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     }
 
+    if let Some(file) = ppl_file {
+        return score(&model_path, &tok_path, &file, format, ctx, chunks, kl, cores);
+    }
     let (mut model, text) = load(&model_path, &tok_path, steps, format);
     eprintln!("weights: {format:?}, {:.1} MB", model.weights.bytes() as f64 / 1e6);
     let steps = steps.min(model.config.seq_len);
@@ -186,6 +214,31 @@ fn main() {
         eprint!(" | decode: {n_dec} tokens in {:.1} ms ({:.1} tok/s)", decode.as_secs_f64() * 1e3, rate(n_dec, decode));
     }
     eprintln!();
+}
+
+/// `--ppl` mode: perplexity (and with `--kl`, KL divergence against the f32
+/// model) over a text file, printed like llama-perplexity.
+#[allow(clippy::too_many_arguments)]
+fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: usize, chunks: usize, kl: bool, cores: Option<Vec<usize>>) {
+    let (mut model, text) = load(model_path, tok_path, ctx, format);
+    let mut base = kl.then(|| load(model_path, tok_path, ctx, Format::F32).0);
+    if let Some(cores) = &cores {
+        model.set_pool(ThreadPool::new(cores).unwrap_or_else(|e| panic!("thread pool on {cores:?}: {e}")));
+    }
+    let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
+    let t0 = Instant::now();
+    let tokens = text.encode(&raw);
+    eprintln!("{}: {} tokens (tokenized in {:.0} ms), weights {format:?} {:.1} MB", file.display(), tokens.len(), t0.elapsed().as_secs_f64() * 1e3, model.weights.bytes() as f64 / 1e6);
+    let t1 = Instant::now();
+    let s = aether::eval::perplexity(&mut model, base.as_mut(), &tokens, text.chunk_bos(), ctx, chunks, |i, s| {
+        eprint!("[{i}]{:.4},", s.ppl());
+    });
+    eprintln!();
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored in {:.1} s)", s.ppl(), s.ppl_err(), s.count, t1.elapsed().as_secs_f64());
+    if kl {
+        println!("PPL(base f32) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
+        println!("Mean KLD: {:.6}   Same top p: {:.3} %", s.mean_kld(), s.same_top_pct());
+    }
 }
 
 fn usage() -> ! {
