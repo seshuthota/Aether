@@ -167,9 +167,9 @@ mod tests {
         }
 
         // Greedy continuation, one token at a time.
-        for pos in prompt.len()..greedy.len() {
+        for (pos, &want) in greedy.iter().enumerate().skip(prompt.len()) {
             let next = crate::kernels::argmax(&logits);
-            assert_eq!(next, greedy[pos], "greedy token at position {pos}");
+            assert_eq!(next, want, "greedy token at position {pos}");
             logits.copy_from_slice(t.forward(next, pos));
         }
         println!("{} greedy tokens identical to transformers.generate", greedy.len() - prompt.len());
