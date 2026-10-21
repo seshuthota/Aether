@@ -89,7 +89,7 @@ pub fn f32_to_f16(x: f32) -> u16 {
 /// Quantizes `x` (a multiple of 32 long) into Q8_0 blocks.
 pub fn quantize_q8_0(x: &[f32], out: &mut [BlockQ8_0]) {
     assert_eq!(x.len(), out.len() * QK, "length must be blocks × 32");
-    for (blk, v) in out.iter_mut().zip(x.chunks_exact(QK)) {
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::<QK>().0) {
         let amax = v.iter().fold(0.0f32, |m, &a| m.max(a.abs()));
         let d = amax / 127.0;
         let id = if d != 0.0 { 1.0 / d } else { 0.0 };
@@ -103,7 +103,7 @@ pub fn quantize_q8_0(x: &[f32], out: &mut [BlockQ8_0]) {
 /// Quantizes `x` (a multiple of 32 long) into Q4_0 blocks.
 pub fn quantize_q4_0(x: &[f32], out: &mut [BlockQ4_0]) {
     assert_eq!(x.len(), out.len() * QK, "length must be blocks × 32");
-    for (blk, v) in out.iter_mut().zip(x.chunks_exact(QK)) {
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::<QK>().0) {
         // The element of largest magnitude, first one on ties, sign kept.
         let (mut amax, mut max) = (0.0f32, 0.0f32);
         for &a in v {
@@ -124,7 +124,7 @@ pub fn quantize_q4_0(x: &[f32], out: &mut [BlockQ4_0]) {
 
 pub fn dequantize_q8_0(blocks: &[BlockQ8_0], out: &mut [f32]) {
     assert_eq!(out.len(), blocks.len() * QK);
-    for (blk, o) in blocks.iter().zip(out.chunks_exact_mut(QK)) {
+    for (blk, o) in blocks.iter().zip(out.as_chunks_mut::<QK>().0.iter_mut()) {
         let d = f16_to_f32(blk.d);
         for (v, &q) in o.iter_mut().zip(&blk.qs) {
             *v = q as f32 * d;
@@ -134,7 +134,7 @@ pub fn dequantize_q8_0(blocks: &[BlockQ8_0], out: &mut [f32]) {
 
 pub fn dequantize_q4_0(blocks: &[BlockQ4_0], out: &mut [f32]) {
     assert_eq!(out.len(), blocks.len() * QK);
-    for (blk, o) in blocks.iter().zip(out.chunks_exact_mut(QK)) {
+    for (blk, o) in blocks.iter().zip(out.as_chunks_mut::<QK>().0.iter_mut()) {
         let d = f16_to_f32(blk.d);
         for j in 0..QK / 2 {
             o[j] = ((blk.qs[j] & 0x0F) as i32 - 8) as f32 * d;
@@ -151,7 +151,7 @@ pub mod scalar {
     /// (a) Q8_0 row · f32 `x`.
     pub fn dot_q8_0_f32(row: &[BlockQ8_0], x: &[f32]) -> f32 {
         let mut acc = 0.0f32;
-        for (blk, xs) in row.iter().zip(x.chunks_exact(QK)) {
+        for (blk, xs) in row.iter().zip(x.as_chunks::<QK>().0) {
             let mut s = 0.0f32;
             for (&q, &v) in blk.qs.iter().zip(xs) {
                 s += q as f32 * v;
@@ -174,7 +174,7 @@ pub mod scalar {
     /// (a) Q4_0 row · f32 `x`.
     pub fn dot_q4_0_f32(row: &[BlockQ4_0], x: &[f32]) -> f32 {
         let mut acc = 0.0f32;
-        for (blk, xs) in row.iter().zip(x.chunks_exact(QK)) {
+        for (blk, xs) in row.iter().zip(x.as_chunks::<QK>().0) {
             let mut s = 0.0f32;
             for j in 0..QK / 2 {
                 s += ((blk.qs[j] & 0x0F) as i32 - 8) as f32 * xs[j];
