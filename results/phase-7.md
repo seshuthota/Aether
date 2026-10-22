@@ -14,7 +14,8 @@ llama-bench was pinned with `taskset` to the same cores and given one thread
 per core (`-t 6` / `-t 2`), 3 repetitions; ours reports the median of 3.
 
 Engine code: commit `0f56ed4`, i.e. **before NEON attention** (attention
-scores were a scalar loop). The re-run with NEON attention is pending.
+scores were a scalar loop). NEON attention was measured the next day as an
+A/B against this commit; see "Attention: A/B" below.
 
 ## Correctness (from the Phase 7 commits)
 
@@ -74,8 +75,11 @@ tok/s. `pp N` = prefill of an N-token prompt from an empty cache; `tg64 @ dD`
 
 ## Where the time goes
 
-- **Short-context decode is level with llama.cpp on 6 cores** (Q4_0 128.8 vs
-  125.0; Q8_0 88.8 vs 96.4). Decode reads every weight once per token, so it
+- **Short-context decode is close to llama.cpp on 6 cores**: level on
+  2026-10-21 (Q4_0 128.8 vs 125.0; Q8_0 88.8 vs 96.4), ~20 % behind in the
+  same-day re-run of 2026-10-22 (111.5 vs 134.9 ± 6.6). Run-to-run and
+  day-to-day spread is as large as the gap, so "within ~20 %" is what these
+  numbers support. Decode reads every weight once per token, so it
   is bandwidth work: 278 MB × 128.8 tok/s ≈ 36 GB/s, about half the ~67 GB/s
   all-core DRAM read of Phase 1.
 - **On 2 prime cores llama.cpp decodes ~1.6× faster** (123.7 vs 78.8). Two
@@ -84,17 +88,20 @@ tok/s. `pp N` = prefill of an N-token prompt from an empty cache; `tg64 @ dD`
   (compute-bound on one core, `results/phase-6.md`); this llama.cpp build
   (`GGML_CPU_REPACK=ON`, `-march=armv8.7a+dotprod+i8mm`) repacks Q4_0
   weights at load into interleaved blocks for `smmla` and needs fewer.
-- **Decode falls off with context in ours** (Q4_0, cores 2–7: 128.8 → 62.8
-  tok/s from depth 0 to 512; llama.cpp 125 → 123). At depth 512 the step
-  takes 8.2 ms longer (15.9 vs 7.8 ms), which is what the scalar attention loop costs:
-  per layer, 14 heads × 513 positions × 64-long dot products, each a chain
-  of dependent adds the compiler may not reorder. That is item 3.5's NEON
-  attention (done since; re-measure pending).
+- **Decode falls off with context faster in ours.** The table's 128.8 →
+  62.8 tok/s (depth 0 → 512) did not reproduce: on 2026-10-22 the same
+  commit gave 110.6 → 87.0 in three alternating runs, so the single 62.8 was
+  mostly a bad run (likely clock or memory caps changing mid-test, which the
+  shell cannot read). What the A/B below does show: at depth 512 scalar
+  attention cost ~2.5 ms per token (11.5 vs 9.0 ms at depth 0), NEON
+  attention ~1.5 ms (10.4 vs 9.0). llama.cpp loses less (134.9 → 117.5 the
+  same day). One visible cause in ours: work is split by head, and 14 heads
+  over 6 threads gives some threads 3 heads and others 2.
 - **Prefill is 2.1–5.8× slower than llama.cpp.** Prefill is compute work (each
   weight is reused across all prompt tokens), and our quantized prefill
   still runs `sdot` row kernels per token group rather than a blocked
-  integer GEMM; llama.cpp uses `smmla` (i8mm, 8×8 int8 → int32 per
-  instruction) on repacked weights. That is item 6.5. For 64–256-token
+  integer GEMM; llama.cpp uses `smmla` (i8mm: one instruction multiplies a
+  2×8 int8 block by an 8×2 block into 2×2 int32 sums) on repacked weights. That is item 6.5. For 64–256-token
   prompts Q8_0 prefills faster than Q4_0 in ours (no nibble unpacking) —
   the opposite of decode.
 - **Cores 2–7 vs 6–7**: performance cores add bandwidth demand but each is
@@ -113,7 +120,32 @@ back to back for 5 minutes.
   → **0.041 J per token** (about 24 tokens per joule). That is total phone
   power with the screen on, not the CPU alone.
 
+## Attention: A/B (2026-10-22)
+
+`ab-attention.txt`: scalar attention (`0f56ed4`) and NEON attention
+(`8ae105c`) run alternately on the same phone, three rounds, each run started
+below 48 °C (battery 54 %, discharging; under load the prime cores were
+capped at 1.96 GHz instead of the previous day's 2.44 GHz). Q4_0, cores 2–7,
+median of three rounds, tok/s:
+
+| | tg64 @ d0 | tg64 @ d256 | tg64 @ d512 |
+| --- | --- | --- | --- |
+| scalar attention | 110.6 | 96.8 | 87.0 |
+| NEON attention | 111.5 | 103.8 | 95.7 |
+| llama.cpp, same session (`llamacpp-qwen-q4_0-c2-7-tg-rerun.txt`) | 134.9 ± 6.6 | 114.0 ± 12.2 | 117.5 ± 8.5 |
+
+NEON attention is +10 % at depth 512 and changes nothing at depth 0, as
+expected. The `*-neonattn.txt` files are the first re-run of the full tables
+that morning, before the A/B: their cores 6–7 decode came out at half the
+previous day's (38.8 vs 78.8 tok/s for Q4_0), and so did its 256- and
+512-token prefill (53.6 vs 112.1, 53.2 vs 99.9), while 64-token prefill
+dropped only from 121.6 to 107.7. The prime-core cap under load was 1.96 GHz
+(a 1.25× drop), which explains only part of that; the memory-bus frequency,
+the other likely factor, is not readable from the shell
+(`/sys/class/devfreq` is denied). The cause is not established. Those files
+are kept as a record of how much conditions move, not as a comparison.
+
 ## Pending
 
-- Re-run the speed tables with NEON attention (expect depth 512 to close most
-  of the gap to depth 0).
+- Split attention across positions as well as heads (14 heads over 6
+  threads), then re-measure depth 512.

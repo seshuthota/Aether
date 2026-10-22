@@ -1,0 +1,13 @@
+# A/B attention, 2026-10-22T08:14:31+05:30; old = 0f56ed4 (scalar attention), new = 8ae105c (NEON attention)
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 54
+# Capacity level: -1
+round 1 old start 46900 m°C: pp64,158.0,405.0 tg64@d0,110.6,578.6 tg64@d256,98.1,652.3 tg64@d512,86.1,742.9 
+round 1 new start 47600 m°C: pp64,146.3,437.4 tg64@d0,112.9,566.9 tg64@d256,104.8,610.8 tg64@d512,97.6,656.0 
+round 2 old start 47300 m°C: pp64,152.2,420.4 tg64@d0,111.1,576.3 tg64@d256,96.8,661.4 tg64@d512,87.0,735.6 
+round 2 new start 47600 m°C: pp64,150.0,426.7 tg64@d0,111.2,575.3 tg64@d256,99.2,645.4 tg64@d512,85.2,750.8 
+round 3 old start 47300 m°C: pp64,144.4,443.3 tg64@d0,104.9,609.9 tg64@d256,83.2,769.0 tg64@d512,88.4,723.9 
+round 3 new start 46500 m°C: pp64,147.2,434.8 tg64@d0,111.5,573.9 tg64@d256,103.8,616.8 tg64@d512,95.7,668.5 
