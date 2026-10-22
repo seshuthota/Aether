@@ -326,11 +326,18 @@ mod tests {
     #[test]
     fn samples_until_stopped() {
         let m = Monitor::start(Duration::from_millis(20), None).unwrap();
-        thread::sleep(Duration::from_millis(150));
-        let t = Instant::now();
+        // On Android the first sample reads the battery service (three
+        // subprocesses): over 150 ms while the other tests load every core.
+        // Later samples skip it until the slow period, so 1 s is plenty.
+        thread::sleep(Duration::from_secs(1));
         let r = m.stop();
-        assert!(t.elapsed() < Duration::from_millis(15), "stop must not wait for a full period");
         assert!(r.samples.len() >= 5, "only {} samples", r.samples.len());
+        // Stopping finishes the sample in progress (the first one reads the
+        // battery: up to ~1 s of subprocesses under load) but must not wait
+        // for the next tick. With a 10 s period the two are far apart.
+        let t = Instant::now();
+        Monitor::start(Duration::from_secs(10), None).unwrap().stop();
+        assert!(t.elapsed() < Duration::from_secs(5), "stop waited {:?}: it must not wait for the next tick", t.elapsed());
         assert!(r.samples.windows(2).all(|w| w[0].t_s <= w[1].t_s));
         let mut csv = Vec::new();
         r.write_csv(&mut csv).unwrap();
