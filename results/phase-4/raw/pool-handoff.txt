@@ -1,0 +1,19 @@
+# 2026-10-22T20:09:26+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 81
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# foreground: topResumedActivity=ActivityRecord{4159373 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+# media sessions playing: 0
+# pool_handoff cores [6, 7] (caller + 1 others), best of 5, us per job
+spawn+join 70.25 | condvar 48.23 | pool.run 0.147
+# pool_handoff cores [4, 5, 6, 7] (caller + 3 others), best of 5, us per job
+spawn+join 424.97 | condvar 183.93 | pool.run 0.863
+# pool_handoff cores [2, 3, 4, 5, 6, 7] (caller + 5 others), best of 5, us per job
+spawn+join 505.80 | condvar 276.19 | pool.run 1.262
+# pool_handoff cores [0, 1, 2, 3, 4, 5, 6, 7] (caller + 7 others), best of 5, us per job
+spawn+join 659.00 | condvar 440.89 | pool.run 1.881

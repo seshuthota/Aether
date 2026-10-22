@@ -1,0 +1,50 @@
+# 2026-10-22T20:44:58+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 74
+# Capacity level: -1
+# cpu0 cap 1555200 kHz
+# cpu6 cap 1689600 kHz
+# foreground: topResumedActivity=ActivityRecord{4159373 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+# media sessions playing: 0
+# bench_suite testdata/models/SmolLM2-135M | q4_0 | weights 75.8 MB | cores [0, 1, 2, 3, 4, 5, 6, 7] (8 threads) | load 778 ms
+test,tok_per_s,ms
+pp64,246.3,259.9
+tg64@d0,221.7,288.6
+ttft_pp64,5.9,168.9
+# peak RSS 793396 kB
+sustain_t_s,tok_per_s
+10,190.8
+20,195.2
+30,225.3
+40,223.3
+51,229.1
+61,223.9
+71,223.3
+81,226.8
+91,214.7
+101,201.4
+111,204.1
+121,209.6
+131,204.1
+141,200.2
+152,208.9
+162,209.3
+172,204.3
+182,204.2
+192,205.5
+202,205.9
+212,211.5
+223,208.8
+233,175.0
+243,189.4
+253,207.1
+263,193.7
+274,199.9
+284,191.5
+294,206.6
+# sustained: 62016 tokens in 300 s = 206.6 tok/s average
+# monitor: 602 samples over 300.22 s, max temp 71.8 °C, energy 499.49 J, avg power 1.66 W, charge counter: 413.1 J over a 183 s window = 2.26 W
+# energy per token: 0.011 J (2.26 W from charge counter)

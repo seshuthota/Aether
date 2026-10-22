@@ -1,0 +1,17 @@
+# 2026-10-22T20:16:33+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 80
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# foreground: topResumedActivity=ActivityRecord{235257412 u0 com.reddit.frontpage/launcher.default t29888 d0}
+# media sessions playing: 0
+# bench_suite testdata/models/SmolLM2-135M | q4_0 | weights 75.8 MB | cores [0, 1, 2, 3, 4, 5] (6 threads) | load 503 ms
+test,tok_per_s,ms
+pp64,379.8,168.5
+tg64@d0,247.5,258.6
+ttft_pp64,5.5,180.2
+# peak RSS 793352 kB
