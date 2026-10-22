@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,17 +25,19 @@
 <div class="callout ok"><span class="lbl">Built and verified</span><p>Every page in this phase describes code that exists and runs on the phone. Its output was checked against llama2.c and is bit-identical: the same tokens, and every intermediate number equal down to the last bit.</p></div>
 
 <h1>Phase 2 — a whole model in plain Rust</h1>
-<p class="lede">Phase 2 builds every part of a real language model, in the simplest code that works: no vector instructions, no threads, one token at a time. When it is done, a 15-million-parameter model writes children's stories on the phone, and every number it computes matches a reference program exactly.</p>
+<p class="lede">A language model is a program that scores each possible next token. Phase 2 builds every part of a real one, in the simplest code that works: no vector instructions, no threads, one token at a time. When it is done, a 15-million-parameter model writes children's stories on the phone, and every number it computes matches a reference program exactly.</p>
 <nav class="toc">
-  <a href="#model">The model</a>
-  <a href="#map">One forward pass, as a map</a>
-  <a href="#order">Read in this order</a>
-  <a href="#done">What “done” meant</a>
-  <a href="#code">Where the code is</a>
+  <a href="#model">What model is this, and how big is it?</a>
+  <a href="#map">What path does a token take?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#done">How do you know it is finished?</a>
+  <a href="#code">Which files hold the code?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="model">The model: stories15M</h2>
-<p>stories15M is a tiny model trained by Andrej Karpathy on simple children's stories. It is small enough to understand completely and big enough to be a real transformer: the same parts, in the same order, as the models in Phases 5 and 7. Only the sizes are smaller.</p>
+<h2 id="model">What model is this, and how big is it?</h2>
+<p>You need a model small enough to read in full. A <strong>parameter</strong> is one learned number inside the model. stories15M is a tiny model trained by Andrej Karpathy on simple children's stories. It is small enough to understand completely and big enough to be a real <strong>transformer</strong>, the kind of network most modern language models use. It has the same parts, in the same order, as the models in Phases 5 and 7. Only the sizes are smaller.</p>
+<p>Each row of the table is one setting. The last column says what it does.</p>
 <table>
   <thead><tr><th>Setting</th><th>Value</th><th>What it means</th></tr></thead>
   <tbody>
@@ -48,10 +50,11 @@
     <tr><td>parameters</td><td class="num">15.2 million</td><td>60.8 MB as f32 <span class="tag c">calculated</span> — the file is 60,816,028 bytes <span class="tag m">measured</span>.</td></tr>
   </tbody>
 </table>
-<p>The reference is llama2.c: one C file that runs this model. Its job here is to be the answer key. Our code is written independently, in Rust, and then compared with it number by number.</p>
+<p>How do you know the code is right? Compare it with a program that already is. llama2.c is one C file that runs this model. Its job here is to be the answer key. Our code is written independently, in Rust, and then compared with it number by number.</p>
+<p><strong>Takeaway: stories15M has the same parts as the larger models, only smaller, so you can read all of it.</strong></p>
 
-<h2 id="map">One forward pass, as a map</h2>
-<p>Each page of this phase is one box below. Read it left to right: a token id goes in, scores for every possible next token come out.</p>
+<h2 id="map">What path does a token take?</h2>
+<p>A token enters as one id number. The model must finish with one score for each of its 32,000 possible next tokens. The map below is that path, one box per page. Read it left to right: a token id goes in, scores for every possible next token come out.</p>
 <figure>
 <div class="flow">
   <div>token id<small><a href="tokenizer.html">tokenizer</a></small></div><span class="arr">→</span>
@@ -62,8 +65,10 @@
 </div>
 <figcaption>The KV cache (<a href="kv-cache.html">page 7</a>) sits beside attention: it holds what every earlier token contributed, so each new token only has to compute its own part.</figcaption>
 </figure>
+<p><strong>Takeaway: every page in this phase is one box on this path, so the map shows where each piece fits.</strong></p>
 
-<h2 id="order">Read in this order</h2>
+<h2 id="order">Which page should I read first?</h2>
+<p>Read the pages top to bottom. Each one builds on the parts before it, so skipping ahead means meeting terms you have not seen. <strong>tok/s</strong> means tokens per second: how many tokens the model writes in one second.</p>
 <ol>
   <li><a href="model-file.html">Inside a model file</a> — the 28-byte header and where each of the 15.2 million numbers lives.</li>
   <li><a href="tokenizer.html">Text to tokens</a> — how “Once upon a time” becomes 1, 9038, 2501, 263, 931.</li>
@@ -78,17 +83,20 @@
   <li><a href="correctness.html">Bit-identical with llama2.c</a> — how we know every step is right.</li>
   <li><a href="baseline.html">First speed: 88.6 tok/s</a> — what is slow, and why, which sets up Phase 3.</li>
 </ol>
+<p><strong>Takeaway: read top to bottom, because each page uses the parts the page before it built.</strong></p>
 
-<h2 id="done">What “done” meant</h2>
-<p>The phase was finished when three things were true, all checked on the PC and on the phone:</p>
+<h2 id="done">How do you know it is finished?</h2>
+<p>Text that looks fluent is not proof that the code is right. The phase was finished when three things were true, all checked on the PC and on the phone:</p>
 <ul>
-  <li>For the prompt “Once upon a time”, 14 kinds of intermediate result (the embedding, each layer's q, k, v, attention output, MLP output, and so on, through to the final scores) equal llama2.c's for 6 layers × 64 positions, with an error of exactly <strong>0</strong> <span class="tag m">measured</span>.</li>
+  <li>For the prompt “Once upon a time”, 14 kinds of intermediate result (the embedding, each layer's q, k, v, attention output, MLP output, and so on, through to the final scores) equal llama2.c's for 6 layers × 64 positions, with an error of exactly <strong>0</strong> <span class="tag m">measured</span>. An error of 0 means the two programs produce the same bits.</li>
   <li>Greedy generation and seeded random sampling produce the same tokens as llama2.c, and the same text byte for byte <span class="tag m">measured</span>.</li>
   <li>The tokenizer gives the same ids as llama2.c's for 323 test strings: accents, Chinese, emoji, control characters <span class="tag m">measured</span>.</li>
 </ul>
 <p>Then one number for the record: <strong>88.6 tokens per second</strong> on one prime core, on battery <span class="tag m">measured</span>. llama2.c, compiled for the same phone, did 84.7. Page 12 explains why both are this slow, and why that is good news.</p>
+<p><strong>Takeaway: finished means the output matches the reference exactly, not that the text merely looks right.</strong></p>
 
-<h2 id="code">Where the code is</h2>
+<h2 id="code">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds every measurement, with the conditions it was taken under.</p>
 <table>
   <thead><tr><th>File</th><th>Job</th></tr></thead>
   <tbody>
@@ -101,14 +109,20 @@
     <tr><td><code>results/phase-2.md</code></td><td>Every check and measurement, with conditions</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: each kind of operation lives in one kernels file, and the results file records every measurement.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A small model has the same parts as a large one: an embedding, six layers of attention and MLP, and a classifier.</p>
+<p>Each page is one box on the path from a token to the next token, and you read them in order.</p>
+<p>The model counts as correct only when it matches llama2.c number for number, and 88.6 tokens per second is where the speed work begins.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

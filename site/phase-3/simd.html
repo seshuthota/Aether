@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,19 +23,20 @@
 <main id="content">
 <p class="kicker">Phase 3 · 01</p>
 <h1>SIMD and NEON</h1>
-<p class="lede">SIMD means single instruction, multiple data: one instruction that does the same operation on several numbers side by side. On ARM phones the SIMD instruction set is called NEON. Its registers are 128 bits wide, which is four <code>f32</code>s. This page covers the registers, the handful of instructions the engine's kernels use, and how Rust exposes them.</p>
+<p class="lede">SIMD means single instruction, multiple data: one instruction that does the same operation on several numbers side by side. On ARM phones the SIMD instruction set is called NEON. Its registers are 128 bits wide, which is four <code>f32</code>s. A register is a small piece of storage inside the CPU that holds the numbers an instruction works on. This page covers the registers, the handful of instructions the engine's kernels use, and how Rust exposes them.</p>
 <nav class="toc">
-  <a href="#idea">One instruction, four lanes</a>
-  <a href="#registers">The registers</a>
-  <a href="#instructions">The five instructions that matter</a>
-  <a href="#intrinsics">Intrinsics: NEON from Rust</a>
-  <a href="#unsafe">Why it is <code>unsafe</code></a>
-  <a href="#fma">FMA: one rounding instead of two</a>
+  <a href="#idea">What does one instruction do to four numbers?</a>
+  <a href="#registers">How many numbers fit in the registers?</a>
+  <a href="#instructions">Which five instructions does the engine use?</a>
+  <a href="#intrinsics">How do you call NEON from Rust?</a>
+  <a href="#unsafe">Why does a NEON load need <code>unsafe</code>?</a>
+  <a href="#fma">Does FMA round like a multiply and an add?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="idea">One instruction, four lanes</h2>
-<p>A scalar add takes two numbers and produces one. A NEON add takes two registers of four numbers each and produces four sums at once, lane by lane:</p>
+<h2 id="idea">What does one instruction do to four numbers?</h2>
+<p>A <strong>dot product</strong> multiplies two lists of numbers pairwise, then adds up the products. A scalar add takes two numbers and produces one. A NEON add takes two registers of four numbers each and produces four sums at once, lane by lane. A <strong>lane</strong> is one slot in a register. Each NEON register here has four.</p>
 <figure>
 <svg viewBox="0 0 520 150" role="img" aria-label="Lane-wise addition of two four-float registers">
   <g font-size="13" text-anchor="middle">
@@ -52,14 +53,17 @@
 </svg>
 <figcaption>Each lane is independent: lane 2 never sees lane 0. That is what makes it cheap for the hardware, and what makes the last step of a dot product (adding the lanes together) a separate instruction.</figcaption>
 </figure>
-<p>For a dot product of 288 numbers, that means 72 vector multiply-adds instead of 288 scalar ones. The catch, as the next page shows, is that being wide does not help if every instruction still waits for the previous one.</p>
+<p>A dot product of 288 numbers takes 72 vector multiply-adds instead of 288 scalar ones. The catch, as the next page shows, is that width does not help if every instruction waits for the previous one.</p>
+<p><strong>Takeaway: one NEON instruction does four lane-wise operations, so a 288-number dot product needs 72 instructions instead of 288.</strong></p>
 
-<h2 id="registers">The registers</h2>
-<p>An AArch64 core has 32 vector registers, <code>v0</code> to <code>v31</code>, each 128 bits. The same register can be viewed as 16 bytes, 8 × 16-bit, 4 × 32-bit or 2 × 64-bit numbers; for <code>f32</code> work it is 4 lanes, written <code>v0.4s</code> in assembly (“4 singles”).</p>
-<p>32 sounds like a lot, but a fast kernel wants to keep many running sums <em>and</em> the numbers it is about to use in registers at the same time. Running out means spilling values to memory and back, which costs more than it saves. That register budget decides the shape of the <a href="gemm.html">GEMM tile</a>.</p>
-<p>All 64-bit ARM cores have NEON; it is not optional, so code for <code>aarch64</code> can always use it. The Snapdragon 8 Elite's Oryon cores also have extensions on top (dot product for 8-bit integers, <code>i8mm</code>, <code>bf16</code>, <code>fp16</code>), but no SVE, ARM's newer variable-width vectors.</p>
+<h2 id="registers">How many numbers fit in the registers?</h2>
+<p>A fast kernel keeps its running sums and the numbers it is about to use in registers at the same time. An <strong>accumulator</strong> is a running sum that is updated again and again. <strong>AArch64</strong> is ARM’s 64-bit instruction set, and the core has 32 vector registers, <code>v0</code> to <code>v31</code>, each 128 bits. The same register can be read as 16 bytes, 8 × 16-bit, 4 × 32-bit or 2 × 64-bit numbers. For <code>f32</code> work it is 4 lanes, written <code>v0.4s</code> in assembly (“4 singles”).</p>
+<p>Running out of registers is costly. The kernel must spill values to memory and load them back, which costs more than it saves. That register budget decides the shape of the <a href="gemm.html">GEMM tile</a>.</p>
+<p>All 64-bit ARM cores have NEON; it is not optional, so code for <code>aarch64</code> can always use it. The Snapdragon 8 Elite’s Oryon cores also have extensions on top (dot product for 8-bit integers, <code>i8mm</code>, <code>bf16</code>, <code>fp16</code>), but no SVE, ARM’s newer variable-width vectors.</p>
+<p><strong>Takeaway: the phone has 32 vector registers of four floats each, and a kernel must fit its running sums into them.</strong></p>
 
-<h2 id="instructions">The five instructions that matter</h2>
+<h2 id="instructions">Which five instructions does the engine use?</h2>
+<p>The table gives each Rust name, the assembly instruction it becomes, and what it does. A <strong>store</strong> writes a register back to memory; a <strong>load</strong> reads memory into a register.</p>
 <table>
   <thead><tr><th>Rust intrinsic</th><th>Instruction</th><th>Does</th></tr></thead>
   <tbody>
@@ -70,11 +74,45 @@
     <tr><td><code>vaddvq_f32(a)</code></td><td><code>faddp</code> ×2</td><td>add the 4 lanes of one register into a single float</td></tr>
   </tbody>
 </table>
-<p>With just these, a dot product is: zero an accumulator; repeat “load 4 weights, load 4 inputs, fused multiply-add”; at the end, add the 4 lanes together. The attention kernel adds a store, <code>vst1q_f32</code>.</p>
+<p>With just these, a dot product takes three steps: zero an accumulator; repeat “load 4 weights, load 4 inputs, fused multiply-add”; at the end, add the 4 lanes together. The attention kernel adds one more store, <code>vst1q_f32</code>, to write its results back to memory.</p>
+<p><strong>Takeaway: a NEON dot product needs only loads, fused multiply-adds and one final lane sum.</strong></p>
 
-<h2 id="intrinsics">Intrinsics: NEON from Rust</h2>
-<p>An <em>intrinsic</em> looks like a function but compiles to (usually) one specific instruction. Rust provides ARM's standard names in <code>std::arch::aarch64</code>, with a type for each register shape (<code>float32x4_t</code> is a 4-lane <code>f32</code> register). The compiler still chooses which physical registers to use and schedules the instructions; you choose the operations. This is the same API C programmers use from <code>arm_neon.h</code>, so ARM's documentation applies directly.</p>
-<p>Step 1 of the GEMV, from <code>src/kernels/neon.rs</code>:</p>
+<h2 id="intrinsics">How do you call NEON from Rust?</h2>
+<p>You want the NEON instructions inside ordinary Rust code, not in a separate assembly file. An <strong>intrinsic</strong> is a Rust function that looks like a function but compiles to (usually) one specific instruction. Rust provides ARM’s standard names in <code>std::arch::aarch64</code>, with a type for each register shape. <code>float32x4_t</code> is a register of four <code>f32</code> lanes. The compiler still chooses which physical registers to use and schedules the instructions; you choose the operations. This is the same API C programmers use from <code>arm_neon.h</code>, so ARM’s documentation applies directly.</p>
+<p>The code below is the inner loop of the GEMV in <code>src/kernels/neon.rs</code>. Build it up one step at a time.</p>
+
+<h3>Step 1: start the running sum at zero</h3>
+<pre><code>use std::arch::aarch64::*;
+
+let mut acc = vdupq_n_f32(0.0);                      // [0, 0, 0, 0]</code></pre>
+<ul>
+  <li><code>use std::arch::aarch64::*;</code> brings the NEON functions and types into scope.</li>
+  <li><code>vdupq_n_f32(0.0)</code> fills all four lanes with 0.0. The accumulator starts at zero.</li>
+  <li><code>let mut</code> makes the variable changeable, because the loop will update it.</li>
+</ul>
+
+<h3>Step 2: multiply and add, four at a time</h3>
+<pre><code>for j in (0..n4).step_by(4) {
+    acc = vfmaq_f32(acc,
+                    vld1q_f32(row.as_ptr().add(j)),  // 4 weights
+                    vld1q_f32(x.as_ptr().add(j)));   // 4 inputs
+}</code></pre>
+<ul>
+  <li><code>(0..n4).step_by(4)</code> visits j = 0, 4, 8, and so on, the start of each group of four.</li>
+  <li><code>vld1q_f32</code> loads 4 consecutive floats from memory into a register.</li>
+  <li><code>vfmaq_f32(acc, a, b)</code> computes <code>acc + a × b</code> in every lane and stores the result in <code>acc</code>.</li>
+  <li>The snippet leaves out the <code>unsafe { }</code> block these calls sit in (see <a href="#unsafe">the next section</a>).</li>
+</ul>
+
+<h3>Step 3: add the lanes and handle the leftovers</h3>
+<pre><code>let mut s = vaddvq_f32(acc);                          // lanes → one float
+for j in n4..n { s += row[j] * x[j]; }                // leftovers, one by one</code></pre>
+<ul>
+  <li><code>vaddvq_f32</code> adds the four lanes of <code>acc</code> into one float.</li>
+  <li>The second loop handles the elements left over, one at a time, with ordinary scalar code.</li>
+</ul>
+
+<h3>All three steps together</h3>
 <pre><code>use std::arch::aarch64::*;
 
 let mut acc = vdupq_n_f32(0.0);                      // [0, 0, 0, 0]
@@ -85,14 +123,17 @@ for j in (0..n4).step_by(4) {
 }
 let mut s = vaddvq_f32(acc);                          // lanes → one float
 for j in n4..n { s += row[j] * x[j]; }                // leftovers, one by one</code></pre>
-<p>The last line handles the elements that do not fill a whole register. Those leftovers are called the <a href="tails.html">tail</a>, and they are where SIMD bugs like to live.</p>
+<p>The leftover elements that do not fill a whole register are the <a href="tails.html">tail</a>, and they are where SIMD bugs like to live.</p>
+<p><strong>Takeaway: each intrinsic is one NEON instruction, and the tail needs ordinary scalar code.</strong></p>
 
-<h2 id="unsafe">Why it is <code>unsafe</code></h2>
-<p><code>vld1q_f32</code> takes a raw pointer and reads 16 bytes from it. It has no idea how long your array is. If <var>j</var> + 4 goes past the end, it reads whatever lies there: garbage at best, a crash at worst. Rust cannot check that, so the call must be inside an <code>unsafe</code> block, which means: “I, the programmer, have checked this.”</p>
-<p>The project's rule is that every <code>unsafe</code> block carries a <code>// SAFETY:</code> comment saying <em>why</em> it is safe. For the loop above: “every load reads 4 floats starting at <var>j</var> &lt; <var>n4</var> ≤ <var>n</var>, inside <code>row</code> and <code>x</code>, both of length <var>n</var>.” The function also asserts the lengths at the top, so a wrong call panics instead of reading out of bounds. (<a href="../phase-1/rust-memory.html">Phase 1</a> explains <code>unsafe</code> in general.)</p>
+<h2 id="unsafe">Why does a NEON load need <code>unsafe</code>?</h2>
+<p><code>vld1q_f32</code> takes a <strong>raw pointer</strong>, which is a memory address with no length attached. It reads 16 bytes from that address and does not check how long your array is. Take a row of 8 floats. A load at j = 4 reads floats 4 to 7, which is fine. A load at j = 6 would read floats 6 to 9, and floats 8 and 9 lie past the end. The read would return garbage at best and crash at worst. Rust cannot check this, so the call must be inside an <code>unsafe</code> block, which means: “I, the programmer, have checked this.”</p>
+<p>The project’s rule is that every <code>unsafe</code> block carries a <code>// SAFETY:</code> comment saying <em>why</em> it is safe. For the loop above: “every load reads 4 floats starting at <var>j</var> &lt; <var>n4</var> ≤ <var>n</var>, inside <code>row</code> and <code>x</code>, both of length <var>n</var>.” The function also asserts the lengths at the top, so a wrong call panics instead of reading out of bounds. (<a href="../phase-1/rust-memory.html">Phase 1</a> explains <code>unsafe</code> in general.)</p>
+<p><strong>Takeaway: every NEON load needs a bounds argument in a SAFETY comment, because the compiler does not check it.</strong></p>
 
-<h2 id="fma">FMA: one rounding instead of two</h2>
-<p><code>vfmaq_f32</code> computes <code>acc + a × b</code> and rounds once, at the end. A separate multiply then add rounds twice. FMA is faster (one instruction) and slightly more accurate, but its results differ in the last bits from the scalar loop's, which is one of the two reasons Phase 3 gives up bit-identity with llama2.c (the other is the order of additions, <a href="chains.html">next page</a>).</p>
+<h2 id="fma">Does FMA round like a multiply and an add?</h2>
+<p><strong>FMA</strong> is a fused multiply-add: <code>a × b + c</code> done as one instruction. <code>vfmaq_f32</code> computes <code>acc + a × b</code> and rounds once, at the end. A separate multiply then add rounds twice. FMA is faster (one instruction) and slightly more accurate, but its results differ in the last bits from the scalar loop’s. That is one of the two reasons Phase 3 gives up bit-identity with llama2.c (the other is the order of additions, <a href="chains.html">next page</a>).</p>
+<p><strong>Takeaway: FMA rounds once, so compare its output with a scalar loop by tolerance, not bit for bit.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>How many <code>f32</code>s fit in one NEON register, and why?</summary>
@@ -108,13 +149,18 @@ for j in n4..n { s += row[j] * x[j]; }                // leftovers, one by one</
 <p>It is roughly 3–4× (5.3 → 17.8 GB/s measured), but no more, because every FMA still waits for the previous one on the same accumulator. Width alone does not break the chain: <a href="chains.html">next page</a>.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>A NEON register holds four floats, and one instruction works on all four lanes at once.</p>
+<p>Each intrinsic maps to one instruction, and every load needs a bounds argument written down.</p>
+<p>FMA rounds once, so it is faster and a little different from multiply then add.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

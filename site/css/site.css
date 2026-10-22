@@ -119,6 +119,7 @@ pre { background: var(--code-bg); color: var(--code-fg); border-radius: .55rem; 
 pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 .filehead { display: flex; justify-content: space-between; gap: 1rem; font-family: var(--mono); font-size: .75rem; color: var(--muted); margin: 1rem 0 .25rem; }
 table { width: 100%; border-collapse: collapse; font-size: .95rem; margin: .8rem 0 1rem; }
+main :not(pre) > code { overflow-wrap: anywhere; }
 th, td { text-align: left; vertical-align: top; padding: .45rem .5rem; border-bottom: 1px solid var(--line); }
 th { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .tag { display: inline-block; font-family: var(--mono); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; padding: .1rem .38rem; border-radius: 999px; vertical-align: .12em; white-space: nowrap; }
@@ -374,3 +375,4 @@ h2 .tag { font-family: var(--mono); vertical-align: .3em; }
 .split i.pr { background: var(--accent); } .split i.pr.alt { background: color-mix(in srgb, var(--accent) 72%, var(--surface)); }
 .split i.pf { background: var(--blue); } .split i.pf.alt { background: color-mix(in srgb, var(--blue) 72%, var(--surface)); }
 .split i.hatch, .legend i.hatch { background: repeating-linear-gradient(135deg, var(--bg-2) 0 4px, var(--line) 4px 8px); }
+@media (max-width: 600px) { table.code-walk td:first-child { white-space: normal; overflow-wrap: anywhere; } }

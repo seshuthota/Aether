@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,28 +25,51 @@
 <h1>Tails and testing floats</h1>
 <p class="lede">A vector loop eats its input 4, 8 or 16 numbers at a time. When the length is not a multiple of that, something has to handle the leftovers, and an off-by-one there reads past the end of an array or skips the last numbers. The real model sizes are all nice multiples, so a test that only uses them will never find such a bug. This page covers tails, and how the kernels are tested against numpy when bit-identity is no longer possible.</p>
 <nav class="toc">
-  <a href="#tails">What a tail is</a>
-  <a href="#widget">See the pieces</a>
-  <a href="#bugs">The bugs that live there</a>
-  <a href="#testing">Testing: sizes chosen to break things</a>
-  <a href="#tolerance">Testing: how close is close enough</a>
+  <a href="#tails">What is left over when the length is not a multiple?</a>
+  <a href="#widget">Which stage handles which element?</a>
+  <a href="#bugs">Which bugs hide in the leftovers?</a>
+  <a href="#testing">How do you test sizes that break things?</a>
+  <a href="#tolerance">How close is close enough?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="tails">What a tail is</h2>
-<p><code>dot_row</code> processes a row in three stages:</p>
+<h2 id="tails">What is left over when the length is not a multiple?</h2>
+<p>Take a row of 37 floats. The 16-float loop takes 32 of them and leaves 5. The 4-float loop takes 4 of those, and 1 is left. That leftover is the <strong>tail</strong>: the elements at the end that do not fill a whole step. <code>dot_row</code> handles a row in three stages:</p>
 <ol class="steps">
   <li>16 floats per step, into 4 accumulators, for as long as 16 fit: up to <var>n16</var> = <var>n</var> rounded down to a multiple of 16.</li>
   <li>4 floats per step, into one accumulator, up to <var>n4</var> = <var>n</var> rounded down to a multiple of 4.</li>
   <li>One float at a time, scalar, for the last 0–3.</li>
 </ol>
+
+<h3>Step 1: round the length down</h3>
+<pre><code>let n16 = n / 16 * 16;      // integer division rounds down
+let n4  = n / 4 * 4;</code></pre>
+<ul>
+  <li><code>n / 16</code> is whole-number division, so it drops the remainder. Multiplying back by 16 gives the largest multiple of 16 that fits. For n = 37 that is 32.</li>
+  <li>The same idea gives <code>n4</code>. For n = 37 it is 36.</li>
+</ul>
+
+<h3>Step 2: the three loops</h3>
+<pre><code>for j in (0..n16).step_by(16) { /* 4 FMAs */ }
+for j in (n16..n4).step_by(4) { /* 1 FMA */ }
+for j in n4..n                { /* scalar */ }</code></pre>
+<ul>
+  <li>The first loop covers 0 up to <var>n16</var>, 16 floats at a time.</li>
+  <li>The second starts where the first stopped and moves 4 floats at a time.</li>
+  <li>The third handles the last 0–3 elements one by one.</li>
+</ul>
+
+<h3>All three steps together</h3>
 <pre><code>let n16 = n / 16 * 16;      // integer division rounds down
 let n4  = n / 4 * 4;
 for j in (0..n16).step_by(16) { /* 4 FMAs */ }
 for j in (n16..n4).step_by(4) { /* 1 FMA */ }
 for j in n4..n                { /* scalar */ }</code></pre>
+<p><strong>Takeaway: the length rounds down in two steps, and whatever is left runs through the 4-float loop and then the scalar tail.</strong></p>
 
-<h2 id="widget">See the pieces</h2>
+<h2 id="widget">Which stage handles which element?</h2>
+<p>Move the slider to see where each element of a row goes.</p>
 <div class="widget" data-tails>
   <h3>Which stage handles which element</h3>
   <p>Teal: the 16-float loop. Blue: the 4-float loop. Copper: the scalar tail.</p>
@@ -56,8 +79,10 @@ for j in n4..n                { /* scalar */ }</code></pre>
   <p class="note" data-note></p>
 </div>
 <p>At <var>n</var> = 288, 576 or 896, the real widths, everything goes through the first stage. The tail code never runs. That is precisely why it needs its own tests.</p>
+<p><strong>Takeaway: the real model widths never reach the tail, so the tail stays untested unless you test other sizes.</strong></p>
 
-<h2 id="bugs">The bugs that live there</h2>
+<h2 id="bugs">Which bugs hide in the leftovers?</h2>
+<p>The tail is easy to get wrong. Here are four common mistakes:</p>
 <ul>
   <li><strong>Reading past the end.</strong> Write the vector loop as <code>while j &lt; n</code> instead of <code>j + 4 &lt;= n</code>, and the last load reads up to 3 floats beyond the array. Usually that memory exists, so nothing crashes; the result is just slightly wrong. Sometimes it is the end of a page, and the program dies.</li>
   <li><strong>Skipping the leftovers.</strong> Forget stage 3 and the last 1–3 products are never added. With real sizes, invisible.</li>
@@ -65,27 +90,57 @@ for j in n4..n                { /* scalar */ }</code></pre>
   <li><strong>Leftover rows.</strong> <code>gemv</code> handles four rows at a time; if the number of rows is not a multiple of 4, the last 1–3 rows need their own path. Same bug family, other dimension.</li>
 </ul>
 <p>All of these produce plausible numbers. None of them would show up in the text a model generates, at least not in an obvious way.</p>
+<p><strong>Takeaway: each leftover mistake gives plausible numbers, so only a test at the right sizes will catch it.</strong></p>
 
-<h2 id="testing">Testing: sizes chosen to break things</h2>
-<p><code>tools/gen_kernels.py</code> uses numpy to generate random inputs and the correct outputs for every kernel, at sizes chosen to hit every boundary:</p>
+<h2 id="testing">How do you test sizes that break things?</h2>
+<p>A test that uses only the real sizes never runs the tail, so the test sizes have to be chosen on purpose. <code>tools/gen_kernels.py</code> uses numpy to generate random inputs and the correct outputs for every kernel, at sizes chosen to hit every boundary:</p>
 <pre><code>odd = [1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 129]
 shapes = [(d, n) for d in (1, 3, 8, 17) for n in odd] + [
     (288, 288), (768, 288), (288, 768), (576, 576), …, (4864, 896), (896, 4864), …]</code></pre>
-<p>Each length sits just below, on, or just above a multiple of 4, 8, 16 or 32, so every combination of stages runs: a tail of 1, 2 or 3; a 4-float loop with and without a 16-float loop before it; one row, three rows, seventeen rows. Then the real layer shapes of all three models, so the sizes that matter are covered too. The same goldens are used for RMSNorm, softmax, SwiGLU, both RoPE layouts and attention.</p>
+<ul>
+  <li><code>odd</code> lists lengths. Each one sits just below, on, or just above a multiple of 4, 8, 16 or 32.</li>
+  <li><code>shapes</code> pairs each length with 1, 3, 8 or 17 rows, and then adds the real layer shapes of the models.</li>
+</ul>
+<p>So every combination of stages runs: a tail of 1, 2 or 3; a 4-float loop with and without a 16-float loop before it; one row, three rows, seventeen rows. The real layer shapes of all three models are included too, so the sizes that matter are covered. The same goldens are used for RMSNorm, softmax, SwiGLU, both RoPE layouts and attention.</p>
 <p>The reference is computed in float64 from the exact float32 inputs, then stored. numpy is an external reference (<a href="../phase-2/correctness.html#why">why that matters</a>); the tests read its <code>.npy</code> files directly.</p>
+<p><strong>Takeaway: pick test sizes that hit every stage, and include the real shapes as well.</strong></p>
 
-<h2 id="tolerance">Testing: how close is close enough</h2>
-<p>NEON results cannot equal the float64 reference exactly, and do not equal the scalar loop's bits either. So the test asks for a small <em>relative</em> error:</p>
+<h2 id="tolerance">How close is close enough?</h2>
+<p>NEON results cannot equal the float64 reference exactly, and do not equal the scalar loop’s bits either. So the test asks for a small <em>relative</em> error, which is the error divided by the size of the answer. The test checks it in three steps.</p>
+
+<h3>Step 1: measure the error</h3>
+<pre><code>let (_, rel) = max_errors(&amp;out, &amp;want);</code></pre>
+<ul>
+  <li><code>max_errors</code> compares the kernel output <code>out</code> with the reference <code>want</code>.</li>
+  <li>The underscore ignores the first value it returns. The test keeps <code>rel</code>, the relative error.</li>
+</ul>
+
+<h3>Step 2: set the bound</h3>
+<pre><code>let bound = 1e-6 * (x.len() as f32).sqrt().max(4.0);</code></pre>
+<ul>
+  <li><code>x.len() as f32</code> turns the length into a float, and <code>sqrt()</code> takes its square root.</li>
+  <li><code>.max(4.0)</code> keeps the factor at least 4, so very short vectors still get a fair bound.</li>
+</ul>
+
+<h3>Step 3: compare</h3>
+<pre><code>assert!(rel &lt;= bound, …);</code></pre>
+<ul>
+  <li>The test fails if the error is larger than the bound.</li>
+</ul>
+
+<h3>All three steps together</h3>
 <pre><code>let (_, rel) = max_errors(&amp;out, &amp;want);
 let bound = 1e-6 * (x.len() as f32).sqrt().max(4.0);
 assert!(rel &lt;= bound, …);</code></pre>
+
 <p>Two choices in those lines are worth understanding:</p>
 <ul>
-  <li><strong>Relative to the vector's largest value</strong>, not element by element. An output that happens to be 0.000001 would otherwise turn a harmless tiny difference into a huge “relative” error.</li>
+  <li><strong>Relative to the vector’s largest value</strong>, not element by element. An output that happens to be 0.000001 would otherwise turn a harmless tiny difference into a huge “relative” error.</li>
   <li><strong>Growing with √n.</strong> A dot product of <var>n</var> terms accumulates <var>n</var> rounding errors. They are random in sign, so they grow roughly like √<var>n</var>, not like <var>n</var>. An <code>f32</code> has about 7 decimal digits (relative precision about 6 × 10<sup>−8</sup>), so 10<sup>−6</sup> × √<var>n</var> leaves headroom without letting a real bug through.</li>
 </ul>
 <p>Why does this still catch the bugs above? A skipped tail or a double-counted block changes the result by a whole product, typically 10<sup>−2</sup> or more relative to the output, while rounding is below 10<sup>−5</sup>. The gap between “rounding” and “bug” is several orders of magnitude, so a tolerance in between separates them cleanly.</p>
 <div class="callout"><span class="lbl">Tested on the phone</span><p>The NEON kernels only exist on ARM, so these tests are only meaningful on the phone. <code>cargo test --release --target aarch64-linux-android</code> pushes the test binary and the goldens there through the runner script (<a href="../phase-0/cargo.html">Phase 0</a>). On the PC the same tests check the scalar kernels.</p></div>
+<p><strong>Takeaway: the tolerance must sit between rounding error and bug error, so it grows with √n.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary><var>n</var> = 37. How many elements go through each stage?</summary>
@@ -101,13 +156,18 @@ assert!(rel &lt;= bound, …);</code></pre>
 <p>A tail or stage-boundary bug: 33 = 32 + 1 runs a tail of one element after two 16-float steps. 0.04 is the size of a missing or doubled product, not of rounding.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>A length that is not a multiple of 16 leaves a tail, and the tail needs its own loop and its own tests.</p>
+<p>Test at sizes that hit every boundary, because the real model sizes never reach the tail.</p>
+<p>Judge the result by a relative error that grows with √n, sitting between rounding and real bugs.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,18 +23,19 @@
 <main id="content">
 <p class="kicker">Phase 4 · 01</p>
 <h1>Threads that stay</h1>
-<p class="lede">The phone has eight cores, and Phase 3's engine used one. Giving the others work sounds like one line of code: start a thread per core. It is not, because decode does not hand out one big job. It hands out a couple of hundred small ones per token, and the cost of handing one out has to be tiny next to the job itself. This page measures that cost three ways and shows why the engine starts its threads once and keeps them.</p>
+<p class="lede">The phone has eight cores, and Phase 3's engine used one. Giving the others work sounds like one line of code: start a thread per core. A thread is a sequence of instructions that the operating system runs on a core. Starting one per core is not enough, because decode does not hand out one big job. It hands out a couple of hundred small ones per token, and the cost of handing one out has to be tiny next to the job itself. This page measures that cost three ways and shows why the engine starts its threads once and keeps them.</p>
 <nav class="toc">
-  <a href="#jobs">How many jobs per token</a>
-  <a href="#cost">Three ways to hand out a job</a>
-  <a href="#widget">What it costs per token</a>
-  <a href="#how">How the pool hands out a job</a>
-  <a href="#code">The code</a>
+  <a href="#jobs">How many jobs does one token need?</a>
+  <a href="#cost">Which way of handing out a job is cheapest?</a>
+  <a href="#widget">What does the hand-out cost add to a token?</a>
+  <a href="#how">How does the pool hand out a job?</a>
+  <a href="#code">What does the code look like?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="jobs">How many jobs per token</h2>
-<p>A <a href="../start/llm.html">decode step</a> is a chain of matrix products, one after another, and each needs the result of the one before. Every matrix product can be split across cores, but the next one cannot start until all cores have finished this one. So the threads meet once per matrix product.</p>
+<h2 id="jobs">How many jobs does one token need?</h2>
+<p>A <a href="../start/llm.html">decode step</a> is a chain of matrix products, one after another. Each product needs the result of the one before it. Each product can be split across the cores, but the cores must all finish it before the next one starts. So the threads meet once per matrix product.</p>
 <p>Count them for one layer: the three projections Q, K and V, the attention itself, the output projection, then gate, up and down in the MLP. That is 8 parallel jobs per layer, plus one for the final logits <span class="tag c">calculated</span>:</p>
 <table>
   <thead><tr><th>Model</th><th>Layers</th><th>Jobs per token</th></tr></thead>
@@ -45,11 +46,13 @@
   </tbody>
 </table>
 <p>SmolLM2-135M Q4_0 decodes at about 335 tokens per second on cores 2–7 (326.4 and 343.4 in two passes) <span class="tag m">measured</span>, which is 3.0 ms per token. Divided by 241 jobs, that is about <strong>12 µs per job</strong> on average <span class="tag c">calculated</span>, the serial work between jobs included. Whatever it costs to hand out a job has to be small next to 12 µs.</p>
+<p><strong>Takeaway: a token is about 200 small jobs, so each hand-out must cost far less than the 12 µs job, or the hand-outs alone take as long as the work.</strong></p>
 
-<h2 id="cost">Three ways to hand out a job</h2>
+<h2 id="cost">Which way of handing out a job is cheapest?</h2>
+<p>The caller has to wake the workers, give each one its job, and learn when they have finished. There are three common ways to do this.</p>
 <ol>
-  <li><strong>Start fresh threads for every job</strong>, and wait for them to end (<em>spawn</em> and <em>join</em>). Simple, and the operating system has to create a thread, schedule it, and tear it down every time.</li>
-  <li><strong>Keep the threads, wake them with a lock.</strong> Workers sleep on a <em>condition variable</em>; the caller takes a mutex, writes the job, and signals. Waking a sleeping thread is a system call, and so is putting it back to sleep.</li>
+  <li><strong>Start fresh threads for every job</strong>, and wait for them to end (<em>spawn</em> and <em>join</em>). Simple, but the operating system must create, schedule and tear down a thread every time.</li>
+  <li><strong>Keep the threads, and wake them with a lock.</strong> Workers sleep on a <em>condition variable</em>, a way for a sleeping thread to wait for a signal. The caller takes a <em>mutex</em> (a lock that only one thread can hold at a time), writes the job, and signals. Waking a sleeping thread is a system call, a request from your program to the kernel, and so is putting it back to sleep.</li>
   <li><strong>Keep the threads, and have them watch a counter.</strong> Each worker reads a shared number in a loop. The caller writes the job and adds one to the number. No system call at all, as long as the worker is still watching. This is Aether's <code>ThreadPool</code>.</li>
 </ol>
 <p><code>examples/pool_handoff.rs</code> times all three with an empty job, so only the hand-out is measured: the caller plus the workers on the other cores, best of 5 runs. On the phone, microseconds per hand-out <span class="tag m">measured</span>:</p>
@@ -67,10 +70,12 @@
   <div class="bar alt"><span>lock + condvar</span><i style="--w:55%"></i><b>276 µs</b></div>
   <div class="bar"><span>Aether's pool</span><i style="--w:0.5%"></i><b>1.26 µs</b></div>
 </div>
-<p>(The bars show cores 2–7.) Two things stand out. The pool is 200 to 400 times cheaper than the other two. And every method gets dearer with more threads: the pool's own cost is 13 times higher on eight threads than on two, because more workers have to notice the change and report back. On the PC the same program gave 50–57, 3–5 and 0.2–0.3 µs with 4 threads <span class="tag m">measured on the PC</span>; the phone is much slower at every step, the lock-based method most of all, probably because the phone's cores are slower to wake (not examined).</p>
-<p>These runs were on battery with the clock caps at 2.40 and 2.44 GHz and the phone idle, but the hand-out cost moves with the caps and with what else runs, so read it as the right order of magnitude. The pool figure was measured with workers that were still spinning; it is the cost during decode, not after the workers have gone to sleep.</p>
+<p>The bars show cores 2–7. The pool is 200 to 400 times cheaper than the other two. Every method gets dearer with more threads. The pool's own cost is 13 times higher on eight threads than on two, because more workers have to notice the change and report back. On the PC the same program gave 50–57, 3–5 and 0.2–0.3 µs with 4 threads <span class="tag m">measured on the PC</span>. The phone is much slower at every step, the lock-based method most of all, probably because the phone's cores are slower to wake (not examined).</p>
+<p>These runs were on battery with the clock caps at 2.40 and 2.44 GHz and the phone idle. The hand-out cost moves with the caps and with what else runs, so read it as the right order of magnitude. The pool figure was measured with workers that were still spinning. It is the cost during decode, not after the workers have gone to sleep.</p>
+<p><strong>Takeaway: keeping threads and watching a counter costs about 1 µs per hand-out on six threads, against 276 to 506 µs for the other two methods.</strong></p>
 
-<h2 id="widget">What it costs per token</h2>
+<h2 id="widget">What does the hand-out cost add to a token?</h2>
+<p>Every job in a token pays its hand-out cost, so the costs multiply by the number of jobs. Pick a model and a method to see the total.</p>
 <div class="widget" data-handoff>
   <h3>Hand-out cost × jobs per token</h3>
   <div class="controls">
@@ -91,19 +96,51 @@
   <div class="statrow" data-stats></div>
   <p class="note" data-note></p>
 </div>
-<p>The token times are measured speeds on cores 2–7 (SmolLM2 from the clean sweep, Qwen from a run where the clocks had already dropped); the hand-out costs are the phone's figures for 6 threads. Both are rough, so read the result as an order of magnitude <span class="tag c">calculated</span>. With the pool, 241 hand-outs of 1.26 µs add about 0.3 ms to a 3.0 ms token: a tenth, which is the price of threading before any waiting is counted.</p>
+<p>The token times are measured speeds on cores 2–7 (SmolLM2 from the clean sweep, Qwen from a run where the clocks had already dropped). The hand-out costs are the phone's figures for 6 threads. Both are rough, so read the result as an order of magnitude <span class="tag c">calculated</span>. With the pool, 241 hand-outs of 1.26 µs add about 0.3 ms to a 3.0 ms token: a tenth, which is the price of threading before any waiting is counted.</p>
+<p><strong>Takeaway: at 241 jobs per token, spawning threads would cost more than the whole token, while the pool adds about a tenth.</strong></p>
 
-<h2 id="how">How the pool hands out a job</h2>
-<p>The pool keeps one worker thread per core, pinned to it, for the whole life of the model. Two counters do all the talking:</p>
+<h2 id="how">How does the pool hand out a job?</h2>
+<p>The caller must reach every worker without a system call per job, and it must know when they are done. The pool keeps one worker thread per core, pinned to that core (the operating system keeps it there) for the whole life of the model. Two counters do all the talking:</p>
 <ul>
-  <li><strong><code>epoch</code></strong>, the job number. The caller stores a pointer to the job, then adds one to <code>epoch</code>. Each worker remembers the last epoch it ran; when the number changes, there is a new job.</li>
+  <li><strong><code>epoch</code></strong>, the job number. The caller stores a pointer to the job, then adds one to <code>epoch</code>. Each worker remembers the last epoch it ran. When the number changes, there is a new job.</li>
   <li><strong><code>done</code></strong>, the finished count. Each worker adds one when its part is finished. The caller waits until it reaches the number of workers.</li>
 </ul>
-<p>The caller does not sit idle while it waits: it runs share 0 of the job itself. So “4 threads” means the caller plus 3 workers.</p>
-<p>Watching a counter in a loop is called <strong>spinning</strong>, and it keeps a whole core busy doing nothing useful. Between tokens, or while the user types, that would waste battery. So a worker spins only for a while and then goes to sleep; the next page, <a href="waiting.html">Waiting: spin, then park</a>, is about that choice.</p>
+<p>The caller does not sit idle while it waits. It runs share 0 of the job itself, so "4 threads" means the caller plus 3 workers.</p>
+<p>Watching a counter in a loop is called <strong>spinning</strong>. It keeps a whole core busy doing nothing useful, so between tokens, or while the user types, it would waste battery. A worker therefore spins only for a while and then goes to sleep. The next page, <a href="waiting.html">Waiting: spin, then park</a>, is about that choice.</p>
+<p><strong>Takeaway: the caller hands out a job by adding one to a counter, and the workers see it by watching that counter.</strong></p>
 
-<h2 id="code">The code</h2>
-<p><code>src/pool.rs</code>, the caller's side of <code>run</code>, shortened:</p>
+<h2 id="code">What does the code look like?</h2>
+<p>The hand-out is short, but two details decide whether it is correct. The caller's side of <code>run</code> comes first, in three steps.</p>
+
+<h3>Step 1: publish the job</h3>
+<pre><code>s.job.0.store(&amp;job as *const &amp;Job as *mut &amp;Job, Ordering::Relaxed);
+s.done.0.store(0, Ordering::Relaxed);
+s.epoch.0.fetch_add(1, Ordering::Release);   // "new job": publish it</code></pre>
+<ul>
+  <li><code>store</code> writes the pointer to the job, and resets <code>done</code> to zero.</li>
+  <li><code>fetch_add(1, …)</code> adds one to <code>epoch</code>, and that is the signal. <code>Release</code> keeps this write after the job pointer write (see below).</li>
+</ul>
+
+<h3>Step 2: wake the workers and do share 0</h3>
+<pre><code>for w in &amp;self.workers {
+    w.thread().unpark();                       // no system call unless that worker sleeps
+}
+f(0, n);                                       // the caller does share 0</code></pre>
+<ul>
+  <li><code>unpark</code> wakes a worker that has gone to sleep. A worker that is still spinning sees the new epoch without it.</li>
+  <li><code>f(0, n)</code> runs the caller's own share while the workers run theirs.</li>
+</ul>
+
+<h3>Step 3: wait for the workers</h3>
+<pre><code>while s.done.0.load(Ordering::Acquire) != n - 1 {
+    std::hint::spin_loop();                    // wait for the workers (then yield)
+}</code></pre>
+<ul>
+  <li><code>n - 1</code> is the number of workers. With 4 threads, <code>done</code> must reach 3.</li>
+  <li><code>spin_loop</code> tells the CPU that this is a wait loop. The comment notes that the loop yields after a while, which means the thread gives up its turn on the core to others.</li>
+</ul>
+
+<h3>All three together</h3>
 <pre><code>s.job.0.store(&amp;job as *const &amp;Job as *mut &amp;Job, Ordering::Relaxed);
 s.done.0.store(0, Ordering::Relaxed);
 s.epoch.0.fetch_add(1, Ordering::Release);   // "new job": publish it
@@ -114,20 +151,23 @@ f(0, n);                                       // the caller does share 0
 while s.done.0.load(Ordering::Acquire) != n - 1 {
     std::hint::spin_loop();                    // wait for the workers (then yield)
 }</code></pre>
+
 <p>And each worker:</p>
 <pre><code>loop {
     let epoch = /* spin on s.epoch until it changes, then park */;
     seen = epoch;
+    // SAFETY: the caller keeps the job alive until every worker has counted itself done.
     let f: &amp;Job = unsafe { *s.job.0.load(Ordering::Relaxed) };
     f(share, n);                               // this worker's part
     s.done.0.fetch_add(1, Ordering::Release);  // "finished"
 }</code></pre>
 <p>Two details carry the correctness:</p>
 <ul>
-  <li><strong>Release and Acquire.</strong> The caller writes the job pointer first, then the epoch, with <code>Release</code>. A worker that reads the new epoch with <code>Acquire</code> is guaranteed to also see the job pointer written before it. Without that pairing, the CPU or the compiler may reorder the two writes, and a worker could run the previous job.</li>
-  <li><strong>The job lives on the caller's stack.</strong> <code>run</code> does not return until every worker has counted itself done, so the workers can never use the job after it is gone. The <code>unsafe</code> block depends on that rule, and the comment above it in <code>src/pool.rs</code> says so.</li>
+  <li><strong>Release and Acquire.</strong> These are memory-ordering rules: they say which writes another core must see before which reads. The caller writes the job pointer first, then the epoch, with <code>Release</code>. A worker that reads the new epoch with <code>Acquire</code> is guaranteed to also see the job pointer written before it. Without that pairing, the CPU or the compiler may reorder the two writes, and a worker could run the previous job.</li>
+  <li><strong>The job lives on the caller's stack.</strong> <code>run</code> does not return until every worker has counted itself done, so the workers can never use the job after it is gone. The <code>unsafe</code> block depends on that rule, and the comment above it in <code>src/pool.rs</code> says so. If the caller returned early, a worker would read a job that no longer exists.</li>
 </ul>
 <p>The tests in <code>src/pool.rs</code> run 2,000 jobs in a row and check that every share ran exactly once per job, and that a worker that went to sleep wakes up for the next one.</p>
+<p><strong>Takeaway: the hand-out is correct only because the epoch is written after the job and the job outlives its last worker.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does decode need so many hand-outs, when prefill could do with few?</summary>
@@ -140,13 +180,18 @@ while s.done.0.load(Ordering::Acquire) != n - 1 {
 <p>Because it happens after the worker read the new epoch with <code>Acquire</code>, and the caller wrote the pointer before the epoch with <code>Release</code>. The pair of orderings already makes the pointer visible; the pointer read itself needs no extra ordering.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Each token needs about 200 small hand-outs, so each one must cost far less than a 12 µs job.</p>
+<p>Keeping threads and having them watch a counter makes a hand-out about a microsecond, where spawning costs hundreds.</p>
+<p>The caller publishes a job by bumping a counter, and the workers see it by watching that counter.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

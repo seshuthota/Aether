@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,30 +26,33 @@
 <h1>Calling Linux from Rust</h1>
 <p class="lede">Rust’s standard library has no “run this thread on cpu6.” Linux does, as a C function called <code>sched_setaffinity</code>. Calling a C function from Rust is called FFI, and the <code>libc</code> crate is what makes it a one-liner.</p>
 <nav class="toc">
-  <a href="#ffi">What FFI is</a>
-  <a href="#dep">Adding libc</a>
-  <a href="#mask">A CPU set is a bitmask</a>
-  <a href="#call">The call</a>
-  <a href="#errors">When it fails</a>
-  <a href="#thread">It is per thread</a>
-  <a href="#verify">Checking it worked</a>
+  <a href="#ffi">How can Rust call a C function?</a>
+  <a href="#dep">How do you get libc?</a>
+  <a href="#mask">What is a CPU set?</a>
+  <a href="#call">What does the call look like?</a>
+  <a href="#errors">What if it fails?</a>
+  <a href="#thread">Does pinning apply to the whole program?</a>
+  <a href="#verify">How do you check it worked?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
 <div class="callout"><span class="lbl">How to use this page</span><p><a href="topology.html#pin">Cores and pinning</a> explains what pinning is for. This page is the Rust side. The snippets compile for <code>aarch64-linux-android</code> against <code>libc</code> 0.2.190 <span class="tag m">measured</span>; they have not been run on the phone as written. The engine’s own version, <code>src/sys/affinity.rs</code>, pins every benchmark since Phase 1.</p></div>
 
-<h2 id="ffi">What FFI is</h2>
-<p>Android’s C library, Bionic, already contains <code>sched_setaffinity</code>. It is compiled machine code with a C calling convention. Rust can call it, as long as Rust is told the function’s exact name, argument types and return type. That declaration is the “foreign function interface.”</p>
-<p>The compiler can’t check that the declaration matches the real C function, or that you passed valid pointers. So every FFI call is <code>unsafe</code>, for the same reason as on the <a href="rust-memory.html#unsafe">raw memory</a> page: you are vouching for something the compiler cannot see.</p>
+<h2 id="ffi">How can Rust call a C function?</h2>
+<p>You want to pin a thread, and the function that does it is written in C. Android’s C library, Bionic, already contains <code>sched_setaffinity</code>. It is compiled machine code with a C calling convention. Rust can call it, as long as Rust is told the function’s exact name, argument types and return type. That declaration is the “foreign function interface,” or <strong>FFI</strong>.</p>
+<p>The compiler can’t check that the declaration matches the real C function, or that you passed valid pointers. If you get either wrong, nothing warns you. So every FFI call is <code>unsafe</code>, for the same reason as on the <a href="rust-memory.html#unsafe">raw memory</a> page: you are vouching for something the compiler cannot see.</p>
+<p><strong>Takeaway: FFI means telling Rust a C function’s signature, and every call is <code>unsafe</code> because you vouch for it.</strong></p>
 
-<h2 id="dep">Adding <code>libc</code></h2>
-<p>The <code>libc</code> crate is a big list of those declarations, for every platform Rust supports, plus the C types and constants. It contains almost no logic of its own. One line in <code>Cargo.toml</code>:</p>
+<h2 id="dep">How do you get <code>libc</code>?</h2>
+<p>Writing those declarations by hand for every C function would be slow and easy to get wrong. The <code>libc</code> crate (a crate is a Rust library) is a big list of them, for every platform Rust supports, plus the C types and constants. It contains almost no logic of its own. One line in <code>Cargo.toml</code>:</p>
 <pre><code>[dependencies]
 libc = "0.2"</code></pre>
-<p>This does not break the from-scratch rule. <code>libc</code> is the doorway to the operating system, not inference code. The plan names it for exactly this job.</p>
+<p>Does this break the from-scratch rule? No. <code>libc</code> is the doorway to the operating system, not inference code. The plan names it for exactly this job.</p>
+<p><strong>Takeaway: <code>libc</code> is the declarations of the operating system’s C functions, not engine code.</strong></p>
 
-<h2 id="mask">A CPU set is a bitmask</h2>
-<p><code>cpu_set_t</code> is a row of bits, one per CPU number. Bit 6 set means “cpu6 is allowed.” On 64-bit Android it is 1024 bits long, far more than eight cores need. <code>CPU_ZERO</code> clears every bit and <code>CPU_SET(n, …)</code> turns bit <code>n</code> on.</p>
+<h2 id="mask">What is a CPU set?</h2>
+<p>The call needs to be told which cores are allowed. A <strong>CPU set</strong>, <code>cpu_set_t</code>, is a row of bits, one per CPU number. For example, with only bit 6 set, “cpu6 is allowed.” On 64-bit Android it is 1024 bits long, far more than eight cores need. <code>CPU_ZERO</code> clears every bit and <code>CPU_SET(n, …)</code> turns bit <code>n</code> on.</p>
 <div class="widget" data-cpumask>
   <h3>Build a CPU set</h3>
   <p>Click cores to allow them. Cores 0–5 are the 3.53 GHz performance cores and 6–7 the 4.32 GHz prime cores <span class="tag m">measured</span> in Phase 0.</p>
@@ -57,9 +60,44 @@ libc = "0.2"</code></pre>
   <pre class="formula" data-out></pre>
   <p class="note" data-note></p>
 </div>
+<p><strong>Takeaway: a CPU set is one bit per core; set the bits of the cores you allow.</strong></p>
 
-<h2 id="call">The call</h2>
+<h2 id="call">What does the call look like?</h2>
+<p>Four steps, all inside one <code>unsafe</code> block. Each is shown alone first.</p>
+
+<h3>Step 1: make an empty set</h3>
+<pre><code>let mut set: libc::cpu_set_t = std::mem::zeroed();
+libc::CPU_ZERO(&amp;mut set);</code></pre>
+<ul>
+  <li><code>std::mem::zeroed()</code> gives a value of all-zero bytes. C structs have no constructor. All-zero bytes is a valid empty set. It is <code>unsafe</code> because all-zero is not valid for every type; here it is.</li>
+  <li><code>CPU_ZERO</code> is a macro in C. <code>libc</code> provides it as a Rust function, marked <code>unsafe</code>.</li>
+</ul>
+
+<h3>Step 2: allow one core</h3>
+<pre><code>libc::CPU_SET(cpu, &amp;mut set);</code></pre>
+<ul>
+  <li><code>CPU_SET</code> is also a macro in C, and an <code>unsafe</code> function in <code>libc</code>. It turns bit <code>cpu</code> on.</li>
+</ul>
+
+<h3>Step 3: ask Linux</h3>
+<pre><code>let rc = libc::sched_setaffinity(0, std::mem::size_of::&lt;libc::cpu_set_t&gt;(), &amp;set);</code></pre>
+<ul>
+  <li>The first argument <code>0</code> says which thread. 0 means “the thread making this call.”</li>
+  <li><code>size_of::&lt;cpu_set_t&gt;()</code>: C does not know how long the set is. You tell it, in bytes.</li>
+</ul>
+
+<h3>Step 4: check the result</h3>
+<pre><code>if rc != 0 {
+    return Err(std::io::Error::last_os_error());
+}</code></pre>
+<ul>
+  <li>C functions report failure with a return value, here −1, and leave the reason in <code>errno</code>. <code>rc != 0</code> catches it.</li>
+</ul>
+
+<h3>All four together</h3>
 <pre><code>fn pin_to(cpu: usize) -&gt; std::io::Result&lt;()&gt; {
+    // SAFETY: `set` is all-zero bytes, a valid empty cpu_set_t; the size passed
+    // is the size of that type; `&amp;set` stays alive for the whole call.
     unsafe {
         let mut set: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_ZERO(&amp;mut set);
@@ -71,31 +109,25 @@ libc = "0.2"</code></pre>
     }
     Ok(())
 }</code></pre>
-<table>
-  <thead><tr><th>Piece</th><th>Why it is there</th></tr></thead>
-  <tbody>
-    <tr><td><code>std::mem::zeroed()</code></td><td>C structs have no constructor. All-zero bytes is a valid empty set. It is <code>unsafe</code> because all-zero is not valid for every type; here it is.</td></tr>
-    <tr><td><code>CPU_ZERO</code>, <code>CPU_SET</code></td><td>In C these are macros. <code>libc</code> provides them as Rust functions, marked <code>unsafe</code>.</td></tr>
-    <tr><td>first argument <code>0</code></td><td>Which thread. 0 means “the thread making this call.”</td></tr>
-    <tr><td><code>size_of::&lt;cpu_set_t&gt;()</code></td><td>C does not know how long the set is. You tell it, in bytes.</td></tr>
-    <tr><td><code>rc != 0</code></td><td>C functions report failure with a return value, here −1, and leave the reason in <code>errno</code>.</td></tr>
-  </tbody>
-</table>
+<p><strong>Takeaway: zero a set, turn on the core, call with the set’s size, and check the return value.</strong></p>
 
-<h2 id="errors">When it fails</h2>
-<p><code>std::io::Error::last_os_error()</code> reads <code>errno</code> and gives you a normal Rust error that prints as text, like <code>Invalid argument (os error 22)</code>. The common failure is <code>EINVAL</code>: the set contains no CPU the thread is allowed to use. Asking for cpu9 on an 8-core phone does that. So can Android itself, if the group of processes it put your shell in is restricted to some cores; the kernel only lets you pick inside what that group allows.</p>
+<h2 id="errors">What if it fails?</h2>
+<p>The call returns −1 and leaves a number in <code>errno</code>, which is hard to read. <code>std::io::Error::last_os_error()</code> reads <code>errno</code> and gives you a normal Rust error that prints as text, like <code>Invalid argument (os error 22)</code>. The common failure is <code>EINVAL</code>: the set contains no CPU the thread is allowed to use. Asking for cpu9 on an 8-core phone does that. So can Android itself, if the group of processes it put your shell in is restricted to some cores; the kernel only lets you pick inside what that group allows.</p>
 <div class="callout warn"><span class="lbl">Easy to get wrong</span><p>Ignoring the return value. A pin that failed silently leaves the thread unpinned, and the result file still says “cpu6.” Return the error, and have the benchmark stop if it fails.</p></div>
+<p><strong>Takeaway: turn <code>errno</code> into a Rust error and stop the benchmark; a silent failed pin gives wrong results under the right label.</strong></p>
 
-<h2 id="thread">It is per thread</h2>
-<p>Linux keeps one affinity mask per thread, not per program. Two consequences for Phase 1:</p>
+<h2 id="thread">Does pinning apply to the whole program?</h2>
+<p>You pin the main thread, then start eight workers. Where do they run? Linux keeps one affinity mask per thread, not per program. Two consequences for Phase 1:</p>
 <ul>
   <li>A new thread starts with a copy of its creator’s mask. Pin the main thread to cpu6 and then spawn eight workers, and all eight crowd onto cpu6.</li>
   <li>For the parallel sweep, each worker pins <em>itself</em> to its own core as the first thing it does. The <a href="rust-threads.html#scope">Threads</a> page shows that shape.</li>
 </ul>
 <p>A mask with several cores on one thread is allowed, but it is not the parallel case. One thread with the set {0–5} is still one thread, which the scheduler may move between those six cores.</p>
+<p><strong>Takeaway: the mask belongs to a thread and is inherited, so each worker pins itself.</strong></p>
 
-<h2 id="verify">Checking it worked</h2>
+<h2 id="verify">How do you check it worked?</h2>
 <p><code>libc::sched_getcpu()</code> returns the CPU the calling thread is on right now. After pinning to cpu6 it should return 6, every time. Printing it once at the start of a run is a cheap check. Calling it inside a timed loop is not, because it is extra work in the thing you are measuring.</p>
+<p><strong>Takeaway: print <code>sched_getcpu()</code> once at the start, not inside the timed loop.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why is calling <code>sched_setaffinity</code> unsafe in Rust, when the C function itself is fine?</summary>
@@ -108,12 +140,17 @@ libc = "0.2"</code></pre>
 <p>All on cpu7. They inherit main’s mask. The “parallel” run is six threads taking turns on one core, and its GB/s will say so.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Rust reaches Linux’s pinning call through FFI, using <code>libc</code>; the call is <code>unsafe</code> because you vouch for it.</p>
+<p>Build a one-bit CPU set, call with its size, and treat a failed pin as an error.</p>
+<p>Each thread has its own mask: pin every worker itself, and check once with <code>sched_getcpu()</code>.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

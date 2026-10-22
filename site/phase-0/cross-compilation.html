@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,20 +25,21 @@
 
 
 <h1>Cross-compilation</h1>
-<p class="lede">You compile on an x86 Linux PC. The binary has to run on an ARM phone, with Android’s C library, not the PC’s. Those are three different mismatches, and the first build failed on exactly one of them.</p>
+<p class="lede">You compile on an x86 Linux PC, but the binary has to run on an ARM phone with Android’s C library. The C library is the standard set of system functions programs call. Three mismatches separate the two machines, and the first build failed on exactly one of them.</p>
 <nav class="toc">
-  <a href="#host">Host and target</a>
-  <a href="#triple">The triple</a>
-  <a href="#halves">Two halves of the toolchain</a>
-  <a href="#broke">What actually broke</a>
-  <a href="#api">API level 31</a>
-  <a href="#file">What <code>file</code> showed</a>
+  <a href="#host">What are the host and the target?</a>
+  <a href="#triple">What does aarch64-linux-android mean?</a>
+  <a href="#halves">Where do the two halves of the toolchain come from?</a>
+  <a href="#broke">What actually broke in the first build?</a>
+  <a href="#api">Why build for API level 31?</a>
+  <a href="#file">What did <code>file</code> show?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="host">Host and target</h2>
-<p>The <strong>host</strong> is the machine that runs the compiler. Here that is the Linux PC. The <strong>target</strong> is the machine that will run the binary. Here that is the phone: <code>aarch64</code>, Android, Bionic.</p>
-<p>Same source, different instructions. A PC CPU cannot execute AArch64 machine code. That is a separate fact from “both are Linux.” Linux is a kernel family. The instruction set and the C library are independent of that.</p>
+<h2 id="host">What are the host and the target?</h2>
+<p>Your code is compiled on one machine and run on another, so you need names for both. The <strong>host</strong> is the machine that runs the compiler: here, the Linux PC. The <strong>target</strong> is the machine that will run the binary: here, the phone, which is <code>aarch64</code>, Android and Bionic (Android’s C library).</p>
+<p>Example: the same source file built for the PC runs x86 instructions, and built for the phone it runs ARM instructions. The PC CPU cannot execute AArch64 machine code. That is a separate fact from “both are Linux.” Linux is a kernel family. The instruction set and the C library are independent of that.</p>
 
 <figure>
 <svg class="fig" viewBox="0 0 720 250" role="img" aria-label="Build pipeline from Rust source to a phone binary">
@@ -65,9 +66,10 @@
 </svg>
 <figcaption>Rust’s target std produces ARM objects. Only the NDK linker knows how to finish them into an Android executable. The PC linker refuses the objects.</figcaption>
 </figure>
+<p><strong>Takeaway: the PC and the phone both run Linux and still need different binaries.</strong></p>
 
-<h2 id="triple">The triple</h2>
-<p><code>aarch64-linux-android</code> is a target triple: architecture, kernel, environment.</p>
+<h2 id="triple">What does aarch64-linux-android mean?</h2>
+<p>Rust and the NDK (Android’s native build kit) must agree on what they are building. <code>aarch64-linux-android</code> is a <strong>target triple</strong>: three parts that name the machine.</p>
 <table>
   <thead><tr><th>Piece</th><th>Here</th><th>What it decides</th></tr></thead>
   <tbody>
@@ -76,18 +78,20 @@
     <tr><td>environment</td><td><code>android</code></td><td>Bionic, Android’s C library, and Android’s dynamic linker. Not glibc.</td></tr>
   </tbody>
 </table>
-<p>Rust and the NDK both use this name, so they agree on what is being built. A normal Linux ARM binary is <code>aarch64-unknown-linux-gnu</code>. Same CPU, different C library and different loader. That binary will not run on Android even if you could get it onto the phone.</p>
+<p>Example: a normal Linux ARM binary is <code>aarch64-unknown-linux-gnu</code>. It has the same CPU but a different C library and a different loader. That binary will not run on Android, even if you could get it onto the phone. Change one piece of the triple and you have named a different machine.</p>
+<p><strong>Takeaway: the triple names the CPU, the kernel and the C library, and every tool must use the same one.</strong></p>
 
-<h2 id="halves">Two halves of the toolchain</h2>
+<h2 id="halves">Where do the two halves of the toolchain come from?</h2>
 <p>A toolchain is compiler, linker, sysroot (the target’s headers and libraries), and C library. For this project the two halves come from different places:</p>
 <ol class="steps">
-  <li><code>rustup target add aarch64-linux-android</code> installs Rust’s standard library, already compiled for the phone. That is what lets <code>println!</code> and <code>Vec</code> exist in the ARM build. It does not link the final executable against Android.</li>
-  <li>The linker is the NDK clang: <code>aarch64-linux-android31-clang</code> under <code>~/Android/Sdk/ndk/27.3.13750724/...</code>. Only that linker knows Bionic and <code>/system/bin/linker64</code>.</li>
+  <li><code>rustup target add aarch64-linux-android</code> installs Rust’s standard library, already compiled for the phone. That is what lets <code>println!</code> and <code>Vec</code> exist in the ARM build. Without it, they do not. It does not link the final executable against Android.</li>
+  <li>The linker is the NDK clang: <code>aarch64-linux-android31-clang</code> under <code>~/Android/Sdk/ndk/27.3.13750724/...</code>. Only that linker knows Bionic and <code>/system/bin/linker64</code>. Without it, the PC’s linker tries and fails.</li>
 </ol>
 <p>Cargo is told about the linker in <code>.cargo/config.toml</code>, which is gitignored. The committed example is <code>.cargo/config.toml.example</code>. A new machine copies it and edits the path.</p>
+<p><strong>Takeaway: Rust compiles the code, and the NDK linker finishes it into an Android executable.</strong></p>
 
-<h2 id="broke">What actually broke</h2>
-<p>The first Android build failed with <code>/usr/bin/ld: file in wrong format</code>. Easy to misread as “the standard library is missing.” It was not.</p>
+<h2 id="broke">What actually broke in the first build?</h2>
+<p>The first Android build failed with <code>/usr/bin/ld: file in wrong format</code>. That looks like a missing library, but it was not. The table shows which layer did what.</p>
 <table>
   <thead><tr><th>Layer</th><th>Job</th><th>Who provides it</th><th>Failed?</th></tr></thead>
   <tbody>
@@ -96,12 +100,15 @@
   </tbody>
 </table>
 <div class="callout warn"><span class="lbl">Easy to get wrong</span><p>The standard library was the thing that worked. It is why Rust could emit ARM objects at all. The PC’s linker then refused those objects because they were the wrong architecture. Pointing Cargo at the NDK clang fixed the link, not the compile.</p></div>
+<p><strong>Takeaway: the error came from the linker, so the fix was pointing Cargo at the NDK linker.</strong></p>
 
-<h2 id="api">API level 31</h2>
-<p>The <code>31</code> in <code>aarch64-linux-android31-clang</code> is the <em>minimum</em> Android version the binary supports. 31 is Android 12. A binary built for 31 runs on Android 12 and everything newer, including this phone.</p>
-<p>The phone itself reports SDK 36, Android 16 <span class="tag m">measured</span>. Building for 36 would refuse to run on Android 12 through 15. Lower is more compatible. Go higher only when you need a C library function that was added later. Phase 0 does not need one.</p>
+<h2 id="api">Why build for API level 31?</h2>
+<p>The number in the linker’s name, <code>aarch64-linux-android31-clang</code>, is a choice, and it sets a version floor. The <code>31</code> is the <em>minimum</em> Android version the binary supports. 31 is Android 12. A binary built for 31 runs on Android 12 and everything newer, including this phone.</p>
+<p>Example: the phone itself reports SDK 36, Android 16 <span class="tag m">measured</span>. Building for 36 would refuse to run on Android 12 through 15. Lower is more compatible. Go higher only when you need a C library function that was added later. Phase 0 does not need one.</p>
+<p><strong>Takeaway: build for the lowest API level that has the functions you need, which is 31 here.</strong></p>
 
-<h2 id="file">What <code>file</code> showed</h2>
+<h2 id="file">What did <code>file</code> show?</h2>
+<p>The <code>file</code> command reads a binary’s header and says what kind of program it is. That answers the question you need first: is this binary for the PC or for the phone?</p>
 <table>
   <thead><tr><th>Result</th><th>What it means</th></tr></thead>
   <tbody>
@@ -113,6 +120,7 @@
   </tbody>
 </table>
 <div class="callout"><span class="lbl">Two different “won’t run”</span><p>An AArch64 binary on this x86 PC fails with <code>Exec format error</code> because the CPU is wrong. A glibc AArch64 binary on the phone would fail even though the CPU is right, because Android does not have <code>ld-linux-aarch64.so.1</code> or glibc. The hello-world experiment showed the first. The interpreter path <code>/system/bin/linker64</code> is the evidence for the second.</p></div>
+<p><strong>Takeaway: <code>file</code> names the architecture and the loader, so read it before you guess at the cause.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why can’t the PC run the phone binary, even though both are Linux?</summary>
@@ -124,13 +132,19 @@
 <details class="check"><summary>Why not target API 36, since that is the phone’s version?</summary>
 <p>The number is a minimum, not a match. 31 runs on this phone and on older ones. 36 would refuse Android 12–15. Raise it only for a symbol that did not exist yet at 31.</p>
 </details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The PC and the phone differ in CPU, kernel and C library, so the phone needs its own binary.</p>
+<p>Rust supplies the ARM objects, and the NDK clang links them into an Android executable.</p>
+<p>Build for API 31 and confirm the result with <code>file</code>.</p>
+
 <nav class="pager" data-pager></nav>
 
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,35 +23,53 @@
 <main id="content">
 <p class="kicker">Phase 2 · 11</p>
 <h1>Bit-identical with llama2.c</h1>
-<p class="lede">How do you know an inference engine is right? Plausible-looking text is not proof: a model with a small bug still writes sentences. This project checks against an external reference, number by number, at every step of the forward pass. In Phase 2 every one of those numbers matched llama2.c to the last bit. This page shows how, and why “the same maths” is not enough for that.</p>
+<p class="lede">How do you know an inference engine is right? Plausible-looking text is not proof: a model with a small bug still writes sentences. This project checks against an external reference, number by number, at every step of the forward pass. In Phase 2 every one of those numbers matched llama2.c to the last bit (bit-identical means every bit of the result is the same). This page shows how, and why “the same maths” is not enough for that.</p>
 <nav class="toc">
-  <a href="#why">Why text is not enough</a>
-  <a href="#reference">The reference: llama2.c</a>
-  <a href="#dumps">Golden dumps</a>
-  <a href="#replay">Replaying the reference</a>
-  <a href="#order">Float addition depends on order</a>
-  <a href="#fma">The FMA trap</a>
-  <a href="#after">After Phase 2: tolerances</a>
+  <a href="#why">Why isn’t reading the output text enough?</a>
+  <a href="#reference">Which reference is the answer key?</a>
+  <a href="#dumps">How do you get the numbers out of llama2.c?</a>
+  <a href="#replay">How does the test compare the two engines?</a>
+  <a href="#order">Why does the order of additions change the answer?</a>
+  <a href="#fma">Why can one instruction change the answer?</a>
+  <a href="#after">Once the bits differ, how do you check?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="why">Why text is not enough</h2>
-<p>Swap two RoPE pairs, forget the √48, or read the wrong cache row, and the model still produces English-looking words for a while. Errors in a transformer often degrade quality instead of crashing. A test that only looks at the output text would miss them, or catch them so late that the cause is unclear.</p>
-<p>The rule in this project: <strong>correctness comes from external references only</strong>. Never a second implementation of our own (it would share our misunderstandings), always someone else's established code: llama2.c here, numpy for single kernels, Hugging Face <code>transformers</code> for SmolLM2 and Qwen, llama.cpp for quantized formats.</p>
+<h2 id="why">Why isn’t reading the output text enough?</h2>
+<p>A model with a bug can still write fluent sentences for a while. Swap two RoPE pairs (RoPE is the rotation that encodes position), forget the √48, or read the wrong cache row, and the output still looks like English. Errors in a transformer often degrade quality instead of crashing. A test that only looks at the output text would miss them, or catch them so late that the cause is unclear.</p>
+<p>The rule in this project: <strong>correctness comes from external references only</strong>. Never write a second implementation of our own: it would share our misunderstandings, so a misread formula would pass the test. Use established code instead: llama2.c here, numpy for single kernels, Hugging Face <code>transformers</code> for SmolLM2 and Qwen, llama.cpp for quantized formats.</p>
+<p><strong>Takeaway: a small bug can leave the text looking fine, so check the numbers inside the model against an outside reference.</strong></p>
 
-<h2 id="reference">The reference: llama2.c</h2>
-<p>llama2.c's <code>run.c</code> is about 1,000 lines of plain C that runs stories15M. It is simple enough to read completely and widely used, so it is a good answer key. Aether's code is written independently in Rust; llama2.c is only run, never translated.</p>
+<h2 id="reference">Which reference is the answer key?</h2>
+<p>You need a reference you can read and trust. llama2.c’s <code>run.c</code> is about 1,000 lines of plain C that runs stories15M. It is simple enough to read completely and widely used, so it is a good answer key. Aether’s code is written independently in Rust; llama2.c is only run, never translated.</p>
+<p><strong>Takeaway: llama2.c is the answer key: run it and read it, but never translate it into Aether.</strong></p>
 
-<h2 id="dumps">Golden dumps</h2>
-<p>To compare intermediate numbers, not just tokens, llama2.c needs to report them. <code>tools/llama2c-dump.patch</code> adds a <code>dump()</code> call after each step of its forward pass, writing every activation to a file:</p>
+<h2 id="dumps">How do you get the numbers out of llama2.c?</h2>
+<p>Comparing only the final tokens misses the middle of the forward pass. So llama2.c must report its intermediate numbers. <code>tools/llama2c-dump.patch</code> adds a <code>dump()</code> call after each step of its forward pass, writing every activation to a file (an activation is one of the intermediate lists of numbers a step produces). Built in steps:</p>
+<h3>Step 1: declare the dump function</h3>
+<pre><code>static void dump(const char* name, int layer, int pos, const float* data, int n);</code></pre>
+<ul>
+  <li><code>name</code> labels the activation, <code>layer</code> and <code>pos</code> say where it came from.</li>
+  <li><code>data</code> points at the numbers and <code>n</code> is how many there are.</li>
+</ul>
+<h3>Step 2: call it after a step</h3>
+<pre><code>rmsnorm(s-&gt;xb, x, w-&gt;rms_att_weight + l*dim, dim);
+dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
+<ul>
+  <li>The <code>rmsnorm</code> line is the step; the <code>dump</code> line right after it saves its output.</li>
+  <li><code>s-&gt;xb</code> is the buffer that holds the result, and <code>dim</code> is its length.</li>
+</ul>
+<h3>All together</h3>
 <pre><code>static void dump(const char* name, int layer, int pos, const float* data, int n);
 …
 rmsnorm(s-&gt;xb, x, w-&gt;rms_att_weight + l*dim, dim);
 dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
-<p><code>tools/stories15m_goldens.sh</code> builds the patched llama2.c, runs “Once upon a time” for 64 positions (greedy, and seeded sampling), and saves the dumps. These are the <em>golden files</em>. They are regenerated from the script, not committed, because they are large.</p>
-<p>The 14 names, in forward order: <code>embed</code>, <code>attn_norm</code>, <code>q</code>, <code>k</code>, <code>v</code>, <code>attn</code>, <code>attn_out</code>, <code>resid_attn</code>, <code>ffn_norm</code>, <code>swiglu</code>, <code>ffn_out</code>, <code>resid_ffn</code>, <code>final_norm</code>, <code>logits</code>. Aether's <a href="forward.html#observer">observer</a> taps the same 14 places under the same names.</p>
+<p><code>tools/stories15m_goldens.sh</code> builds the patched llama2.c, runs “Once upon a time” for 64 positions (greedy, and seeded sampling), and saves the dumps. These are the <em>golden files</em>. They are regenerated from the script, not committed, because they are large. Committing them would bloat the repo.</p>
+<p>The 14 names, in forward order: <code>embed</code>, <code>attn_norm</code>, <code>q</code>, <code>k</code>, <code>v</code>, <code>attn</code>, <code>attn_out</code>, <code>resid_attn</code>, <code>ffn_norm</code>, <code>swiglu</code>, <code>ffn_out</code>, <code>resid_ffn</code>, <code>final_norm</code>, <code>logits</code>. Aether’s <a href="forward.html#observer">observer</a> taps the same 14 places under the same names.</p>
+<p><strong>Takeaway: the patched llama2.c writes 14 named activations, so a mismatch points at one step.</strong></p>
 
-<h2 id="replay">Replaying the reference</h2>
+<h2 id="replay">How does the test compare the two engines?</h2>
 <p>The test (<code>greedy_matches_llama2c_at_every_layer</code> in <code>src/model/llama2c.rs</code>) feeds Aether the same prompt tokens, lets it choose each next token itself, and checks two things:</p>
 <ol class="steps">
   <li><strong>Every chosen token equals llama2.c's.</strong> The first difference stops the test with the position where it happened.</li>
@@ -67,9 +85,10 @@ dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
     <tr><td>generated text vs llama2.c's <code>run</code></td><td>byte-identical</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: a pass means identical tokens and matching numbers at every step, not just similar text.</strong></p>
 
-<h2 id="order">Float addition depends on order</h2>
-<p>Why is “bit-identical” worth aiming for, and why is it hard? Because computer floats are rounded after every operation, and so <strong>(a + b) + c is not always equal to a + (b + c)</strong>. Each addition rounds to the nearest representable <code>f32</code>, and different orders round at different moments.</p>
+<h2 id="order">Why does the order of additions change the answer?</h2>
+<p>Exact matching is worth aiming for, and it is hard, because computer floats are rounded after every operation. So <strong>(a + b) + c is not always equal to a + (b + c)</strong>. Each addition rounds the true result to the nearest value an <code>f32</code> can hold, and different orders round at different moments.</p>
 <div class="widget" data-floatorder>
   <h3>Twelve numbers, four orders</h3>
   <p>The same twelve products, summed in <code>f32</code> in four different orders. The hex is the exact bit pattern.</p>
@@ -77,15 +96,18 @@ dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
   <p class="note" data-note></p>
 </div>
 <p>All four are correct to about seven digits, and none is “the” answer. So two engines that compute the same formula in different orders will differ in the last bits, and those differences grow a little through 6 layers.</p>
-<p>That is why Aether's scalar kernels follow llama2.c's order exactly: left-to-right sums, <code>w * (scale * x)</code> in RMSNorm, the division by √48 after the dot product, <code>v * (1 / (1 + e<sup>−v</sup>))</code> in SiLU. With the order matched, any non-zero difference is a real bug, and it stands out against a background of exact zeros. With a tolerance, a small bug could hide inside it.</p>
+<p>That is why Aether’s scalar kernels follow llama2.c’s order exactly: left-to-right sums, <code>w * (scale * x)</code> in RMSNorm, the division by √48 after the dot product, <code>v * (1 / (1 + e<sup>−v</sup>))</code> in SiLU. With the order matched, any non-zero difference is a real bug, and it stands out against a background of exact zeros. With a tolerance, a small bug could hide inside it.</p>
+<p><strong>Takeaway: the same formula in a different order gives different last bits, so match the order to keep the check exact.</strong></p>
 
-<h2 id="fma">The FMA trap</h2>
-<p>ARM CPUs have a <em>fused multiply-add</em> instruction: <code>a × b + c</code> with a single rounding at the end instead of two. It is faster and slightly more accurate, so compilers are sometimes allowed to use it for <code>acc += w * x</code>. That would round differently from llama2.c's separate multiply and add.</p>
-<p>Rust never fuses a multiply and an add on its own; and the NDK's C compiler, as configured for llama2.c here, did not either. Both sides did two roundings, so the bits matched. Phase 3 then uses FMA on purpose, and gives up bit-identity in exchange for speed.</p>
+<h2 id="fma">Why can one instruction change the answer?</h2>
+<p>ARM CPUs have a <em>fused multiply-add</em> instruction: <code>a × b + c</code> with a single rounding at the end instead of two. It is faster and slightly more accurate, so compilers are sometimes allowed to use it for <code>acc += w * x</code>. That would round differently from llama2.c’s separate multiply and add.</p>
+<p>Rust never fuses a multiply and an add on its own; and the NDK’s C compiler (the Android build compiler), as configured for llama2.c here, did not either. Both sides did two roundings, so the bits matched. Phase 3 then uses FMA on purpose, and gives up bit-identity in exchange for speed.</p>
+<p><strong>Takeaway: a fused multiply-add rounds once instead of twice, so using it changes the last bits.</strong></p>
 
-<h2 id="after">After Phase 2: tolerances</h2>
-<p>Phase 3's NEON kernels sum with several accumulators and fused multiply-adds: a different order, so different last bits. From then on the same test runs with a <em>tolerance</em>: every activation must be within 10<sup>−4</sup> relative error of llama2.c's, and every greedy token must still be identical. The scalar build on the PC remains bit-identical, which keeps the zero-background check available.</p>
+<h2 id="after">Once the bits differ, how do you check?</h2>
+<p>Phase 3’s NEON kernels sum with several accumulators and fused multiply-adds: a different order, so different last bits. From then on the same test runs with a <em>tolerance</em> (the largest difference you accept): every activation must be within 10<sup>−4</sup> relative error of llama2.c’s, and every greedy token must still be identical. The scalar build on the PC remains bit-identical, which keeps the zero-background check available.</p>
 <p>The same approach scales up: SmolLM2 and Qwen are compared layer by layer with Hugging Face <code>transformers</code> (Phase 5), quantized formats with llama.cpp (Phase 6), and model quality by perplexity and KL divergence against llama.cpp (Phase 7).</p>
+<p><strong>Takeaway: from Phase 3 on, the check uses a tolerance plus identical greedy tokens.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why compare every activation, not only the final tokens?</summary>
@@ -101,13 +123,18 @@ dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
 <p>Several accumulators and FMA are what make the kernels fast (Phase 3, <a href="../phase-3/chains.html">dependency chains</a>), and both change the order of rounding. The check becomes a tolerance plus identical greedy tokens.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>The reference is llama2.c, run and never copied, and a patch makes it report every activation.</p>
+<p>Float sums depend on order, so an exact check needs the same order, and FMA breaks that.</p>
+<p>From Phase 3 on, the check uses a tolerance and identical greedy tokens.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

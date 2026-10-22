@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,21 +25,23 @@
 <h1>Course outline</h1>
 <p class="lede">Every page these notes still need, phase by phase, and how far each one has got. The engine is ahead of the notes: Phases 0–8 are built and verified, but the explanations stop at Phase 3. So for most rows the code and the measurements already exist and only the page is missing. The third column says which.</p>
 <nav class="toc">
-  <a href="#status">Where the notes stand</a>
-  <a href="#p-1">Before Phase 0</a>
-  <a href="#p0-3">Phases 0–3</a>
-  <a href="#p4">4 Threads</a>
-  <a href="#p5">5 Modern models</a>
-  <a href="#p6">6 Quantization</a>
-  <a href="#p7">7 GGUF and Qwen</a>
-  <a href="#p8">8 The app</a>
-  <a href="#p9">9 Accelerators</a>
-  <a href="#p10">10 Advanced</a>
-  <a href="#capstone">Capstone</a>
-  <a href="#site">Across the site</a>
+  <a href="#status">Where do the notes stand?</a>
+  <a href="#p-1">What must I know before Phase 0?</a>
+  <a href="#p0-3">Which pages cover Phases 0–3?</a>
+  <a href="#p4">Phase 4: how do threads share the work?</a>
+  <a href="#p5">Phase 5: what do modern models add?</a>
+  <a href="#p6">Phase 6: how are the weights made smaller?</a>
+  <a href="#p7">Phase 7: what is in a GGUF file?</a>
+  <a href="#p8">Phase 8: how does Kotlin reach the engine?</a>
+  <a href="#p9">Phase 9: are GPUs and NPUs worth it?</a>
+  <a href="#p10">Phase 10: what else could the engine do?</a>
+  <a href="#capstone">How do I get from an empty repo to an app?</a>
+  <a href="#site">What is still missing across the site?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="status">Where the notes stand</h2>
+<h2 id="status">Where do the notes stand?</h2>
+<p>Start with the counts.</p>
 <div class="statrow">
   <div class="stat"><b>12</b><span>written</span></div>
   <div class="stat"><b>4</b><span>partly covered</span></div>
@@ -49,8 +51,10 @@
 <p><span class="tag d">written</span> the page exists and is checked against the code and <code>results/</code>. <span class="tag c">partly</span> some of it is on an existing page, linked. <span class="tag a">to write</span> nothing yet.</p>
 <p>In the third column, <strong>built</strong> means the engine has the code and the measured numbers a page can teach from; <strong>not built</strong> means the page would have to explain something the engine does not do yet.</p>
 <div class="callout"><span class="lbl">Two choices behind this list</span><p>Phases 9 and 10 go past the <a href="roadmap.html">roadmap</a>, which ends with the Android app in Phase 8. The plan only lists those topics as “later”. They are kept here as optional. Also, this phone has no efficiency cores (<a href="../phase-1/topology.html">Phase 1</a>), so where the outline says prime/performance/efficiency, the pages compare prime with performance cores and say how other chips differ.</p></div>
+<p><strong>Takeaway: 12 pages are written, 4 are partly covered, and 28 still need writing.</strong></p>
 
-<h2 id="p-1">Before Phase 0: prerequisites</h2>
+<h2 id="p-1">What must I know before Phase 0?</h2>
+<p>Phase 0 assumes some Rust and arithmetic. A <em>primer</em> is a short first introduction to a subject.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -59,8 +63,10 @@
     <tr><td><span class="tag a">to write</span></td><td>A tour of existing engines: llama.cpp/ggml, ExecuTorch, MLC-LLM, LiteRT, MNN, ncnn. What each does, and which Aether checks itself against.</td><td>llama.cpp is built for host and phone</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: the Rust primer is only half on the site, because ownership and slices have no page yet.</strong></p>
 
-<h2 id="p0-3">Phases 0–3</h2>
+<h2 id="p0-3">Which pages cover Phases 0–3?</h2>
+<p>A <em>snippet</em> is a short piece of code on a page. The last three rows record a results page, a fix and a move.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -73,8 +79,10 @@
     <tr><td><span class="tag d">written</span></td><td>Moved <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a> to Phase 7, where the work happened and where Qwen’s long contexts make it matter.</td><td>—</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: Phases 0 to 3 are written, and the last three rows say what changed in them.</strong></p>
 
-<h2 id="p4">Phase 4: threads</h2>
+<h2 id="p4">Phase 4: how do threads share the work?</h2>
+<p>A <em>thread</em> is one worker that the operating system runs on a core.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -85,8 +93,10 @@
     <tr><td><span class="tag d">written</span></td><td>Speed and energy vs thread count: <a href="../phase-4/cores.html">Choosing cores</a> and the end of <a href="../phase-4/waiting.html#cost">Waiting</a></td><td>measured · twelve core sets twice, energy on four (<code>results/phase-4.md</code>); a steadier repeat is still open</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: Phase 4 is written, but a steadier repeat of the thread-count measurements is still open.</strong></p>
 
-<h2 id="p5">Phase 5: modern models</h2>
+<h2 id="p5">Phase 5: what do modern models add?</h2>
+<p>Every row here is still to write, but the engine has the code for each one. <em>bf16</em> is a 16-bit number format.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -97,8 +107,10 @@
     <tr><td><span class="tag a">to write</span></td><td>Checking layer by layer against Hugging Face</td><td>built · within 5.5e-5 of <code>transformers</code></td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: all five Phase 5 topics are built, and none of them has a page yet.</strong></p>
 
-<h2 id="p6">Phase 6: quantization</h2>
+<h2 id="p6">Phase 6: how are the weights made smaller?</h2>
+<p>Quantization stores each weight in fewer bits. A <em>block scale</em> is one number that a small group of weights shares, so each weight can be a short integer.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -109,8 +121,10 @@
     <tr><td><span class="tag a">to write</span></td><td>Accuracy checks: perplexity and KL</td><td>built · matches <code>llama-perplexity</code></td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: Q8_0 and Q4_0 are built and match llama.cpp byte for byte; the other rows are still to write.</strong></p>
 
-<h2 id="p7">Phase 7: GGUF and Qwen</h2>
+<h2 id="p7">Phase 7: what is in a GGUF file?</h2>
+<p><em>GGUF</em> is the file format llama.cpp uses. A <em>KV cache</em> holds the keys and values from earlier tokens. <em>J/token</em> is joules per generated token.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -120,8 +134,10 @@
     <tr><td><span class="tag a">to write</span></td><td>A sustained-speed and energy benchmark suite (joules per token)</td><td>built · 0.041 J/token, Qwen2.5 Q4_0</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: the GGUF reader and the energy benchmark are built; long context and the quantized cache are not.</strong></p>
 
-<h2 id="p8">Phase 8: the app</h2>
+<h2 id="p8">Phase 8: how does Kotlin reach the engine?</h2>
+<p>The app is written in Kotlin, and the engine is written in Rust. <em>JNI</em> is the bridge that lets Kotlin call native code, and an <em>APK</em> is the package file Android installs.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -131,8 +147,10 @@
     <tr><td><span class="tag a">to write</span></td><td>Storing and downloading the model</td><td>stored in the app’s files folder, pushed with adb; download not built</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: the C interface and the packaging are built; memory limits are not measured, and downloading the model is not built.</strong></p>
 
-<h2 id="p9">Phase 9: accelerators <span class="tag a">optional</span></h2>
+<h2 id="p9"><span class="tag a">optional</span> Phase 9: accelerators. Are GPUs and NPUs worth it?</h2>
+<p>An <em>accelerator</em> is a chip other than the CPU that runs model work. A GPU is a graphics chip, and an NPU is a neural processing unit. Phase 9 is optional and not built.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -141,8 +159,10 @@
     <tr><td><span class="tag a">to write</span></td><td>Why accelerators help prefill more than decode</td><td>not built · the CPU numbers to compare against exist</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: no accelerator row is built, but the CPU numbers to compare against already exist.</strong></p>
 
-<h2 id="p10">Phase 10: advanced <span class="tag a">optional</span></h2>
+<h2 id="p10"><span class="tag a">optional</span> Phase 10: advanced. What else could the engine do?</h2>
+<p>These three are optional and not built. A <em>computation graph</em> is the list of operations a model runs, in order. <em>Op fusion</em> merges two operations into one pass.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -151,16 +171,20 @@
     <tr><td><span class="tag a">to write</span></td><td>Speculative decoding, batching</td><td>not built</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: all three are not built, and the plan waits for a GPU backend before graph planning.</strong></p>
 
-<h2 id="capstone">Capstone</h2>
+<h2 id="capstone">How do I get from an empty repo to an app?</h2>
+<p>One row: a checklist from an empty repo to a chat app.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
     <tr><td><span class="tag a">to write</span></td><td>A checklist from an empty repo to a chat APK, linking the code and the tests at each step</td><td>built through Phase 8</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: the capstone is still to write, and the engine it would walk through is built through Phase 8.</strong></p>
 
-<h2 id="site">Across the site</h2>
+<h2 id="site">What is still missing across the site?</h2>
+<p>These rows cover the whole site, not one phase.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
@@ -170,15 +194,21 @@
     <tr><td><span class="tag a">to write</span></td><td>Search, a menu that works without JavaScript, “last updated” dates</td><td>—</td></tr>
   </tbody>
 </table>
-<p>When a row is done, change its tag in <code>site/start/outline.html</code> and the counts at the top.</p>
+<p>When a row is done, change its tag in <code>site/start/outline.html</code> and the counts at the top. Otherwise the counts go stale.</p>
+<p><strong>Takeaway: the repo link is blocked until the repo has a public remote.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The status table says what is written, partly covered and still to write.</p>
+<p>Most open rows need a page, not engine work, though a few are marked not built.</p>
+<p>Phases 9 and 10 are optional, and the capstone is still to write.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

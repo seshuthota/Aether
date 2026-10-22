@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,15 +26,17 @@
 <h1>Plotting the sweep</h1>
 <p class="lede">The working-set sweep produces about twenty numbers per core set. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
 <nav class="toc">
-  <a href="#path">From phone to picture</a>
-  <a href="#csv">A CSV with its conditions</a>
-  <a href="#log">Why the size axis is logarithmic</a>
-  <a href="#script">The plotting script</a>
-  <a href="#units">Bytes and gigabytes</a>
+  <a href="#path">How do the numbers get from phone to picture?</a>
+  <a href="#csv">How do we save numbers with their conditions?</a>
+  <a href="#log">Why is the size axis logarithmic?</a>
+  <a href="#script">How do we write the plotting script?</a>
+  <a href="#units">Bytes or gigabytes: which one?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="path">From phone to picture</h2>
+<h2 id="path">How do the numbers get from phone to picture?</h2>
+<p>The phone runs the sweep and prints its numbers. They travel to the PC through adb (the Android debug bridge), land in a CSV file in <code>results/</code>, and the plotting script draws them as a PNG.</p>
 <figure>
 <svg class="fig" viewBox="0 0 700 120" role="img" aria-label="Pipeline from phone output to a plot">
   <rect x="10" y="30" width="140" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
@@ -54,10 +56,11 @@
 </svg>
 <figcaption>The runner passes the binary’s output straight back. Cargo’s own messages go to stderr, so <code>&gt;</code> captures only what your program printed.</figcaption>
 </figure>
-<p>The phone does no drawing. It doesn’t have Python, and it shouldn’t be busy with anything but the benchmark. The PC already has Python and matplotlib 3.10 <span class="tag m">measured</span>.</p>
+<p>The phone does no drawing. It doesn’t have Python, and it shouldn’t be busy with anything but the benchmark. The PC already has Python and matplotlib 3.10 <span class="tag m">measured</span>. matplotlib is the Python plotting library.</p>
+<p><strong>Takeaway: the phone only measures; the PC draws the picture and keeps the files.</strong></p>
 
-<h2 id="csv">A CSV with its conditions</h2>
-<p>CSV is a table as text: one row per line, values separated by commas. Rust can print it with <code>println!</code>, and Python can read it without help. Put the conditions at the top as <code>#</code> lines, so the numbers and the circumstances that produced them can never be separated:</p>
+<h2 id="csv">How do we save numbers with their conditions?</h2>
+<p>CSV (comma-separated values) is a table written as text, one row per line. Here is the whole format in a small example.</p>
 <pre><code># sweep: pure read, f32, pinned cpu6
 # date=2026-10-20 screen=off charging=no start_temp_c=31.2
 # commit=5632c75
@@ -65,11 +68,22 @@ bytes,gbps
 4096,88.41
 8192,92.07
 …</code></pre>
+<ul>
+  <li>Lines that start with <code>#</code> hold the conditions of the run, as plain text.</li>
+  <li><code>bytes,gbps</code> is the header. It names the two columns.</li>
+  <li>Each later line is one measurement: a working-set size in bytes, then its bandwidth in GB/s.</li>
+</ul>
+<p>The conditions sit at the top, so they can never be separated from the numbers. Rust writes the file with two <code>println!</code> calls, each one line.</p>
 <pre><code>println!("bytes,gbps");
 println!("{},{:.2}", bytes, gbps);</code></pre>
-<p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete on its own. The numbers above are an example of the format, not results.</p>
+<ul>
+  <li><code>{:.2}</code> prints the number with two digits after the decimal point. Without it, Rust prints every digit the float holds.</li>
+  <li>If you leave out the header, the script cannot find <code>bytes</code> or <code>gbps</code> by name.</li>
+</ul>
+<p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete. The numbers above are an example, not results.</p>
+<p><strong>Takeaway: one CSV per core set, with the conditions as <code>#</code> lines at the top.</strong></p>
 
-<h2 id="log">Why the size axis is logarithmic</h2>
+<h2 id="log">Why is the size axis logarithmic?</h2>
 <p>The sweep doubles the size each step: 4 KB, 8 KB, 16 KB … 256 MB. That is 17 sizes spanning a factor of 65,536. On an ordinary axis the first twelve points, everything up to 8 MB, crowd into the left 3% <span class="tag c">calculated</span>, which is exactly where the L1 and L2 cliffs are.</p>
 <div class="widget" data-axis>
   <h3>Same points, two axes</h3>
@@ -83,10 +97,69 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
   <svg class="fig" viewBox="0 0 640 236" role="img" aria-label="Sweep plotted on linear or log axis" data-svg></svg>
   <p class="note" data-out></p>
 </div>
-<p>On a log axis, every doubling is the same distance, so each cache level gets room in proportion to how many doublings it covers. The y axis stays linear: you want to read GB/s directly and see that DRAM is a fraction of L1.</p>
 
-<h2 id="script">The plotting script</h2>
-<p>This goes in <code>tools/</code>, where host-side Python lives. Give it one or more CSV files and it draws them on the same axes:</p>
+<p>On a log axis, every doubling is the same distance, so each cache level gets room in proportion to its doublings. The y axis stays linear, so you can read GB/s directly.</p>
+<p><strong>Takeaway: a log size axis spreads the cache cliffs out; a linear one squeezes them against the left edge.</strong></p>
+
+<h2 id="script">How do we write the plotting script?</h2>
+<p>The script goes in <code>tools/</code>, where host-side Python lives (it runs on the PC, not the phone). It takes one or more CSV files and draws them on the same axes. We build it in four steps, then show it whole.</p>
+
+<h3>Step 1: imports and a drawing mode with no window</h3>
+<pre><code>import csv
+import sys
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")                      # write a file; no window needed
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter</code></pre>
+<ul>
+  <li><code>import</code> loads a library: <code>csv</code> reads the file, <code>sys</code> gives the command-line file names, <code>Path</code> gets a short name.</li>
+  <li><code>matplotlib.use("Agg")</code> picks the mode that writes a file and opens no window.</li>
+  <li><code>FuncFormatter</code> lets us write our own axis labels.</li>
+</ul>
+
+<h3>Step 2: a label function for sizes</h3>
+<pre><code>def size_label(b, _pos):
+    return f"{b / 2**10:.0f} KiB" if b &lt; 2**20 else f"{b / 2**20:.0f} MiB"</code></pre>
+<ul>
+  <li>matplotlib calls this once per tick mark, with the size in bytes as <code>b</code>. <code>_pos</code> is unused.</li>
+  <li><code>2**10</code> is 1,024, so <code>b / 2**10</code> turns bytes into KiB. 4096 ÷ 1024 = 4, so 4096 bytes shows as “4 KiB”.</li>
+  <li>Below <code>2**20</code> (1 MiB) the label uses KiB, above it MiB. <code>.0f</code> means no decimals.</li>
+</ul>
+
+<h3>Step 3: read each file and plot it</h3>
+<pre><code>fig, ax = plt.subplots(figsize=(8, 4.5))
+for path in sys.argv[1:]:
+    with open(path) as f:
+        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
+    x = [int(r["bytes"]) for r in rows]
+    y = [float(r["gbps"]) for r in rows]
+    ax.plot(x, y, marker="o", label=Path(path).stem)</code></pre>
+<ul>
+  <li><code>sys.argv[1:]</code> is the list of files named on the command line.</li>
+  <li><code>DictReader</code> uses the header line, so <code>r["bytes"]</code> finds the column by name. <code>#</code> lines are dropped first.</li>
+  <li><code>int(...)</code> and <code>float(...)</code> turn the text into numbers. Each measured point gets a dot. A line between two dots is not a measurement.</li>
+</ul>
+
+<h3>Step 4: axes, labels and the file</h3>
+<pre><code>ax.set_xscale("log", base=2)               # each step right = twice the size
+ax.xaxis.set_major_formatter(FuncFormatter(size_label))
+ax.set_xlabel("working set")
+ax.set_ylabel("read bandwidth (GB/s)")
+ax.set_ylim(bottom=0)
+ax.grid(True, alpha=0.3)
+ax.legend()
+fig.tight_layout()
+fig.savefig("results/sweep.png", dpi=150)
+print("wrote results/sweep.png")</code></pre>
+<ul>
+  <li><code>base=2</code> makes each step a doubling, which is how the sweep sizes were chosen.</li>
+  <li><code>set_ylim(bottom=0)</code> keeps the y axis from starting at, say, 10 GB/s, which would make a small drop look like a cliff.</li>
+  <li><code>savefig</code> writes the file. The path is relative, so run the script from the project root.</li>
+</ul>
+
+<h3>All four together</h3>
 <pre><code># Plot one or more sweep CSVs (bytes,gbps) on the same axes.
 # Usage: python3 tools/plot_sweep.py results/sweep-cpu6.csv results/sweep-cpu0-5.csv
 import csv
@@ -121,17 +194,13 @@ ax.legend()
 fig.tight_layout()
 fig.savefig("results/sweep.png", dpi=150)
 print("wrote results/sweep.png")</code></pre>
-<p>Tested on made-up CSVs, including Windows-style line endings <span class="tag m">measured</span>. Run it from the project root so <code>results/</code> resolves.</p>
-<ul>
-  <li><code>DictReader</code> uses the header line, so columns are found by name, not position.</li>
-  <li>The <code>#</code> lines are skipped before the CSV reader sees them.</li>
-  <li><code>set_ylim(bottom=0)</code> keeps the y axis from starting at, say, 10 GB/s, which would make a small drop look like a cliff.</li>
-  <li>A dot on every measured point shows where data exists. A line between two dots is not a measurement.</li>
-</ul>
+<p>Tested on made-up CSVs, including Windows-style line endings <span class="tag m">measured</span>. Run it from the project root.</p>
+<p><strong>Takeaway: the script reads columns by name, sets the axes, and saves a PNG under <code>results/</code>.</strong></p>
 
-<h2 id="units">Bytes and gigabytes</h2>
-<p>The sizes are powers of two: 4096 bytes, 1,048,576 bytes. Those are KiB and MiB, which is how the script labels them. Bandwidth is the other convention: GB/s means 10<sup>9</sup> bytes per second, which is what the decode ceiling and published figures use. Both are fine. Mixing them silently is a 7% error at the gigabyte scale (2<sup>30</sup> / 10<sup>9</sup> ≈ 1.074) <span class="tag c">calculated</span>.</p>
-<p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>gbps</code>. Put it in a comment line too, if you like. Next month you won’t remember.</p>
+<h2 id="units">Bytes or gigabytes: which one?</h2>
+<p>The sizes are powers of two: 4096 bytes is 4 KiB, and 1,048,576 bytes is 1 MiB. Those are KiB and MiB, which is how the script labels them. Bandwidth uses the other convention: GB/s means 10<sup>9</sup> bytes per second, which is what the decode ceiling and published figures use. Both are fine. Mixing them silently is a 7% error at the gigabyte scale (2<sup>30</sup> / 10<sup>9</sup> ≈ 1.074) <span class="tag c">calculated</span>.</p>
+<p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>gbps</code>. Next month you won’t remember which one it was.</p>
+<p><strong>Takeaway: KiB and MiB count sizes, GB/s counts 10<sup>9</sup> bytes; say which one each number uses.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why do the conditions go inside the CSV, not in a separate notes file?</summary>
@@ -144,12 +213,16 @@ print("wrote results/sweep.png")</code></pre>
 <p>45 × 1.074 ≈ 48.3 GB/s (10<sup>9</sup>). Pick one convention and say which.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>The phone measures and the PC draws, and both keep their results in <code>results/</code>.</p>
+<p>Each CSV carries its own conditions, so a number can always be traced back to how it was made.</p>
+<p>Use a log axis for sizes, and say whether GB/s means 10<sup>9</sup> or 2<sup>30</sup> bytes.</p>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

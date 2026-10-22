@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,25 +23,28 @@
 <main id="content">
 <p class="kicker">Phase 2 · 07</p>
 <h1>The KV cache</h1>
-<p class="lede">To generate token 100, attention needs the keys and values of tokens 0 to 99. They could be recomputed from scratch every time, but that would make each new token slower than the last. Instead the engine keeps them in a cache, so each step computes only its own key and value. This page shows why that is allowed, what it costs in memory, and how it is laid out.</p>
+<p class="lede">To generate token 100, attention needs the keys and values of tokens 0 to 99. Recomputing them for every token would make each new token slower than the last. So the engine keeps them in a cache, and each step computes only its own key and value. This page shows why that is allowed, what it costs in memory, and how it is laid out.</p>
 <nav class="toc">
-  <a href="#without">Without a cache</a>
-  <a href="#why-ok">Why keeping them is allowed</a>
-  <a href="#layout">Layout in memory</a>
-  <a href="#size">How big it gets</a>
-  <a href="#read">The cache is read every step</a>
+  <a href="#without">What happens without a cache?</a>
+  <a href="#why-ok">Is it safe to keep them?</a>
+  <a href="#layout">Where do the numbers sit in memory?</a>
+  <a href="#size">How big does the cache get?</a>
+  <a href="#read">Does reading the cache cost anything?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="without">Without a cache</h2>
-<p>Attention at position <var>pos</var> needs <var>k</var><sub>t</sub> and <var>v</var><sub>t</sub> for every <var>t</var> ≤ <var>pos</var>, in every layer. Each of those came out of a matrix multiply on that token's vector at that layer. Without saving them, generating token <var>pos</var> would mean running the whole model again on all <var>pos</var> + 1 tokens. Writing 256 tokens would cost 1 + 2 + … + 256 ≈ 33,000 token-passes instead of 256: about 130 times the work <span class="tag c">calculated</span>.</p>
+<h2 id="without">What happens without a cache?</h2>
+<p>Attention at position <var>pos</var> needs <var>k</var><sub>t</sub> and <var>v</var><sub>t</sub> for every <var>t</var> ≤ <var>pos</var>, in every layer. These are the key and value vectors (one of each per token, per layer) that attention compares and mixes. Each of them came out of a matrix multiply on that token’s vector at that layer. Without saving them, generating token <var>pos</var> would mean running the whole model again on all <var>pos</var> + 1 tokens. Writing 256 tokens would cost 1 + 2 + … + 256 ≈ 33,000 token-passes instead of 256: about 130 times the work <span class="tag c">calculated</span>.</p>
+<p><strong>Takeaway: without the cache, each new token pays again for every earlier token.</strong></p>
 
-<h2 id="why-ok">Why keeping them is allowed</h2>
-<p>Because attention is <a href="attention.html#causal">causal</a>, a token never looks forward. So nothing about token 5, at any layer, depends on tokens 6, 7, 8… Once token 5's key and value are computed, they are final. Adding new tokens later cannot change them. That is the whole justification, and it is why a cache is not an approximation: the output is exactly the same as recomputing.</p>
-<p>Queries are not cached. A query is used once, by its own token, to look back. Only keys and values are looked up later, hence “KV cache”.</p>
+<h2 id="why-ok">Is it safe to keep them?</h2>
+<p>Keeping them is safe only if they never change. Attention is <a href="attention.html#causal">causal</a>: a token looks at itself and the tokens before it, never after. So nothing about token 5, at any layer, depends on tokens 6, 7, 8… Once token 5’s key and value are computed, they are final, and new tokens cannot change them. That is why a cache is not an approximation: the output is exactly the same as recomputing.</p>
+<p>Queries are not cached. A <strong>query</strong> is the vector a token uses to look back. It is used once, by its own token. Only keys and values are looked up later, hence “KV cache”.</p>
+<p><strong>Takeaway: keys and values are final once computed, so storing them changes the speed, not the output.</strong></p>
 
-<h2 id="layout">Layout in memory</h2>
-<p>Two big buffers, <code>key_cache</code> and <code>value_cache</code>, each laid out as <code>[layer][position][kv_dim]</code>:</p>
+<h2 id="layout">Where do the numbers sit in memory?</h2>
+<p>Two big buffers, <code>key_cache</code> and <code>value_cache</code>, each laid out as <code>[layer][position][kv_dim]</code>. Read it as nested blocks: all of layer 0 comes first, then layer 1, and within a layer each position is one row of <code>kv_dim</code> numbers.</p>
 <figure>
 <svg viewBox="0 0 560 150" role="img" aria-label="Cache layout: layers, each with rows per position">
   <g font-size="11">
@@ -62,13 +65,19 @@
 </svg>
 <figcaption>Each layer has its own block of 256 rows. Step <var>pos</var> writes one row per layer (copper) and reads all the rows above it (teal).</figcaption>
 </figure>
-<p>The forward pass computes this token's k and v <em>directly into</em> the cache row, so there is no copy:</p>
+<p>The forward pass computes this token’s k and v <em>directly into</em> the cache row, so there is no copy:</p>
 <pre><code>let layer_off = l * c.seq_len * kv_dim;   // start of this layer's block
 let at = layer_off + pos * kv_dim;        // this position's row
 k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);</code></pre>
-<p>Within a row, the 288 numbers are the 6 heads of 48 one after another, so head <var>h</var>'s key at position <var>t</var> is the 48 floats starting at <var>t</var> × 288 + <var>h</var> × 48. The cache is allocated once, at full size (256 positions), when the model is loaded. Nothing is allocated while generating.</p>
+<ul>
+  <li><code>l * c.seq_len * kv_dim</code> is where layer <code>l</code>’s block starts: the blocks of the layers before it come first.</li>
+  <li><code>pos * kv_dim</code> is the row for this position inside that block.</li>
+  <li><code>&amp;mut s.key_cache[at..at + kv_dim]</code> is that one row as a slice, and the matmul writes straight into it.</li>
+</ul>
+<p>Within a row, the 288 numbers are the 6 heads of 48 one after another (a head is one of several attention computations that run side by side), so head <var>h</var>’s key at position <var>t</var> is the 48 floats starting at <var>t</var> × 288 + <var>h</var> × 48. The cache is allocated once, at full size (256 positions), when the model is loaded. Nothing is allocated while generating.</p>
+<p><strong>Takeaway: one offset calculation finds any position’s row in any layer, and nothing is copied.</strong></p>
 
-<h2 id="size">How big it gets</h2>
+<h2 id="size">How big does the cache get?</h2>
 <p class="formula">cache bytes = layers × positions × kv_dim × 2 (K and V) × bytes per number</p>
 <div class="widget" data-kvcalc>
   <h3>KV cache size</h3>
@@ -81,10 +90,12 @@ k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);</code><
   <div class="statrow" data-stats></div>
   <p class="note" data-note></p>
 </div>
-<p>For stories15M the full cache is 6 × 256 × 288 × 2 × 4 bytes = 3.5 MB <span class="tag c">calculated</span>, small next to its 60.8 MB of weights. For bigger models at long contexts the cache can rival the weights; then the answers are fewer key/value heads (grouped-query attention, which SmolLM2 and Qwen use), storing the cache in 16 or 8 bits, or both.</p>
+<p>For stories15M the full cache is 6 × 256 × 288 × 2 × 4 bytes = 3.5 MB <span class="tag c">calculated</span>, small next to its 60.8 MB of weights. For bigger models at long contexts the cache can rival the weights; then the answers are fewer key/value heads (grouped-query attention, where several query heads share one key/value head, as SmolLM2 and Qwen use), storing the cache in 16 or 8 bits, or both.</p>
+<p><strong>Takeaway: the cache grows with the context length; for stories15M it is small next to the weights.</strong></p>
 
-<h2 id="read">The cache is read every step</h2>
-<p>Memory is not the only cost. At position <var>pos</var>, each layer reads <var>pos</var> + 1 keys and <var>pos</var> + 1 values. So decode reads the weights <em>plus</em> a growing cache. For stories15M at position 255 that is 3.5 MB on top of 60.8 MB, a few percent. For Qwen2.5 at depth 512 it became visible: decode slowed from 110 to 87 tokens per second, which led to the NEON attention kernel in <a href="../phase-7/attention-ab.html">Phase 7</a> <span class="tag m">measured</span>.</p>
+<h2 id="read">Does reading the cache cost anything?</h2>
+<p>Memory is not the only cost. At position <var>pos</var>, each layer reads <var>pos</var> + 1 keys and <var>pos</var> + 1 values, so decode reads the weights <em>plus</em> a growing cache. For stories15M at position 255 that is 3.5 MB on top of 60.8 MB, about 6 % <span class="tag c">calculated</span>. For Qwen2.5 at depth 512 it became visible: decode slowed from 110 to 87 tokens per second, which led to the NEON attention kernel in <a href="../phase-7/attention-ab.html">Phase 7</a> <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: every step reads the cache as well as the weights, so long text slows decode.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does caching k and v give exactly the same output as recomputing them?</summary>
@@ -100,13 +111,18 @@ k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);</code><
 <p>Each step still reads every cached key and value to compute attention, and there are more of them as the text grows. The weights cost the same every step; the cache part grows.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Keys and values are computed once per token and kept, so each step computes only its own.</p>
+<p>The cache is two buffers laid out by layer, then position, then head, and a position’s row is found by an offset.</p>
+<p>The cache adds memory and read traffic that grow with the text, which matters for long contexts.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

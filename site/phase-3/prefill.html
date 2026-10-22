@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,18 +23,20 @@
 <main id="content">
 <p class="kicker">Phase 3 · 05</p>
 <h1>Prefill: many tokens at once</h1>
-<p class="lede">Before the model can write anything, it has to read the prompt. Decode goes one token at a time because each token depends on the one before. The prompt is different: all its tokens are known up front. So they can go through each weight matrix together, and every weight loaded from memory gets used once per prompt token instead of once. That turns a memory problem into an arithmetic problem.</p>
+<p class="lede">Before the model can write anything, it has to read the prompt. Decode goes one token at a time, because each token depends on the one before it. The prompt is different: all of its tokens are known at the start. So they can all pass through each weight matrix together. Each weight loaded from memory then gets used once per prompt token, not once. That turns a memory problem into an arithmetic problem.</p>
 <nav class="toc">
-  <a href="#phases">Two phases of generation</a>
-  <a href="#reuse">Reuse: the whole idea</a>
-  <a href="#widget">Bytes per token as the prompt grows</a>
-  <a href="#batch">The batched forward pass</a>
-  <a href="#attention">What stays one-by-one</a>
-  <a href="#measured">Measured</a>
+  <a href="#phases">What is the difference between prefill and decode?</a>
+  <a href="#reuse">Why does a batch make each weight cheaper?</a>
+  <a href="#widget">How many bytes per token as the prompt grows?</a>
+  <a href="#batch">How does one forward pass handle many tokens?</a>
+  <a href="#attention">What cannot be batched?</a>
+  <a href="#measured">What did the phone measure?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="phases">Two phases of generation</h2>
+<h2 id="phases">What is the difference between prefill and decode?</h2>
+<p>A model answers in two stages. <strong>Prefill</strong> reads the whole prompt. <strong>Decode</strong> writes the answer one token at a time. Both stages run the same model, but the shape of the input differs, and the shape decides what limits each stage.</p>
 <table>
   <thead><tr><th></th><th>Prefill</th><th>Decode</th></tr></thead>
   <tbody>
@@ -45,13 +47,17 @@
     <tr><td>What the user feels</td><td>time to first token</td><td>tokens per second while it writes</td></tr>
   </tbody>
 </table>
-<p>A chat app with a long system prompt and history spends much of its time in prefill, so both numbers matter.</p>
+<p>GEMM is a matrix times a matrix, and GEMV is a matrix times a vector. A chat app with a long system prompt and chat history spends much of its time in prefill, so both numbers matter. If you measure only decode, you miss the wait before the first word.</p>
+<p><strong>Takeaway: prefill handles many tokens at once and decode handles one, and that difference decides what limits each.</strong></p>
 
-<h2 id="reuse">Reuse: the whole idea</h2>
-<p>In decode, each weight <var>w</var><sub>ij</sub> is loaded and used for one multiply-add: <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub>. With <var>T</var> prompt tokens, the same weight is needed for <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(1)</sup>, <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(2)</sup>, … <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(T)</sup>. Load it once, use it <var>T</var> times. The bytes per token fall by a factor of <var>T</var>, and the arithmetic per byte (the <a href="../phase-1/roofline.html">arithmetic intensity</a>) rises by <var>T</var>.</p>
-<p>On the roofline, decode sits far left, under the sloped memory roof. Prefill slides right as <var>T</var> grows, until it hits the flat compute roof. From there, only faster arithmetic helps, which is the <a href="gemm.html">GEMM micro-kernel</a>'s job.</p>
+<h2 id="reuse">Why does a batch make each weight cheaper?</h2>
+<p>Start with decode. The model needs weight <var>w</var><sub>ij</sub> for one multiply-add: <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub>. Most of the cost is loading that weight from memory, and the multiply-add uses it once.</p>
+<p>Now take a prompt of <var>T</var> tokens. The same weight is needed <var>T</var> times: <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(1)</sup>, <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(2)</sup>, … <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(T)</sup>. Load it once and use it <var>T</var> times. The bytes per token fall by a factor of <var>T</var>. The number of multiply-adds per byte loaded, called <a href="../phase-1/roofline.html">arithmetic intensity</a>, rises by <var>T</var>.</p>
+<p>On the roofline, a chart of the limits on speed, decode sits far left, under the sloped memory roof. Prefill slides right as <var>T</var> grows, until it hits the flat compute roof. From there, only faster arithmetic helps, which is the <a href="gemm.html">GEMM micro-kernel</a>’s job.</p>
+<p><strong>Takeaway: with <var>T</var> tokens, each loaded weight does <var>T</var> uses of work, so the bytes per token fall <var>T</var>-fold.</strong></p>
 
-<h2 id="widget">Bytes per token as the prompt grows</h2>
+<h2 id="widget">How many bytes per token as the prompt grows?</h2>
+<p>Move the slider to see how the bytes per token change when <var>T</var> tokens share one pass.</p>
 <div class="widget" data-reuse>
   <h3>stories15M, f32, one prime core</h3>
   <p>Weight bytes 60.8 MB <span class="tag c">calculated</span>; DRAM read 61 GB/s <span class="tag m">measured</span> in Phase 1.</p>
@@ -60,20 +66,29 @@
   <div class="bars" data-bars></div>
   <p class="note" data-note></p>
 </div>
-<p>This is an idealised picture: it assumes the kernel really loads each weight only once for all <var>T</var> tokens. Whether it does depends on the loop order, which the next page is about.</p>
+<p>This is an idealised picture: it assumes the kernel really loads each weight only once for all <var>T</var> tokens. Whether it does depends on the loop order, which the next page is about. If the loop reloads each weight for every token, the real curve stays high.</p>
+<p><strong>Takeaway: if each weight loads once, the bytes per token follow 60.8 MB divided by <var>T</var>.</strong></p>
 
-<h2 id="batch">The batched forward pass</h2>
-<p><code>forward_batch(tokens, start)</code> in <code>src/model/transformer.rs</code> is the same forward pass, with every buffer turned into a matrix: one row per token. Where decode calls <code>matmul</code> (GEMV), prefill calls <code>matmul_batch</code> (GEMM):</p>
+<h2 id="batch">How does one forward pass handle many tokens?</h2>
+<p>A <strong>forward pass</strong> is one run of the whole model over its input. The decode step runs one forward pass per token. <code>forward_batch(tokens, start)</code> in <code>src/model/transformer.rs</code> runs one forward pass over all the prompt tokens. Every buffer becomes a matrix with one row per token. Where decode calls <code>matmul</code> (GEMV), prefill calls <code>matmul_batch</code> (GEMM):</p>
 <pre><code>// decode, one token:      out[d]    = W[d, n] · x[n]
 // prefill, T tokens:      out[T, d] = x[T, n] · Wᵀ
 k::matmul_batch(out, x, w, t);   // NEON gemm on the phone</code></pre>
-<p>The element-wise steps (RMSNorm, RoPE, SwiGLU, residual adds) simply run once per row. Each token's keys and values are written to the cache at its own position, exactly as decode would have done, so after prefill the cache is the same as after <var>T</var> decode steps, and decode carries on from there.</p>
-<p>The test <code>batched_prefill_matches_llama2c</code> checks this: it prefills in batches of 5, 12 and 13 tokens (deliberately not multiples of the 4-token tile), then decodes, and compares every activation at every position with llama2.c's one-token-at-a-time dump <span class="tag m">measured</span>.</p>
+<ul>
+  <li>The first line is a matrix times a vector. The second is a matrix times a matrix, with one row per token.</li>
+  <li><code>t</code> is the number of tokens in the batch.</li>
+  <li>NEON is the vector instruction set of the phone’s ARM CPU. The GEMM kernel uses it.</li>
+</ul>
+<p>The element-wise steps (RMSNorm, RoPE, SwiGLU, residual adds) run once per row. Each token’s keys and values go into the <strong>KV cache</strong>, the store of past keys and values, at that token’s own position. Decode would have written them the same way, so after prefill the cache matches the cache after <var>T</var> decode steps, and decoding continues from there. Write them to the wrong positions and decode reads the wrong history.</p>
+<p>The test <code>batched_prefill_matches_llama2c</code> checks this. It prefills in batches of 5, 12 and 13 tokens (deliberately not multiples of the 4-token tile), then decodes. It compares every activation at every position with llama2.c’s one-token-at-a-time dump <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: a batched pass swaps GEMV for GEMM and leaves the KV cache as decode would have left it.</strong></p>
 
-<h2 id="attention">What stays one-by-one</h2>
-<p>Attention cannot be batched the same way, because token <var>t</var> may only look at tokens 0 to <var>t</var>. The batched pass runs attention for each prompt token in turn, against the keys written so far. For short prompts that is a small part of the work; for long prompts on bigger models it grows (attention is quadratic in prompt length), and it is one reason Aether's long-prompt prefill is far behind llama.cpp's (<code>results/phase-7.md</code>).</p>
+<h2 id="attention">What cannot be batched?</h2>
+<p><strong>Attention</strong> is the step where each token looks back at earlier tokens. Token <var>t</var> may look only at tokens 0 to <var>t</var>, so its result depends on the tokens before it. The weights do not have this problem, but attention does.</p>
+<p>The batched pass therefore runs attention for each prompt token in turn, against the keys written so far. For short prompts that is a small part of the work. For long prompts on bigger models it grows, because attention is quadratic in prompt length. That is one reason Aether’s long-prompt prefill is far behind llama.cpp’s (<code>results/phase-7.md</code>).</p>
+<p><strong>Takeaway: the matrix work batches, but attention runs one token at a time and grows fastest with prompt length.</strong></p>
 
-<h2 id="measured">Measured</h2>
+<h2 id="measured">What did the phone measure?</h2>
 <p>f32, one prime core (core 7), on battery <span class="tag m">measured</span> (<code>results/phase-6/raw/model-speed.txt</code>):</p>
 <table>
   <thead><tr><th>Model</th><th>Prefill</th><th>Decode</th><th>Ratio</th></tr></thead>
@@ -82,7 +97,8 @@ k::matmul_batch(out, x, w, t);   // NEON gemm on the phone</code></pre>
     <tr><td>stories15M, 5-token prompt</td><td class="num">1,151 tok/s</td><td class="num">422 tok/s</td><td class="num">2.7×</td></tr>
   </tbody>
 </table>
-<p>Even a 5-token prompt is 2.7 times faster per token, because each weight is used up to 4 times per load in the 4 × 4 tile. For SmolLM2, 231.8 tokens per second × about 270 million FLOPs per token is roughly 60 GFLOP/s on one core <span class="tag c">calculated</span>, versus about 11 GFLOP/s in its decode at 39.2 tok/s. The GEMM's own peak against the core's FMA limit has not been measured yet (<code>examples/gemm_bench.rs</code> exists; its phone output was not saved).</p>
+<p>Even a 5-token prompt is 2.7 times faster per token, because each weight is used up to 4 times per load in the 4 × 4 tile. A <strong>FLOP</strong> is one floating-point operation, and GFLOP/s is billions of them per second. For SmolLM2, 231.8 tokens per second × about 270 million FLOPs per token is roughly 60 GFLOP/s on one core <span class="tag c">calculated</span>. Its decode at 39.2 tok/s is about 11 GFLOP/s. The GEMM’s own peak against the core’s FMA limit has not been measured yet (<code>examples/gemm_bench.rs</code> exists; its phone output was not saved).</p>
+<p><strong>Takeaway: on the phone, prefill runs 5.9 times faster per token than decode for SmolLM2, and 2.7 times for stories15M.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why can the prompt be processed in one batch, but not the generated text?</summary>
@@ -98,13 +114,18 @@ k::matmul_batch(out, x, w, t);   // NEON gemm on the phone</code></pre>
 <p>Decode does 2 FLOPs per 4-byte weight; prefill does 2<var>T</var>. With enough reuse, the core runs out of arithmetic throughput before memory runs out of bandwidth.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Prefill reads many prompt tokens at once, so each loaded weight is used many times.</p>
+<p>The matrix work batches; attention still runs one token at a time.</p>
+<p>On the phone, prefill is several times faster per token than decode, and the gap grows with the prompt.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

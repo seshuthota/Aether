@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,31 +25,57 @@
 <h1>Queries, keys, values, heads</h1>
 <p class="lede">Attention lets each token pull in information from the tokens before it. To do that, every token produces three vectors: a query (what am I looking for?), a key (what do I contain?) and a value (what do I hand over if chosen?). This page is about where those three vectors come from, and why they are cut into six heads.</p>
 <nav class="toc">
-  <a href="#idea">The idea, in a library</a>
-  <a href="#proj">Three matrix multiplies</a>
-  <a href="#heads">Heads: six small attentions</a>
-  <a href="#out">Putting the heads back together</a>
-  <a href="#gqa">Fewer key/value heads (preview)</a>
-  <a href="#cost">What it costs</a>
+  <a href="#idea">What are a query, a key and a value?</a>
+  <a href="#proj">How do three matrix multiplies make q, k and v?</a>
+  <a href="#heads">Why cut the vectors into six heads?</a>
+  <a href="#out">How do six heads become one vector again?</a>
+  <a href="#gqa">Do all query heads need their own key/value head?</a>
+  <a href="#cost">How much work does this cost?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="idea">The idea, in a library</h2>
-<p>Picture a library. You walk in with a <strong>question</strong> (the query). Every book has a <strong>label</strong> on its spine (the key) and <strong>contents</strong> inside (the value). You compare your question with every label; the books whose labels match best are the ones you read most from. What you walk out with is a blend of contents, weighted by how well each label matched.</p>
+<h2 id="idea">What are a query, a key and a value?</h2>
+<p>A token has to decide which earlier tokens matter to it. A library shows how the three vectors do that job.</p>
+<p>Picture a library. You walk in with a <strong>question</strong> (the query). Every book has a <strong>label</strong> on its spine (the key) and <strong>contents</strong> inside (the value). You compare your question with every label, and the books whose labels match best are the ones you read most from. You walk out with a blend of contents, weighted by how well each label matched.</p>
 <p>In the model, the “books” are the earlier tokens, including the current one. The current token's query is compared with every earlier token's key, and the answer is a weighted mix of their values. <a href="attention.html">Page 6</a> does that comparison. This page builds the three vectors.</p>
+<p><strong>Takeaway: a query asks, each key is matched against it, and the matching values are mixed into the answer.</strong></p>
 
-<h2 id="proj">Three matrix multiplies</h2>
-<p>All three come from the same normalised vector <code>xb</code> (288 numbers), each through its own learned matrix:</p>
+<h2 id="proj">How do three matrix multiplies make q, k and v?</h2>
+<p>A token needs a question, a label and contents, and all three come from the same input: the normalised vector <code>xb</code> (288 numbers). Each one goes through its own learned matrix:</p>
 <p class="formula">q = W<sub>q</sub> · xb &nbsp;&nbsp; k = W<sub>k</sub> · xb &nbsp;&nbsp; v = W<sub>v</sub> · xb</p>
-<p>Each matrix is 288 × 288 in stories15M, so each of q, k, v is 288 numbers. They start from the same input but are different because the matrices are different: training taught W<sub>q</sub> to produce good questions, W<sub>k</sub> good labels and W<sub>v</sub> useful contents.</p>
-<p>In the code (<code>src/model/transformer.rs</code>), k and v are written straight into the <a href="kv-cache.html">KV cache</a>, at this token's position, because every later token will need them:</p>
+<p>Each matrix is 288 × 288 in stories15M, so each of q, k, v is 288 numbers. They start from the same input but differ because the matrices differ: training taught W<sub>q</sub> to produce good questions, W<sub>k</sub> good labels and W<sub>v</sub> useful contents.</p>
+<p>The code in <code>src/model/transformer.rs</code> builds them in three steps, starting with the query.</p>
+
+<h3>Step 1: the query</h3>
+<pre><code>k::matmul(&amp;mut s.q, &amp;s.xb, &amp;lw.wq);</code></pre>
+<ul>
+  <li><code>k::matmul</code> is a <a href="../start/llm.html#matvec">matrix-vector multiply</a>: for each of the 288 rows, a dot product of that row with <code>xb</code>.</li>
+  <li>It writes into <code>s.q</code>. The query is used only now, to look back, so it is not stored.</li>
+</ul>
+
+<h3>Step 2: the key</h3>
+<pre><code>k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);</code></pre>
+<ul>
+  <li><code>key_cache[at..at + kv_dim]</code> is a slice of the <a href="kv-cache.html">KV cache</a>: <code>kv_dim</code> numbers starting at <code>at</code>, this token's place in the cache.</li>
+  <li>The key goes straight into the cache, because every later token will need it. Leave this write out and later tokens have no key to compare against.</li>
+</ul>
+
+<h3>Step 3: the value</h3>
+<pre><code>k::matmul(&amp;mut s.value_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wv);</code></pre>
+<ul>
+  <li>Same pattern as the key: the value goes into the cache at the same position, for the same reason.</li>
+</ul>
+
+<h3>All three together</h3>
 <pre><code>k::matmul(&amp;mut s.q, &amp;s.xb, &amp;lw.wq);
 k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);
 k::matmul(&amp;mut s.value_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wv);</code></pre>
-<p>This is the Phase 2 code. <a href="../phase-4/pool.html">Phase 4</a> later adds one argument, the thread pool (<code>k::linear_on(pool, …)</code>), so that several cores share the rows; the arithmetic stays the same. Each <code>matmul</code> is a <a href="../start/llm.html#matvec">matrix-vector multiply</a>: for each of the 288 rows, a dot product of that row with <code>xb</code>. That is 82,944 multiply-adds per matrix.</p>
+<p>This is the Phase 2 code. <a href="../phase-4/pool.html">Phase 4</a> later adds one argument, the thread pool (<code>k::linear_on(pool, …)</code>), so that several cores share the rows; the arithmetic stays the same. One matrix here is 82,944 multiply-adds (a multiply, then an add).</p>
+<p><strong>Takeaway: three matrix multiplies turn <code>xb</code> into q, k and v, and the key and value go into the cache.</strong></p>
 
-<h2 id="heads">Heads: six small attentions</h2>
-<p>One query can only ask one question. A token often needs several things at once: the subject of the sentence, the previous word, whether a quote is open. So the 288 numbers are cut into <strong>6 heads of 48 numbers</strong>, and each head runs attention on its own.</p>
+<h2 id="heads">Why cut the vectors into six heads?</h2>
+<p>One query can ask only one question, but a token often needs several things at once: the subject of the sentence, the previous word, whether a quote is open. So the 288 numbers are cut into <strong>6 heads of 48 numbers</strong>. A <em>head</em> is one slice of the vectors, with its own attention.</p>
 <figure>
 <svg viewBox="0 0 560 120" role="img" aria-label="A 288-number query cut into six heads of 48">
   <g font-size="12" text-anchor="middle">
@@ -69,19 +95,33 @@ k::matmul(&amp;mut s.value_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wv);</code
 </svg>
 <figcaption>Heads are not separate matrices: they are slices of the one q, k and v. Cutting is free; it is just which 48 numbers you look at.</figcaption>
 </figure>
-<p>Each head is a smaller copy of the library: head 2's query is compared only with head 2's keys and mixes only head 2's values. Because the heads never interact, they can run in any order, or in parallel on different cores, which <a href="../phase-4/split.html#heads">Phase 4</a> does.</p>
+<p>Each head is a smaller copy of the library. Head 2's query is compared only with head 2's keys, and it mixes only head 2's values. Its slice is numbers 96 to 143 of q, k and v, and the figure shows the slice for every head.</p>
+<p>Because the heads never interact, they can run in any order, or in parallel on different cores, which <a href="../phase-4/split.html#heads">Phase 4</a> does.</p>
+<p><strong>Takeaway: a head is a slice of the same q, k and v, and it attends only within its own slice.</strong></p>
 
-<h2 id="out">Putting the heads back together</h2>
-<p>Each head outputs 48 numbers. Laid side by side, the six outputs form a 288-number vector again. One more 288 × 288 matrix, W<sub>o</sub> (the output projection), mixes them so information from different heads can combine. Its result is added into the residual stream:</p>
+<h2 id="out">How do six heads become one vector again?</h2>
+<p>Each head outputs 48 numbers, and side by side the six outputs form a 288-number vector again. The heads have not exchanged anything yet. One more 288 × 288 matrix, W<sub>o</sub> (the output projection), mixes them so information from different heads can combine. The result is added to the residual stream, the running vector that every layer adds its result to:</p>
 <pre><code>k::matmul(&amp;mut s.xb2, &amp;s.xb, &amp;lw.wo);   // mix the heads
 k::add_inplace(&amp;mut s.x, &amp;s.xb2);        // x += attention's contribution</code></pre>
+<ul>
+  <li>The first line writes the mixed heads into <code>xb2</code>.</li>
+  <li>The second line adds <code>xb2</code> into <code>x</code>, the residual stream. <code>+=</code> adds to the old value; it does not replace it. Skip this line and the attention output never reaches the residual stream.</li>
+</ul>
+<p><strong>Takeaway: W<sub>o</sub> mixes the heads, and the result is added to the residual stream rather than written over it.</strong></p>
 
-<h2 id="gqa">Fewer key/value heads (preview)</h2>
-<p>In stories15M every query head has its own key/value head (<code>n_kv_heads</code> = <code>n_heads</code> = 6). Bigger models save memory by letting several query heads share one key/value head. This is <strong>grouped-query attention</strong>, and Phase 5 needs it: SmolLM2-135M has 9 query heads and 3 key/value heads, so each group of 3 query heads reads the same keys and values. The code already handles it with one line, which picks the shared head:</p>
+<h2 id="gqa">Do all query heads need their own key/value head?</h2>
+<p>In stories15M every query head has its own key/value head (<code>n_kv_heads</code> = <code>n_heads</code> = 6). Bigger models save memory by letting several query heads share one key/value head. This is <strong>grouped-query attention</strong>. Phase 5 needs it: SmolLM2-135M has 9 query heads and 3 key/value heads, so each group of 3 query heads reads the same keys and values.</p>
+<p>The code already handles this with one line, which picks the shared head:</p>
 <pre><code>let kv_off = (h / group) * hs;  // query head h reads K/V head h / group</code></pre>
-<p>With <code>group</code> = 1, as in stories15M, that is just head <var>h</var>.</p>
+<ul>
+  <li><code>h</code> is the query head, and <code>group</code> is how many query heads share each key/value head.</li>
+  <li><code>hs</code> is the head size, 48 here. <code>kv_off</code> is where that key/value head's 48 numbers start.</li>
+  <li>With <code>group</code> = 1, as in stories15M, that is just head <var>h</var>. A wrong <code>group</code> makes a query head read another head's keys.</li>
+</ul>
+<p><strong>Takeaway: grouped-query attention lets several query heads read one key/value head, and stories15M uses one each.</strong></p>
 
-<h2 id="cost">What it costs</h2>
+<h2 id="cost">How much work does this cost?</h2>
+<p>Count the multiply-adds for one layer. The table lists the four projections and the attention itself.</p>
 <table>
   <thead><tr><th>Matrix</th><th>Shape</th><th>Multiply-adds per token, per layer</th></tr></thead>
   <tbody>
@@ -92,7 +132,8 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb2);        // x += attention's contributio
     <tr><td>attention itself</td><td>6 heads × (pos + 1) positions × 48 × 2</td><td class="num">576 × (pos + 1)</td></tr>
   </tbody>
 </table>
-<p>The four projections are fixed work: 331,776 multiply-adds per layer, whatever the position <span class="tag c">calculated</span>. Attention itself grows with the number of earlier tokens. Even at stories15M's 256-token limit it is 147,456 multiply-adds per layer, less than half of the four projections, and the MLP is bigger again. Over a 222-token story it averages about 2.5 % of a token's multiply-adds <span class="tag c">calculated</span>. That is why attention is only 1.1 % of the time on the <a href="baseline.html">profile</a>, and why it only became worth optimising for a bigger model at longer contexts (<a href="../phase-7/attention-ab.html">Phase 7</a>).</p>
+<p>The four projections are fixed work: 331,776 multiply-adds per layer, whatever the position <span class="tag c">calculated</span>. Attention grows with the number of earlier tokens. At stories15M's 256-token limit it is 147,456 multiply-adds per layer, less than half of the four projections, and the MLP is bigger again. Over a 222-token story, counting all six layers and the final classifier, it averages about 2.5 % of a token's multiply-adds <span class="tag c">calculated</span>. That is why attention is only 1.1 % of the time on the <a href="baseline.html">profile</a>, and why it only became worth optimising for a bigger model at longer contexts (<a href="../phase-7/attention-ab.html">Phase 7</a>).</p>
+<p><strong>Takeaway: the four projections cost the same at every position, while attention grows with each earlier token.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>q, k and v are all computed from the same <code>xb</code>. Why are they different?</summary>
@@ -107,14 +148,18 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb2);        // x += attention's contributio
 <details class="check"><summary>SmolLM2-135M has 9 query heads and 3 key/value heads. Which key/value head does query head 7 read?</summary>
 <p>group = 9 ÷ 3 = 3, so head 7 ÷ 3 = 2 (integer division). Query heads 6, 7, 8 share key/value head 2.</p>
 </details>
+<h2 id="takeaway">What you should take away</h2>
+<p>Three matrices turn one vector into a query, a key and a value.</p>
+<p>Keys and values go into the cache, and heads are slices that mix only at W<sub>o</sub>.</p>
+<p>Attention's share of the work grows with the context, while the four projections stay fixed.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

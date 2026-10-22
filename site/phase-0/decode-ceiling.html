@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -27,19 +27,21 @@
 <h1>The decode ceiling</h1>
 <p class="lede">This is the idea Phase 0 was building toward. During decode, generating one token, the model reads nearly every weight, uses each weight once, and then has to read them all again for the next token. Speed is capped by how fast those bytes can arrive.</p>
 <p class="pull">tokens per second ≤ memory bandwidth ÷ bytes of weights read per token.</p>
+<p><strong>Memory bandwidth</strong> is how many bytes per second can move from memory to the processor. The formula above divides it by the bytes each token needs.</p>
 <nav class="toc">
-  <a href="#bytes">Bytes per parameter</a>
-  <a href="#table">The table</a>
-  <a href="#why">Why the ceiling is firm</a>
-  <a href="#prefill">Prefill is a different problem</a>
-  <a href="#quant">Why quantization is a bandwidth trick</a>
-  <a href="#not">What is not a measurement</a>
-  <a href="#lab">Ceiling lab</a>
+  <a href="#bytes">How big are the weights?</a>
+  <a href="#table">What is the best speed the phone could reach?</a>
+  <a href="#why">Why can’t faster math fix it?</a>
+  <a href="#prefill">Does reading the prompt hit the same limit?</a>
+  <a href="#quant">Why does a smaller format go faster?</a>
+  <a href="#not">Which of these numbers are measured?</a>
+  <a href="#lab">What happens when the bandwidth changes?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="bytes">Bytes per parameter</h2>
-<p>Model size, for the weights, is parameters times bytes per parameter. A 0.5 billion parameter model:</p>
+<h2 id="bytes">How big are the weights?</h2>
+<p>Every token needs the weights, so their size sets how many bytes must move. A <strong>parameter</strong> is one learned number in the model. A 0.5 billion parameter model has 500 million of them. At f32, which is 4 bytes per number (a 32-bit float), that is 2,000,000,000 bytes, or 2 GB:</p>
 <table>
   <thead><tr><th>Format</th><th>Bytes each</th><th>Weight bytes</th></tr></thead>
   <tbody>
@@ -49,10 +51,11 @@
     <tr><td>ideal 4-bit</td><td>0.5</td><td>0.25 GB</td></tr>
   </tbody>
 </table>
-<p>“GB” here is 10<sup>9</sup> bytes, the same unit as GB/s. 0.5×10<sup>9</sup> × 4 = 2×10<sup>9</sup>. A phone’s caches hold megabytes. Two gigabytes of weights do not fit. They come from DRAM.</p>
+<p>“GB” here is 10<sup>9</sup> bytes, the same unit as GB/s. So 0.5×10<sup>9</sup> × 4 = 2×10<sup>9</sup>. A <strong>cache</strong> is a small, fast memory close to the processor. A phone’s caches hold megabytes, so two gigabytes of weights do not fit. They come from <strong>DRAM</strong>, the main memory chips. If you assume the weights sit in cache, every ceiling below comes out too high.</p>
+<p><strong>Takeaway: at f32 the weights are 2 GB, which cannot fit in cache, so they come from DRAM.</strong></p>
 
-<h2 id="table">The table</h2>
-<p>If the phone could read 30 GB/s, and every weight is read once per token <span class="tag a">assumption</span>:</p>
+<h2 id="table">What is the best speed the phone could reach?</h2>
+<p>Suppose the phone reads 30 GB/s, and each weight is read once per token <span class="tag a">assumption</span>. Divide: 30 GB/s ÷ 2 GB = 15 tokens per second for f32. Smaller formats divide into bigger numbers:</p>
 <table>
   <thead><tr><th>Format</th><th>Size</th><th>Max tokens/sec</th></tr></thead>
   <tbody>
@@ -61,7 +64,7 @@
     <tr><td>ideal 4-bit</td><td>0.25 GB</td><td>120</td></tr>
   </tbody>
 </table>
-<p>Halving the bytes per weight doubles the ceiling. Compute barely changes between these formats. The saving is moving fewer bytes. That is why quantization is not optional on a phone if you care about tokens per second.</p>
+<p>Halving the bytes per weight doubles the ceiling. Compute barely changes between these formats. The saving is moving fewer bytes. That is why <strong>quantization</strong> (storing each weight in fewer bits) is not optional on a phone if you care about tokens per second. Skip it and tokens per second stay capped at 15.</p>
 
 <figure>
 <svg class="fig" viewBox="0 0 680 200" role="img" aria-label="Weights stream from DRAM, each used once">
@@ -81,27 +84,37 @@
 <figcaption>Decode is a stream, not a reuse. The ceiling is the width of the pipe, not the speed of the multiply.</figcaption>
 </figure>
 
-<h2 id="why">Why the ceiling is firm</h2>
-<p>Two facts, not one.</p>
+<p><strong>Takeaway: at 30 GB/s, f32 tops out at 15 tokens per second, and every halving of the bytes doubles that.</strong></p>
+
+<h2 id="why">Why can’t faster math fix it?</h2>
+<p>Faster math sounds like the cure. It is not, because a token does not wait on the math. It waits on the bytes. Two facts show why.</p>
 <ol class="steps">
-  <li><strong>Each weight is used once per token.</strong> In decode, a weight matrix multiplies one activation vector. Each weight takes part in one multiply-add and is not needed again for that token. About 2 FLOPs per 4 bytes in f32. That ratio is called arithmetic intensity, and it is very low. The CPU finishes the math long before the next weights arrive, even if compute were free. More FLOPs of peak do not raise this ceiling.</li>
-  <li><strong>The weights do not fit in cache.</strong> Caches are megabytes. The model is gigabytes. The next token reads the weights from DRAM again. There is no reuse to amortize the trip.</li>
+  <li><strong>Each weight is used once per token.</strong> In decode, a weight matrix multiplies one input vector, a list of numbers for the current token. Each weight takes part in one multiply-add, one multiply plus one add, and is not needed again for that token. The page counts that as 2 FLOPs (floating-point operations). For f32 that is 2 FLOPs per 4 bytes read. That ratio is called <strong>arithmetic intensity</strong>, FLOPs per byte read, and it is very low. The CPU finishes the math long before the next weights arrive, even if compute were free. More peak FLOPs do not raise this ceiling.</li>
+  <li><strong>The weights do not fit in cache.</strong> Caches are megabytes. The model is gigabytes. The next token reads the weights from DRAM again. No reuse spreads the cost of that trip.</li>
 </ol>
-<p>So the bound is bandwidth ÷ bytes read, not a function of how wide the FMA units are. Unlimited compute does not generate a token faster than the weights can be fetched, because the weights are an input to the math, not a side effect of it.</p>
+<pre><code>token 1:  read every weight from DRAM ──► multiply ──► token 1 out
+token 2:  read every weight from DRAM ──► multiply ──► token 2 out
+                 ^ the same weights again, because the cache is too small to keep them</code></pre>
+<p>So the bound is bandwidth ÷ bytes read. How wide the <strong>FMA units</strong> (the circuits that do a multiply-add) are does not enter it. Unlimited compute does not make a token faster than the weights can be fetched, because the weights are an input to the math. Ignore this and you can spend effort on the math, which cannot move the ceiling.</p>
+<p><strong>Takeaway: the ceiling is bandwidth ÷ bytes read, so faster math does not raise it.</strong></p>
 
-<h2 id="prefill">Prefill is a different problem</h2>
-<p>Processing the prompt is not one token. With 100 prompt tokens at once, each weight can be used 100 times while it is in a register or a cache, if the kernel is tiled so that the activations are the small side. Intensity goes up by about that factor. Prefill can be compute-bound. Decode stays bandwidth-bound.</p>
-<p>Same engine, two strategies. That is why the plan separates GEMV (one token times a matrix, decode) from GEMM (many tokens, prefill). Phase 0 does not implement either. It only needs the split to be obvious before any kernel is written.</p>
+<h2 id="prefill">Does reading the prompt hit the same limit?</h2>
+<p>Before the first new token, the model must read the whole prompt. That is <strong>prefill</strong>, and it is a different job, because many tokens go through the weights at once. Take 100 prompt tokens. Each weight can be used 100 times while it sits in a <strong>register</strong> (the CPU’s own tiny storage) or a cache, if the kernel works in blocks, or tiles, so that the activations are the small side. Intensity goes up by about that factor. Prefill can be compute-bound. Decode stays bandwidth-bound.</p>
+<p>Same engine, two strategies. The plan splits GEMV (one token times a matrix) from GEMM (many tokens at once). Decode uses GEMV and prefill uses GEMM. Phase 0 writes neither kernel. It only needs the split to be clear before any kernel is written. Ignore it and you apply the decode ceiling to prompt processing, where it does not hold.</p>
+<p><strong>Takeaway: prefill can be compute-bound because it reuses each weight, while decode has one token and cannot.</strong></p>
 
-<h2 id="quant">Why quantization is a bandwidth trick</h2>
-<p>Real 4-bit formats cost more than 4 bits. llama.cpp’s <code>Q4_0</code> stores 32 weights as nibbles plus one f16 scale: 16 + 2 = 18 bytes per block, 4.5 bits per weight, about 0.28 GB for 0.5B parameters <span class="tag c">calculated</span>. <code>Q8_0</code> is 32 int8 values plus one f16 scale, 34/32 = 8.5 bits, about 0.53 GB. The ceiling moves, but not by the full ideal factor.</p>
+<h2 id="quant">Why does a smaller format go faster?</h2>
+<p>The ideal 4-bit row assumed 0.25 GB, which is exactly 4 bits per weight. Real 4-bit formats need more, because they store extra numbers alongside the weights. A <strong>nibble</strong> is 4 bits, half a byte. A <strong>block</strong> is a group of weights that share one stored <strong>scale</strong>, a number that turns the small stored integers back into real weights.</p>
+<p>llama.cpp’s <code>Q4_0</code> stores 32 weights as nibbles (16 bytes) plus one f16 scale (a 16-bit float, 2 bytes): 16 + 2 = 18 bytes per block, 4.5 bits per weight, about 0.28 GB for 0.5B parameters <span class="tag c">calculated</span>. <code>Q8_0</code> is 32 int8 values (8-bit integers) plus one f16 scale, 34/32 = 8.5 bits, about 0.53 GB. The ceiling moves, but not by the full ideal factor. Use the ideal 4-bit size and you overstate the ceiling, because the real formats are bigger.</p>
 <p>Two other leaks, both still ahead of us:</p>
 <ul>
   <li>Attention also reads the KV cache, which grows with context length. Weights are not the only bytes.</li>
   <li>You will not get the full assumed bandwidth. A scalar sum of 16 MB already showed ~3.3 GB/s, and that was a latency chain, not DRAM. Phase 1 measures the DRAM number the ceiling should actually use.</li>
 </ul>
+<p><strong>Takeaway: real 4-bit formats store a scale per block, so they are bigger than the ideal 4 bits.</strong></p>
 
-<h2 id="not">What is not a measurement</h2>
+<h2 id="not">Which of these numbers are measured?</h2>
+<p>Most numbers on this page are assumptions or calculations. The table labels each one.</p>
 <table>
   <thead><tr><th>Number</th><th>Status</th></tr></thead>
   <tbody>
@@ -111,9 +124,10 @@
     <tr><td>15 / 60 / 120 tok/s</td><td><span class="tag c">calculated</span> upper bounds under the 30 GB/s assumption, weights only, ideal packing. Real decode will be lower.</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: none of the tokens-per-second numbers here is a measurement of this phone.</strong></p>
 
-<h2 id="lab">Ceiling lab</h2>
-<p>Pick a model and move the assumed bandwidth. The table and bars update. Nothing here is a benchmark result: it is the ceiling, weights only, before any real-world losses.</p>
+<h2 id="lab">What happens when the bandwidth changes?</h2>
+<p>Bandwidth is the number you are least sure of, so the lab lets you move it. Pick a model and move the assumed bandwidth. The table and bars update. Nothing here is a benchmark result. It is the ceiling for weights only, before any real-world losses.</p>
 <div class="widget" data-ceiling>
   <h3>Bandwidth ÷ weight bytes</h3>
   <div class="controls">
@@ -135,6 +149,7 @@
     <tbody data-table></tbody>
   </table>
 </div>
+<p><strong>Takeaway: the ceiling grows in direct proportion to bandwidth and shrinks as the weight bytes grow.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why can’t unlimited compute beat “model size ÷ bandwidth”?</summary>
@@ -146,13 +161,19 @@
 <details class="check"><summary>What would make the 15 tok/s figure wrong even if bandwidth really were 30 GB/s?</summary>
 <p>KV-cache traffic, scales and block overhead in a real quant format, and any byte the kernel reads that is not a weight. Also the assumption that the kernel actually reaches 30 GB/s. The figure is a ceiling, not a prediction.</p>
 </details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Decode reads every weight from DRAM for every token, so the bytes per weight set the speed ceiling.</p>
+<p>Faster math does not raise that ceiling, but smaller weights do.</p>
+<p>Prefill is a different case, and every number here is an assumption or a calculation, not a measurement.</p>
+
 <nav class="pager" data-pager></nav>
 
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

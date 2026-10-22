@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,25 +25,29 @@
 <h1>RoPE: position as rotation</h1>
 <p class="lede">Attention compares a query with keys, but a dot product cannot tell where a key came from. “The dog bit the man” and “The man bit the dog” would look the same. Rotary position embedding (RoPE) fixes this by rotating q and k by an angle that grows with the position. After the rotation, how well a query matches a key depends on how far apart the two tokens are.</p>
 <nav class="toc">
-  <a href="#problem">The problem: attention has no sense of order</a>
-  <a href="#pairs">Pairs of numbers as arrows</a>
-  <a href="#rotate">Rotate by position</a>
-  <a href="#relative">Why only the distance matters</a>
-  <a href="#freq">Many speeds</a>
-  <a href="#code">The code, and the two layouts</a>
+  <a href="#problem">Why can’t attention tell word order?</a>
+  <a href="#pairs">How can a pair of numbers be an arrow?</a>
+  <a href="#rotate">What does rotating by position do?</a>
+  <a href="#relative">Why does only the distance matter?</a>
+  <a href="#freq">Why does each pair spin at its own speed?</a>
+  <a href="#code">How does the code rotate q and k?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="problem">The problem: attention has no sense of order</h2>
+<h2 id="problem">Why can’t attention tell word order?</h2>
 <p>The score between a query and a key is their dot product (<a href="attention.html">page 6</a>). A dot product only looks at the two vectors. If the same word appears at position 3 and at position 40, its key is the same vector both times, so the query cannot prefer the nearby one. Word order would be invisible.</p>
-<p>The fix is to change q and k depending on where their tokens are, in a way that makes the dot product sensitive to position. RoPE's trick is to do this with rotations, because rotations have a neat property you can see in the widget below.</p>
+<p>The fix is to change q and k depending on where their tokens are, in a way that makes the dot product sensitive to position. RoPE does this with rotations, because rotations have a property you can see in the widget below.</p>
+<p><strong>Takeaway: a plain dot product ignores position, so q and k must carry it in some other way.</strong></p>
 
-<h2 id="pairs">Pairs of numbers as arrows</h2>
+<h2 id="pairs">How can a pair of numbers be an arrow?</h2>
 <p>Take a head's 48 numbers two at a time: (q₀, q₁), (q₂, q₃), … That gives 24 pairs. Each pair can be drawn as an arrow on a flat plane, with the first number as the x coordinate and the second as y.</p>
 <p>Rotating an arrow by an angle θ keeps its length and turns it:</p>
 <p class="formula">x′ = x cos θ − y sin θ &nbsp;&nbsp;&nbsp; y′ = x sin θ + y cos θ</p>
+<p>Example: the arrow (1, 0) turned by 90° (θ = π/2) has cos θ = 0 and sin θ = 1. So x′ = 0 and y′ = 1, and it points straight up at (0, 1). Its length is still 1.</p>
+<p><strong>Takeaway: a pair of numbers is an arrow, and rotating it changes its direction but not its length.</strong></p>
 
-<h2 id="rotate">Rotate by position</h2>
+<h2 id="rotate">What does rotating by position do?</h2>
 <p>RoPE rotates every pair of q by an angle proportional to the token's position <var>m</var>, and every pair of k by the same rule for its position <var>n</var>. A token at position 0 is not rotated at all; at position 10 it is rotated ten times as far as at position 1.</p>
 <div class="widget" data-rope>
   <h3>A query and a key, rotated by their positions</h3>
@@ -58,12 +62,14 @@
   <div class="statrow" data-stats></div>
   <p class="note" data-note></p>
 </div>
+<p><strong>Takeaway: the further a token sits along the text, the further its arrows have turned.</strong></p>
 
-<h2 id="relative">Why only the distance matters</h2>
-<p>The dot product of two arrows depends only on their lengths and the angle <em>between</em> them. Rotate q by <var>m</var> steps and k by <var>n</var> steps, and the angle between them changes by (<var>m</var> − <var>n</var>) steps. Move both tokens forward by the same amount and both arrows turn equally; the angle between them, and so the score, stays put. Press “Move both +7” to see it.</p>
+<h2 id="relative">Why does only the distance matter?</h2>
+<p>The dot product of two arrows depends only on their lengths and the angle <em>between</em> them. Rotate q by <var>m</var> steps and k by <var>n</var> steps, and the angle between them changes by (<var>m</var> − <var>n</var>) steps. Move both tokens forward by the same amount and both arrows turn equally. The angle between them, and so the score, stays put. Press “Move both +7” to see it.</p>
 <p>So after RoPE, a query can learn “I want the token just before me” or “I want something about 20 tokens back”, and that preference works at any point in the text. Position is encoded as <em>relative</em> distance, which is what language needs.</p>
+<p><strong>Takeaway: the score depends on how far apart two tokens are, not on where they sit.</strong></p>
 
-<h2 id="freq">Many speeds</h2>
+<h2 id="freq">Why does each pair spin at its own speed?</h2>
 <p>If every pair turned at the same speed, positions 0 and one full turn later would look identical. So each pair turns at its own speed:</p>
 <p class="formula">angle of pair <var>p</var> at position <var>m</var> = <var>m</var> × θ<sup>−2p/48</sup>, &nbsp; θ = 10,000</p>
 <table>
@@ -75,11 +81,41 @@
     <tr><td>23</td><td class="num">0.00015</td><td class="num">43,000</td><td>barely moves within 256 tokens</td></tr>
   </tbody>
 </table>
-<p>It works like the hands of a clock: the second hand tells fine time but repeats every minute; the hour hand is coarse but does not repeat all day. Together, the 24 pairs give every position within the context a distinct pattern, and fast pairs can track nearby tokens while slow ones track far ones. <span class="tag c">calculated</span> from the formula.</p>
-<p>θ is a setting of the model. stories15M uses 10,000; SmolLM2 uses 100,000 and Qwen2.5 1,000,000, which slows every pair down so that longer contexts stay distinguishable.</p>
+<p>It works like the hands of a clock: the second hand tells fine time but repeats every minute, and the hour hand is coarse but does not repeat all day. Together, the 24 pairs give every position within the context a distinct pattern. Fast pairs track nearby tokens and slow ones track far ones. <span class="tag c">calculated</span> from the formula.</p>
+<p>θ is a setting of the model. stories15M uses 10,000. SmolLM2 uses 100,000 and Qwen2.5 1,000,000, which slows every pair down so that longer contexts stay distinguishable.</p>
+<p><strong>Takeaway: fast pairs resolve small distances and slow pairs resolve large ones, so the 24 together cover the whole context.</strong></p>
 
-<h2 id="code">The code, and the two layouts</h2>
-<p><code>rope_adjacent</code> in <code>src/kernels/scalar.rs</code>, applied to q and to this token's k (v is not rotated: values carry content, not position):</p>
+<h2 id="code">How does the code rotate q and k?</h2>
+<p><code>rope_adjacent</code> in <code>src/kernels/scalar.rs</code> does the rotation. It is applied to q and to this token's k. Its vector is called <code>v</code> in the code, but it is not the value vector; v is not rotated, because values carry content, not position. The code builds in three steps.</p>
+
+<h3>Step 1: loop over heads and pairs</h3>
+<pre><code>for head in v.chunks_exact_mut(head_size) {
+    for i in (0..head_size).step_by(2) {</code></pre>
+<ul>
+  <li><code>chunks_exact_mut(head_size)</code> cuts the vector into one slice per head, and <code>head</code> is one of them.</li>
+  <li><code>step_by(2)</code> visits <code>i</code> = 0, 2, 4, … so each step handles one pair: element <code>i</code> and element <code>i + 1</code>.</li>
+</ul>
+
+<h3>Step 2: the pair's angle</h3>
+<pre><code>let freq = 1.0 / theta.powf(i as f32 / head_size as f32);
+let angle = pos as f32 * freq;
+let (sin, cos) = (angle.sin(), angle.cos());</code></pre>
+<ul>
+  <li><code>freq</code> is the pair's speed, θ<sup>−i/48</sup>. Slow pairs have a large <code>i</code>, so a small <code>freq</code>.</li>
+  <li><code>angle</code> is the position times that speed. <code>pos as f32</code> converts the integer position to a float.</li>
+  <li><code>sin</code> and <code>cos</code> are the two numbers the rotation needs.</li>
+</ul>
+
+<h3>Step 3: rotate the pair</h3>
+<pre><code>let (v0, v1) = (head[i], head[i + 1]);
+head[i]     = v0 * cos - v1 * sin;
+head[i + 1] = v0 * sin + v1 * cos;</code></pre>
+<ul>
+  <li><code>v0</code> and <code>v1</code> keep the old pair, because the first assignment would overwrite <code>head[i]</code> before the second line needed it.</li>
+  <li>The two lines are the rotation formula from above, written for one pair.</li>
+</ul>
+
+<h3>All three together</h3>
 <pre><code>for head in v.chunks_exact_mut(head_size) {
     for i in (0..head_size).step_by(2) {
         let freq = 1.0 / theta.powf(i as f32 / head_size as f32);
@@ -90,8 +126,9 @@
         head[i + 1] = v0 * sin + v1 * cos;
     }
 }</code></pre>
-<p>Keys are rotated <em>once</em>, when they are computed, and stored rotated in the cache. Since a token's position never changes, there is no need to rotate them again later.</p>
+<p>Keys are rotated <em>once</em>, when they are computed, and stored rotated in the cache. A token's position never changes, so there is no need to rotate its key again later. A second rotation would add a second angle to the key.</p>
 <div class="callout warn"><span class="lbl">Two ways to pair the numbers</span><p>llama2.c pairs neighbours: (0, 1), (2, 3), … Hugging Face models pair element <var>i</var> with element <var>i</var> + 24: (0, 24), (1, 25), … (“rotate half”). It is the same maths on a different pairing, and it depends on how the weights were saved. Use the wrong one and the model still runs, and writes nonsense. Aether has both (<code>rope_adjacent</code>, <code>rope_halves</code>), and the model's config says which; Phase 5 needed the second.</p></div>
+<p><strong>Takeaway: rotate each pair by its own angle, once per key, and use the pairing the weights were saved with.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why can't plain attention (without RoPE) tell word order?</summary>
@@ -106,14 +143,18 @@
 <details class="check"><summary>Why does each pair spin at a different speed?</summary>
 <p>A single speed would repeat after one turn, making far positions look like near ones. Fast pairs resolve small distances, slow pairs large ones, like the hands of a clock.</p>
 </details>
+<h2 id="takeaway">What you should take away</h2>
+<p>Plain attention cannot see position, because a dot product depends only on the vectors.</p>
+<p>RoPE rotates each pair of q and k by an angle set by position, so the score depends on distance.</p>
+<p>Each pair spins at its own speed, and the pairing must match how the weights were saved.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

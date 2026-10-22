@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,32 +23,36 @@
 <main id="content">
 <p class="kicker">Phase 1 · 13</p>
 <h1>What Phase 1 measured</h1>
-<p class="lede">The Phase 1 pages before this one were written before anything was measured. This page is the answer sheet: the yardstick table from <code>results/phase-1.md</code>, the two sweeps as plots, and what each number means for the engine. Every later kernel is compared against these numbers.</p>
+<p class="lede">Before this page, the Phase 1 pages were written before anything was measured. This is the answer sheet: the yardstick table from <code>results/phase-1.md</code>, the two sweeps as plots, and what each number means for the engine. Every later kernel is compared against these numbers.</p>
 <nav class="toc">
-  <a href="#conditions">Conditions</a>
-  <a href="#table">The table</a>
-  <a href="#sweep">The read sweep</a>
-  <a href="#one-core">One core nearly fills the bus</a>
-  <a href="#kernels">Copy, scale, add, and misalignment</a>
-  <a href="#heat">Five minutes of heat</a>
-  <a href="#energy">Energy per gigabyte</a>
-  <a href="#open">Still open</a>
+  <a href="#conditions">What were the conditions for these numbers?</a>
+  <a href="#table">What are the headline numbers?</a>
+  <a href="#sweep">How does bandwidth change with buffer size?</a>
+  <a href="#one-core">Does one core nearly fill the bus?</a>
+  <a href="#kernels">What do writes and misalignment cost?</a>
+  <a href="#heat">Does bandwidth hold up after five minutes?</a>
+  <a href="#energy">How much energy does a gigabyte cost?</a>
+  <a href="#open">What is still unexplained?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="conditions">Conditions</h2>
-<p>All runs on 2026-10-21, <strong>on battery</strong> (adb over Wi-Fi, so no USB power), screen kept on, battery saver off, each run started with the hottest CPU zone below 44–48 °C <span class="tag m">measured</span>.</p>
-<p>On battery, the vendor caps the clocks well below their maximum: under load the prime cores (max 4.32 GHz) ran at 2.44 GHz and the performance cores (max 3.53 GHz) at 2.40 GHz. With the screen off the caps fall further, to 1.02 and 1.79 GHz, which is why every run keeps the screen on. So every number here is an <em>on-battery</em> number. Plugged in, or in a performance mode, they would be different, and that has not been measured.</p>
-<p>Two smaller facts from the same runs: the CPU reports a 64-byte cache line through the <code>CTR_EL0</code> register, so <a href="alignment.html#lines">64-byte alignment</a> is the right choice; and there are no efficiency cores, so “prime vs efficiency” in the plan became prime vs performance.</p>
+<h2 id="conditions">What were the conditions for these numbers?</h2>
+<p>A speed holds only under the conditions that produced it. This phone was on battery, and that changes its clocks.</p>
+<p>All runs were on 2026-10-21, <strong>on battery</strong> (adb over Wi-Fi, so no USB power), with the screen kept on and battery saver off. Each run started with the hottest CPU zone below 44–48 °C <span class="tag m">measured</span>.</p>
+<p>On battery, the vendor caps the clocks well below their maximum. Under load, the prime cores (max 4.32 GHz) ran at 2.44 GHz and the performance cores (max 3.53 GHz) at 2.40 GHz. Keep the screen on. With it off, the caps fall further, to 1.02 and 1.79 GHz, and the run measures a slower phone. So every number here is an <em>on-battery</em> number. Plugged in, or in a performance mode, they would be different, and that has not been measured.</p>
+<p>Two smaller facts came from the same runs. The CPU reports a 64-byte cache line through the <code>CTR_EL0</code> register, a hardware register that describes the cache. A cache line is the block the cache moves at once, so <a href="alignment.html#lines">64-byte alignment</a> is the right choice. And there are no efficiency cores, so “prime vs efficiency” in the plan became prime vs performance.</p>
 <p>Programs: <code>examples/bw_sweep.rs</code> and <code>examples/bw_sustained.rs</code>, run by <code>scripts/phase1-runs.sh</code>. Every CSV in <code>results/phase-1/raw/</code> starts with the conditions it ran under.</p>
+<p><strong>Takeaway: every number here is an on-battery number with the screen on, so a plugged-in run needs its own measurement.</strong></p>
 
-<h2 id="table">The table</h2>
-<p>GB/s are decimal (10⁹ bytes). Bytes are counted the STREAM way: each element read or written counts once (<a href="bandwidth.html#count">why that matters</a>). “Read” is a sum with 8 independent NEON accumulators, so it is limited by memory, not by a <a href="../phase-3/chains.html">dependency chain</a>. All values <span class="tag m">measured</span>.</p>
+<h2 id="table">What are the headline numbers?</h2>
+<p>Later kernels need one yardstick. GB/s here are decimal, so 61 GB/s means 61 billion bytes per second. Bytes are counted the STREAM way, a counting rule that counts each element read or written once. So a copy counts its read and its write (<a href="bandwidth.html#count">why that matters</a>). “Read” is a sum with 8 independent NEON accumulators. NEON is the phone’s vector instruction set, and an accumulator is a running total. Because of the accumulators, the read is limited by memory, not by a <a href="../phase-3/chains.html">dependency chain</a>. All values <span class="tag m">measured</span>.</p>
+<p>Compare a kernel with the DRAM rows. Judged against the L1 row, it expects about 102 GB/s, and the bus cannot give that to a kernel that reads from DRAM.</p>
 <table>
   <thead><tr><th>What</th><th>Prime core</th><th>Performance core</th></tr></thead>
   <tbody>
     <tr><td>L1 read (up to ~90 KB)</td><td class="num"><strong>~102 GB/s</strong></td><td class="num">~61 GB/s</td></tr>
-    <tr><td>L2 read (128 KB – 2 MB)</td><td class="num">~67 GB/s</td><td class="num">~44 GB/s</td></tr>
+    <tr><td>L2 read (128 KB – about 2–3 MB)</td><td class="num">~67 GB/s</td><td class="num">~44 GB/s</td></tr>
     <tr><td>DRAM read (64 MB and up)</td><td class="num"><strong>~61 GB/s</strong></td><td class="num">~43 GB/s</td></tr>
     <tr><td>DRAM read, 5 minutes, one core</td><td class="num">47.5 GB/s average</td><td class="num">32.3 GB/s average</td></tr>
     <tr><td>Energy per GB read, 5 minutes</td><td class="num"><strong>0.066 J/GB</strong></td><td class="num">0.082 J/GB</td></tr>
@@ -64,14 +68,19 @@
     <tr><td>all 8 cores, L1-sized pieces (64 KB per thread)</td><td class="num">~400 GB/s together</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: a prime core reads about 61 GB/s from DRAM, and all eight cores together about 67 GB/s.</strong></p>
 
-<h2 id="sweep">The read sweep</h2>
-<p>This is the plot <a href="bandwidth.html#sweep">Bandwidth</a> told you to look for. One buffer per run, read again and again; the size grows from 4 KB to 256 MB, four sizes per doubling. For the multi-core lines the buffer is split between the threads, so the x axis is the total size.</p>
+<h2 id="sweep">How does bandwidth change with buffer size?</h2>
+<p>A kernel reads from a buffer, a block of memory the program reads again and again. The buffer’s size decides which level of memory serves those reads. This is the plot <a href="bandwidth.html#sweep">Bandwidth</a> told you to look for: one buffer per run, read again and again, growing from 4 KB to 256 MB, four sizes per doubling. For the multi-core lines the buffer is split between the threads, so the x axis is the total size.</p>
 <figure>
 <img src="read-sweep.png" alt="Read bandwidth against working-set size for one prime core, one performance core, two prime cores, six performance cores and all eight cores" style="width:100%;height:auto;border-radius:.4rem;background:#fff">
 <figcaption>Median of 7 samples per size; the shaded band runs from the worst sample to the best. On battery caps <span class="tag m">measured</span>.</figcaption>
 </figure>
-<p>How to read it, following the blue line (one prime core) from left to right:</p>
+<p>For one prime core, the plot has three levels. L1 and L2 are caches, small fast memories close to the core. DRAM is the main memory, far away on the bus.</p>
+<pre><code>L1 cache    buffer up to ~90 KB    ~102 GB/s   fastest, closest
+L2 cache    128 KB to 2–3 MB       ~67 GB/s
+DRAM        64 MB and up           ~61 GB/s    the bus is the limit</code></pre>
+<p>How to read the blue line (one prime core) from left to right:</p>
 <ol class="steps">
   <li><strong>Up to about 90 KB: ~102 GB/s.</strong> The whole buffer fits in L1. The cliff sits just below 96 KB, Oryon’s L1 data cache size. The first steady plateau is the cache size you can see without any documentation.</li>
   <li><strong>128 KB to about 2–3 MB: ~67 GB/s.</strong> L2. Its edge is less clean to read off, likely because the L2 is shared by a cluster of cores (12 MB per cluster, according to launch coverage <span class="tag a">assumption</span>).</li>
@@ -79,35 +88,43 @@
   <li><strong>64 MB and up: ~61 GB/s.</strong> DRAM. Every line converges here: the bus, not the cores, is the limit.</li>
 </ol>
 <p>The orange line (one performance core) has the same shape, lower everywhere: about 0.6× the prime core in L1 and 0.7× from DRAM, at nearly the same clock cap (2.40 vs 2.44 GHz). The same cores, the same caps, but a large difference. Phase 2 hit the same puzzle with the <a href="../phase-2/baseline.html#prime">scalar model</a>.</p>
-<p>The multi-core lines start at 64 KB, so their L1 region is where each thread’s piece fits its own L1: eight L1 caches together give about 400 GB/s. That is the speed of data a kernel already has close by, and the reason <a href="../phase-3/gemm.html">GEMM</a> works hard to reuse it.</p>
+<p>The multi-core lines start at 64 KB, so their L1 region is where each thread’s piece fits its own L1: eight L1 caches together give about 400 GB/s. That is the speed of data a kernel already has close by, and the reason <a href="../phase-3/gemm.html">GEMM</a> works hard to reuse it. Read a buffer that fits in L1 as if it were DRAM and you report about 102 GB/s for a kernel that will really run at about 61.</p>
+<p><strong>Takeaway: speed steps down each time the buffer outgrows a cache level, and flattens at DRAM.</strong></p>
 
-<h2 id="one-core">One core nearly fills the bus</h2>
-<p>The plan expected one core to fall well short of the whole phone’s bandwidth, so that decode would need several threads just to read the weights fast enough. On this phone that is true only for a performance core: 43 of ~67 GB/s, about 64 %. One prime core gets 61 of ~67, about 90 % <span class="tag c">calculated</span>.</p>
-<p>So decode on one prime core is close to the memory limit already, <em>if the kernel keeps up</em>. Phase 2’s scalar loop read only 5.4 GB/s; Phase 3’s NEON GEMV reached 41–49 GB/s from DRAM. The yardstick says how much is left: about 61.</p>
-<p>For stories15M in f32, 60.8 MB per token and 61 GB/s gives a ceiling of about 1,000 tokens per second on one prime core <span class="tag c">calculated</span>. Phase 3 reached 422.</p>
+<h2 id="one-core">Does one core nearly fill the bus?</h2>
+<p>Decode reads the weights for every token, so the question is how many cores it takes to read them fast enough. The plan expected one core to fall well short, so decode would need several threads. On this phone that is true only for a performance core: 43 of ~67 GB/s, about 64 %. One prime core gets 61 of ~67, about 90 % <span class="tag c">calculated</span>.</p>
+<p>So decode on one prime core is close to the memory limit already, <em>if the kernel keeps up</em>. Phase 2’s scalar loop read only 5.4 GB/s, and Phase 3’s NEON GEMV reached 41–49 GB/s from DRAM. The yardstick says how much is left: about 61. A kernel that reads at 5.4 GB/s leaves most of the bus unused.</p>
+<p>For stories15M in f32, 60.8 MB per token and 61 GB/s give a ceiling of about 1,000 tokens per second on one prime core <span class="tag c">calculated</span>. In numbers: 61,000 MB per second ÷ 60.8 MB per token ≈ 1,000 tokens per second. Phase 3 reached 422.</p>
+<p><strong>Takeaway: one prime core is already close to the memory limit, so the kernel’s own efficiency decides how much of it you use.</strong></p>
 
-<h2 id="kernels">Copy, scale, add, and misalignment</h2>
+<h2 id="kernels">What do writes and misalignment cost?</h2>
+<p>Real kernels write their results as well as read their inputs. A write is not free. Before the cache can change a line, it must fetch that line. Follow one element of a copy, which reads one value and writes one:</p>
+<pre><code>copy, per element, as the STREAM count sees it:  read 1 + write 1          = 2 units
+copy, what the bus carries:                      read 1 + line fetch 1 + write 1 = 3 units
+                                                 3 ÷ 2 = 1.5×</code></pre>
 <figure>
 <img src="kernels-core7.png" alt="Bandwidth of read, misaligned read, copy, scale and add on prime core 7 against working-set size" style="width:100%;height:auto;border-radius:.4rem;background:#fff">
 <figcaption>Prime core 7. Blue: read; orange: the same read from an address 4 bytes past a 64-byte boundary (the legend shows both as “read”). Green, red, purple: copy, scale, add, counted the STREAM way <span class="tag m">measured</span>.</figcaption>
 </figure>
 <ul>
   <li><strong>In L1, copy and add beat read</strong> (up to ~145 GB/s counted). They move a read and a write per element, and a core can usually run loads and stores side by side <span class="tag a">assumption</span>, so in cache the two add up.</li>
-  <li><strong>From DRAM they lose</strong>: 42 / 43 / 46 GB/s for copy / scale / add. The writes have a hidden cost: before writing into a line, the cache first reads it from DRAM (<a href="bandwidth.html#count">write-allocate</a>). The real traffic is 1.5× the counted bytes for copy and scale, 1.33× for add. 42 × 1.5 ≈ 63 GB/s, the same as the read limit <span class="tag c">calculated</span>.</li>
+  <li><strong>From DRAM they lose</strong>: 42 / 43 / 46 GB/s for copy / scale / add. The line fetch is the hidden cost (<a href="bandwidth.html#count">write-allocate</a>). The real traffic is 1.5× the counted bytes for copy and scale, 1.33× for add. 42 × 1.5 ≈ 63 GB/s, the same as the read limit <span class="tag c">calculated</span>.</li>
   <li><strong>From DRAM, scale tracks copy</strong> (43 vs 42 GB/s): one multiply per element costs nothing when the stream is the limit. In L1 it does show: scale peaks near 120 GB/s, copy near 145.</li>
-  <li><strong>Misalignment costs 3–5 %</strong>: 97 vs 102 GB/s in L1, 59 vs 61 from DRAM. Measurable, small. <code>AlignedBuf</code> (<code>src/aligned.rs</code>) is kept mostly so every benchmark starts from the same layout.</li>
+  <li><strong>Misalignment costs 3–5 %</strong>: 97 vs 102 GB/s in L1, 59 vs 61 from DRAM. Misaligned data starts 4 bytes past a 64-byte boundary (the orange line in the figure). The cost is measurable and small. <code>AlignedBuf</code> (<code>src/aligned.rs</code>) is kept mostly so every benchmark starts from the same layout.</li>
 </ul>
+<p><strong>Takeaway: a write from DRAM also fetches its line first, so copy’s 42 GB/s counted is about 63 GB/s on the bus.</strong></p>
 
-<h2 id="heat">Five minutes of heat</h2>
-<p>A fresh number and a sustained number answer different questions (<a href="power.html">Power and heat</a>). Over 5 minutes:</p>
+<h2 id="heat">Does bandwidth hold up after five minutes?</h2>
+<p>A fresh number and a sustained number answer different questions (<a href="power.html">Power and heat</a>). A chat can run for minutes, and the phone heats up as it works. So the test ran for 5 minutes:</p>
 <ul>
   <li><strong>All 8 cores lost only 2.6 %</strong> (70.2 → 68.4 GB/s), although the phone reached 88 °C and the governor cut the clocks from 2.40 / 2.44 GHz to 1.36 / 1.02 GHz. Eight cores at a low clock still keep enough loads in flight to fill the bus. A memory-bound job does not need full clocks.</li>
   <li><strong>One prime core lost about 22 %</strong> (61 fresh → 47.5 average). A single core needs its clock to issue loads fast enough.</li>
 </ul>
-<p>For decode, this means a single-thread speed measured on a cool phone is optimistic for a long chat; several threads hold their speed better.</p>
+<p>For decode, a single-thread speed measured on a cool phone is optimistic for a long chat, and several threads hold their speed better. Quote the cool number as the speed and a long chat runs slower than the figure promised.</p>
+<p><strong>Takeaway: eight cores held their speed over five minutes and one prime core did not, so a cool single-thread number overstates a long chat.</strong></p>
 
-<h2 id="energy">Energy per gigabyte</h2>
-<p>The plan’s method, reading <code>current_now</code> from <code>/sys/class/power_supply</code>, does not work here: SELinux denies those files to the shell user. Android’s battery service is readable instead, but it refreshes only every 45–85 seconds. So energy was measured from the battery’s <strong>charge counter</strong>: the charge used between its first and last step inside each 5-minute run, times the battery voltage, minus a 5-minute idle baseline measured just before.</p>
+<h2 id="energy">How much energy does a gigabyte cost?</h2>
+<p>Speed is only half the story, because the phone runs on a battery. The plan’s method reads <code>current_now</code> from <code>/sys/class/power_supply</code>, but SELinux (Android’s access-control system) denies those files to the shell user. Android’s battery service is readable instead, but it refreshes only every 45–85 seconds. So energy was measured from the battery’s <strong>charge counter</strong>, the running total of charge the battery has given out. The method takes the charge used between its first and last step inside each 5-minute run, times the battery voltage, minus a 5-minute idle baseline (what the phone draws doing nothing) measured just before.</p>
 <table>
   <thead><tr><th></th><th>Total</th><th>Above idle</th></tr></thead>
   <tbody>
@@ -116,16 +133,19 @@
     <tr><td>all 8 cores (4.57 W)</td><td class="num">0.066 J/GB</td><td class="num">—</td></tr>
   </tbody>
 </table>
-<p>The prime core moved 47 % more bytes per second at 18 % more power, so each gigabyte cost it less in total. Above idle, the two are within this method’s resolution. The total is the one that matters for a phone: the screen, radio and the rest draw power the whole time the job runs, so <strong>finishing sooner (“race to idle”) wins</strong> for memory-bound work.</p>
-<div class="callout warn"><span class="lbl">How precise is this?</span><p>One step of the charge counter is about 1 mAh, about 3.6 % of a 5-minute prime-core run, and the idle baseline itself varied from 0.53 to 0.70 W between runs. Treat differences under about 10 % as noise. The 0.082 vs 0.066 total is a real difference; 0.060 vs 0.055 above idle is not.</p></div>
+<p>The prime core moved 47 % more bytes per second at 18 % more power, so each gigabyte cost it less in total. Above idle, the two are within this method’s resolution. The total is the one that matters for a phone. The screen, radio and the rest draw power the whole time the job runs, so <strong>finishing sooner (“race to idle”, meaning finish fast, then let the phone rest) wins</strong> for memory-bound work.</p>
+<div class="callout warn"><span class="lbl">How precise is this?</span><p>One step of the charge counter is about 1 mAh (a unit of charge), roughly 14 J at about 4 V <span class="tag a">assumption</span>. That is about 1.5–2 % of a 5-minute prime-core run (791–938 J) <span class="tag c">calculated</span>. The idle baseline itself varied from 0.53 to 0.70 W between runs. Treat differences under about 10 % as noise. The 0.082 vs 0.066 total is a real difference; 0.060 vs 0.055 above idle is not.</p></div>
+<p><strong>Takeaway: for memory-bound work, finishing sooner saves energy, because the screen and radio draw power for the whole run.</strong></p>
 
-<h2 id="open">Still open</h2>
+<h2 id="open">What is still unexplained?</h2>
+<p>Four questions are still open. Each one is a job for later work.</p>
 <ul>
   <li><strong>The 4–8 MB dip.</strong> One core reads slower from a 4–8 MB buffer than from DRAM (46–57 vs 61 GB/s). Candidates: the 12 MB L2 being shared by the cluster, the system-level cache, prefetcher behaviour. A <a href="profiling.html">simpleperf</a> question.</li>
   <li><strong>Why the performance core is so much slower</strong> at nearly the same clock cap. The real clock under load may be lower than the cap.</li>
-  <li><strong>Plugged-in numbers.</strong> Everything here is on battery caps.</li>
+  <li><strong>Plugged-in numbers.</strong> Everything here is on battery caps. Until they are measured, do not mix them with the on-battery numbers.</li>
   <li><strong>The compute roof.</strong> Phase 1 measured the memory roof of the <a href="roofline.html">roofline</a>; the peak FMA rate has not been measured.</li>
 </ul>
+<p><strong>Takeaway: the 4–8 MB dip, the slow performance core, the plugged-in numbers and the compute roof are still open.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does the read sweep have flat steps instead of a smooth slope?</summary>
@@ -141,13 +161,18 @@
 <p>About 61 GB/s ÷ 60.8 MB ≈ 1,000 tokens per second, if the kernel kept up with memory. It is a ceiling, not a prediction.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Every number depends on its conditions, so record the battery, the screen and the temperature with it.</p>
+<p>Writes cost more than reads, because the cache fetches each line before changing it.</p>
+<p>Energy per gigabyte favours finishing fast, since the rest of the phone draws power the whole time.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

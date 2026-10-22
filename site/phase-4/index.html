@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,34 +25,49 @@
 <div class="callout ok"><span class="lbl">Built and verified</span><p>The thread pool and the split matmuls are in the engine, and threaded results are bit-identical to single-threaded ones, checked against the same numpy, llama2.c and Hugging Face goldens. The speeds on these pages are measured on battery. A clean sweep of twelve core sets, run twice, is in; it corrected several of the first measurements, and the pages say where.</p></div>
 
 <h1>Phase 4 — threads</h1>
-<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores. The hard part is not the arithmetic; it is that decode hands out a couple of hundred small jobs per token, and every one ends when its slowest thread does. The first threaded build gained almost nothing from cores beyond two. Fixing that taught most of what this phase is about.</p>
+<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores, using <strong>threads</strong>: streams of work that the operating system runs on separate cores. The hard part is not the arithmetic. Decode hands out a couple of hundred small jobs per token, and each job ends only when its slowest thread does. The first threaded build gained almost nothing beyond two cores. Fixing that taught most of what this phase is about.</p>
 <nav class="toc">
-  <a href="#idea">The idea in one paragraph</a>
-  <a href="#result">The result</a>
-  <a href="#order">Read in this order</a>
-  <a href="#open">Still open</a>
-  <a href="#code">Where the code is</a>
+  <a href="#idea">How do you share the work without waiting?</a>
+  <a href="#result">How much faster did threads make it?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#code">Which files hold the code?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="idea">The idea in one paragraph</h2>
-<p>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching, because starting threads or waking them through the kernel costs more than a job is worth. Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change. Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end. Put the thread that does the serial work on the fastest core. Then measure which cores are worth using: on this phone, speed stops growing at about six cores, and the last two add nothing measurable.</p>
+<h2 id="idea">How do you share the work without waiting?</h2>
+<p>Each matrix product has to be split across threads. The split must avoid three costs: starting threads, one slow thread holding up the rest, and a change in the result. Four ideas handle them:</p>
+<ul>
+  <li>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching. Starting threads or waking them through the kernel costs more than a job is worth, so doing it per job loses time.</li>
+  <li>Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change.</li>
+  <li>Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end.</li>
+  <li>Put the thread that does the serial work on the fastest core.</li>
+</ul>
+<p>Then measure which cores are worth using: on this phone, speed stops growing at about six cores, and the last two add nothing measurable.</p>
+<p><strong>Takeaway: keep threads alive, split by rows, and hand out small blocks, or the slowest thread sets the pace.</strong></p>
 
-<h2 id="result">The result</h2>
+<h2 id="result">How much faster did threads make it?</h2>
+<p>Three measurements sum up the phase. <strong>µs</strong> means microseconds, millionths of a second.</p>
 <div class="statrow">
   <div class="stat"><b>160 → 335 tok/s</b><span>SmolLM2-135M Q4_0 decode, core 7 alone → cores 2–7, mean of two passes <span class="tag m">measured</span></span></div>
   <div class="stat"><b>265 → 343 tok/s</b><span>cores 2–7, equal shares → blocks, same day, same conditions <span class="tag m">measured</span></span></div>
   <div class="stat"><b>1.3 vs 506 µs</b><span>handing out one job on cores 2–7: the pool vs fresh threads <span class="tag m">measured</span></span></div>
 </div>
 
-<h2 id="order">Read in this order</h2>
+<p><strong>Takeaway: the pool hands out one job in 1.3 µs, against 506 µs for fresh threads.</strong></p>
+
+<h2 id="order">Which page should I read first?</h2>
+<p>Four pages, in this order. The first explains the cost of a hand-out and how the pool pays less; the rest cover how work is split, how threads wait, and which cores to use.</p>
 <ol>
   <li><a href="pool.html">Threads that stay</a>: how many jobs a token hands out, what a hand-out costs three ways, and how the pool does it with two counters.</li>
   <li><a href="split.html">Splitting the work</a>: rows, not pieces of rows; why equal shares failed; blocks from a shared counter; attention by head.</li>
   <li><a href="waiting.html">Waiting: spin, then park</a>: the trade between reacting fast and leaving the core free, the lost wake-up, and false sharing.</li>
   <li><a href="cores.html">Choosing cores</a>: prime and performance cores, the caller on the fastest core, and what each core set measured.</li>
 </ol>
+<p><strong>Takeaway: read the pool page first, since the later pages build on the counters it explains.</strong></p>
 
-<h2 id="open">Still open</h2>
+<h2 id="open">What is still open?</h2>
+<p>Four things the sweep did not settle. Each one is a question for a later run, not a result.</p>
 <ul>
   <li><strong>A steadier sweep</strong>: the phone throttled during the Qwen and five-minute runs (clock caps fell to 1.6–2.0 GHz), and some runs started with another app in the foreground. A repeat on a cooler phone would settle the energy comparison and the 6–7 against 2–7 gap on Qwen.</li>
   <li><strong>Why 0–7 swings so much</strong>: with blocks it ran from 237 to 346 tokens per second between runs (<a href="split.html">Splitting the work</a>).</li>
@@ -60,7 +75,10 @@
   <li><strong>Multi-thread bandwidth</strong>: the GB/s numbers are calculated from tokens per second; <code>gemv_bench</code> only runs one thread.</li>
 </ul>
 
-<h2 id="code">Where the code is</h2>
+<p><strong>Takeaway: the energy comparison and the 6–7 against 2–7 gap on Qwen need a steadier run on a cooler phone to settle.</strong></p>
+
+<h2 id="code">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds the measurements, with the conditions they were taken under.</p>
 <table>
   <thead><tr><th>File</th><th>Job</th></tr></thead>
   <tbody>
@@ -72,14 +90,20 @@
     <tr><td><code>results/phase-4.md</code></td><td>Measurements and their conditions</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: the pool lives in src/pool.rs, and the matmul splits live in src/kernels/mod.rs.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Threads that stay alive and take work from a counter cost far less than fresh threads for each job.</p>
+<p>Splitting by whole rows keeps the result the same, and small blocks keep the cores busy.</p>
+<p>Measure the core sets before choosing one: on this phone, speed stopped growing at about six cores.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

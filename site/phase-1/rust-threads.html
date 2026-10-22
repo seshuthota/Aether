@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,24 +26,66 @@
 <h1>Threads in Rust</h1>
 <p class="lede">Phase 1 needs threads twice. The power monitor runs beside the benchmark, sampling while the benchmark works. The parallel sweep runs one reader per core at the same moment. Both use the standard library; no crate needed.</p>
 <nav class="toc">
-  <a href="#what">What a thread is</a>
-  <a href="#spawn">spawn and join</a>
-  <a href="#stop">Telling a thread to stop</a>
-  <a href="#rate">How often to sample</a>
-  <a href="#scope">Scoped threads for the sweep</a>
+  <a href="#what">What is a thread?</a>
+  <a href="#spawn">How do you start one and wait for it?</a>
+  <a href="#stop">How do you tell a thread to stop?</a>
+  <a href="#rate">How often should the sampler sample?</a>
+  <a href="#scope">How do worker threads borrow the buffer?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
 <div class="callout"><span class="lbl">How to use this page</span><p>Two patterns, each shown once. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>. <code>read_power</code>, <code>run_benchmark</code>, <code>read_sum</code> and <code>pin_to</code> are placeholders for code you write.</p></div>
 
-<h2 id="what">What a thread is</h2>
-<p>A program starts with one thread: one stream of instructions, running on one core at a time. A second thread is a second stream, which the operating system can run on another core at the same moment. Threads in one program share its memory. That is what makes them useful, and why Rust is strict about them: two threads writing the same value at once is a data race, and Rust refuses to compile code that could have one.</p>
+<h2 id="what">What is a thread?</h2>
+<p>You want the sampler to run while the benchmark runs. One stream of instructions cannot do both. A program starts with one <strong>thread</strong>: one stream of instructions, running on one core at a time. A second thread is a second stream, which the operating system can run on another core at the same moment.</p>
+<p>Threads in one program share its memory. That is what makes them useful, and why Rust is strict about them. Two threads writing the same value at once is a <strong>data race</strong>, and Rust refuses to compile code that could have one.</p>
+<p><strong>Takeaway: a thread is a second stream of instructions that shares memory, and Rust refuses data races at compile time.</strong></p>
 
-<h2 id="spawn">spawn and join</h2>
-<p><code>std::thread::spawn</code> starts a thread running a closure and returns a handle. <code>handle.join()</code> waits for it to finish and hands back whatever the closure returned. The closure is <code>move</code>, so it takes ownership of what it uses. The new thread may outlive the function that started it, so it can’t borrow local variables.</p>
+<h2 id="spawn">How do you start a thread and wait for it?</h2>
+<p><code>std::thread::spawn</code> starts a thread running a closure (a small function written inline, <code>|| { … }</code>) and returns a handle. <code>handle.join()</code> waits for it to finish and hands back whatever the closure returned.</p>
+<p>The closure is <code>move</code>, so it takes ownership of what it uses. The new thread may outlive the function that started it, so it can’t borrow local variables. If it could, a local might be gone while the thread still used it.</p>
+<p><strong>Takeaway: <code>spawn</code> starts, <code>join</code> waits and returns the result, and the closure must own what it uses.</strong></p>
 
-<h2 id="stop">Telling a thread to stop</h2>
-<p>The sampler loops until the benchmark is done. It needs a flag that one thread sets and another reads. A plain <code>bool</code> won’t compile: two threads touching one variable without synchronisation is the data race Rust forbids. An <code>AtomicBool</code> is a bool whose reads and writes are each one indivisible step, so sharing it is allowed. <code>Arc</code> (“atomically reference counted”) lets both threads own a handle to the same flag.</p>
+<h2 id="stop">How do you tell a thread to stop?</h2>
+<p>The sampler loops until the benchmark is done, so it needs a flag that one thread sets and another reads. A plain <code>bool</code> won’t compile: two threads touching one variable without synchronisation is the data race Rust forbids. Two tools fix that:</p>
+<ul>
+  <li>An <strong><code>AtomicBool</code></strong> is a bool whose reads and writes are each one indivisible step, so sharing it is allowed.</li>
+  <li><strong><code>Arc</code></strong> (“atomically reference counted”) lets both threads own a handle to the same flag.</li>
+</ul>
+
+<h3>Step 1: make the shared flag</h3>
+<pre><code>let stop = Arc::new(AtomicBool::new(false));
+let flag = Arc::clone(&amp;stop);</code></pre>
+<ul>
+  <li><code>Arc::clone</code> makes a second handle to the same flag. It does not copy the bool.</li>
+</ul>
+
+<h3>Step 2: spawn the sampler</h3>
+<pre><code>let sampler = thread::spawn(move || {
+    let mut samples = Vec::new();
+    while !flag.load(Ordering::Relaxed) {
+        samples.push((Instant::now(), read_power()));
+        thread::sleep(Duration::from_millis(100));
+    }
+    samples
+});</code></pre>
+<ul>
+  <li><code>move</code> hands <code>flag</code> to the new thread.</li>
+  <li>The loop checks the flag, takes one sample, sleeps 100 ms, and repeats.</li>
+  <li>The last line, <code>samples</code>, is what <code>join</code> will return.</li>
+</ul>
+
+<h3>Step 3: stop it and collect</h3>
+<pre><code>run_benchmark();
+stop.store(true, Ordering::Relaxed);
+let samples = sampler.join().unwrap();</code></pre>
+<ul>
+  <li><code>store(true, …)</code> sets the flag. The sampler sees it on its next check and leaves the loop.</li>
+  <li><code>.unwrap()</code> takes the value out of <code>join</code>’s <code>Result</code>, and panics if the sampler thread had panicked.</li>
+</ul>
+
+<h3>All three together</h3>
 <pre><code>use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -64,9 +106,11 @@ run_benchmark();
 stop.store(true, Ordering::Relaxed);
 let samples = sampler.join().unwrap();</code></pre>
 <p><code>Ordering::Relaxed</code> is enough here. The flag carries no data; it only says “stop.” The samples come back through <code>join</code>, and <code>join</code> guarantees you see everything the thread wrote. Orderings matter when an atomic is guarding other data. That is a Phase 4 topic.</p>
-<p>Keep each sample’s <code>Instant</code>. Then you can keep only the samples inside the timed window, and work out energy as each power reading times the gap to the next one, added up. Sampling intervals are never exactly 100 ms.</p>
+<p>Keep each sample’s <code>Instant</code>. Then you can keep only the samples inside the timed window, and work out energy as each power reading times the gap to the next one, added up. Sampling intervals are never exactly 100 ms, so without the timestamps the sum is wrong.</p>
+<p><strong>Takeaway: share an <code>Arc&lt;AtomicBool&gt;</code> to stop a thread, return its data through <code>join</code>, and keep every sample’s timestamp.</strong></p>
 
-<h2 id="rate">How often to sample</h2>
+<h2 id="rate">How often should the sampler sample?</h2>
+<p>Faster sounds better. Drag the benchmark length and the interval to see how many samples land inside the run.</p>
 <div class="widget" data-sampler>
   <h3>How many samples land inside the run?</h3>
   <p>The bar is the timed benchmark. Each tick is one sample.</p>
@@ -81,11 +125,47 @@ let samples = sampler.join().unwrap();</code></pre>
   <svg class="fig" viewBox="0 0 640 70" role="img" aria-label="Samples along the benchmark" data-svg></svg>
   <p class="formula" data-out></p>
 </div>
-<p>Faster sampling is not free and is not always more information. Each sample is a few file reads, which cost the CPU something. And the battery gauge updates its reading on its own schedule. If ten samples in a row return the same <code>current_now</code>, you are sampling faster than the sensor changes <span class="tag a">assumption</span>, so check by hand what this phone does. A run that is short next to the interval gets one or two readings, which is a guess, not an average. Make energy runs long.</p>
+<p>Faster sampling is not free and is not always more information. Each sample is a few file reads, which cost the CPU something. And the battery gauge updates its reading on its own schedule. If ten samples in a row return the same <code>current_now</code>, you are sampling faster than the sensor changes <span class="tag a">assumption</span>, so check by hand what this phone does.</p>
+<p>A run that is short next to the interval gets one or two readings, which is a guess, not an average. Make energy runs long.</p>
 <p>The sampler thread runs on a core too. For a single-core run, pin the sampler to a core you are not measuring. For the all-cores run there is no spare core; it sleeps almost all the time, so it costs little, but note it.</p>
+<p><strong>Takeaway: sample no faster than the sensor changes, and make the run long compared with the interval.</strong></p>
 
-<h2 id="scope">Scoped threads for the sweep</h2>
+<h2 id="scope">How do worker threads borrow the buffer?</h2>
 <p>The parallel sweep splits one big buffer into chunks, one per core. Each worker only needs to <em>borrow</em> its chunk. <code>spawn</code> can’t do that, because the thread might outlive the buffer. <code>std::thread::scope</code> can: every thread started inside the scope is joined before the scope ends, so borrowing is safe and the compiler allows it.</p>
+<p>Starting a thread and pinning it take time, and that time is not bandwidth. A <code>Barrier</code> keeps it out of the clock: every worker gets ready, then waits there until all have arrived.</p>
+
+<h3>Step 1: cut the buffer</h3>
+<pre><code>let per = data.len() / cpus.len();
+data.chunks(per).zip(cpus)</code></pre>
+<ul>
+  <li><code>chunks(per)</code> cuts the buffer into pieces of <code>per</code> floats. <code>zip(cpus)</code> pairs each piece with a core number.</li>
+  <li>If the length doesn’t divide evenly, <code>chunks</code> makes one short extra chunk and <code>zip</code> drops it. Count <code>per × cpus.len()</code> floats, not <code>data.len()</code>, or the GB/s is slightly too high.</li>
+</ul>
+
+<h3>Step 2: each worker pins itself, then waits</h3>
+<pre><code>s.spawn(move || {
+    pin_to(cpu).expect("pin failed");  // each worker pins itself
+    start.wait();                      // then waits for the others
+    read_sum(chunk)
+})</code></pre>
+<ul>
+  <li><code>s.spawn</code> is the scope’s version of <code>spawn</code>; it allows borrowing <code>chunk</code>.</li>
+  <li><code>.expect("pin failed")</code> is <code>unwrap</code> with a message, so a failed pin stops the run.</li>
+</ul>
+
+<h3>Step 3: release everyone and start the clock</h3>
+<pre><code>start.wait();                                  // everyone is pinned; go
+let t0 = Instant::now();
+for h in handles {
+    h.join().unwrap();
+}
+t0.elapsed()</code></pre>
+<ul>
+  <li>The main thread arrives at the barrier last, which releases everyone together, and starts the clock at that moment.</li>
+  <li>The GB/s is the bytes actually read over <code>elapsed</code>.</li>
+</ul>
+
+<h3>All three together</h3>
 <pre><code>use std::sync::Barrier;
 
 let per = data.len() / cpus.len();
@@ -110,8 +190,8 @@ let elapsed = thread::scope(|s| {
     }
     t0.elapsed()
 });</code></pre>
-<p>The <code>Barrier</code> is there for the clock. Starting a thread and pinning it take time, and that time is not bandwidth. Every worker gets ready, then waits at the barrier. The main thread arrives there last, which releases everyone together, and starts the clock at that moment. The GB/s is the bytes actually read over <code>elapsed</code>. If the length doesn’t divide evenly, <code>chunks</code> makes one short extra chunk and <code>zip</code> drops it, so count <code>per × cpus.len()</code> floats, not <code>data.len()</code>.</p>
 <p>The <code>black_box</code> rule from <a href="../phase-0/measuring-time.html#compiler">Measuring time</a> still applies to <code>read_sum</code>’s input and result. The sketch leaves it out to keep the shape visible.</p>
+<p><strong>Takeaway: <code>thread::scope</code> lets workers borrow, and the barrier keeps start-up time out of the clock.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does the stop flag need to be atomic, if only one thread ever writes it?</summary>
@@ -124,12 +204,17 @@ let elapsed = thread::scope(|s| {
 <p>Close to nothing: at most one sample inside the run. Lengthen the run, or repeat it back to back inside one timed window, until the window holds many samples.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Use <code>spawn</code> and <code>join</code> for the sampler, stopped by a shared <code>Arc&lt;AtomicBool&gt;</code>; keep every sample’s timestamp.</p>
+<p>Use <code>thread::scope</code> so workers can borrow their chunk, and a <code>Barrier</code> so the clock starts when everyone is pinned and ready.</p>
+<p>Sample no faster than the sensor changes, and make energy runs long.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

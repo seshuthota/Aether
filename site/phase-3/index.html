@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -27,24 +27,30 @@
 <h1>Phase 3 — NEON kernels</h1>
 <p class="lede">Phase 2 ended with a correct model that runs at 88.6 tokens per second, held back by one long chain of additions. Phase 3 rewrites the hot loops with the phone's vector instructions (NEON) and several independent accumulators. The same model on the same core goes to 422 tokens per second, and the main kernel to within reach of what memory can deliver.</p>
 <nav class="toc">
-  <a href="#idea">The idea in one paragraph</a>
-  <a href="#result">The result</a>
-  <a href="#order">Read in this order</a>
-  <a href="#done">What “done” meant</a>
-  <a href="#code">Where the code is</a>
+  <a href="#idea">Why is the plain loop slow, and what fixes it?</a>
+  <a href="#result">How much faster did it get?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#done">How do you know the kernels are right?</a>
+  <a href="#code">Which files hold the code?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="idea">The idea in one paragraph</h2>
-<p>A CPU core can do much more arithmetic per cycle than the scalar loop asked of it. Two things were missing. First, <strong>width</strong>: one NEON instruction multiplies and adds four floats at once. Second, <strong>independence</strong>: an addition takes several cycles to finish, so if each one waits for the last, the hardware sits idle; with four or eight separate running sums, new additions can start every cycle. Put both together and the matrix-vector product stops being limited by its own chain and starts being limited by how fast memory can feed it, which is the limit that matters for decode.</p>
+<h2 id="idea">Why is the plain loop slow, and what fixes it?</h2>
+<p>The plain loop asks the core for one multiply and one add at a time, so it uses only a fraction of the core. A core can do much more per cycle (one tick of its clock). Two things are missing. The first is <strong>width</strong>: one NEON instruction, the phone's vector instruction set, works on four floats at once. The second is <strong>independence</strong>: an addition takes several cycles to finish, so if each one waits for the last, the hardware sits idle. Keep four or eight separate running sums, called <strong>accumulators</strong>, and new additions can start every cycle. With both in place, the matrix-vector product stops being limited by its own chain and starts being limited by how fast memory can feed it, which is the limit that matters for decode.</p>
+<p><strong>Takeaway: use wide instructions and several accumulators, or the core waits on one addition at a time.</strong></p>
 
-<h2 id="result">The result</h2>
+<h2 id="result">How much faster did it get?</h2>
+<p>Three numbers sum up the phase. Each one is measured on a prime core, which is the fastest class of core on this phone.</p>
 <div class="statrow">
   <div class="stat"><b>5.3 → 53.5 GB/s</b><span>matrix-vector, one prime core, matrix in L2 <span class="tag m">measured</span></span></div>
   <div class="stat"><b>40.6 GB/s</b><span>the same on a 256 MB matrix, from DRAM: 67 % of the core's read bandwidth <span class="tag m">measured</span></span></div>
   <div class="stat"><b>88.6 → 422 tok/s</b><span>stories15M decode, core 7, ×4.8 <span class="tag m">measured</span></span></div>
 </div>
 
-<h2 id="order">Read in this order</h2>
+<p><strong>Takeaway: the kernel went from 5.3 to 53.5 GB/s, and the whole model from 88.6 to 422 tokens per second.</strong></p>
+
+<h2 id="order">Which page should I read first?</h2>
+<p>Read the pages in order. Each one builds on the idea before it: the instructions first, then the chains that limit speed, then the kernel that uses both.</p>
 <ol>
   <li><a href="simd.html">SIMD and NEON</a> — four floats per instruction, the 32 vector registers, and how Rust lets you use them.</li>
   <li><a href="chains.html">Dependency chains</a> — latency versus throughput, and why four accumulators beat one.</li>
@@ -54,15 +60,19 @@
   <li><a href="gemm.html">Inside the GEMM micro-kernel</a> — a 4 × 4 tile and the register budget.</li>
   <li><a href="dispatch.html">One API, two machines</a> — NEON on the phone, scalar on the PC, and checking CPU features at run time.</li>
 </ol>
+<p><strong>Takeaway: read in order, because the GEMV page uses the instructions and chains the first two pages explain.</strong></p>
 
-<h2 id="done">What “done” meant</h2>
+<h2 id="done">How do you know the kernels are right?</h2>
+<p>A fast kernel that gives wrong numbers is no use, so each one is checked before it is timed. numpy, a Python library for arrays, serves as the answer key here. A <strong>tolerance</strong> is the small difference you allow between two floats that should match.</p>
 <ul>
   <li>Every kernel (GEMV, GEMM, RMSNorm, softmax, SwiGLU, both RoPE layouts, one attention head) matches numpy within a tolerance, on sizes from 1 up to the real layer shapes, including all the awkward sizes around multiples of 4, 8, 16 and 32.</li>
   <li>stories15M's greedy tokens stay identical to llama2.c's, and every activation is within 10<sup>−4</sup> relative error. Bit-identity is given up on purpose: a different order of additions changes the last bits (<a href="../phase-2/correctness.html#order">why</a>).</li>
   <li>Each step of the GEMV is benchmarked separately, so every speed-up can be explained, not just observed.</li>
 </ul>
+<p><strong>Takeaway: a kernel is done when numpy agrees with it and each of its speed-ups is measured on its own.</strong></p>
 
-<h2 id="code">Where the code is</h2>
+<h2 id="code">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds the measurements, with the conditions they were taken under.</p>
 <table>
   <thead><tr><th>File</th><th>Job</th></tr></thead>
   <tbody>
@@ -73,14 +83,20 @@
     <tr><td><code>results/phase-3.md</code></td><td>Measurements and their conditions</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: kernels/mod.rs is where NEON or scalar gets picked, and the numpy goldens come from tools/gen_kernels.py.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Wide instructions and several accumulators together let the matrix-vector product run at the speed of memory.</p>
+<p>The same model went from 88.6 to 422 tokens per second, and every kernel still matches numpy.</p>
+<p>Each speed-up was measured on its own, so each one can be explained, not only observed.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

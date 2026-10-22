@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css">
+<link rel="stylesheet" href="css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -31,23 +31,25 @@
 
 <p class="pull">Decode cannot go faster than memory bandwidth divided by the bytes of weights read for that token. Phase 0 exists to make that sentence precise, and to make the measurements you will hang on it trustworthy.</p>
 <nav class="toc" aria-label="On this page">
-  <a href="#start">Start here</a>
-  <a href="#how">How to read a number</a>
-  <a href="#why">Why this project</a>
-  <a href="#phase0">Phase 0</a>
-  <a href="#phase1">Phase 1</a>
-  <a href="#phase2">Phase 2</a>
-  <a href="#phase3">Phase 3</a>
-  <a href="#phase4">Phase 4</a>
-  <a href="#serve">Open it later</a>
+  <a href="#start">Where do I start?</a>
+  <a href="#how">What do the number tags mean?</a>
+  <a href="#why">Why build this on a phone?</a>
+  <a href="#phase0">What does Phase 0 give you?</a>
+  <a href="#phase1">What does Phase 1 teach?</a>
+  <a href="#phase2">What does Phase 2 build?</a>
+  <a href="#phase3">How does Phase 3 make it fast?</a>
+  <a href="#phase4">What do threads add in Phase 4?</a>
+  <a href="#serve">How do I open the site later?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="start">Start here</h2>
-<p>The foundations. Read these first if words like token, weight, or decode are new.</p>
+<h2 id="start">Where do I start?</h2>
+<p>If words like token, weight, or decode are new to you, read the foundations first. Each phase assumes them.</p>
 <div class="cards" data-cards="Start here"></div>
+<p><strong>Takeaway: read the foundations before any phase, because the phases use their words.</strong></p>
 
-<h2 id="how">How to read a number</h2>
-<p>Three kinds of number show up, and mixing them up is how a learning project lies to itself.</p>
+<h2 id="how">What do the number tags mean?</h2>
+<p>Every number on these pages carries one of three tags. Mixing them up is how a learning project fools itself. Here is what each one means:</p>
 <table>
   <thead><tr><th>Tag</th><th>Means</th></tr></thead>
   <tbody>
@@ -56,11 +58,12 @@
     <tr><td><span class="tag a">assumption</span></td><td>A stand-in used to learn the shape of an idea. 30 GB/s in the tokens-per-second exercise is one of these. It is not this phone’s bandwidth.</td></tr>
   </tbody>
 </table>
-<p>Phase 0 pages describe work that is finished: the project builds, <code>cargo test</code> runs on the phone, the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for; the measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. The engine is built further, through Phase 8; the <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
+<p>Which pages describe finished work? Phase 0 pages do: the project builds, <code>cargo test</code> runs on the phone, and the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for. The measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. The engine is built further, through Phase 8. The <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
+<p><strong>Takeaway: a number is only as good as its label, so read the label before you trust the number.</strong></p>
 
-<h2 id="why">Why this project</h2>
+<h2 id="why">Why build this on a phone?</h2>
 <p>The objective is to understand inference by building it, on a phone, from scratch. A fast engine at the end is a bonus. The plan is not a race against llama.cpp.</p>
-<p>Phone hardware is the design constraint, not a smaller desktop:</p>
+<p>A phone is not a smaller desktop. Its hardware sets the design:</p>
 <ul>
   <li><strong>Memory bandwidth</strong>, not peak FLOPs, limits token generation. A phone has far less of it than a desktop GPU.</li>
   <li><strong>RAM is small and shared</strong> with Android. The OS will kill a process that uses too much.</li>
@@ -69,48 +72,60 @@
   <li><strong>Cores are not identical.</strong> On this phone they are all Oryon, in two frequency classes. Older Snapdragons also have efficiency cores. The plan’s general story has to be checked against this chip.</li>
   <li><strong>CPU first.</strong> Every phone has ARM NEON. GPU and NPU come later, if at all.</li>
 </ul>
-<p>Correctness does not come from a second copy of our own code. Golden outputs come from outside: numpy and PyTorch for kernels, llama2.c for stories15M, Hugging Face for SmolLM2 and Qwen, llama.cpp for quantization formats. If both of our implementations share a bug, a test against ourselves cannot see it.</p>
-<p>A phase is finished when the engine is correct and the numbers can be explained: where the time went, and what limited it. A kernel at 40% of measured bandwidth is a finished lesson once the missing 60% has an explanation.</p>
+<p>Where does correctness come from? Not from a second copy of our own code. Golden outputs come from outside: numpy and PyTorch for kernels, llama2.c for stories15M, Hugging Face for SmolLM2 and Qwen, llama.cpp for quantization formats. If both of our implementations share a bug, a test against ourselves cannot see it.</p>
+<p>When is a phase finished? When the engine is correct and the numbers can be explained: where the time went, and what limited it. A kernel at 40% of measured bandwidth is a finished lesson once the missing 60% has an explanation.</p>
+<p><strong>Takeaway: build for the phone, check against outside references, and explain every number.</strong></p>
 
-<h2 id="phase0">Phase 0, finished</h2>
-<p>Six concepts, in the order they were learned. Together they get code onto the phone, then make a timing believable, then make a tensor an address into a flat buffer. <a href="phase-0/index.html">The Phase 0 overview</a> maps them onto the files in the repo.</p>
+<h2 id="phase0">What does Phase 0 give you?</h2>
+<p>Phase 0 has six concepts, learned in order. Together they get code onto the phone, make a timing believable, and turn a tensor (a block of numbers with a shape) into an address in a flat buffer. <a href="phase-0/index.html">The Phase 0 overview</a> maps them onto the files in the repo.</p>
 <div class="cards" data-cards="Phase 0 · done"></div>
+<p><strong>Takeaway: after Phase 0 you have code that runs on the phone, a timer you can trust, and tensors that point into memory.</strong></p>
 
-<h2 id="phase1">Phase 1, measured</h2>
-<p>Hardware and the memory model. The success criterion in the plan is a table in <code>results/</code>: cache bandwidths, single-core and all-core DRAM read bandwidth, throttled sustained bandwidth, and energy per GB on the two core classes. These pages are the concepts that table teaches, written before it was measured.</p>
+<h2 id="phase1">What does Phase 1 teach?</h2>
+<p>Phase 1 teaches the hardware and its memory model. The plan’s success criterion is a table in <code>results/</code>: cache bandwidths, single-core and all-core DRAM read bandwidth (DRAM is the phone’s main memory, outside the processor), throttled sustained bandwidth, and energy per GB on the two core classes. These pages explain the concepts that table depends on. They were written before it was measured.</p>
 <div class="cards" data-cards="Phase 1 · concepts"></div>
-<h3>The Rust you need to build it</h3>
-<p>The pages above are the hardware ideas. These are the Rust tools the Phase 1 code needs: raw allocation, calling a C function, threads, reading <code>/sys</code>, and drawing the result.</p>
+<h3>What Rust do you need to build it?</h3>
+<p>The pages above cover the hardware ideas. These cover the Rust tools the Phase 1 code needs: raw allocation, calling a C function, threads, reading <code>/sys</code>, and drawing the result.</p>
 <div class="cards" data-cards="Phase 1 · Rust tools"></div>
-<h3>The answers</h3>
+<h3>What did the measurements show?</h3>
 <p>The measured table, with the sweeps as plots: what one core, all cores, five minutes of heat and a gigabyte of reads cost on this phone.</p>
 <div class="cards" data-cards="Phase 1 · results"></div>
+<p><strong>Takeaway: Phase 1 explains what limits memory speed on this phone, and the results page has the measured answers.</strong></p>
 
-<h2 id="phase2">Phase 2, a whole model</h2>
-<p>Every part of a real model (stories15M), written simply, checked bit for bit against llama2.c, and timed: 88.6 tokens per second on one prime core. Read in order; each page is one step of the forward pass.</p>
+<h2 id="phase2">What does Phase 2 build?</h2>
+<p>A whole model. Every part of stories15M is written simply, checked bit for bit against llama2.c, and timed: 88.6 tokens per second on one prime core. The forward pass is the calculation that turns the tokens so far into scores for the next one. Read the pages in order; each one is one step of that pass.</p>
 <div class="cards" data-cards="Phase 2 · a whole model"></div>
+<p><strong>Takeaway: the forward pass is a series of steps, and the whole model matches llama2.c bit for bit.</strong></p>
 
-<h2 id="phase3">Phase 3, NEON kernels</h2>
-<p>The same model, made fast with four floats per instruction: dependency chains, GEMV, tails, prefill and GEMM. From 88.6 to 422 tokens per second on one core.</p>
+<h2 id="phase3">How does Phase 3 make it fast?</h2>
+<p>The model stays the same. Phase 3 makes it faster by using four floats per instruction. The pages cover dependency chains (runs of calculations where each waits for the one before), GEMV (a matrix times a vector), tails (leftover numbers that do not fill a group of four), prefill and GEMM (a matrix times a matrix). On one core, speed goes from 88.6 to 422 tokens per second.</p>
 <div class="cards" data-cards="Phase 3 · NEON kernels"></div>
+<p><strong>Takeaway: the same model runs almost five times faster once its kernels use four floats per instruction.</strong></p>
 
-<h2 id="phase4">Phase 4, threads</h2>
-<p>Each matrix product split across cores: a pool of threads that stay, work handed out in blocks, and which cores are worth using. From 160 tokens per second on one core to 335 on six, for SmolLM2-135M, measured in a sweep of twelve core sets; the speed stops growing at about six cores.</p>
+<h2 id="phase4">What do threads add in Phase 4?</h2>
+<p>Phase 4 splits each matrix product across cores. It uses a pool (a set of threads that stay alive and wait for work), hands out work in blocks, and chooses which cores are worth using. For SmolLM2-135M, speed goes from 160 tokens per second on one core to 335 on six. A sweep of twelve core sets measured it, and the speed stops growing at about six cores.</p>
 <div class="cards" data-cards="Phase 4 · threads"></div>
+<p><strong>Takeaway: on this phone, more cores stop helping at about six, so pick the thread count by measuring.</strong></p>
 
-<h2 id="serve">Open it later</h2>
-<p>From the repo root:</p>
+<h2 id="serve">How do I open the site later?</h2>
+<p>From the repo root, run this command. It starts a small web server on port 8765 that serves the <code>site</code> folder:</p>
 <pre><code>python3 -m http.server 8765 --directory site</code></pre>
-<p>Then open <code>http://localhost:8765/</code>. Opening <code>site/index.html</code> as a file also works; the links are relative. The typefaces load from Google Fonts when the network is up and fall back to the system stack when it is not. On a phone on the same Wi-Fi, use the PC’s address instead of <code>localhost</code>.</p>
-<p>Later phases get a section here as their pages are written. Adding a page is two steps, written up in <code>site/README.md</code>: copy <code>_template.html</code>, and add one line to <code>js/pages.js</code>. The menu, the previous/next links and the cards above all update from that line.</p>
+<p>Then open <code>http://localhost:8765/</code>. Opening <code>site/index.html</code> as a file also works, because the links are relative. The typefaces load from Google Fonts when the network is up, and fall back to the system fonts when it is not. On a phone on the same Wi-Fi, use the PC’s address instead of <code>localhost</code>.</p>
+<p>Later phases get a section here as their pages are written. Adding a page takes two steps, written up in <code>site/README.md</code>: copy <code>_template.html</code>, and add one line to <code>js/pages.js</code>. The menu, the previous and next links, and the cards above all update from that line.</p>
 <p>Do not skip ahead in the engine. The early measurements are what the later kernels get compared against.</p>
+<p><strong>Takeaway: serve the folder over HTTP, and read the phases in order, because the early measurements are the baseline.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Start with the foundations, and read each number’s label before you trust it.</p>
+<p>The phone sets the limits: memory bandwidth, shared RAM, heat and energy.</p>
+<p>A phase is finished when its engine is correct against outside references and its numbers can be explained.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="js/pages.js?v=11"></script>
-<script src="js/glossary.js?v=11"></script>
-<script src="js/site.js?v=11"></script>
+<script src="js/pages.js?v=15"></script>
+<script src="js/glossary.js?v=15"></script>
+<script src="js/site.js?v=15"></script>
 </body>
 </html>

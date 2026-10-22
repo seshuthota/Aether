@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,20 +23,21 @@
 <main id="content">
 <p class="kicker">Phase 4 · 04</p>
 <h1>Choosing cores</h1>
-<p class="lede">How many cores are worth using? On this phone, decode keeps getting faster up to six or seven cores and then stops; two prime cores alone are well behind. This page covers what kinds of core the phone has, why the thread that calls the pool goes on the fastest one, what each of twelve core sets measured, and what turned out not to be true.</p>
+<p class="lede">How many cores are worth using? On this phone, decode keeps getting faster up to six or seven cores and then stops. Two prime cores alone are well behind. This page covers what kinds of core the phone has, why the thread that calls the pool goes on the fastest one, what each of twelve core sets measured, and what turned out not to be true.</p>
 <nav class="toc">
-  <a href="#kinds">Two kinds of core</a>
-  <a href="#caller">The caller goes on the fastest core</a>
-  <a href="#sets">What each set measured</a>
-  <a href="#zero-one">Do cores 0 and 1 hurt?</a>
-  <a href="#roof">Far from the memory limit</a>
-  <a href="#other">Phones with efficiency cores</a>
+  <a href="#kinds">Are all the cores the same?</a>
+  <a href="#caller">Which core should run the serial work?</a>
+  <a href="#sets">Which cores are worth using?</a>
+  <a href="#zero-one">Do cores 0 and 1 slow the job down?</a>
+  <a href="#roof">Is decode close to the memory limit?</a>
+  <a href="#other">What about phones with efficiency cores?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="kinds">Two kinds of core</h2>
-<p>The Snapdragon 8 Elite has eight cores of one design (Oryon) in two groups: cores 0–5 are <strong>performance</strong> cores with a top clock of 3.53 GHz, cores 6–7 are <strong>prime</strong> cores with 4.32 GHz. Many other phone chips also have small <em>efficiency</em> cores; this one has none.</p>
-<p>On battery, the vendor caps both groups under load: about 2.44 GHz for prime, 2.40 GHz for performance <span class="tag m">measured in Phase 1</span>. Almost the same clock. Yet one prime core still reads much faster <span class="tag m">measured in Phase 1</span>:</p>
+<h2 id="kinds">Are all the cores the same?</h2>
+<p>No. The Snapdragon 8 Elite has eight cores of one design (Oryon), in two groups. Cores 0–5 are <strong>performance</strong> cores with a top clock of 3.53 GHz. Cores 6–7 are <strong>prime</strong> cores with 4.32 GHz. Many other phone chips also have small <em>efficiency</em> cores, but this one has none.</p>
+<p>On battery, the vendor caps both groups under load: about 2.44 GHz for prime and 2.40 GHz for performance <span class="tag m">measured in Phase 1</span>. That is almost the same clock. Yet one prime core still reads much faster <span class="tag m">measured in Phase 1</span>:</p>
 <table>
   <thead><tr><th>One core reading</th><th>prime (core 7)</th><th>performance (core 0)</th></tr></thead>
   <tbody>
@@ -45,18 +46,39 @@
     <tr><td>from DRAM</td><td>~61 GB/s</td><td>~43 GB/s</td></tr>
   </tbody>
 </table>
-<p>So the difference is not mostly the clock. Where it comes from (the caches, the path to memory, something the vendor configures) has not been checked. For choosing cores, what matters is the measurement: a prime core does more work per second.</p>
+<p>L1 and L2 are small, fast memories close to each core. DRAM is the main memory. So the difference is not mostly the clock. Where it comes from (the caches, the path to memory, or something the vendor configures) has not been checked. For choosing cores, what matters is the measurement: a prime core does more work per second.</p>
+<p><strong>Takeaway: prime cores read faster than performance cores at almost the same clock, so choose cores by measurement, not by clock.</strong></p>
 
-<h2 id="caller">The caller goes on the fastest core</h2>
-<p>Between two parallel jobs, the thread that called the pool works alone: RMSNorm, RoPE, residual adds, turning the input into Q8_0 for the quantized kernels, and choosing the next token at the end. While it does that, every worker waits. That serial work should run as fast as possible, so <code>ThreadPool::new</code> sorts the cores by their top clock and pins the caller to the first. <code>src/pool.rs</code>:</p>
+<h2 id="caller">Which core should run the serial work?</h2>
+<p>Between two parallel jobs, the thread that called the pool works alone. It does RMSNorm, RoPE, residual adds, turns the input into Q8_0 for the quantized kernels, and chooses the next token at the end. While it does that, every worker waits. That serial work should run as fast as possible. So <code>ThreadPool::new</code> sorts the cores by their top clock and <em>pins</em> the caller to the first one. Pinning means fixing a thread to run on one named core. The code is in <code>src/pool.rs</code>, in two steps.</p>
+
+<h3>Step 1: sort the cores by top clock</h3>
+<pre><code>let mut cores = cores.to_vec();
+// Stable: equal-speed cores keep the order they were given in.
+cores.sort_by_key(|&amp;c| Reverse(cpu_max_freq_khz(c).unwrap_or(0)));</code></pre>
+<ul>
+  <li><code>to_vec()</code> makes a copy of the list, so the caller's list is not reordered.</li>
+  <li><code>Reverse</code> flips the sort so the highest clock comes first.</li>
+  <li><code>unwrap_or(0)</code> treats a core whose clock cannot be read as the slowest.</li>
+</ul>
+
+<h3>Step 2: pin the caller to the first core</h3>
+<pre><code>affinity::pin_current_thread(&amp;cores[..1])?;   // the caller: share 0</code></pre>
+<ul>
+  <li><code>cores[..1]</code> is the first core in the sorted list, which is the fastest.</li>
+  <li>The list holds one core, so the caller may run only on that core.</li>
+</ul>
+
+<p>All together:</p>
 <pre><code>let mut cores = cores.to_vec();
 // Stable: equal-speed cores keep the order they were given in.
 cores.sort_by_key(|&amp;c| Reverse(cpu_max_freq_khz(c).unwrap_or(0)));
 affinity::pin_current_thread(&amp;cores[..1])?;   // the caller: share 0</code></pre>
-<p><code>cpu_max_freq_khz</code> reads <code>cpuinfo_max_freq</code>, the hardware top clock, not the current cap. On battery the caps are nearly equal, but the ranking still puts a prime core first, which is the right choice by the table above. Asked for cores 2–7, the pool runs the caller on core 6 and workers on 7, 2, 3, 4, 5.</p>
+<p><code>cpu_max_freq_khz</code> reads <code>cpuinfo_max_freq</code>, the hardware top clock, not the current cap. On battery the caps are nearly equal, but the ranking still puts a prime core first, which is the right choice by the table above. Asked for cores 2–7, the pool runs the caller on core 6 and the workers on 7, 2, 3, 4 and 5.</p>
+<p><strong>Takeaway: the caller runs the serial work, so it goes on the fastest core, which the pool picks by sorting on top clock.</strong></p>
 
-<h2 id="sets">What each set measured</h2>
-<p>Pick cores to see the measured decode speed for that set. SmolLM2-135M Q4_0 (75.8 MB of weights), on battery, a cool phone each time, clock caps 2.40 and 2.44 GHz, each set run twice (once in each order) <span class="tag m">measured</span>. The bar shows the mean of the two passes; the stats show both.</p>
+<h2 id="sets">Which cores are worth using?</h2>
+<p>The engine can run decode on any set of cores. Pick cores to see the measured decode speed for that set. SmolLM2-135M Q4_0 (75.8 MB of weights) was run on battery, on a cool phone each time, with clock caps 2.40 and 2.44 GHz. Each set was run twice, once in each order <span class="tag m">measured</span>. The bar shows the mean of the two passes, and the stats show both.</p>
 <div class="widget" data-coresets>
   <h3>Which cores?</h3>
   <div class="cores" data-cores></div>
@@ -75,23 +97,25 @@ affinity::pin_current_thread(&amp;cores[..1])?;   // the caller: share 0</code><
 </div>
 <p>Reading the bars:</p>
 <ul>
-  <li>One prime core (160) does about <strong>1.9×</strong> one performance core (83).</li>
-  <li>Two prime cores (262) beat one by 1.6×; four more performance cores (2–7, 335) add another 1.3×.</li>
+  <li>One prime core (160) does about <strong>1.9×</strong> the work of one performance core (83).</li>
+  <li>Two prime cores (262) beat one by 1.6×. Four more performance cores (2–7, 335) add another 1.3×.</li>
   <li>After about six cores the curve is flat: 2–7, 1–7 and 0–7 are all between 310 and 348. The two passes of one set differ by up to 10 % (0–7) and 25 % (0–5), so differences of a few percent between them mean nothing.</li>
 </ul>
-<p>Qwen2.5-0.5B Q4_0 shows the same pattern with a bigger gap: 117 and 125 tokens per second on 2–7 against 87 and 71 on 6–7 <span class="tag m">measured</span>. The clocks had dropped to 2.0 and then 1.8 GHz during those runs, so only compare numbers within that group, and the 6–7 pair is most affected. The file is <code>results/phase-4.md</code>.</p>
+<p>Qwen2.5-0.5B Q4_0 shows the same pattern with a bigger gap: 117 and 125 tokens per second on 2–7, against 87 and 71 on 6–7 <span class="tag m">measured</span>. The clocks had dropped to 2.0 and then 1.8 GHz during those runs, so only compare numbers within that group, and the 6–7 pair is most affected. The file is <code>results/phase-4.md</code>.</p>
+<p><strong>Takeaway: speed climbs steeply to about six cores and then flattens, so more cores beyond that add little.</strong></p>
 
-<h2 id="zero-one">Do cores 0 and 1 hurt?</h2>
-<p>An earlier measurement said so: all eight cores (228 tokens per second) came out slower than cores 2–7 (275), and the explanation offered was that Android sends most hardware interrupts to cores 0 and 1, so a thread there is interrupted more and the whole job waits for it. That was a <strong>hypothesis</strong>. The clean sweep tested both parts:</p>
+<h2 id="zero-one">Do cores 0 and 1 slow the job down?</h2>
+<p>An earlier measurement said they did: all eight cores (228 tokens per second) came out slower than cores 2–7 (275). The explanation offered was that Android sends most hardware interrupts to cores 0 and 1. An interrupt is a signal from a device, such as a network chip, that makes a core stop what it is doing to handle it. So a thread there is interrupted more, and the whole job waits for it. That was a <strong>hypothesis</strong>. The clean sweep tested both parts:</p>
 <ul>
   <li><strong>The speed loss did not come back.</strong> 0–7 gave 340.6 and 310.5; 2–7 gave 326.4 and 343.4. Those are the same within the noise. The earlier numbers were single short runs, and the conditions of the 228 and 275 runs were not recorded at all <span class="tag m">measured</span>.</li>
-  <li><strong>The interrupts are real, but small.</strong> <code>/proc/interrupts</code> counts every interrupt per core since boot. With nothing of ours running for 60 seconds, core 0 took 49,597, core 1 took 12,371, cores 4 and 5 took 8,632 and 10,047, cores 2 and 3 about 3,000 and the prime cores almost none <span class="tag m">measured</span>. During the five-minute runs core 0 took 246,000 to 298,000, about 800 to 1,000 a second.</li>
+  <li><strong>The interrupts are real, but small.</strong> <code>/proc/interrupts</code> counts every interrupt per core since boot. With nothing of ours running for 60 seconds, core 0 took 49,597, core 1 took 12,371, cores 4 and 5 took 8,632 and 10,047, cores 2 and 3 about 3,000, and the prime cores almost none <span class="tag m">measured</span>. During the five-minute runs, core 0 took 246,000 to 298,000, about 800 to 1,000 a second.</li>
 </ul>
 <p>Whether that matters depends on what one interrupt costs, which was not measured. If it is 10 µs <span class="tag a">assumption</span>, core 0 loses about 1 % of its time <span class="tag c">calculated</span>, not the 17 % the first run seemed to show. So the interrupts are probably not the explanation, and nothing in this sweep needs one. The first loss was most likely throttling and noise, but its conditions are unknown, so that is not proved.</p>
-<p>One thing did show up: core 0 alone decodes at 83 tokens per second and cores 0–1 together at 136 and 145, while the two cores 6–7 reach 262. Core 1 alone was not run, so this cannot say whether core 0 is slower than the other performance cores, or whether interrupts have anything to do with it.</p>
+<p>One thing did show up: core 0 alone decodes at 83 tokens per second, and cores 0–1 together at 136 and 145, while the two cores 6–7 reach 262. Core 1 alone was not run, so this cannot say whether core 0 is slower than the other performance cores, or whether interrupts have anything to do with it.</p>
+<p><strong>Takeaway: the loss on all eight cores did not repeat, so the interrupt explanation is not supported by this data.</strong></p>
 
-<h2 id="roof">Far from the memory limit</h2>
-<p>Decode reads every weight once per token. So tokens per second × weight bytes is the memory traffic, and it cannot pass the ~67 GB/s all eight cores read in Phase 1 <span class="tag c">calculated</span>:</p>
+<h2 id="roof">Is decode close to the memory limit?</h2>
+<p>Decode reads every weight once per token, so tokens per second × weight bytes is the memory traffic. That traffic cannot pass the ~67 GB/s all eight cores read in Phase 1 <span class="tag c">calculated</span>:</p>
 <table>
   <thead><tr><th>Model, cores</th><th>tok/s</th><th>weights read</th><th>share of 67 GB/s</th></tr></thead>
   <tbody>
@@ -99,10 +123,12 @@ affinity::pin_current_thread(&amp;cores[..1])?;   // the caller: share 0</code><
     <tr><td>Qwen2.5-0.5B Q4_0, 2–7</td><td>121</td><td>278 MB × 121 ≈ 33.7 GB/s</td><td>50 %</td></tr>
   </tbody>
 </table>
-<p>Neither is near the limit, and the smaller model is further from it. Its jobs are smaller (about 15 µs each), so the fixed costs per job weigh more: handing out the job, waiting for the last thread, the serial work in between. llama.cpp shows what is possible on the bigger model: 123.7 tokens per second from the two prime cores alone, where ours reached 71 to 87 in the sweep (the llama.cpp figure is from an earlier day <span class="tag m">measured</span>, <code>results/phase-7.md</code>). The <a href="../phase-7/attention-ab.html">Phase 7 pages</a> follow that gap into the kernels.</p>
+<p>Neither is near the limit, and the smaller model is further from it. Its jobs are smaller (about 12 µs each), so the fixed costs per job weigh more: handing out the job, waiting for the last thread, and the serial work in between. llama.cpp shows what is possible on the bigger model: 123.7 tokens per second from the two prime cores alone, where ours reached 71 to 87 in the sweep. The llama.cpp figure is from an earlier day <span class="tag m">measured</span>, <code>results/phase-7.md</code>. The <a href="../phase-7/attention-ab.html">Phase 7 pages</a> follow that gap into the kernels.</p>
+<p><strong>Takeaway: decode uses at most half of the measured memory bandwidth, so memory is not the limit yet.</strong></p>
 
-<h2 id="other">Phones with efficiency cores</h2>
-<p>Most phone chips before this one pair big cores with small, simple efficiency cores built to save power. For decode, the usual advice is to leave those out <span class="tag a">general claim, not measured here</span>: with equal shares one slow core sets the pace of every job, and even with blocks it adds threads to wait for at every meeting. The pool's design would still pick sensibly, because the caller lands on the core with the highest top clock and the blocks keep slow cores from holding up the rest. This phone cannot test any of that.</p>
+<h2 id="other">What about phones with efficiency cores?</h2>
+<p>Most phone chips before this one pair big cores with small, simple efficiency cores built to save power. For decode, the usual advice is to leave those out <span class="tag a">general claim, not measured here</span>. With equal shares, one slow core sets the pace of every job. Even with blocks, it adds threads to wait for at every meeting. The pool's design would still pick sensibly, because the caller lands on the core with the highest top clock, and the blocks keep slow cores from holding up the rest. This phone cannot test any of that.</p>
+<p><strong>Takeaway: this phone has no efficiency cores, so the advice for phones that have them is untested here.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why sort by <code>cpuinfo_max_freq</code> rather than the current clock?</summary>
@@ -115,13 +141,18 @@ affinity::pin_current_thread(&amp;cores[..1])?;   // the caller: share 0</code><
 <p>Its jobs are shorter, so the fixed costs of each job (hand-out, waiting for the slowest thread, the serial work between jobs) are a larger part of the token time.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Prime cores are faster than performance cores at nearly the same clock, so the engine picks cores by measurement.</p>
+<p>The caller runs the serial work on the fastest core, and decode stops gaining speed after about six cores.</p>
+<p>Decode is far from the memory limit, so the remaining gap lies in the kernels and the per-job overhead.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

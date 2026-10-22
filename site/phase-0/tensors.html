@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -27,22 +27,24 @@
 <h1>Tensors</h1>
 <p class="lede">A tensor here is not a nested list. Memory is a line. The shape is how you interpret that line, and the strides are how far you jump to take one step along each dimension. This module addresses elements. It does not add them.</p>
 <nav class="toc">
-  <a href="#line">Memory is a line</a>
-  <a href="#row">Row-major</a>
-  <a href="#strides">Strides</a>
-  <a href="#lab">Stride lab</a>
-  <a href="#transpose">Transpose without a copy</a>
-  <a href="#struct">The struct</a>
-  <a href="#edges">Edges</a>
+  <a href="#line">Is a 2×3 grid stored as a grid?</a>
+  <a href="#row">Which neighbor is next in memory?</a>
+  <a href="#strides">How far do you jump for each index?</a>
+  <a href="#lab">Can you see which slot an index reads?</a>
+  <a href="#transpose">Can you transpose without copying?</a>
+  <a href="#struct">What does the Tensor struct hold?</a>
+  <a href="#edges">What happens at the edges?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="line">Memory is a line</h2>
-<p>A 2×3 grid of numbers does not exist as a grid in RAM. It exists as six <code>f32</code>s in a row, plus metadata that turns <code>(row, col)</code> into an offset. One allocation, contiguous elements. Later kernels want to walk that line. Nested <code>Vec&lt;Vec&lt;f32&gt;&gt;</code> would be a pointer chase per row, and the rows might not even sit next to each other.</p>
-<p>Sizes and indices are <code>usize</code>. They are never negative, and <code>usize</code> is what a slice is indexed with.</p>
+<h2 id="line">Is a 2×3 grid stored as a grid?</h2>
+<p>No. A 2×3 grid of numbers is stored as one line of six <code>f32</code>s (4-byte floats). RAM has no rows or columns. The tensor adds metadata, the shape and strides, that turn a <code>(row, col)</code> position into an offset from the start of the line. One allocation with contiguous elements is what later kernels walk. Nested <code>Vec&lt;Vec&lt;f32&gt;&gt;</code> would cost a <strong>pointer chase</strong> per row (following an address stored in memory to reach the next item), and the rows might not sit next to each other.</p>
+<p>Sizes and indices are <code>usize</code>, an unsigned integer that is never negative. A slice is indexed with <code>usize</code>.</p>
+<p><strong>Takeaway: a tensor is one contiguous line plus the shape and strides that read it.</strong></p>
 
-<h2 id="row">Row-major</h2>
-<p>Row-major, also called C order, means the last dimension varies fastest. For shape <code>[2, 3]</code> filled with <code>0, 1, 2, 3, 4, 5</code>:</p>
+<h2 id="row">Which neighbor is next in memory?</h2>
+<p>Neighbors in a grid are not always neighbors in memory. <strong>Row-major</strong>, also called C order, means the last dimension varies fastest. For shape <code>[2, 3]</code> filled with <code>0, 1, 2, 3, 4, 5</code>, the first row sits in slots 0, 1 and 2, and the second row in slots 3, 4 and 5.</p>
 <figure>
 <svg class="fig" viewBox="0 0 680 150" role="img" aria-label="Row-major 2 by 3 layout">
   <g font-family="IBM Plex Mono, monospace" font-size="13">
@@ -69,17 +71,18 @@
 </svg>
 <figcaption>The last index walks adjacent memory. A step to the next row skips a whole row of 3.</figcaption>
 </figure>
-<p>Column-major, Fortran order, is the other convention: the first index varies fastest, so <code>(r, c)</code> lives at <code>c × rows + r</code>. Same six numbers, different neighbor relation. This <code>Tensor</code> is row-major only. The stride field is what would let a later view look column-major without copying. That view is not written.</p>
+<p><strong>Column-major</strong>, Fortran order, is the other convention: the first index varies fastest, so <code>(r, c)</code> lives at <code>c × rows + r</code>. Same six numbers, different neighbor relation. This <code>Tensor</code> is row-major only. The stride field is what would let a later view look column-major without copying. That view is not written.</p>
+<p><strong>Takeaway: in row-major order the last index walks adjacent memory, and a step to the next row skips a whole row.</strong></p>
 
-<h2 id="strides">Strides</h2>
-<p>A stride is how many buffer slots you skip to advance one step along a dimension. For row-major layout, each stride is the product of the dimension sizes to its right, and the last stride is 1.</p>
-<p>A worked example, shape <code>[4, 5, 6]</code>. Picture it as 4 slabs, each slab 5 rows, each row 6 numbers:</p>
+<h2 id="strides">How far do you jump for each index?</h2>
+<p>Each index needs a jump size. A <strong>stride</strong> is how many buffer slots you skip to advance one step along a dimension. For row-major layout, each stride is the product of the sizes to its right (the sizes multiplied together), and the last stride is 1.</p>
+<p>A worked example, shape <code>[4, 5, 6]</code>: 4 slabs, each with 5 rows of 6 numbers. Build the strides from right to left:</p>
 <ol class="steps">
   <li>Last dimension, size 6, stride 1. One step along dim 2 is one element.</li>
   <li>Dim 1 has stride <code>1 × 6 = 6</code>. One step along dim 1 skips a row.</li>
   <li>Dim 0 has stride <code>6 × 5 = 30</code>. One step along dim 0 skips a 5×6 slab.</li>
 </ol>
-<p>Position <code>(2, 3, 1)</code> is <code>2×30 + 3×6 + 1×1 = 79</code> <span class="tag c">calculated</span>. That is the test <code>index_of_2_3_1_is_79</code>. The general formula is the dot product of the position and the strides. It does not change when you add a fourth dimension. You add one more term, and every earlier stride is multiplied by the new last size.</p>
+<p>So position <code>(2, 3, 1)</code> is <code>2×30 + 3×6 + 1×1 = 79</code> <span class="tag c">calculated</span>. That is the test <code>index_of_2_3_1_is_79</code>. The general formula is a <strong>dot product</strong>: each index times its stride, added up. A fourth dimension adds one more term, and every earlier stride is multiplied by the new last size.</p>
 <figure>
 <svg class="fig" viewBox="0 0 720 210" role="img" aria-label="Finding flat index 79">
   <text x="16" y="22" font-size="13">dim 0 = 2 → skip two slabs of 30</text>
@@ -107,10 +110,11 @@
 </svg>
 <figcaption>Three zooms of the same offset. The flat index is the sum of the skips, not a search through nested lists.</figcaption>
 </figure>
-<p><code>row_major_strides</code> fills this right to left. It starts from a vector of ones, so the last dimension keeps stride 1, and walks every index except the last. <code>saturating_sub(1)</code> keeps that walk empty for a scalar (<code>[]</code>) and a vector. A plain <code>len() - 1</code> would underflow on <code>[]</code>.</p>
+<p><code>row_major_strides</code> builds the list right to left. It starts from a vector of ones, so the last dimension keeps stride 1, and it walks every index except the last. <code>saturating_sub(1)</code> keeps that walk empty for a scalar (<code>[]</code>) and a vector. A plain <code>len() - 1</code> would <strong>underflow</strong> (go below zero, which a <code>usize</code> cannot hold) on <code>[]</code>.</p>
+<p><strong>Takeaway: each stride is the product of the sizes to its right, and <code>len() - 1</code> breaks on an empty shape.</strong></p>
 
-<h2 id="lab">Stride lab</h2>
-<p>Same rule as <code>Tensor::index</code>, in two dimensions so the grid can be drawn. The 79 example is the figure above; only the rank changed. An out-of-range position reports what the Rust code panics on.</p>
+<h2 id="lab">Can you see which slot an index reads?</h2>
+<p>The lab uses the same rule as <code>Tensor::index</code>, in two dimensions so the grid fits on the page. An out-of-range position reports what the Rust code panics on.</p>
 <div class="widget" data-stride>
   <h3>Address an element</h3>
   <p>Click a cell, or type a position. Each cell shows which slot of the flat buffer it reads. Then tick “view as transpose” and watch the grid change shape while the memory line underneath stays exactly the same.</p>
@@ -127,23 +131,27 @@
   <p class="lablabel">the buffer as it really is in memory: one line</p>
   <div class="memline" data-line></div>
 </div>
+<p><strong>Takeaway: a cell’s number is its slot in the one-line buffer, and the lab shows that slot.</strong></p>
 
-<h2 id="transpose">Transpose without a copy</h2>
-<p>Reverse the shape <code>[4, 5, 6]</code> to <code>[6, 5, 4]</code> and the strides <code>[30, 6, 1]</code> to <code>[1, 6, 30]</code>, together, and you read the same bytes in a different order. No data moves. Element <code>(1, 3, 2)</code> of the transposed view is <code>1×1 + 3×6 + 2×30 = 79</code>, the same slot as <code>(2, 3, 1)</code> in the original. That is what a transpose is, once strides are real metadata and not recomputed from the shape on every access. Tick “view as transpose” in the lab above to see it in 2D.</p>
-<p>Why care: reading memory with stride 1 is fast. Jumping around is slow. Weight matrices get stored in the order the kernel reads them, because the layout is part of the speed. Phase 1 measures how large that gap is. The field is stored now so <code>index</code> does not have to change when views arrive. Views have not arrived.</p>
+<h2 id="transpose">Can you transpose without copying?</h2>
+<p>Swapping the axes of a tensor can avoid a copy, if the strides say so. Reverse the shape <code>[4, 5, 6]</code> to <code>[6, 5, 4]</code> and the strides <code>[30, 6, 1]</code> to <code>[1, 6, 30]</code>, together. You read the same bytes in a different order, and no data moves. Element <code>(1, 3, 2)</code> of the transposed view is <code>1×1 + 3×6 + 2×30 = 79</code>, the same slot as <code>(2, 3, 1)</code> in the original. That is a transpose once strides are real metadata, not recomputed from the shape on every access. Tick “view as transpose” in the lab above to see it in 2D.</p>
+<p>Why care: reading memory with stride 1 is fast, and jumping around is slow. Weight matrices get stored in the order the kernel reads them, because the layout is part of the speed. Phase 1 measures how large that gap is. The field is stored now so <code>index</code> does not have to change when views arrive. Views have not arrived.</p>
+<p><strong>Takeaway: a transpose is a change of strides, so the same bytes are read in a new order.</strong></p>
 
-<h2 id="struct">The struct</h2>
-<p>Three fields: <code>shape</code>, <code>strides</code>, <code>data: Vec&lt;f32&gt;</code>. Every constructor keeps two invariants:</p>
+<h2 id="struct">What does the Tensor struct hold?</h2>
+<p>Three fields: <code>shape</code>, <code>strides</code>, and <code>data: Vec&lt;f32&gt;</code>. Every constructor must keep two <strong>invariants</strong>, rules that are always true of a valid value:</p>
 <ul>
   <li><code>shape.len() == strides.len()</code></li>
   <li><code>data.len() == shape.iter().product()</code></li>
 </ul>
-<p><code>zeros</code> delegates to <code>from_vec</code>, so the length check and the stride build happen in one place. <code>from_vec</code> moves the buffer in. It does not reorder elements. A length mismatch panics. That is a programming error, and a silent wrong read would be worse.</p>
-<p><code>numel</code> returns <code>data.len()</code>, not a fresh product. The constructors already forced them to agree, and the buffer length is the fact the rest of the program relies on. <code>size_bytes</code> is <code>numel × size_of::&lt;f32&gt;()</code>, which is 4 today. A 1000×1000 tensor is 1,000,000 elements and 4,000,000 bytes. A 4096×4096 tensor, the one <code>main</code> prints, is 64 MiB <span class="tag c">calculated</span>. That is one weight matrix, not a model.</p>
-<p><code>get</code> and <code>set</code> go through <code>index</code>. <code>set</code> resolves the index before the write so the shared borrow in <code>index</code> ends before <code>data</code> is borrowed mutably. The split is for the reader; one line would compile the same.</p>
+<p><code>zeros</code> hands its work to <code>from_vec</code>, so the length check and the stride build happen in one place. <code>from_vec</code> moves the buffer in and does not reorder elements. A length mismatch panics. That is a programming error, and a silent wrong read would be worse.</p>
+<p><code>numel</code> (the element count) returns <code>data.len()</code> rather than a fresh product. The constructors already forced them to agree. <code>size_bytes</code> is <code>numel × size_of::&lt;f32&gt;()</code>, which is 4 today. A 1000×1000 tensor is 1,000,000 elements and 4,000,000 bytes. A 4096×4096 tensor, the one <code>main</code> prints, is 64 MiB <span class="tag c">calculated</span>. That is one weight matrix, not a model.</p>
+<p><code>get</code> and <code>set</code> go through <code>index</code>. <code>set</code> resolves the index before the write, so the read-only hold on <code>self</code> that <code>index</code> takes ends before <code>data</code> is borrowed mutably. The split is for the reader; one line would compile the same.</p>
 <p><code>Clone</code> is a deep copy of the metadata and the whole buffer. <code>PartialEq</code> compares shape, strides, and values.</p>
+<p><strong>Takeaway: shape, strides and data must always agree, and the constructors enforce it.</strong></p>
 
-<h2 id="edges">Edges</h2>
+<h2 id="edges">What happens at the edges?</h2>
+<p>Empty and out-of-range shapes can break naive code, so each edge has a defined answer.</p>
 <table>
   <thead><tr><th>Shape</th><th>What happens</th><th>Why that is right</th></tr></thead>
   <tbody>
@@ -154,7 +162,8 @@
     <tr><td><code>[2, 3]</code> index <code>[0, 3]</code></td><td>panics, “out of range”</td><td>Dim 1 has size 3. Index 3 is one past the end. Computing a flat offset anyway would read a neighbor or off the buffer.</td></tr>
   </tbody>
 </table>
-<p>Alignment is not handled. <code>Vec&lt;f32&gt;</code> guarantees 4-byte alignment, because that is <code>align_of::&lt;f32&gt;()</code>. NEON wants 16. A cache line is 64. That replacement is Phase 1, described in <a href="../phase-1/alignment.html">alignment</a>. Do not “fix” it inside <code>Tensor</code> until the allocator exists and a benchmark shows the difference.</p>
+<p>Alignment is not handled here. <code>Vec&lt;f32&gt;</code> guarantees 4-byte alignment (the address is a multiple of 4), because that is <code>align_of::&lt;f32&gt;()</code>. NEON wants 16. A cache line is 64. The fix is Phase 1’s job, described in <a href="../phase-1/alignment.html">alignment</a>. Do not “fix” it inside <code>Tensor</code> until the allocator exists and a benchmark shows the difference.</p>
+<p><strong>Takeaway: empty and out-of-range shapes have defined answers, and alignment waits for Phase 1.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Where is <code>(2, 3, 1)</code> in a row-major <code>[4, 5, 6]</code> tensor?</summary>
@@ -166,13 +175,19 @@
 <details class="check"><summary>Why store strides if they are a pure function of the shape today?</summary>
 <p>So <code>index</code> is already written against the field. A transpose or a slice changes strides without changing the rule in <code>index</code>. Recomputing from the shape on every access would make those views impossible without a copy.</p>
 </details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A tensor is one contiguous line of numbers, with a shape and strides that say how to read it.</p>
+<p>Each stride is a product of sizes, so a flat index is a dot product of the position and the strides.</p>
+<p>A transpose changes only the strides, so no data moves.</p>
+
 <nav class="pager" data-pager></nav>
 
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

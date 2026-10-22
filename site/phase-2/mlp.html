@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,22 +23,28 @@
 <main id="content">
 <p class="kicker">Phase 2 · 08</p>
 <h1>The MLP and the residual stream</h1>
-<p class="lede">After attention has mixed information between tokens, each layer's second half works on every token by itself: widen its vector to 768 numbers, let a gate decide what passes, narrow back to 288. This is the MLP, and it holds two thirds of each layer's weights. Both halves of the layer add their result into one running vector, the residual stream, which is the thread the whole model hangs on.</p>
+<p class="lede">After attention has mixed information between tokens, each layer’s second half works on every token by itself. It widens the vector to 768 numbers, lets a gate decide what passes, and narrows back to 288. This is the MLP, and it holds two thirds of each layer’s weights. Both halves add their result into one running vector, the residual stream, which carries the token through the whole model.</p>
 <nav class="toc">
-  <a href="#residual">The residual stream</a>
-  <a href="#shape">The MLP's shape</a>
-  <a href="#swiglu">SwiGLU: a gate on every channel</a>
-  <a href="#silu">The SiLU curve</a>
-  <a href="#code">The code</a>
-  <a href="#cost">Where the weights are</a>
+  <a href="#residual">Why does each half add to x?</a>
+  <a href="#shape">What shape does the MLP have?</a>
+  <a href="#swiglu">What does the gate do to each channel?</a>
+  <a href="#silu">What does the SiLU curve look like?</a>
+  <a href="#code">How does the code compute the MLP?</a>
+  <a href="#cost">Where are the MLP’s weights?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="residual">The residual stream</h2>
+<h2 id="residual">Why does each half add to x?</h2>
 <p>Look at how each half of a layer ends:</p>
 <pre><code>k::add_inplace(&amp;mut s.x, &amp;s.xb2);   // after attention:  x += attention(x)
 k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</code></pre>
-<p>Neither block replaces <code>x</code>. Each reads a normalised copy of it, computes something, and <em>adds</em> that to it. So <code>x</code> is a running total: the embedding, plus what layer 0's attention contributed, plus layer 0's MLP, plus layer 1's attention, and so on. This is the <strong>residual stream</strong>; the additions are <em>residual connections</em>.</p>
+<ul>
+  <li><code>add_inplace</code> adds its second buffer into the first, changing it in place.</li>
+  <li><code>&amp;mut s.x</code> is the running total, so <code>x</code> is the one that changes.</li>
+  <li><code>&amp;s.xb2</code> is the attention result and <code>&amp;s.xb</code> the MLP result; both are only read.</li>
+</ul>
+<p>Neither block replaces <code>x</code>. Each reads a normalised copy, computes something, and <em>adds</em> it. So <code>x</code> is a running total: the embedding, plus layer 0’s attention, plus layer 0’s MLP, plus layer 1’s attention, and so on. This is the <strong>residual stream</strong>; the additions are <em>residual connections</em>.</p>
 <figure>
 <div class="flow">
   <div>embedding</div><span class="arr">→</span>
@@ -50,10 +56,11 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</co
 </div>
 <figcaption>Twelve blocks, each adding a correction to the same 288 numbers.</figcaption>
 </figure>
-<p>Why build it this way? A block that has nothing useful to add can output nearly zero and leave <code>x</code> alone. Training a deep stack is much easier when each layer only has to learn a small correction instead of a whole new representation. For the engine, it means one buffer <code>x</code> lives through the whole token, and each block works in scratch buffers beside it.</p>
+<p>Why build it this way? A block that has nothing useful to add can output nearly zero and leave <code>x</code> alone. Training a deep stack is much easier when each layer only has to learn a small correction instead of a whole new representation. For the engine, one buffer <code>x</code> lives through the whole token, and each block works in scratch buffers beside it.</p>
+<p><strong>Takeaway: each block adds a correction to <code>x</code>, and <code>x</code> is the one vector that lives through the whole token.</strong></p>
 
-<h2 id="shape">The MLP's shape</h2>
-<p>MLP stands for multi-layer perceptron, an old name for “matrix multiply, nonlinearity, matrix multiply”. Llama-family models use a variant with three matrices:</p>
+<h2 id="shape">What shape does the MLP have?</h2>
+<p>The MLP starts from the same 288 numbers and must end with 288. Between them it widens. MLP stands for multi-layer perceptron, an old name for “matrix multiply, nonlinearity, matrix multiply”. Llama-family models use a variant with three matrices:</p>
 <table>
   <thead><tr><th>Name in the code</th><th>llama2.c name</th><th>Shape</th><th>Does</th></tr></thead>
   <tbody>
@@ -63,14 +70,18 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</co
   </tbody>
 </table>
 <p>Widening to 768 gives the layer room: 768 channels, each of which can respond to some pattern in the input. Narrowing back writes a 288-number correction into the stream.</p>
+<p><strong>Takeaway: the MLP widens 288 to 768 and narrows back, so its output is a 288-number correction.</strong></p>
 
-<h2 id="swiglu">SwiGLU: a gate on every channel</h2>
-<p>Without something nonlinear between them, two matrix multiplies are just one bigger matrix multiply, and stacking layers would add nothing. The nonlinearity here is a <strong>gate</strong>:</p>
+<h2 id="swiglu">What does the gate do to each channel?</h2>
+<p>Without a <strong>nonlinearity</strong>, a step that bends the numbers instead of only scaling and adding them, two matrix multiplies are just one bigger matrix multiply, and stacking layers would add nothing. Here the nonlinearity is a <strong>gate</strong>:</p>
 <p class="formula">h<sub>i</sub> = SiLU(gate<sub>i</sub>) × up<sub>i</sub> &nbsp;&nbsp; for each of the 768 channels</p>
-<p>The input is projected twice. One projection, <code>gate</code>, goes through the SiLU function and decides <em>how much</em> of the channel gets through; the other, <code>up</code>, decides <em>what</em> gets through. A strongly negative gate shuts the channel (SiLU ≈ 0); a large positive gate passes <code>up</code> through nearly unchanged. This gated design is called SwiGLU (Swish-Gated Linear Unit; Swish is another name for SiLU).</p>
+<p>The input is projected twice. The <code>gate</code> projection goes through the SiLU function and decides <em>how much</em> of the channel gets through; the <code>up</code> projection decides <em>what</em> gets through. A strongly negative gate shuts the channel (SiLU ≈ 0); a large positive gate passes <code>up</code> through nearly unchanged. This gated design is called SwiGLU (Swish-Gated Linear Unit; Swish is another name for SiLU).</p>
+<p><strong>Takeaway: SiLU of the gate decides how much of each channel passes, and up decides what passes.</strong></p>
 
-<h2 id="silu">The SiLU curve</h2>
+<h2 id="silu">What does the SiLU curve look like?</h2>
+<p>The gate needs a function that shuts off for very negative inputs and passes large positive ones. SiLU does both. Its formula is:</p>
 <p class="formula">SiLU(x) = x × sigmoid(x) = x ÷ (1 + e<sup>−x</sup>)</p>
+<p>Take <var>x</var> = 1.5: SiLU is 1.5 ÷ (1 + e<sup>−1.5</sup>) ≈ 1.5 ÷ 1.223 ≈ 1.23. Take <var>x</var> = −6: SiLU is −6 ÷ 404 ≈ −0.015, almost 0.</p>
 <div class="widget" data-silu>
   <h3>SiLU, and what the gate does</h3>
   <p>The solid curve is SiLU; the dashed line is ReLU (max(0, x)), the older choice, for comparison. Move the gate value and the up value.</p>
@@ -81,26 +92,40 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</co
   </div>
   <div class="statrow" data-stats></div>
 </div>
-<p>For large positive <var>x</var>, SiLU is almost <var>x</var>; for large negative <var>x</var>, almost 0; near zero it is smooth, with a small dip below zero (lowest about −0.28, at <var>x</var> ≈ −1.28). The smoothness is what training likes about it compared with ReLU's sharp corner. At inference it is simply a function to compute, 768 times per layer.</p>
+<p>For large positive <var>x</var>, SiLU is almost <var>x</var>; for large negative <var>x</var>, almost 0; near zero it is smooth, with a small dip below zero (lowest about −0.28, at <var>x</var> ≈ −1.28). The smoothness is what training likes about it compared with ReLU’s sharp corner. At inference it is simply a function to compute, 768 times per layer.</p>
+<p><strong>Takeaway: SiLU is near <var>x</var> for large positive inputs and near 0 for large negative ones.</strong></p>
 
-<h2 id="code">The code</h2>
-<p>In the forward pass:</p>
+<h2 id="code">How does the code compute the MLP?</h2>
+<p>In the forward pass, the MLP is six calls:</p>
 <pre><code>k::rmsnorm(&amp;mut s.xb, &amp;s.x, &amp;lw.ffn_norm, c.norm_eps);   // normalised copy of x
 k::matmul(&amp;mut s.hb,  &amp;s.xb, &amp;lw.w_gate);                  // gate: 768 numbers
 k::matmul(&amp;mut s.hb2, &amp;s.xb, &amp;lw.w_up);                    // up:   768 numbers
 k::swiglu(&amp;mut s.hb, &amp;s.hb2);                              // hb = silu(gate) × up
 k::matmul(&amp;mut s.xb, &amp;s.hb, &amp;lw.w_down);                   // back to 288
 k::add_inplace(&amp;mut s.x, &amp;s.xb);                            // x += mlp</code></pre>
-<p>And <code>swiglu</code> itself, in llama2.c's exact order of operations:</p>
+<ul>
+  <li>The first call writes a normalised copy of <code>x</code> into <code>xb</code>, and the two matmuls read from that copy.</li>
+  <li>The gate and up each fill a 768-number buffer, <code>hb</code> and <code>hb2</code>.</li>
+  <li><code>swiglu</code> writes into <code>hb</code>, so <code>hb</code> is its first argument.</li>
+  <li>The last matmul writes 288 numbers back into <code>xb</code>, and <code>add_inplace</code> adds them to <code>x</code>.</li>
+</ul>
+<p>And <code>swiglu</code> itself, in llama2.c’s exact order of operations:</p>
 <pre><code>for (g, &amp;u) in gate.iter_mut().zip(up) {
     let mut v = *g;
     v *= 1.0 / (1.0 + (-v).exp());   // silu
     v *= u;                           // × up
     *g = v;
 }</code></pre>
+<ul>
+  <li><code>zip</code> walks the gate and up values together, one channel at a time.</li>
+  <li><code>let mut v = *g;</code> copies the gate value out of its reference.</li>
+  <li><code>v *= 1.0 / (1.0 + (-v).exp());</code> is SiLU, with 1 ÷ (1 + e<sup>−v</sup>) computed first.</li>
+  <li><code>v *= u;</code> is the gating, and <code>*g = v;</code> stores the result back.</li>
+</ul>
 <p>Writing <code>v * (1 / (1 + e<sup>−v</sup>))</code> instead of <code>v / (1 + e<sup>−v</sup>)</code> is mathematically the same but can round differently in the last bit. To be <a href="correctness.html">bit-identical</a> with llama2.c, the code copies its form exactly.</p>
+<p><strong>Takeaway: the MLP is six calls, and the <code>swiglu</code> loop is where the gate is applied.</strong></p>
 
-<h2 id="cost">Where the weights are</h2>
+<h2 id="cost">Where are the MLP’s weights?</h2>
 <table>
   <thead><tr><th>Per layer</th><th>Multiply-adds</th><th>Share of the layer</th></tr></thead>
   <tbody>
@@ -108,7 +133,8 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);                            // x += mlp<
     <tr><td>MLP (gate, up, down)</td><td class="num">663,552</td><td class="num">67 %</td></tr>
   </tbody>
 </table>
-<p>The MLP holds two thirds of every layer's weights, and since <a href="baseline.html">decode time follows bytes read</a>, about two thirds of each layer's time <span class="tag c">calculated</span>. Larger models keep roughly that ratio: Qwen2.5-0.5B's MLP is 896 → 4,864 → 896.</p>
+<p>The MLP holds two thirds of every layer’s weights, and since <a href="baseline.html">decode time follows bytes read</a>, about two thirds of each layer’s time <span class="tag c">calculated</span>. Larger models keep roughly that ratio: Qwen2.5-0.5B’s MLP is 896 → 4,864 → 896.</p>
+<p><strong>Takeaway: the MLP holds two thirds of each layer’s weights, so it takes most of each layer’s time.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>What would go wrong if a block did <code>x = block(x)</code> instead of <code>x += block(x)</code>?</summary>
@@ -124,13 +150,18 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);                            // x += mlp<
 <p>Its matrices are 768 × 288, attention's 288 × 288. Three of 221,184 is more than four of 82,944.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>Each half of a layer adds a correction to <code>x</code>, and <code>x</code> carries the token through the model.</p>
+<p>The MLP widens 288 to 768, gates each channel with SiLU, and narrows back to 288.</p>
+<p>Without the nonlinearity, the MLP would collapse into a single matrix multiply.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

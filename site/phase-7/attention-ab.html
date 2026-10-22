@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,25 +23,63 @@
 <main id="content">
 <p class="kicker">Phase 7 · 01</p>
 <h1>NEON attention, measured honestly</h1>
-<p class="lede">Attention was 1.1 % of stories15M's time, so Phase 3 left it scalar. On Qwen2.5-0.5B at long contexts it was not small any more, and a NEON version was written later. Measuring its benefit turned out to be the interesting part: a single before-and-after run overstated the problem it fixed, and only an alternating A/B test gave a number worth keeping.</p>
-<div class="callout banner"><span class="lbl">Jumping ahead</span><p>This page is Phase 7 work, and the pages for Phases 4–6 are not written yet. It only needs Phases 2 and 3 to follow: Qwen2.5-0.5B is a bigger model of the same shape, Q4_0 is a format that stores weights in about a seventh of the bytes, and “cores 2–7” means six threads, one per core.</p></div>
+<p class="lede">Attention was 1.1 % of stories15M’s time, so Phase 3 left it scalar (plain code, one number at a time). On Qwen2.5-0.5B at long contexts it was no longer small, so a NEON version (ARM’s vector instructions) was written later. Measuring its benefit turned out to be the interesting part. A single before-and-after run overstated the problem it fixed. Only an alternating A/B test gave a number worth keeping.</p>
+<div class="callout banner"><span class="lbl">Jumping ahead</span><p>This page is Phase 7 work. The pages for Phases 4–6 are not written yet, so it only needs Phases 2 and 3. Qwen2.5-0.5B is a bigger model of the same shape, Q4_0 is a format that stores weights in about a seventh of the bytes, and “cores 2–7” means six threads, one per core.</p></div>
 <nav class="toc">
-  <a href="#why">Why attention grew</a>
-  <a href="#kernel">The NEON kernel</a>
-  <a href="#drift">The phone drifts</a>
-  <a href="#widget">Sequential vs alternating</a>
-  <a href="#result">The result</a>
-  <a href="#lesson">What changed in the record</a>
+  <a href="#why">Why did attention start to matter?</a>
+  <a href="#kernel">What does the NEON version change?</a>
+  <a href="#drift">Why can one timing run mislead you?</a>
+  <a href="#widget">Why does run order matter?</a>
+  <a href="#result">What did the alternating test find?</a>
+  <a href="#lesson">What changed in the record?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="why">Why attention grew</h2>
-<p>The weights cost the same every decode step. Attention's cost grows with the number of tokens in the <a href="../phase-2/kv-cache.html">KV cache</a>: each step scores the query against every cached key and mixes every cached value. Qwen2.5-0.5B has 24 layers and 14 query heads of 64 numbers. At depth 512, every step does 24 × 14 × 513 dot products of length 64, plus as many weighted adds. Meanwhile Q4_0 quantization had made the weights 7 times smaller to read, so attention's share went up from both sides.</p>
-<p>The scalar score loop is one dependency chain per key: the same problem <a href="../phase-3/chains.html">Phase 3’s chains page</a> solved for GEMV. The compiler cannot reorder float additions, so it cannot vectorize it either.</p>
+<h2 id="why">Why did attention start to matter?</h2>
+<p>The weights cost the same at every decode step. Attention’s cost grows with the number of tokens in the <a href="../phase-2/kv-cache.html">KV cache</a>, the stored keys and values of earlier tokens. Each step scores the query against every cached key and mixes every cached value.</p>
+<p>Qwen2.5-0.5B has 24 layers and 14 query heads of 64 numbers. At depth 512, every step does 24 × 14 × 513 dot products of length 64, plus as many weighted adds. Meanwhile Q4_0 quantization (storing each weight in fewer bits) had made the weights 7 times smaller to read, so attention’s share went up from both sides.</p>
+<p>A <strong>dependency chain</strong> is a sum where each addition has to wait for the one before. The scalar score loop is one chain per key, the same problem <a href="../phase-3/chains.html">Phase 3’s chains page</a> solved for GEMV (matrix times vector). The compiler cannot reorder float additions, so it cannot vectorize the loop either.</p>
+<p>Measured only at depth 0, attention looks free, and the speed you quote will be too high for a long chat.</p>
+<p><strong>Takeaway: attention’s cost grows with depth, so a benchmark at depth 0 hides it.</strong></p>
 
-<h2 id="kernel">The NEON kernel</h2>
-<p><code>neon::attention_head</code> keeps the scalar version's four steps and changes two loops:</p>
+<h2 id="kernel">What does the NEON version change?</h2>
+<p><code>neon::attention_head</code> keeps the scalar version’s steps and changes two loops. NEON is the ARM vector unit, which works on four floats in one instruction. Build the new code one loop at a time.</p>
+
+<h3>Step 1: score each cached position</h3>
 <pre><code>for (t, s) in scores.iter_mut().enumerate() {
+    // SAFETY: keys(t) and q each hold hs floats, so dot_row may read hs from both pointers.
+    *s = unsafe { dot_row(keys(t).as_ptr(), q.as_ptr(), hs) } * scale;   // 4 chains × 4 lanes
+}</code></pre>
+<ul>
+  <li><code>iter_mut().enumerate()</code> gives each score slot <code>s</code> and its position <code>t</code>.</li>
+  <li><code>dot_row</code> is GEMV’s dot product with four accumulators, so four separate chains run side by side, four lanes each.</li>
+  <li><code>* scale</code> is applied to each score after the dot product.</li>
+</ul>
+
+<h3>Step 2: softmax, unchanged</h3>
+<pre><code>super::scalar::softmax(scores);                                          // unchanged</code></pre>
+<ul>
+  <li>Softmax stays scalar because it needs <code>exp</code>, and it is a small part of the work.</li>
+</ul>
+
+<h3>Step 3: add the values, weighted by the scores</h3>
+<pre><code>for (t, &amp;a) in scores.iter().enumerate() {
+    let av = vdupq_n_f32(a);
+    for j in (0..hs4).step_by(4) {                                        // 4 lanes of out per FMA
+        vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+    }
+}</code></pre>
+<ul>
+  <li><code>vdupq_n_f32(a)</code> copies the score into all four lanes.</li>
+  <li><code>vfmaq_f32</code> is a fused multiply-add: it computes the output plus score × value for four floats in one instruction.</li>
+  <li><code>step_by(4)</code> moves <code>j</code> four floats at a time, and <code>op.add(j)</code> is the output position.</li>
+  <li>Each value row is independent, so there is no chain to wait on. The output stays in memory and gets four lanes per step.</li>
+</ul>
+
+<h3>All three together</h3>
+<pre><code>for (t, s) in scores.iter_mut().enumerate() {
+    // SAFETY: keys(t) and q each hold hs floats, so dot_row may read hs from both pointers.
     *s = unsafe { dot_row(keys(t).as_ptr(), q.as_ptr(), hs) } * scale;   // 4 chains × 4 lanes
 }
 super::scalar::softmax(scores);                                          // unchanged
@@ -51,19 +89,21 @@ for (t, &amp;a) in scores.iter().enumerate() {
         vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
     }
 }</code></pre>
-<p>Scores reuse GEMV's <code>dot_row</code> (four accumulators). The weighted sum keeps the output in memory and adds four lanes per FMA: each value row is independent, so there is no chain to break. Softmax stays scalar because it needs <code>exp</code>, and is a small part of the work. It was checked against numpy goldens of up to 1,024 positions, and the model tests still pass.</p>
+<p>The scores reuse GEMV’s <code>dot_row</code> with its four accumulators. The weighted sum keeps the output in memory and adds four lanes per FMA. It was checked against numpy goldens of up to 1,024 positions, and the model tests still pass.</p>
+<p><strong>Takeaway: NEON does four floats per instruction, and the two changed loops are the ones with independent work.</strong></p>
 
-<h2 id="drift">The phone drifts</h2>
-<p>The first measurement was a single table of runs: decode at depth 512 came out at 62.8 tokens per second with scalar attention, against 128.8 at depth 0. That looked like attention costing half the decode time. But the phone is not a stable machine:</p>
+<h2 id="drift">Why can one timing run mislead you?</h2>
+<p>The first measurement was a single table of runs: decode at depth 512 came out at 62.8 tokens per second with scalar attention, against 128.8 at depth 0. That looked like attention costing half the decode time. But the phone is not a steady machine:</p>
 <ul>
-  <li>It heats up under load, and the governor lowers clock caps as it does (<a href="../phase-1/power.html">Phase 1</a>).</li>
+  <li>It heats up under load, and the governor (the part that sets clock speeds) lowers clock caps as it does (<a href="../phase-1/power.html">Phase 1</a>).</li>
   <li>The caps also change with battery level, screen state and whatever else is running. On the A/B day the prime-core cap under load was 1.96 GHz; the day before it had been 2.44 GHz.</li>
   <li>Other apps run: during this session a picture-in-picture video was playing.</li>
 </ul>
 <p>If you run all of version A and then all of version B, any drift during the session is charged to whichever version ran later. The difference you measure is the real difference <em>plus</em> the drift.</p>
+<p><strong>Takeaway: one run mixes the change with the phone’s drift, so it cannot tell them apart.</strong></p>
 
-<h2 id="widget">Sequential vs alternating</h2>
-<p>A simulated phone that slows down steadily as it warms. B is truly 10 % faster than A <span class="tag a">illustration</span>.</p>
+<h2 id="widget">Why does run order matter?</h2>
+<p>Here is a simulated phone that slows down steadily as it warms. B is truly 10 % faster than A <span class="tag a">illustration</span>. Compare the two run orders.</p>
 <div class="widget" data-abtest>
   <h3>Same two versions, two run orders</h3>
   <div class="controls">
@@ -74,10 +114,12 @@ for (t, &amp;a) in scores.iter().enumerate() {
   <p class="note" data-out></p>
   <p class="note" data-note></p>
 </div>
-<p>The alternating order ABBABAAB is balanced: A's runs and B's runs have the same average position in time, so a steady drift falls on both equally and cancels out of the difference. Taking the median of several such rounds also discards a single disturbed run.</p>
 
-<h2 id="result">The result</h2>
-<p>Scalar attention (commit <code>0f56ed4</code>) and NEON attention (<code>8ae105c</code>) run alternately, three rounds, each run started only when the phone was below 48 °C. Qwen2.5-0.5B Q4_0, cores 2–7, median of three, tokens per second <span class="tag m">measured</span>:</p>
+<p>In AAAABBBB, all of B runs later in the drift, so the drift is counted against B. The alternating order ABBABAAB is balanced: A’s runs and B’s runs have the same average position in time, so a steady drift falls on both equally and cancels out of the difference. Taking the median of several such rounds also discards a single disturbed run.</p>
+<p><strong>Takeaway: alternate the runs in a balanced order, and steady drift cancels out of the difference.</strong></p>
+
+<h2 id="result">What did the alternating test find?</h2>
+<p>Scalar attention (commit <code>0f56ed4</code>) and NEON attention (<code>8ae105c</code>) ran alternately for three rounds. Each run started only when the phone was below 48 °C. Qwen2.5-0.5B Q4_0, cores 2–7, median of three, tokens per second <span class="tag m">measured</span>:</p>
 <table>
   <thead><tr><th></th><th>depth 0</th><th>depth 256</th><th>depth 512</th></tr></thead>
   <tbody>
@@ -86,12 +128,14 @@ for (t, &amp;a) in scores.iter().enumerate() {
     <tr><td>llama.cpp, same session</td><td class="num">134.9 ± 6.6</td><td class="num">114.0 ± 12.2</td><td class="num">117.5 ± 8.5</td></tr>
   </tbody>
 </table>
-<p>NEON attention is <strong>+10 % at depth 512</strong> and changes nothing at depth 0, which is what you would expect: with an empty cache there is almost no attention work. In time per token: at depth 512 scalar attention cost about 2.5 ms per token (11.5 vs 9.0 ms at depth 0), NEON attention about 1.5 ms (10.4 vs 9.0) <span class="tag c">calculated</span>.</p>
+<p>NEON attention is <strong>+10 % at depth 512</strong> and changes nothing at depth 0, which is what you would expect: with an empty cache there is almost no attention work. In time per token: at depth 512 scalar attention cost about 2.5 ms per token (11.5 vs 9.0 ms at depth 0), NEON attention about 1.4 ms (10.4 vs 9.0) <span class="tag c">calculated</span>.</p>
+<p><strong>Takeaway: at depth 512 NEON attention is 10 % faster, and at depth 0 it makes no difference.</strong></p>
 
-<h2 id="lesson">What changed in the record</h2>
-<p>Scalar attention went from 110.6 to 87.0 between depth 0 and 512 in the A/B, a 21 % drop, not the 51 % that the single table suggested. The 62.8 did not reproduce, so <code>results/phase-7.md</code> now says so next to it, and the claim that attention cost half the decode time at depth 512 was withdrawn. The cause of that one slow run is not established (the memory bus frequency, a likely suspect, cannot be read from the shell).</p>
+<h2 id="lesson">What changed in the record?</h2>
+<p>Scalar attention went from 110.6 to 87.0 between depth 0 and 512 in the A/B, a 21 % drop, not the 51 % that the single table suggested. The 62.8 did not reproduce, so <code>results/phase-7.md</code> now says so next to it, and the claim that attention cost half the decode time at depth 512 was withdrawn. The cause of that one slow run is not established. The memory bus frequency is a likely suspect, but the shell cannot read it.</p>
 <p>llama.cpp still loses less with depth (134.9 → 117.5). The next step on record is to split attention across positions as well as heads, since 14 heads over 6 threads leaves some threads idle.</p>
 <div class="callout"><span class="lbl">The habit to keep</span><p>A speed comparison on a phone needs: the two versions run alternately in a balanced order, several rounds, a median, a temperature gate before each run, and the conditions written down. And a number that cannot be reproduced gets corrected in the record, not quietly replaced.</p></div>
+<p><strong>Takeaway: a number that does not reproduce is corrected in the record, not quietly replaced.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why did attention matter for Qwen at depth 512 but not for stories15M?</summary>
@@ -107,13 +151,19 @@ for (t, &amp;a) in scores.iter().enumerate() {
 <p>Run old and new alternately in a balanced order, several rounds, from the same temperature, take medians, and record the conditions. Then compare.</p>
 </details>
 
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Attention’s cost grows with depth, so measure at depth as well as at zero.</p>
+<p>Alternate the two versions in a balanced order, take medians, and gate on temperature.</p>
+<p>A number that does not reproduce gets corrected in the record.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

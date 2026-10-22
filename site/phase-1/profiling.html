@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,59 +25,69 @@
 <div class="callout banner"><span class="lbl">Written before measuring</span><p>Written before any profile was taken. simpleperf has since been used for Phase 2’s profile and counters (<a href="../phase-2/baseline.html">First speed</a>). On this phone, kernel events are not available to the shell user and <code>cpu-clock</code> is not supported; <code>cpu-cycles:u</code> works.</p></div>
 
 <h1>simpleperf</h1>
-<p class="lede">A benchmark says how long. A profile says where inside that time the cycles went. Optimizing before you have both is how you speed up a function that was not the cost.</p>
+<p class="lede">A benchmark says how long. A profile says where, inside that time, the cycles went. If you optimize before you have both, you may speed up a function that was never the cost.</p>
 <nav class="toc">
-  <a href="#what">What it is</a>
-  <a href="#symbols">Why symbols are already on</a>
-  <a href="#when">When to reach for it</a>
-  <a href="#read">How to read a report</a>
-  <a href="#not">What it will not tell you</a>
+  <a href="#what">What does simpleperf measure?</a>
+  <a href="#symbols">Why does the profile show function names?</a>
+  <a href="#when">When is it time to profile?</a>
+  <a href="#read">How do you read a report?</a>
+  <a href="#not">What can a profile not tell you?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="what">What it is</h2>
-<p><code>simpleperf</code> is Android’s <code>perf</code>. It samples the CPU while a process runs: at a regular interval it records where the program counter is, and which process and thread that was. Aggregated, that is a histogram of where time went. It is a sampler, not a tracer. A function that is 40% of samples is about 40% of CPU time. A function that ran once for a microsecond may not appear at all.</p>
-<p>It can also count hardware events: cycles, instructions, cache misses, branch misses. Those counters are how you tell “we are stalled on memory” from “we are retiring a lot of instructions.” The GB/s benchmark already answers the first question for a streaming read. The counters become important when a kernel is slower than the streaming read and you need to know if the extra time is misses, branches, or just more instructions.</p>
-<p>The tool lives on the device, or is pushed next to your binary. Phase 1 does not need a wrapper around it. The habit is: release binary, symbols on, pin the thread, record, report. Build the habit on the bandwidth benchmark, where you already know the answer should be “almost all the samples are in the read loop.” If the report says something else, the binary you timed is not the binary you think you built.</p>
+<h2 id="what">What does simpleperf measure?</h2>
+<p>A benchmark gives you a time, but not a reason. <code>simpleperf</code> is Android’s <code>perf</code>, a <strong>profiler</strong>: a tool that shows where a program spends its time. It works by <strong>sampling</strong> the CPU. At a regular interval it records where the program counter is (the address of the instruction running now), and which process and thread it belongs to. Counting those records gives a histogram of where time went.</p>
+<p>A function that holds 40% of the samples is about 40% of the CPU time. A function that ran once for a microsecond may not appear at all, because the sampler rarely lands on it. A profile is for big costs, not tiny ones. It is a sampler, not a tracer.</p>
+<p>simpleperf can also count hardware events: cycles, instructions, cache misses, branch misses. Those counts tell “we are stalled on memory” apart from “we are retiring a lot of instructions.” The GB/s benchmark already answers the first question for a streaming read. Counters matter when a kernel is slower than the streaming read and you need to know whether the extra time is misses, branches, or just more instructions.</p>
+<p>The tool lives on the device, or is pushed next to your binary. Phase 1 does not need a wrapper around it. The habit is: release binary, symbols on, pin the thread, record, report. Build that habit on the bandwidth benchmark, where you already know the answer should be “almost all the samples are in the read loop.” If the report says something else, the binary you timed is not the binary you think you built.</p>
+<p><strong>Takeaway: a profile shows where the time went as a share of samples, so check that share against what you expected.</strong></p>
 
-<h2 id="symbols">Why symbols are already on</h2>
-<p><code>Cargo.toml</code> sets <code>debug = true</code> in the release profile. That keeps names and line numbers in the optimized binary. <code>simpleperf</code> can then say <code>bench::read_loop</code> instead of an address in an anonymous mapping. The hello-world binary being <code>not stripped</code> and 482 KB was the same fact at a smaller scale.</p>
+<h2 id="symbols">Why does the profile show function names?</h2>
+<p>A profile with no names shows only addresses, which tell you nothing about the code. <code>Cargo.toml</code> sets <code>debug = true</code> in the release profile. That keeps names and line numbers in the optimized binary. <code>simpleperf</code> can then say <code>bench::read_loop</code> instead of an address in an anonymous mapping. The hello-world binary being <code>not stripped</code> and 482 KB was the same fact at a smaller scale. Stripping removes those names, so a stripped binary gives you addresses only.</p>
 <p><code>debug = true</code> is not the debug profile. The debug profile turns optimization down. A profile of a debug build tells you where the unoptimized code spent time, which is a different program. Record release binaries.</p>
-<p>Fat LTO and one codegen unit will inline aggressively. A function you expected to see may have disappeared into its caller. That is not a broken profile. It is the compiler doing what the release profile asked. If you need a function to remain visible, <code>#[inline(never)]</code> is the same tool Phase 0 used on <code>sum</code>. Use it to learn, and take it off when the learning is done, because it also changes the timing.</p>
+<p>LTO (link-time optimization) lets the compiler optimize across the whole program, and fat LTO with one codegen unit will inline aggressively. A function you expected to see may have disappeared into its caller. That is not a broken profile. It is the compiler doing what the release profile asked. If you need a function to remain visible, <code>#[inline(never)]</code> is the same tool Phase 0 used on <code>sum</code>. Use it to learn, and take it off when the learning is done, because it also changes the timing.</p>
+<p><strong>Takeaway: profile a release build with its names kept, or the profile describes a different program.</strong></p>
 
-<h2 id="when">When to reach for it</h2>
-<p>Not before a correct, timed result exists. The order that does not waste a week:</p>
+<h2 id="when">When is it time to profile?</h2>
+<p>Not before a correct, timed result exists. A profile of a wrong kernel tells you nothing about the right one. The order that does not waste a week:</p>
 <ol class="steps">
   <li>The kernel matches an external reference, or, for the bandwidth kernels, the bytes and the checksum are not optimized away.</li>
   <li>The harness says how long, with a median and a spread, on a pinned core, in release.</li>
-  <li>You compare that time to the roofline or to the pure-read bandwidth. If you are close to the roof, stop. The residual is not where a profile will find a 2× win.</li>
+  <li>You compare that time to the roofline or to the pure-read bandwidth. The roof is the highest speed the memory can feed the core. If you are close to the roof, stop. The residual is not where a profile will find a 2× win.</li>
   <li>If you are far from the roof, then record. The profile tells you whether the time is in your loop, in a surprise allocation, in <code>adb</code>’s own noise, or in a function you thought was free.</li>
 </ol>
 <p>Phase 0’s sum is a worked example of step 3 without a profile. 3.3 GB/s against an unknown DRAM roof was already enough to say “this is not a memory-bandwidth result.” A profile would have shown the samples in the add loop, which you already knew from the source. Profiling would not have been wrong. It would have been redundant. Save it for the surprise.</p>
+<p><strong>Takeaway: profile only after a correct, timed result shows you are far from the roof.</strong></p>
 
-<h2 id="read">How to read a report</h2>
-<p>A typical record/report pair, once <code>simpleperf</code> is on the phone next to the binary:</p>
-<pre><code>simpleperf record -p &lt;pid&gt; --duration 5 -o /data/local/tmp/aether/perf.data
-simpleperf report -i /data/local/tmp/aether/perf.data</code></pre>
-<p>The flags worth knowing before the rest of the manual:</p>
+<h2 id="read">How do you read a report?</h2>
+<p>A profile is two commands: one records, one reports. Run them on the phone, next to the binary. First, record.</p>
+<pre><code>simpleperf record -p &lt;pid&gt; --duration 5 -o /data/local/tmp/aether/perf.data</code></pre>
 <ul>
   <li><code>-p</code> attaches to the already-running benchmark, so you do not profile process startup and the page faults of the first touch unless you mean to.</li>
   <li><code>--duration</code> keeps the file small. Five seconds of a DRAM read is a lot of samples.</li>
-  <li>The report’s percentages are of samples, which approximate CPU time. A thread that is asleep or descheduled is not running, so it collects no samples at all: the profile cannot show you time spent off the CPU. If the benchmark’s wall-clock time is much longer than its sampled CPU time, something took the core away, and the profile will not say what.</li>
-  <li>DSO and symbol columns tell you if time is in your binary, in <code>libc</code>, or in the Linux kernel. Waiting on memory does not move samples into the kernel: a stalled load is still your instruction, so a DRAM-bound read loop shows up as samples in your own loop, often piled on the load or the instruction right after it. Large kernel time instead means page faults, system calls, or interrupts. For the bandwidth kernel, that usually means the buffer was touched for the first time inside the timed region.</li>
+</ul>
+<p>Then report on the file you recorded:</p>
+<pre><code>simpleperf report -i /data/local/tmp/aether/perf.data</code></pre>
+<p>The report lists functions by their share of samples. Three things in it matter:</p>
+<ul>
+  <li>The percentages are shares of samples, which approximate CPU time. A thread that is asleep or descheduled is not running, so it collects no samples at all. The profile cannot show you time spent off the CPU. If the benchmark’s wall-clock time is much longer than its sampled CPU time, something took the core away, and the profile will not say what.</li>
+  <li>The DSO and symbol columns tell you if time is in your binary, in <code>libc</code>, or in the Linux kernel. Waiting on memory does not move samples into the kernel: a stalled load is still your instruction, so a DRAM-bound read loop shows up as samples in your own loop, often piled on the load or the instruction right after it. Large kernel time instead means page faults, system calls, or interrupts. For the bandwidth kernel, that usually means the buffer was touched for the first time inside the timed region.</li>
   <li>To tell “stalled on memory” from “too many instructions,” count events instead of time: <code>simpleperf stat -e cpu-cycles,instructions</code>. Few instructions per cycle on a streaming loop is the signature of waiting on memory.</li>
 </ul>
-<p>Call-graph mode (<code>-g</code>) attributes samples to callers. Useful when LTO has inlined everything into <code>main</code>. Heavier. Turn it on when the flat report is a single blob.</p>
+<p>Call-graph mode (<code>-g</code>) attributes samples to callers, so it shows which function called which. It helps when LTO has inlined everything into <code>main</code>. It is also heavier, so turn it on when the flat report is a single blob.</p>
 <p>The exact invocation will move with the NDK’s <code>simpleperf</code> version. Treat the manual on the machine as the flag list. The idea will not move: sample a pinned release run, name the functions, decide whether the time is where you thought.</p>
+<p><strong>Takeaway: record a pinned release run, then check whether the time sits where you expected.</strong></p>
 
-<h2 id="not">What it will not tell you</h2>
+<h2 id="not">What can a profile not tell you?</h2>
 <ul>
   <li>It will not give you GB/s. The harness does that. The profile explains a GB/s you already have.</li>
-  <li>It will not notice a wrong answer. Correctness is still an external reference, or a checksum that <code>black_box</code> kept alive.</li>
+  <li>It will not notice a wrong answer. Correctness is still an external reference, or a checksum that <code>black_box</code> kept alive. Skip that and you may profile a fast wrong answer.</li>
   <li>It will not see a core you did not pin, cleanly. Samples follow threads. If the thread migrated, the profile mixes cores. Pin first.</li>
   <li>It is not a thermal log. Frequency changes during a record show up as fewer or more instructions retired, not as a temperature. Keep the Phase 1 sampler for that.</li>
 </ul>
 <p>The plan’s rule stands: profile before optimizing, and do not optimize before a correct end-to-end model exists. Phase 1 is allowed to profile the bandwidth kernels because those kernels are the measurement, not an optimization of a model you do not have yet.</p>
+<p><strong>Takeaway: a profile names where the time went; it does not check the answer, pin the core, or report the temperature.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why is <code>debug = true</code> in the release profile not the same as a debug build?</summary>
@@ -89,13 +99,19 @@ simpleperf report -i /data/local/tmp/aether/perf.data</code></pre>
 <details class="check"><summary>When is it too early to profile?</summary>
 <p>Before the result is correct, and before a timing says you are far from the roof you care about. A profile of a wrong kernel, or of a kernel already at the roof, does not choose the next edit.</p>
 </details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A profile shows where the samples fell, so check the result against what you expected.</p>
+<p>Profile a pinned, correct, release run, and only when you are far from the roof.</p>
+<p>Read the profile as a share of time, and keep the frequency log separate.</p>
+
 <nav class="pager" data-pager></nav>
 
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

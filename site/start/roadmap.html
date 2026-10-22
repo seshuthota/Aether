@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -24,15 +24,16 @@
 <p class="kicker">Start here · 02</p>
 
 <h1>The roadmap</h1>
-<p class="lede">Nine phases, each one small enough to understand completely before the next. This page is the map, not the territory: one line per phase about what it is for. The explanations get written when that phase is the one being learned.</p>
+<p class="lede">Nine phases, each small enough to understand completely before the next. This page is the map, not the territory: one line per phase about what it is for. The explanations are written when that phase is the one being learned.</p>
 <nav class="toc">
-  <a href="#engine">The engine, part by part</a>
-  <a href="#phases">The phases</a>
-  <a href="#rules">Rules that hold the whole way</a>
+  <a href="#engine">What parts does the engine have?</a>
+  <a href="#phases">In what order do the phases go?</a>
+  <a href="#rules">What rules hold the whole way?</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="engine">The engine, part by part</h2>
-<p>Pick a phase to see which parts of the engine it builds. Most parts get built once simply, and then rebuilt later to be faster or more general.</p>
+<h2 id="engine">What parts does the engine have?</h2>
+<p>You want to know which part of the engine belongs to which phase. A <em>kernel</em> is a small routine that does one heavy job, such as a matrix multiply. Pick a phase to see which parts it builds. Most parts get built once simply, and then rebuilt later to be faster or more general.</p>
 <div class="widget" data-roadmap="1">
   <div class="phasebtns" role="group" aria-label="Phase">
     <button type="button" data-phase-btn="0" data-says="Phase 0: a build that runs on the phone, an honest timer, and a tensor type. No model yet.">Phase 0</button>
@@ -61,8 +62,10 @@
   </div>
 </div>
 
-<h2 id="phases">The phases</h2>
-<p>From <code>From_Scratch_Android_Inference_Engine_Plan.md</code>, which is the source of truth. Effort is the plan’s rough guess, not a deadline.</p>
+<p><strong>Takeaway: each phase builds a few parts, and later phases rebuild some of them faster.</strong></p>
+
+<h2 id="phases">In what order do the phases go?</h2>
+<p>Each phase builds on the one before it. The plan is the source of truth, and effort is its rough guess, not a deadline. Each item ends with a <em>Done when</em> line, the test for moving on.</p>
 <ol class="timeline">
   <li class="st-done">
     <h3><a href="../phase-0/index.html">Phase 0 — setup</a> <span class="tag d">done</span></h3>
@@ -112,20 +115,30 @@
 </ol>
 <p>After that, optional directions: better quantization formats, GPU kernels with Vulkan, speculative decoding, the NPU.</p>
 
-<h2 id="rules">Rules that hold the whole way</h2>
+<p><strong>Takeaway: the phases run in order, and each one ends with a Done when line you must meet.</strong></p>
+
+<h2 id="rules">What rules hold the whole way?</h2>
+<p>These four rules apply to every phase, not just one.</p>
 <ul>
-  <li><strong>Do not skip ahead.</strong> Each phase’s measurements are what the next one is compared against.</li>
-  <li><strong>Correctness comes from outside.</strong> numpy, llama2.c, Hugging Face and llama.cpp produce the golden outputs. Never a second copy of our own code.</li>
+  <li><strong>Do not skip ahead.</strong> Each phase’s measurements are what the next one is compared against. Skip one and the next has nothing to compare with.</li>
+  <li><strong>Correctness comes from outside.</strong> numpy, llama2.c, Hugging Face and llama.cpp produce the golden outputs. Never a second copy of our own code, because a copy would share our bugs.</li>
   <li><strong>A phase is done when you can explain the numbers</strong>, not when they hit a target. 40% of bandwidth with an explanation is finished.</li>
   <li><strong>Write <code>notes/phase-N.md</code> in your own words</strong> at the end of each phase. This site is the reference. The journal is the proof you understood it.</li>
 </ul>
+
+<p><strong>Takeaway: go in order, check against outside references, and explain the numbers before moving on.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The engine is built in parts, and each phase adds some of them.</p>
+<p>A phase is finished when its Done when line holds and you can explain the numbers.</p>
+<p>Use the outside references for every check, and keep your own notes as the proof.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase scope and effort come from the plan. Status reflects the repo as of the Phase 0 commit.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

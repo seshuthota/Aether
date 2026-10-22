@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,25 +26,27 @@
 <h1>How an LLM makes text</h1>
 <p class="lede">No background assumed. By the end of this page you should be able to say, in one sentence, why a phone generates text at the speed it does. Everything in the later phases hangs off that sentence.</p>
 <nav class="toc">
-  <a href="#what">What it does</a>
-  <a href="#weights">A file of numbers</a>
-  <a href="#tokens">Text becomes tokens</a>
-  <a href="#forward">One forward pass</a>
-  <a href="#matvec">Matrix × vector</a>
-  <a href="#loop">The generation loop</a>
-  <a href="#why">Why phones are slow at this</a>
-  <a href="#engine">What an engine is</a>
+  <a href="#what">What does a language model do?</a>
+  <a href="#weights">How big is the model file?</a>
+  <a href="#tokens">How does text become numbers?</a>
+  <a href="#forward">What happens in one forward pass?</a>
+  <a href="#matvec">What is the main operation, and how often does it run?</a>
+  <a href="#loop">How does one prompt become a whole reply?</a>
+  <a href="#why">Why is a phone slow at this?</a>
+  <a href="#engine">What does an inference engine contain?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="what">What a language model does</h2>
-<p>A language model does one thing: given some text, it scores every possible next piece of text. Pick a high-scoring piece, stick it on the end, and ask again. Repeat until you have a paragraph. That is all “generating” is.</p>
-<p>The keyboard on your phone suggesting the next word is the same idea at a tiny scale. An LLM does it with hundreds of millions of learned numbers, so its guesses take the whole conversation into account.</p>
+<h2 id="what">What does a language model do?</h2>
+<p>You want to know how a phone can write a reply at all. The answer starts with one small job. A language model takes some text and scores every possible next piece of text. It picks a high-scoring piece, sticks it on the end, and asks again. Repeat until you have a paragraph. That is all “generating” means.</p>
+<p>The keyboard on your phone suggesting the next word is the same idea at a tiny scale. An LLM (large language model) does it with hundreds of millions of learned numbers, so its guesses take the whole conversation into account.</p>
 <div class="callout"><span class="lbl">Training vs inference</span><p>Training is how those numbers were learned, on huge computers, once. Inference is using them. This project is only inference: the numbers arrive in a file, and our job is to do the arithmetic with them correctly and quickly on a phone.</p></div>
+<p><strong>Takeaway: generating text is a loop that scores the next piece, appends it, and repeats.</strong></p>
 
-<h2 id="weights">A model is a file of numbers</h2>
-<p>The learned numbers are called weights, or parameters. They are grouped into big rectangular grids called matrices. They never change while you generate text. The model file is mostly just these numbers, one after another.</p>
-<p>How big is the file? Number of weights times bytes per weight. In f32, each weight is 4 bytes <span class="tag c">calculated</span>:</p>
+<h2 id="weights">How big is the model file?</h2>
+<p>The learned numbers are called <strong>weights</strong>, or parameters. They are grouped into big rectangular grids called <strong>matrices</strong>. They never change while you generate text. The model file is mostly just these numbers, one after another.</p>
+<p>To find the size, multiply the number of weights by the bytes per weight. In f32, each weight is 4 bytes <span class="tag c">calculated</span>:</p>
 <table>
   <thead><tr><th>Model</th><th>Weights</th><th>Size in f32</th><th>Used in</th></tr></thead>
   <tbody>
@@ -54,9 +56,10 @@
   </tbody>
 </table>
 <p>Keep the last number in mind. A phone’s fast on-chip memory (the caches) holds a few megabytes. Two gigabytes does not fit. The weights have to sit in the phone’s main memory, which is far away by chip standards. That one fact is most of this project.</p>
+<p><strong>Takeaway: the weights are a fixed file of numbers, and a 2 GB file cannot fit in the phone’s caches.</strong></p>
 
-<h2 id="tokens">Text becomes tokens</h2>
-<p>The model does not see letters. A tokenizer first chops text into tokens, common chunks like whole words, pieces of words, or punctuation, and replaces each with its number in a fixed list called the vocabulary.</p>
+<h2 id="tokens">How does text become numbers?</h2>
+<p>The model does not see letters. A <strong>tokenizer</strong> first chops text into <strong>tokens</strong>, common chunks like whole words, pieces of words, or punctuation. It replaces each token with its number in a fixed list called the <strong>vocabulary</strong>.</p>
 <figure>
 <div class="chips" style="justify-content:center;font-size:1rem">
   <span class="chip">Once</span><span class="chip">␣upon</span><span class="chip">␣a</span><span class="chip">␣time</span><span class="chip">,</span><span class="chip">␣a</span><span class="chip">␣rob</span><span class="chip">ot</span><span class="chip">␣said</span>
@@ -66,10 +69,11 @@
 </div>
 <figcaption>One way a sentence might split. The IDs are made up for the picture. Note “ a” appears twice and gets the same ID both times, the leading space (␣) belongs to the token, and an unusual word gets split into pieces. The real tokenizers arrive in Phase 2 and Phase 5.</figcaption>
 </figure>
-<p>Each token ID then picks one row out of a big table, the embedding table. That row is a list of numbers, a vector, that stands for the token. For stories15M it is 288 numbers long; for Qwen2.5-0.5B, 896. From here on the model only does arithmetic on vectors.</p>
+<p>Each token ID then picks one row out of a big table, the <strong>embedding table</strong>. That row is a list of numbers, a <strong>vector</strong>, that stands for the token. For stories15M it is 288 numbers long; for Qwen2.5-0.5B, 896. From here on the model only does arithmetic on vectors.</p>
+<p><strong>Takeaway: text becomes token IDs, and each ID picks one vector for the model to work on.</strong></p>
 
-<h2 id="forward">One forward pass</h2>
-<p>Turning the current token into scores for the next one is called a forward pass. The vector goes through a stack of identical blocks called layers, then gets turned into one score per vocabulary entry:</p>
+<h2 id="forward">What happens in one forward pass?</h2>
+<p>Turning the current token into scores for the next one is called a <strong>forward pass</strong>. The vector goes through a stack of identical blocks called <strong>layers</strong>, then gets turned into one score per vocabulary entry:</p>
 <figure>
 <div class="flow">
   <div>token ID</div><span class="arr">→</span>
@@ -81,10 +85,11 @@
 <figcaption>What happens to one token. Inside each layer, attention lets the token look back at earlier tokens, and the MLP does most of the remaining arithmetic. The details belong to Phase 2. For now, notice what nearly every box does: multiply a vector by a big matrix of weights.</figcaption>
 </figure>
 <p>Almost all the time in a forward pass goes into one kind of step: a weight matrix times the token’s vector. Normalisation and other steps exist, but they touch a few thousand numbers. The matrices hold hundreds of millions.</p>
+<p><strong>Takeaway: nearly every box in a forward pass multiplies a vector by a large matrix of weights.</strong></p>
 
-<h2 id="matvec">The operation that dominates: matrix × vector</h2>
-<p>Multiplying a matrix by a vector means: for each row of the matrix, multiply it element by element with the vector, and add the results up. That sum is one number of the output. Do it for every row. This is called GEMV.</p>
-<p>Step through it below. Watch two things: how many times each weight gets used, and the FLOPs-per-byte counter.</p>
+<h2 id="matvec">What is the main operation, and how often does it run?</h2>
+<p>Multiplying a matrix by a vector means: for each row of the matrix, multiply it element by element with the vector, and add the results up. That sum is one number of the output. Do it for every row. This is called <strong>GEMV</strong> (general matrix times vector).</p>
+<p>Step through it below. Watch two things: how many times each weight gets used, and the FLOPs-per-byte counter. A <strong>FLOP</strong> is one floating-point operation, such as one multiply or one add.</p>
 <div class="widget" data-matvec>
   <h3>A tiny matrix × vector</h3>
   <div class="controls">
@@ -112,10 +117,11 @@
   <div class="statrow" data-stats></div>
 </div>
 <p>In decode, each weight is used once, for one multiply and one add, and then it is done for this token. That is 2 FLOPs for every 4 bytes read: 0.5 FLOP per byte. The arithmetic is trivial for a modern core. Getting the bytes there is not.</p>
-<p>Switch to prefill and the same bytes do four times the work, because four tokens’ vectors share each weight once it has been loaded. That ratio, FLOPs per byte, is called arithmetic intensity. It decides whether a piece of code waits on memory or on arithmetic. Phase 1’s <a href="../phase-1/roofline.html">roofline</a> page draws it.</p>
+<p>Switch to prefill and the same bytes do four times the work, because four tokens’ vectors share each weight once it has been loaded. That ratio, FLOPs per byte, is called <strong>arithmetic intensity</strong>. It decides whether a piece of code waits on memory or on arithmetic. Phase 1’s <a href="../phase-1/roofline.html">roofline</a> page draws it.</p>
+<p><strong>Takeaway: in decode each weight is used once per token, so the bytes moved, not the arithmetic, set the pace.</strong></p>
 
-<h2 id="loop">The generation loop</h2>
-<p>Put it together. The prompt goes in first, all at once: that is prefill. Then each new token is one more forward pass: that is decode.</p>
+<h2 id="loop">How does one prompt become a whole reply?</h2>
+<p>Put it together. The prompt goes in first, all at once: that is <strong>prefill</strong>. Then each new token is one more forward pass: that is <strong>decode</strong>.</p>
 <div class="widget" data-genloop>
   <h3>Generate, one token at a time</h3>
   <div class="controls">
@@ -142,17 +148,19 @@
 <p>Two details in that demo:</p>
 <ul>
   <li><strong>Greedy decoding.</strong> The demo always takes the top guess. Real chat apps usually sample with some randomness, but greedy is deterministic, which is why Aether uses it to check its output token-for-token against a reference engine.</li>
-  <li><strong>The KV cache.</strong> Attention needs information about every earlier token. Rather than recompute it each step, the engine saves it. That saved state is the KV cache. It grows by one entry per token, and it is the only thing that grows. The weights stay the same size, and they are read in full every step.</li>
+  <li><strong>The KV cache.</strong> Attention needs information about every earlier token. Rather than recompute it each step, the engine saves it. That saved state is the <strong>KV cache</strong>. It grows by one entry per token, and it is the only thing that grows. The weights stay the same size, and they are read in full every step.</li>
 </ul>
+<p><strong>Takeaway: the prompt is one prefill pass, and each new token is one decode pass that reuses the KV cache.</strong></p>
 
-<h2 id="why">Why phones are slow at this</h2>
-<p>Every decode step reads (nearly) every weight from main memory, uses each one for a single multiply-add, and then needs them all again for the next token. The weights do not fit in the caches, so nothing is still close by. The core spends most of its time waiting for bytes to arrive.</p>
+<h2 id="why">Why is a phone slow at this?</h2>
+<p>Every decode step reads (nearly) every weight from main memory, uses each one for a single multiply-add, and then needs them all again for the next token. The weights do not fit in the caches, so nothing is still close by. The core spends most of its time waiting for bytes to arrive. Speeding up the arithmetic alone does not change that.</p>
 <p class="pull">tokens per second ≤ memory bandwidth ÷ bytes of weights read per token.</p>
 <p>Worked through: if the phone could move 30 GB/s <span class="tag a">assumption</span>, a 2 GB f32 model allows at most 15 tokens per second <span class="tag c">calculated</span>, no matter how fast the arithmetic is. Store the same weights in 4 bits instead of 32 and the bytes shrink about 7×, so the ceiling rises about 7×. That is why quantization matters so much on phones. The full argument, with a calculator, is <a href="../phase-0/decode-ceiling.html">the decode ceiling</a>.</p>
 <p>This is the sentence from the top of the page. Phase 1 measures the real bandwidth. Every later phase is judged against it.</p>
+<p><strong>Takeaway: tokens per second is capped by memory bandwidth divided by the bytes of weights read per token.</strong></p>
 
-<h2 id="engine">What an inference engine is</h2>
-<p>The program that does all of the above is an inference engine. Its main parts, and where this project builds each one:</p>
+<h2 id="engine">What does an inference engine contain?</h2>
+<p>The program that does all of the above is an <strong>inference engine</strong>. The table lists its main parts and the phase where this project builds each one:</p>
 <table>
   <thead><tr><th>Part</th><th>Job</th><th>Phase</th></tr></thead>
   <tbody>
@@ -167,6 +175,7 @@
   </tbody>
 </table>
 <p>The <a href="roadmap.html">roadmap</a> has the same parts as a diagram, lit up phase by phase.</p>
+<p><strong>Takeaway: each row of this table is one piece of the story on this page, built in a later phase.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Generating 50 tokens after a 10-token prompt takes how many forward passes?</summary>
@@ -182,12 +191,17 @@
 <p>The KV cache grows by one entry per token. The weights stay the same. They are read in full for every new token either way.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>A phone writes text by scoring one next token at a time, and each score is a forward pass over a matrix of weights.</p>
+<p>Decode reads the weights for every token, so memory bandwidth sets the speed.</p>
+<p>The one-sentence answer is the bandwidth ceiling: tokens per second cannot exceed bandwidth divided by the bytes read per token.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Model sizes are parameter counts × 4 bytes. Guesses and probabilities in the demo are illustrative. Teal is measured, blue is calculated, amber is an assumption.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>

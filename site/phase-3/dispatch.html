@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,18 +23,19 @@
 <main id="content">
 <p class="kicker">Phase 3 · 07</p>
 <h1>One API, two machines</h1>
-<p class="lede">The engine runs on the phone (ARM, with NEON) and its tests also run on the PC (x86, no NEON). The model code should not care which. So it calls one set of functions, and those functions pick the right kernel. This page shows the two ways that choice is made, at compile time and at run time, and the two places the engine drops to inline assembly.</p>
+<p class="lede">The engine runs on the phone (ARM, with NEON) and its tests also run on the PC (x86, no NEON). The model code should not care which machine it runs on. So it calls one set of functions, and those functions pick the right kernel. This page shows the two ways that choice is made, at compile time and at run time, and the two places the engine drops to inline assembly.</p>
 <nav class="toc">
-  <a href="#api">One function, several bodies</a>
-  <a href="#compile">Choosing at compile time</a>
-  <a href="#detect">Choosing at run time</a>
-  <a href="#asm">When an intrinsic is not enough</a>
-  <a href="#why">Why this structure pays off</a>
+  <a href="#api">What does the model call, and what sits behind it?</a>
+  <a href="#compile">How does the build pick a body?</a>
+  <a href="#detect">What if the phone lacks a CPU feature?</a>
+  <a href="#asm">When is an intrinsic not enough?</a>
+  <a href="#why">What does this structure buy you?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="api">One function, several bodies</h2>
-<p><code>src/kernels/mod.rs</code> is the only kernel module the model talks to. It offers <code>matmul</code>, <code>matmul_batch</code>, <code>attention_head</code>, <code>rmsnorm</code> and so on. The transformer never imports <code>neon</code> or <code>scalar</code> directly. When a faster version arrives (NEON in Phase 3, threads in Phase 4, quantized weights in Phase 6) it replaces a body in this module, and the forward pass does not change.</p>
+<h2 id="api">What does the model call, and what sits behind it?</h2>
+<p>The model needs a matrix multiply, but it should not know which version runs. <code>src/kernels/mod.rs</code> is the only kernel module the model talks to. It offers <code>matmul</code>, <code>matmul_batch</code>, <code>attention_head</code>, <code>rmsnorm</code> and so on. The transformer never imports <code>neon</code> or <code>scalar</code> directly. When a faster version arrives (NEON in Phase 3, threads in Phase 4, quantized weights in Phase 6), it replaces a body in this module, and the forward pass does not change.</p>
 <figure>
 <div class="flow">
   <div>transformer.rs<small>calls k::matmul</small></div><span class="arr">→</span>
@@ -43,8 +44,26 @@
   <div>scalar::matmul<small>elsewhere</small></div>
 </div>
 </figure>
+<p><strong>Takeaway: the model calls one name, and the module behind it decides which body runs.</strong></p>
 
-<h2 id="compile">Choosing at compile time</h2>
+<h2 id="compile">How does the build pick a body?</h2>
+<p>A <strong>compile-time</strong> choice is made when the program is built, not when it runs. The <code>#[cfg(…)]</code> attribute is that switch. Build the two lines one at a time.</p>
+
+<h3>Step 1: the NEON line</h3>
+<pre><code>#[cfg(target_arch = "aarch64")]
+neon::gemv(out, x, w);</code></pre>
+<ul>
+  <li><code>#[cfg(target_arch = "aarch64")]</code> keeps the line only when the target is AArch64, the 64-bit ARM architecture.</li>
+</ul>
+
+<h3>Step 2: the scalar line</h3>
+<pre><code>#[cfg(not(target_arch = "aarch64"))]
+scalar::matmul(out, x, w);</code></pre>
+<ul>
+  <li><code>not(…)</code> flips the test, so this line is kept for every other target.</li>
+</ul>
+
+<h3>All of it together</h3>
 <pre><code>#[inline]
 pub fn matmul(out: &amp;mut [f32], x: &amp;[f32], w: &amp;[f32]) {
     #[cfg(target_arch = "aarch64")]
@@ -52,13 +71,45 @@ pub fn matmul(out: &amp;mut [f32], x: &amp;[f32], w: &amp;[f32]) {
     #[cfg(not(target_arch = "aarch64"))]
     scalar::matmul(out, x, w);
 }</code></pre>
-<p><code>#[cfg(…)]</code> is decided when the program is compiled, for the target it is compiled for (<a href="../phase-0/cross-compilation.html">Phase 0</a>). Building for <code>aarch64-linux-android</code> keeps only the NEON line; building for the PC keeps only the scalar line. The other line is not just skipped; it does not exist in that binary. There is no run-time cost at all, and with <code>#[inline]</code> the call disappears too.</p>
-<p>This works for NEON because every AArch64 CPU has it. It is part of the architecture's baseline, so a binary built for <code>aarch64</code> may always use it. The <code>neon</code> module itself is only compiled on AArch64 (<code>#[cfg(target_arch = "aarch64")] pub mod neon;</code>), since its intrinsics do not exist elsewhere.</p>
+<p><code>#[cfg(…)]</code> is decided when the program is compiled, for the target it is compiled for (<a href="../phase-0/cross-compilation.html">Phase 0</a>). Building for <code>aarch64-linux-android</code> keeps only the NEON line; building for the PC keeps only the scalar line. The other line is not just skipped; it does not exist in that binary. There is no run-time cost at all, and with <code>#[inline]</code> the call disappears too. Ignore this and the PC build tries to compile NEON intrinsics that do not exist there, and it fails.</p>
+<p>This works for NEON because every AArch64 CPU has it. It is part of the architecture’s baseline, so a binary built for <code>aarch64</code> may always use it. The <code>neon</code> module itself is only compiled on AArch64 (<code>#[cfg(target_arch = "aarch64")] pub mod neon;</code>), since its intrinsics do not exist elsewhere.</p>
 <p>One consequence: on the PC, <code>cargo test</code> tests the <em>scalar</em> kernels. The NEON kernels are only tested by running the tests on the phone. Both run against the same numpy goldens.</p>
+<p><strong>Takeaway: a compile-time switch costs nothing at run time, but the choice is fixed in the binary.</strong></p>
 
-<h2 id="detect">Choosing at run time</h2>
-<p>Not every feature is baseline. The integer dot-product instruction <code>sdot</code>, which Phase 6's quantized kernels rely on, is an optional extension (<code>dotprod</code>). This phone has it; an older ARM phone might not. A binary that used it unconditionally would crash there with an “illegal instruction” error.</p>
-<p>So those kernels ask the CPU when they run:</p>
+<h2 id="detect">What if the phone lacks a CPU feature?</h2>
+<p>NEON is baseline, but not every feature is. The integer dot-product instruction <code>sdot</code>, which Phase 6’s quantized kernels rely on, is an optional extension (<code>dotprod</code>). This phone has it; an older ARM phone might not. A binary that used it unconditionally would crash there with an “illegal instruction” error. So those kernels ask the CPU when they run.</p>
+
+<h3>Step 1: ask the CPU</h3>
+<pre><code>pub fn has_dotprod() -&gt; bool {
+    std::arch::is_aarch64_feature_detected!("dotprod")
+}</code></pre>
+<ul>
+  <li><code>is_aarch64_feature_detected!</code> asks the operating system which features the CPU reported. It returns a <code>bool</code>.</li>
+  <li>The answer is cached after the first call, so checking it often is cheap.</li>
+</ul>
+
+<h3>Step 2: pick a path</h3>
+<pre><code>pub fn dot_q8_0_q8_0(row: &amp;[BlockQ8_0], x: &amp;[BlockQ8_0]) -&gt; f32 {
+    if !has_dotprod() {
+        return crate::quant::scalar::dot_q8_0_q8_0(row, x);   // safe fallback
+    }
+    // SAFETY: has_dotprod() just returned true, so the CPU has the dotprod feature sdot needs.
+    unsafe { dot_q8_0_q8_0_sdot(row, x) }                    // fast path
+}</code></pre>
+<ul>
+  <li>The <code>if</code> returns early with the plain scalar version when the feature is missing.</li>
+  <li>The <code>unsafe</code> call runs only after that check passed. The <code>// SAFETY:</code> comment says what was checked.</li>
+</ul>
+
+<h3>Step 3: the fast function</h3>
+<pre><code>#[target_feature(enable = "dotprod")]
+unsafe fn dot_q8_0_q8_0_sdot(…) { … }</code></pre>
+<ul>
+  <li><code>#[target_feature(enable = "dotprod")]</code> lets the compiler use <code>sdot</code> inside that one function, even though the rest of the binary is built for plain AArch64.</li>
+  <li>The function is <code>unsafe</code> to call. Calling it on a CPU without the feature is exactly the crash we are avoiding.</li>
+</ul>
+
+<h3>All of it together</h3>
 <pre><code>pub fn has_dotprod() -&gt; bool {
     std::arch::is_aarch64_feature_detected!("dotprod")
 }
@@ -67,35 +118,34 @@ pub fn dot_q8_0_q8_0(row: &amp;[BlockQ8_0], x: &amp;[BlockQ8_0]) -&gt; f32 {
     if !has_dotprod() {
         return crate::quant::scalar::dot_q8_0_q8_0(row, x);   // safe fallback
     }
+    // SAFETY: has_dotprod() just returned true, so the CPU has the dotprod feature sdot needs.
     unsafe { dot_q8_0_q8_0_sdot(row, x) }                    // fast path
 }
 
 #[target_feature(enable = "dotprod")]
 unsafe fn dot_q8_0_q8_0_sdot(…) { … }</code></pre>
-<ul>
-  <li><code>is_aarch64_feature_detected!</code> asks the operating system which features the CPU reported. The answer is cached after the first call, so checking it often is cheap.</li>
-  <li><code>#[target_feature(enable = "dotprod")]</code> lets the compiler use <code>sdot</code> inside that one function, even though the rest of the binary is built for plain AArch64.</li>
-  <li>Such a function is <code>unsafe</code> to call: calling it on a CPU without the feature is exactly the crash we are avoiding. The check right before the call is what makes it safe.</li>
-</ul>
-<p>Phase 0's look at the phone found <code>dotprod</code>, <code>i8mm</code>, <code>bf16</code> and <code>fp16</code> among its features, and no SVE. <code>i8mm</code> (the <code>smmla</code> matrix instruction) is not used yet; it is an open item for faster quantized prefill.</p>
+<p>Phase 0’s look at the phone found <code>dotprod</code>, <code>i8mm</code>, <code>bf16</code> and <code>fp16</code> among its features, and no SVE. <code>i8mm</code> (the <code>smmla</code> matrix instruction) is not used yet; it is an open item for faster quantized prefill.</p>
+<p><strong>Takeaway: check the feature first, then call the fast path, or the phone that lacks it crashes.</strong></p>
 
-<h2 id="asm">When an intrinsic is not enough</h2>
-<p>Intrinsics cover almost everything. The engine has two exceptions, both written with Rust's <code>asm!</code> macro:</p>
+<h2 id="asm">When is an intrinsic not enough?</h2>
+<p>Intrinsics are Rust functions that map to one CPU instruction each. They cover almost everything. The engine has two exceptions, both written with Rust’s <code>asm!</code> macro, which puts a raw assembly instruction inside Rust code.</p>
 <table>
   <thead><tr><th>Where</th><th>Instruction</th><th>Why assembly</th></tr></thead>
   <tbody>
     <tr><td><code>src/sys/cpu.rs</code></td><td><code>mrs …, ctr_el0</code></td><td>reads a system register that reports the cache line size; there is no intrinsic for it</td></tr>
-    <tr><td><code>src/kernels/neon_quant.rs</code></td><td><code>fcvtl v.4s, v.4h</code></td><td>widens four <code>f16</code> numbers to <code>f32</code> in one instruction. It is part of base NEON, but Rust's intrinsic for it needs a half-precision type that was not usable on stable Rust, so one instruction is written by hand</td></tr>
+    <tr><td><code>src/kernels/neon_quant.rs</code></td><td><code>fcvtl v.4s, v.4h</code></td><td>widens four <code>f16</code> numbers to <code>f32</code> in one instruction. It is part of base NEON, but Rust’s intrinsic for it needs a half-precision type that was not usable on stable Rust, so one instruction is written by hand</td></tr>
   </tbody>
 </table>
-<p>Each <code>asm!</code> block states what it touches (<code>nomem</code>: no memory; <code>pure</code>: same inputs give same output), so the compiler can still optimise around it. Writing whole kernels in assembly would give full control over registers and scheduling, but the intrinsic versions are already close to memory's limit for decode; the gain would not pay for the loss of readability.</p>
+<p>Each <code>asm!</code> block states what it touches (<code>nomem</code>: no memory; <code>pure</code>: same inputs give same output), so the compiler can still optimise around it. Writing whole kernels in assembly would give full control over registers and scheduling. But the intrinsic versions are already close to memory’s limit for decode, so the gain would not pay for the loss of readability.</p>
+<p><strong>Takeaway: write assembly only for the one instruction that has no intrinsic, and say what it touches.</strong></p>
 
-<h2 id="why">Why this structure pays off</h2>
+<h2 id="why">What does this structure buy you?</h2>
 <ul>
-  <li><strong>Every faster version is tested the same way.</strong> The tests call the public functions with numpy goldens; whichever body is compiled in gets tested.</li>
+  <li><strong>Every faster version is tested the same way.</strong> The tests call the public functions with numpy goldens, so whichever body is compiled in gets tested.</li>
   <li><strong>The slow version never goes away.</strong> The scalar kernels stay as the PC path and as the readable statement of what each kernel computes. They are not a test oracle (numpy and llama2.c are), but they are the easiest code to read first.</li>
   <li><strong>Benchmarks can compare versions directly</strong>, since the steps (<code>gemv_one_acc</code>, <code>gemv_row_4acc</code>, <code>gemv</code>) stay public.</li>
 </ul>
+<p><strong>Takeaway: one name, many bodies, and each body is tested through that name.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why can NEON be chosen at compile time, but <code>sdot</code> needs a run-time check?</summary>
@@ -111,13 +161,18 @@ unsafe fn dot_q8_0_q8_0_sdot(…) { … }</code></pre>
 <p>So that new kernel versions (threaded, quantized) can be swapped in at one place, without editing the model code, and so the model also builds on machines without NEON.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>The model calls one set of functions, and the choice of body happens at compile time or at run time.</p>
+<p>Check an optional CPU feature before you call the code that needs it.</p>
+<p>Use assembly only for the one instruction that intrinsics cannot express.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

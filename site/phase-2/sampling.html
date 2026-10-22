@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,43 +23,55 @@
 <main id="content">
 <p class="kicker">Phase 2 · 09</p>
 <h1>Choosing the next token</h1>
-<p class="lede">The forward pass ends with 32,000 numbers, one score per token in the vocabulary. Something has to pick one. Always taking the best gives repetitive text; picking at random gives nonsense. Sampling sits between, with three dials: temperature, top-k and top-p. This page explains each, and how the engine's random choices can be replayed exactly.</p>
+<p class="lede">The forward pass ends with 32,000 numbers, one score for each token in the vocabulary (the list of tokens the model knows). Something has to pick one. Always taking the best gives repetitive text. Picking at random gives nonsense. Sampling sits between the two, with three dials: temperature, top-k and top-p. This page explains each dial, and how to replay the engine’s random choices exactly.</p>
 <nav class="toc">
-  <a href="#logits">Logits and probabilities</a>
-  <a href="#greedy">Greedy</a>
-  <a href="#temperature">Temperature</a>
-  <a href="#topk">Top-k</a>
-  <a href="#topp">Top-p (nucleus)</a>
-  <a href="#play">Try the dials</a>
-  <a href="#rng">A random generator you can replay</a>
-  <a href="#loop">The generation loop</a>
+  <a href="#logits">What turns scores into probabilities?</a>
+  <a href="#greedy">Why not always take the best token?</a>
+  <a href="#temperature">How does temperature reshape the scores?</a>
+  <a href="#topk">How do you cut off the unlikely tail?</a>
+  <a href="#topp">Can the cut-off adapt to how sure the model is?</a>
+  <a href="#play">What do the dials do in practice?</a>
+  <a href="#rng">How does a computer pick at random, and can you replay it?</a>
+  <a href="#loop">How do the pieces make one generated text?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="logits">Logits and probabilities</h2>
-<p>The classifier multiplies the final 288-number vector by the 32,000 × 288 table. Each of the 32,000 results is a <strong>logit</strong>: a raw score, any real number, higher meaning “more likely next”. <a href="attention.html#softmax">Softmax</a> turns logits into probabilities that add up to 1. Sampling is choosing a token from those probabilities.</p>
+<h2 id="logits">What turns scores into probabilities?</h2>
+<p>The classifier produces one score per token, and those scores are not chances yet. The classifier multiplies the final 288-number vector by the 32,000 × 288 table. Each of the 32,000 results is a <strong>logit</strong>: a raw score, any real number, where higher means “more likely next”.</p>
+<p><a href="attention.html#softmax">Softmax</a> turns logits into probabilities that add up to 1. Sampling is then choosing one token at random, weighted by those probabilities.</p>
+<p><strong>Takeaway: the model outputs logits; softmax turns them into probabilities, and sampling draws one token from them.</strong></p>
 
-<h2 id="greedy">Greedy</h2>
-<p>Pick the token with the highest logit (<code>argmax</code>). No randomness: the same prompt always gives the same text. That makes greedy the right mode for testing, and every correctness check in this project uses it (<code>-t 0</code>). For writing, it tends to loop: the model's single most likely continuation is often a phrase it has just said.</p>
+<h2 id="greedy">Why not always take the best token?</h2>
+<p>The simplest choice is the token with the highest logit. That is <code>argmax</code>, the position of the largest value, and it needs no randomness. This is <strong>greedy</strong> decoding.</p>
+<p>Greedy gives the same text for the same prompt every time. That makes it the right mode for testing, and every correctness check in this project uses it (<code>-t 0</code>). Random sampling can give a different text on each run, so a difference would no longer point to a bug. For writing, greedy tends to loop: the model’s single most likely continuation is often a phrase it has just said.</p>
+<p><strong>Takeaway: greedy is repeatable, so it is the mode for correctness tests, but it tends to repeat itself in writing.</strong></p>
 
-<h2 id="temperature">Temperature</h2>
-<p>Divide every logit by a number <var>T</var> before softmax.</p>
+<h2 id="temperature">How does temperature reshape the scores?</h2>
+<p><strong>Temperature</strong> is a dial for how much the top token dominates. Divide every logit by a number <var>T</var> before softmax.</p>
+<p>Take two logits, 2 and 1. At <var>T</var> = 1 they stay as they are, and softmax gives 0.73 and 0.27. At <var>T</var> = 0.5 they become 4 and 2, and the top token gets 0.88.</p>
 <ul>
   <li><var>T</var> &lt; 1 makes gaps between logits bigger, so the top tokens take more of the probability. Safer, duller.</li>
-  <li><var>T</var> = 1 leaves the model's own distribution.</li>
+  <li><var>T</var> = 1 leaves the model’s own distribution.</li>
   <li><var>T</var> &gt; 1 shrinks the gaps, so unlikely tokens get a real chance. More surprising, eventually incoherent.</li>
   <li><var>T</var> → 0 approaches greedy, which is why <code>-t 0</code> means greedy.</li>
 </ul>
+<p><strong>Takeaway: below 1 widens the gaps between logits, above 1 shrinks them, and near 0 the choice becomes greedy.</strong></p>
 
-<h2 id="topk">Top-k</h2>
-<p>Keep only the <var>k</var> most likely tokens, set the rest to zero, rescale the kept ones to add up to 1, and draw. It cuts off the long tail of thousands of tokens that are each unlikely but together add up to a real chance of a bad pick.</p>
+<h2 id="topk">How do you cut off the unlikely tail?</h2>
+<p>The model spreads a little probability over thousands of tokens. Each one is unlikely, but together they can add up to a real chance of a bad pick. <strong>Top-k</strong> removes that tail by keeping only the <var>k</var> most likely tokens.</p>
+<p>Keep only the <var>k</var> most likely tokens, set the rest to zero, rescale the kept ones to add up to 1, and draw. The rescale is needed because a draw works only when the probabilities add up to 1. With <var>k</var> = 2, only the two best tokens can ever be drawn.</p>
+<p>If k is too large, the long tail comes back.</p>
+<p><strong>Takeaway: top-k keeps a fixed number of tokens, whatever the model thinks.</strong></p>
 
-<h2 id="topp">Top-p (nucleus)</h2>
-<p>Sort the tokens by probability and keep the smallest set from the top whose probabilities add up to more than <var>p</var> (say 0.9). Draw from that set. Unlike top-k, the set adapts: when the model is confident, one or two tokens already make 90 %; when it is unsure, the set grows. This is llama2.c's default (<var>p</var> = 0.9), and Aether's.</p>
-<p>A neat speed trick from llama2.c, which the engine copies: a token with probability below (1 − <var>p</var>) ÷ (32,000 − 1) can never be in the nucleus, so those are dropped before sorting. A 32,000-item sort becomes a sort of a few hundred.</p>
+<h2 id="topp">Can the cut-off adapt to how sure the model is?</h2>
+<p>Top-k always keeps k tokens, even when the model is nearly sure of one. <strong>Top-p</strong>, also called <strong>nucleus</strong> sampling, keeps as many tokens as it needs to reach a total probability p.</p>
+<p>Sort the tokens by probability and keep the smallest set from the top whose probabilities add up to more than <var>p</var> (say 0.9). Draw from that set. Unlike top-k, the set adapts: when the model is confident, one or two tokens already make 90 %; when it is unsure, the set grows. This is llama2.c’s default (<var>p</var> = 0.9), and Aether’s.</p>
+<p>llama2.c has a speed trick, which the engine copies: a token with probability below (1 − <var>p</var>) ÷ (32,000 − 1) can never be in the nucleus, so those are dropped before sorting. A 32,000-item sort becomes a sort of a few hundred.</p>
+<p><strong>Takeaway: top-p keeps the smallest set whose probability reaches p, so the set is small when the model is sure and larger when it is not.</strong></p>
 
-<h2 id="play">Try the dials</h2>
-<p>Eight made-up logits for the word after “Once upon a time, there was a little” <span class="tag a">illustration</span>. Greyed words cannot be drawn.</p>
+<h2 id="play">What do the dials do in practice?</h2>
+<p>Here is a small example to try. Eight made-up logits for the word after “Once upon a time, there was a little” <span class="tag a">illustration</span>. Greyed words cannot be drawn.</p>
 <div class="widget" data-sampler2>
   <h3>Temperature, top-k, top-p</h3>
   <div class="controls">
@@ -75,11 +87,45 @@
   <div class="chips" data-chips></div>
   <p class="note" data-note></p>
 </div>
-<p>Try temperature 0.3 and draw ten times, then 1.8 and draw ten times. Then set top-p to 0.5 and watch the tail disappear.</p>
 
-<h2 id="rng">A random generator you can replay</h2>
-<p>A computer has no dice. Sampling uses a <strong>pseudo-random number generator</strong>: a small formula that turns one 64-bit number (the state) into the next, producing a sequence that looks random. Start from the same <em>seed</em> and you get exactly the same sequence.</p>
-<p>Aether uses the same generator as llama2.c, <em>xorshift*</em>: three shifts and XORs to scramble the state, then one multiplication to produce the output:</p>
+<p>Try temperature 0.3 and draw ten times: the same few words come back. Then try 1.8: look for surprising words. Then set top-p to 0.5 and watch the tail disappear.</p>
+<p><strong>Takeaway: each dial removes or reshapes the choices, and the grey words show exactly which ones it removed.</strong></p>
+
+<h2 id="rng">How does a computer pick at random, and can you replay it?</h2>
+<p>A computer has no dice, so sampling uses a <strong>pseudo-random number generator</strong>: a small formula that turns a 64-bit number, the state, into the next state and an output that looks random. Start from the same <em>seed</em>, the state it begins at, and you get the same sequence.</p>
+<p>Aether uses llama2.c’s generator, <em>xorshift*</em>, in three steps.</p>
+
+<h3>Step 1: scramble the state</h3>
+<pre><code>self.rng ^= self.rng &gt;&gt; 12;
+self.rng ^= self.rng &lt;&lt; 25;
+self.rng ^= self.rng &gt;&gt; 27;</code></pre>
+<ul>
+  <li><code>^=</code> is XOR, bit by bit: it mixes the state with a shifted copy of itself.</li>
+  <li><code>&gt;&gt;</code> shifts bits right and <code>&lt;&lt;</code> shifts them left.</li>
+  <li>Change any number here and the sequence changes, so the numbers must match llama2.c’s.</li>
+</ul>
+
+<h3>Step 2: produce a 32-bit number</h3>
+<pre><code>(self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D) &gt;&gt; 32) as u32</code></pre>
+<ul>
+  <li><code>wrapping_mul</code> multiplies and lets the result overflow, wrapping around rather than stopping the program.</li>
+  <li><code>&gt;&gt; 32</code> keeps the top 32 bits. <code>as u32</code> names the type.</li>
+</ul>
+
+<h3>Step 3: turn it into a float from 0 to 1</h3>
+<pre><code>(self.next_u32() &gt;&gt; 8) as f32 / 16_777_216.0   // 24 bits → [0, 1)</code></pre>
+<ul>
+  <li><code>&gt;&gt; 8</code> drops the low 8 bits, leaving 24.</li>
+  <li>24 bits give 2<sup>24</sup> = 16,777,216 values. Dividing by that puts the result in [0, 1), never reaching 1.</li>
+</ul>
+
+<p>The draw: take a random number <var>r</var> in [0, 1), add up the kept tokens’ probabilities in order, and stop at the first one where the running total passes <var>r</var>. A token with probability 0.3 owns 0.3 of that line, so it is hit 30 % of the time.</p>
+<pre><code>0 ───────── 0.3 ────────────────────── 1
+  token A        other tokens
+  r below 0.3: token A is drawn</code></pre>
+<p>Copying llama2.c’s generator and its exact top-p procedure lets sampled runs be checked too, not just greedy ones. With <code>-t 0.8 -p 0.9 -s 42</code>, Aether and llama2.c pick the same 64 tokens <span class="tag m">measured</span>. The seed is the only thing that makes one sampled run differ from another. Pass <code>-s</code> to fix it; without it the CLI takes the current time, so every run is new.</p>
+
+<h3>All three together</h3>
 <pre><code>fn next_u32(&amp;mut self) -&gt; u32 {
     self.rng ^= self.rng &gt;&gt; 12;
     self.rng ^= self.rng &lt;&lt; 25;
@@ -89,19 +135,19 @@
 fn next_f32(&amp;mut self) -&gt; f32 {
     (self.next_u32() &gt;&gt; 8) as f32 / 16_777_216.0   // 24 bits → [0, 1)
 }</code></pre>
-<p>Then the draw itself: take a random number <var>r</var> in [0, 1), walk the kept tokens adding up their probabilities, and stop at the first one where the running total passes <var>r</var>. A token with probability 0.3 owns a stretch of 0.3 of that line, so it is hit 30 % of the time.</p>
-<p>Why copy llama2.c's generator and its exact top-p procedure? Because then sampled runs can be checked too, not just greedy ones. With <code>-t 0.8 -p 0.9 -s 42</code>, Aether and llama2.c pick the same 64 tokens <span class="tag m">measured</span>. The seed is the only thing that makes one sampled run differ from another. Pass <code>-s</code> to fix it; without it the CLI takes the current time, so every run is new.</p>
+<p><strong>Takeaway: the same seed gives the same sequence, so a sampled run can be replayed when the generator and the top-p procedure match llama2.c’s.</strong></p>
 
-<h2 id="loop">The generation loop</h2>
-<p>Put together, generating text is:</p>
+<h2 id="loop">How do the pieces make one generated text?</h2>
+<p>Generating text repeats the pieces above, one token at a time:</p>
 <ol class="steps">
   <li>Tokenize the prompt: BOS + its tokens.</li>
-  <li>Feed the prompt tokens through the model one by one (or all at once, Phase 3's <a href="../phase-3/prefill.html">prefill</a>), filling the KV cache.</li>
+  <li>Feed the prompt tokens through the model one by one (or all at once, Phase 3’s <a href="../phase-3/prefill.html">prefill</a>), filling the KV cache.</li>
   <li>From the logits of the last prompt token, sample the next token. Print its text.</li>
   <li>Feed that token in at the next position, get new logits, sample again.</li>
-  <li>Stop when the model emits BOS (llama2.c's models mark the end of a story by starting a new one) or at the length limit (<code>-n</code>, 256 by default).</li>
+  <li>Stop when the model emits BOS (llama2.c’s models mark the end of a story by starting a new one) or at the length limit (<code>-n</code>, 256 by default).</li>
 </ol>
 <p>Step 3–4 is <em>decode</em>, and each turn of it is one full forward pass. Tokens per second, the number this project measures, counts those turns.</p>
+<p><strong>Takeaway: generation is sample, feed back, and repeat, with one full forward pass per token.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does every correctness test use temperature 0?</summary>
@@ -117,13 +163,19 @@ fn next_f32(&amp;mut self) -&gt; f32 {
 <p>Something other than the sampler differs: the logits themselves changed (a bug, a different kernel or summation order) or the generator was used differently. The sampler alone is deterministic for a given seed.</p>
 </details>
 
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Softmax turns scores into probabilities, and sampling draws one token from them.</p>
+<p>Greedy is repeatable but tends to repeat itself; temperature, top-k and top-p trade that off.</p>
+<p>A seeded generator makes sampled runs replayable, which lets them be checked against llama2.c.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
-<script src="../js/widgets.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
+<script src="../js/widgets.js?v=15"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css">
+<link rel="stylesheet" href="../css/site.css?v=15">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,34 +26,60 @@
 <h1>Reading /sys from Rust</h1>
 <p class="lede">Core clocks, temperatures, battery current and voltage are all plain text files under <code>/sys</code>. Reading one is a single standard-library call. The care goes into turning the text into a number with the right unit.</p>
 <nav class="toc">
-  <a href="#files">A sysfs file is made when you read it</a>
-  <a href="#read">Read and parse</a>
-  <a href="#units">Units</a>
-  <a href="#find">Find files instead of guessing</a>
-  <a href="#cost">What a read costs</a>
+  <a href="#files">Is a sysfs file stored anywhere?</a>
+  <a href="#read">How do you read a number from one?</a>
+  <a href="#units">What unit is the number in?</a>
+  <a href="#find">How do you find the right files?</a>
+  <a href="#cost">What does a read cost?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
 <div class="callout"><span class="lbl">How to use this page</span><p><a href="power.html#files">Power and heat</a> lists which files the plan wants. This page is how the Rust code reads them. Before writing any code, read each one by hand with <code>adb shell cat</code>.</p></div>
 
-<h2 id="files">A sysfs file is made when you read it</h2>
-<p>Nothing under <code>/sys</code> is stored on disk. When you open <code>scaling_cur_freq</code>, the kernel works out the current clock and hands you text, such as <code>3532800</code> and a newline. Read it again a millisecond later and you may get a different number. <code>ls -l</code> shows 4096 bytes for most of these files; that is a placeholder, not the length of the text.</p>
-<p>So reading is the measurement. The value is true for the moment of the read and nothing longer.</p>
+<h2 id="files">Is a sysfs file stored anywhere?</h2>
+<p>You want the current clock speed, and a file called <code>scaling_cur_freq</code> has it. But <code>ls -l</code> shows 4096 bytes for most of these files, and the text inside is a few characters. <strong>sysfs</strong> is the part of the filesystem under <code>/sys</code> where the kernel shows its state as files. The size is a placeholder, not the length of the text.</p>
+<p>Nothing under <code>/sys</code> is stored on disk. When you open <code>scaling_cur_freq</code>, the kernel works out the current clock and hands you text, such as <code>3532800</code> and a newline. Read it again a millisecond later and you may get a different number.</p>
+<p>So reading is the measurement. The value is true for the moment of the read and nothing longer. Keep an old reading and you are reporting the past.</p>
+<p><strong>Takeaway: a sysfs file is computed when you read it, so every read is a fresh measurement.</strong></p>
 
-<h2 id="read">Read and parse</h2>
+<h2 id="read">How do you read a number from one?</h2>
+<p>The file gives you text like <code>"3532800\n"</code>. You want an <code>i64</code>. Four small steps get there.</p>
+
+<h3>Step 1: read the text</h3>
+<pre><code>let text = std::fs::read_to_string(path)?;     // "3532800\n"</code></pre>
+<ul>
+  <li><code>read_to_string</code> opens the file, reads everything and closes it.</li>
+  <li>The <code>?</code> returns the error to the caller if the read failed.</li>
+</ul>
+
+<h3>Step 2: remove the newline</h3>
+<pre><code>text.trim()                                    // "3532800"</code></pre>
+<ul>
+  <li><code>trim()</code> removes the trailing newline. Without it, <code>parse</code> fails on every file.</li>
+</ul>
+
+<h3>Step 3: turn it into a number</h3>
+<pre><code>.parse::&lt;i64&gt;()                                // Ok(3532800), or Err if not a number</code></pre>
+<ul>
+  <li><code>::&lt;i64&gt;</code> picks the number type. It is <code>i64</code>, signed, because <code>current_now</code> can be negative.</li>
+</ul>
+
+<h3>Step 4: give the function one error type</h3>
+<pre><code>.map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))</code></pre>
+<ul>
+  <li><code>map_err</code> turns a parse error into an I/O error, so the function has one error type.</li>
+  <li>A <code>Result</code> lets the caller decide what a missing file means.</li>
+</ul>
+
+<h3>All four together</h3>
 <pre><code>fn read_number(path: &amp;str) -&gt; std::io::Result&lt;i64&gt; {
     let text = std::fs::read_to_string(path)?;     // "3532800\n"
     text.trim()
         .parse::&lt;i64&gt;()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }</code></pre>
-<ul>
-  <li><code>read_to_string</code> opens, reads everything and closes. The <code>?</code> passes errors up to the caller.</li>
-  <li><code>trim()</code> removes the trailing newline. Without it, <code>parse</code> fails on every file.</li>
-  <li><code>i64</code>, signed, because <code>current_now</code> can be negative.</li>
-  <li>The <code>map_err</code> turns a parse error into an I/O error, so the function has one error type. A <code>Result</code> lets the caller decide what a missing file means.</li>
-</ul>
-<p>Three ways it fails, and what each one tells you:</p>
+<p>It can fail three ways. Each one tells you something, and handling it badly stops your benchmark:</p>
 <table>
   <thead><tr><th>Error</th><th>Usually means</th></tr></thead>
   <tbody>
@@ -62,9 +88,10 @@
     <tr><td><code>InvalidData</code></td><td>The text wasn’t one number. Some files hold words (<code>status</code> is <code>Discharging</code>) or several values. Read those with <code>read_to_string</code> and keep the text.</td></tr>
   </tbody>
 </table>
+<p><strong>Takeaway: read, trim, parse, and return the error; never assume the file exists or holds one number.</strong></p>
 
-<h2 id="units">Units</h2>
-<p>The kernel’s documentation fixes the units for these files. Phone vendors usually follow it, not always.</p>
+<h2 id="units">What unit is the number in?</h2>
+<p>A bare <code>3532800</code> means nothing until you know the unit. For this one it is kHz, so the clock is 3,532,800 ÷ 1,000,000 = 3.5328 GHz. The kernel’s documentation fixes the unit for each file. Phone vendors usually follow it, not always.</p>
 <table>
   <thead><tr><th>File</th><th>Documented unit</th><th>To get</th></tr></thead>
   <tbody>
@@ -86,21 +113,29 @@
   <pre class="formula" data-out></pre>
   <p class="note" data-note></p>
 </div>
-<p>Convert to <code>f64</code> before multiplying. Microamps times microvolts is 10<sup>−12</sup> watts per unit, and the raw product of two seven-digit numbers is fine in <code>f64</code> but easy to get wrong in your head. Write the unit into the name: <code>current_ua</code>, <code>power_w</code>.</p>
+<p>Convert to <code>f64</code> before multiplying. Microamps times microvolts is 10<sup>−12</sup> watts per unit, and the raw product of two seven-digit numbers is fine in <code>f64</code> but easy to get wrong in your head. Write the unit into the name: <code>current_ua</code>, <code>power_w</code>. Skip that and a milliampere gets read as an ampere without anything complaining.</p>
+<p><strong>Takeaway: look up the unit, convert in <code>f64</code>, and put the unit in the variable name.</strong></p>
 
-<h2 id="find">Find files instead of guessing</h2>
-<p>Thermal zone numbers aren’t stable across phones, and the plan’s paths are examples. List the directory and read each zone’s <code>type</code> file, which names the sensor:</p>
+<h2 id="find">How do you find the right files?</h2>
+<p>The plan lists paths such as <code>thermal_zone0</code>, but thermal zone numbers aren’t stable across phones, and the plan’s paths are examples. A wrong guess reads the wrong sensor. Each zone has a <code>type</code> file that names its sensor, so list the directory and read them:</p>
 <pre><code>for entry in std::fs::read_dir("/sys/class/thermal")? {
     let path = entry?.path();
     if let Ok(kind) = std::fs::read_to_string(path.join("type")) {
         println!("{}  {}", path.display(), kind.trim());
     }
 }</code></pre>
+<ul>
+  <li><code>read_dir</code> lists the entries of a directory. Each entry is itself a <code>Result</code>, hence the <code>?</code> twice.</li>
+  <li><code>path.join("type")</code> builds the path to that zone’s <code>type</code> file.</li>
+  <li><code>if let Ok(kind)</code> skips any entry whose <code>type</code> can’t be read.</li>
+</ul>
 <p>Pick the zones you want by name once, by hand, and write the names in the results file. A CPU sensor and a battery sensor answer different questions.</p>
+<p><strong>Takeaway: choose sensors by their <code>type</code> name, not by zone number.</strong></p>
 
-<h2 id="cost">What a read costs</h2>
-<p>Every read is a system call. The kernel runs driver code to produce the text, and some drivers have to ask a hardware chip. That is roughly microseconds <span class="tag a">assumption</span>: nothing at ten samples a second, but far too much inside a loop you are timing. Reads belong in the sampler thread, never in the benchmark.</p>
+<h2 id="cost">What does a read cost?</h2>
+<p>You may want to read these files often. Every read is a system call, a request to the kernel. The kernel runs driver code to produce the text, and some drivers have to ask a hardware chip. That is roughly microseconds <span class="tag a">assumption</span>: nothing at ten samples a second, but far too much inside a loop you are timing. Reads belong in the sampler thread, never in the benchmark.</p>
 <p>If you want to know the real cost, time a thousand reads of one file with the Phase 0 harness. That is a good first sysfs experiment.</p>
+<p><strong>Takeaway: sysfs reads are cheap for a sampler and too dear for the code under test.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Why does <code>"3532800\n".parse::&lt;i64&gt;()</code> fail?</summary>
@@ -113,12 +148,17 @@
 <p>No. The benchmark is the measurement and the sensor is extra. Record that the zone was unreadable, keep the zones that work, and say so in the results.</p>
 </details>
 
+<h2 id="takeaway">What you should take away</h2>
+<p>A sysfs file is text the kernel makes when you read it, so each read is one fresh measurement.</p>
+<p>Read, trim, parse, return the error, then convert using the documented unit.</p>
+<p>Find sensors by name, and read them from the sampler, not from the benchmark.</p>
+
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=11"></script>
-<script src="../js/glossary.js?v=11"></script>
-<script src="../js/site.js?v=11"></script>
+<script src="../js/pages.js?v=15"></script>
+<script src="../js/glossary.js?v=15"></script>
+<script src="../js/site.js?v=15"></script>
 </body>
 </html>
