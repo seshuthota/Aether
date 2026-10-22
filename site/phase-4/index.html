@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 4 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 4 · threads</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The thread pool and the split matmuls are in the engine, and threaded results are bit-identical to single-threaded ones, checked against the same numpy, llama2.c and Hugging Face goldens. The speeds on these pages are measured on battery. The clean sweep of speed and energy against core set is still to run.</p></div>
+
+<h1>Phase 4 — threads</h1>
+<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores. The hard part is not the arithmetic; it is that decode hands out a couple of hundred small jobs per token, and every one ends when its slowest thread does. The first threaded build was slower on eight cores than on two. Fixing that taught most of what this phase is about.</p>
+<nav class="toc">
+  <a href="#idea">The idea in one paragraph</a>
+  <a href="#result">The result</a>
+  <a href="#order">Read in this order</a>
+  <a href="#open">Still open</a>
+  <a href="#code">Where the code is</a>
+</nav>
+
+<h2 id="idea">The idea in one paragraph</h2>
+<p>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching, because starting threads or waking them through the kernel costs more than a job is worth. Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change. Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end. Put the thread that does the serial work on the fastest core. Then measure which cores are worth using, because on this phone the answer is not “all of them”.</p>
+
+<h2 id="result">The result</h2>
+<div class="statrow">
+  <div class="stat"><b>123.9 → 274.7 tok/s</b><span>SmolLM2-135M Q4_0 decode, core 7 alone → cores 2–7 <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>98.4 → 227.9 tok/s</b><span>all eight cores, equal shares → blocks <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>0.2 vs 54 µs</b><span>handing out one job: the pool vs fresh threads, on the PC <span class="tag m">measured on the PC</span></span></div>
+</div>
+
+<h2 id="order">Read in this order</h2>
+<ol>
+  <li><a href="pool.html">Threads that stay</a>: how many jobs a token hands out, what a hand-out costs three ways, and how the pool does it with two counters.</li>
+  <li><a href="split.html">Splitting the work</a>: rows, not pieces of rows; why equal shares failed; blocks from a shared counter; attention by head.</li>
+  <li><a href="waiting.html">Waiting: spin, then park</a>: the trade between reacting fast and leaving the core free, the lost wake-up, and false sharing.</li>
+  <li><a href="cores.html">Choosing cores</a>: prime and performance cores, the caller on the fastest core, and what each core set measured.</li>
+</ol>
+
+<h2 id="open">Still open</h2>
+<ul>
+  <li><strong>The clean sweep</strong>: decode and prefill against every core set from one core to eight, twice in opposite orders, with nothing else running; the hand-out cost on the phone; and joules per token for four sets over five minutes each. It needs the phone, and its results get their own page.</li>
+  <li><strong>Why cores 0–1 slow things down</strong>: the interrupt hypothesis, tested by counting <code>/proc/interrupts</code> per core in every run of the sweep.</li>
+  <li><strong>Where the rest of the time goes</strong>: SmolLM2 on six cores reads its weights at about a third of the memory bandwidth (<a href="cores.html#roof">Choosing cores</a>).</li>
+</ul>
+
+<h2 id="code">Where the code is</h2>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/pool.rs</code></td><td>The thread pool: pinned workers, epoch and done counters, spin then park, <code>for_blocks</code></td></tr>
+    <tr><td><code>src/kernels/mod.rs</code></td><td><code>matmul_on</code>, <code>linear_on</code>: the matmuls split by rows; the bit-identity test</td></tr>
+    <tr><td><code>src/model/transformer.rs</code></td><td>Attention split by head; the pool passed to every matmul</td></tr>
+    <tr><td><code>src/sys/affinity.rs</code></td><td>Pinning a thread to cores; parsing <code>-c 2-7</code></td></tr>
+    <tr><td><code>examples/bench_suite.rs</code></td><td>Prefill and decode speed for a model on a core set</td></tr>
+    <tr><td><code>results/phase-4.md</code></td><td>Measurements and their conditions</td></tr>
+  </tbody>
+</table>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The phone · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · concept 2</p>
+
+
+<h1>The phone</h1>
+<p class="lede">Once the binary exists, it still has to be copied somewhere the phone will execute it, and you have to be able to see the hardware you are about to measure. Phase 0 did that inspection. Phase 1 will use the same files as instruments.</p>
+<nav class="toc">
+  <a href="#adb">adb</a>
+  <a href="#where">Where a binary may run</a>
+  <a href="#chip">What this chip reported</a>
+  <a href="#features">Feature flags that matter later</a>
+  <a href="#fail">When a run goes silent</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="adb">adb</h2>
+<p><code>adb</code> is how the PC talks to the phone. Two commands cover Phase 0:</p>
+<ul>
+  <li><code>adb push &lt;local&gt; &lt;remote&gt;</code> copies a file to the phone.</li>
+  <li><code>adb shell &lt;command&gt;</code> runs one command there, the way a single SSH command would.</li>
+</ul>
+<p>This phone was attached over Wi-Fi, not USB, as <code>192.168.29.11</code> with a port. The port changed between sessions (45375, then 42065) <span class="tag m">measured</span>. <code>adb devices</code> is the first thing to check when a run produces no test output.</p>
+<p>Android adds SELinux on top of ordinary Unix permissions. Some things that work on a desktop Linux box are denied here even when the Unix mode bits look fine. The practical rule for Phase 0 is narrower than the whole of SELinux: there is one directory the shell user can both write and execute.</p>
+
+<h2 id="where">Where a binary may run</h2>
+<p><code>/data/local/tmp</code> is that directory. The runner uses <code>/data/local/tmp/aether</code>. Anything copied there still needs <code>chmod +x</code>.</p>
+<p>Running the same hello world from <code>/sdcard</code> returned <code>Permission denied</code> <span class="tag m">measured</span>. <code>/sdcard</code> is mounted so that execution is not allowed. That is why the runner does not push to the shared storage you can see from a file manager.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 150" role="img" aria-label="Two directories, only one can execute">
+  <rect class="good" x="24" y="28" width="290" height="90" rx="8" fill="var(--ok-soft)" stroke="var(--ok)"/>
+  <text x="169" y="62" text-anchor="middle">/data/local/tmp/aether</text>
+  <text class="muted" x="169" y="84" text-anchor="middle" font-size="12">write and execute</text>
+  <text class="muted" x="169" y="102" text-anchor="middle" font-size="12">the runner’s directory</text>
+  <rect class="bad" x="360" y="28" width="290" height="90" rx="8" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="505" y="62" text-anchor="middle">/sdcard</text>
+  <text class="muted" x="505" y="84" text-anchor="middle" font-size="12">Permission denied</text>
+  <text class="muted" x="505" y="102" text-anchor="middle" font-size="12">mounted noexec</text>
+</svg>
+<figcaption>Same binary, two paths. Only one of them is allowed to execute.</figcaption>
+</figure>
+
+<h2 id="chip">What this chip reported</h2>
+<p>Probed with <code>getprop</code>, <code>uname -m</code>, <code>/proc/cpuinfo</code>, and <code>cpuinfo_max_freq</code> <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Property</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>ro.soc.model</code></td><td>SM8750</td></tr>
+    <tr><td><code>ro.soc.manufacturer</code></td><td>QTI</td></tr>
+    <tr><td><code>ro.product.model</code></td><td>I2401 (iQOO 13)</td></tr>
+    <tr><td><code>ro.build.version.release</code></td><td>16</td></tr>
+    <tr><td><code>ro.build.version.sdk</code></td><td>36</td></tr>
+    <tr><td><code>uname -m</code></td><td>aarch64</td></tr>
+    <tr><td>CPU part, all 8 cores</td><td><code>0x001</code></td></tr>
+  </tbody>
+</table>
+<p>Qualcomm’s product brief for SM8750 describes an Oryon CPU with prime cores up to 4.32 GHz on this version of the platform (a faster bin exists; this phone is not it) and performance cores up to 3.53 GHz. The sysfs frequencies match that bin exactly. There is no third, slower class.</p>
+<figure>
+<svg class="fig" viewBox="0 0 720 168" role="img" aria-label="Eight cores in two frequency classes">
+  <text class="muted" x="20" y="22" font-size="12">cpuinfo_max_freq</text>
+  <!-- perf cores -->
+  <g>
+    <rect x="20" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="92" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="164" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="236" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="308" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="380" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  </g>
+  <g>
+    <rect x="476" y="40" width="96" height="72" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+    <rect x="580" y="40" width="96" height="72" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  </g>
+  <text class="mono" x="52" y="72" text-anchor="middle" font-size="12">cpu0</text>
+  <text class="mono" x="124" y="72" text-anchor="middle" font-size="12">cpu1</text>
+  <text class="mono" x="196" y="72" text-anchor="middle" font-size="12">cpu2</text>
+  <text class="mono" x="268" y="72" text-anchor="middle" font-size="12">cpu3</text>
+  <text class="mono" x="340" y="72" text-anchor="middle" font-size="12">cpu4</text>
+  <text class="mono" x="412" y="72" text-anchor="middle" font-size="12">cpu5</text>
+  <text class="mono" x="524" y="72" text-anchor="middle" font-size="12">cpu6</text>
+  <text class="mono" x="628" y="72" text-anchor="middle" font-size="12">cpu7</text>
+  <text class="muted" x="230" y="96" text-anchor="middle" font-size="11">3.53 GHz</text>
+  <text class="muted" x="576" y="96" text-anchor="middle" font-size="11">4.32 GHz</text>
+  <text x="230" y="146" text-anchor="middle">performance, cores 0–5</text>
+  <text x="576" y="146" text-anchor="middle">prime, cores 6–7</text>
+</svg>
+<figcaption>All eight cores report the same CPU part. The split is frequency, not a little-core design. 3532800 kHz and 4320000 kHz, read from sysfs.</figcaption>
+</figure>
+<div class="callout warn"><span class="lbl">The plan was too general</span><p>A generic Snapdragon story has prime, performance, and efficiency cores. This chip has no efficiency cores. One thread on a slow core dragging a parallel matmul is a real problem on older phones. Whether the 3.53 versus 4.32 split matters for bandwidth and energy is a Phase 1 question, not something to assume from the plan.</p></div>
+<p>Current frequency is a different file, <code>scaling_cur_freq</code>. It moves. Idle cores sit slower and ramp up under load. That ramp is one reason a timing needs warm-up. Phase 0 did not catch the ramp in the sum experiment; the earlier experiments had already kept a core busy. The mechanism is still real. Phase 1 reads this file while a benchmark runs.</p>
+
+<h2 id="features">Feature flags that matter later</h2>
+<p><code>/proc/cpuinfo</code> <code>Features</code> line, first core <span class="tag m">measured</span>. The flags Phase 3 and Phase 6 will care about:</p>
+<table>
+  <thead><tr><th>Flag</th><th>Present</th><th>Later use</th></tr></thead>
+  <tbody>
+    <tr><td><code>asimd</code></td><td>yes</td><td>Base NEON. 128-bit vector registers. Phase 3.</td></tr>
+    <tr><td><code>asimddp</code></td><td>yes</td><td>Dot-product instructions. Quantized GEMV in Phase 6.</td></tr>
+    <tr><td><code>i8mm</code></td><td>yes</td><td>8-bit matrix multiply (<code>smmla</code>). Quantized GEMM, if the intrinsics are stable on the toolchain.</td></tr>
+    <tr><td><code>bf16</code></td><td>yes</td><td>Arithmetic on bfloat16 (“brain float”) numbers: <code>BFDOT</code> and <code>BFMMLA</code> multiply bf16 pairs and add into f32, <code>BFCVT</code> converts f32 to bf16. Safetensors weights are often bf16; just reading them needs no special instruction.</td></tr>
+    <tr><td><code>fphp</code>, <code>asimdhp</code></td><td>yes</td><td>Half precision.</td></tr>
+    <tr><td><code>sve</code> / <code>sve2</code></td><td>no</td><td>Do not plan SVE kernels for this phone.</td></tr>
+  </tbody>
+</table>
+<p>The full line also includes crypto and pointer-auth flags (<code>aes</code>, <code>sha2</code>, <code>paca</code>, and others). They do not change the inference plan. Detect features at runtime with <code>is_aarch64_feature_detected!</code> when kernels start to diverge. Do not hard-code “this is an 8 Elite” into the op itself. That habit starts in Phase 3; Phase 0 only needs the idea.</p>
+<p>Qualcomm’s brief also lists LPDDR5X, up to 5300 MHz, and up to 24 GB. It does not publish a GB/s figure, and “5300 MHz” does not by itself say whether that is the clock or the transfer rate. The ~85 GB/s figure you may see (a 64-bit bus × ~10.6 billion transfers per second) is a back-of-envelope guess to verify, not a measurement. <span class="tag a">assumption</span> Phase 1 measures what one core and all cores actually move.</p>
+
+<h2 id="fail">When a run goes silent</h2>
+<p>After the config change, a test run printed nothing. The config was fine. <code>adb</code> reported no devices. The runner cannot push, so Cargo’s output is just the failure from <code>adb</code>, easy to miss if you are looking for <code>test result</code>. Check the phone before debugging the linker path.</p>
+<p>Files you will read again in Phase 1, already confirmed to exist as a category of interface:</p>
+<ul>
+  <li><code>/proc/cpuinfo</code> — features and CPU part.</li>
+  <li><code>/sys/devices/system/cpu/cpuN/cpufreq/</code> — max and current frequency.</li>
+  <li><code>/sys/class/thermal/</code> — temperatures. Not sampled in Phase 0.</li>
+  <li><code>/sys/class/power_supply/battery/</code> — current and voltage. Units and sign vary by device. Not sampled in Phase 0.</li>
+</ul>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why <code>/data/local/tmp</code> and not <code>/sdcard</code>?</summary>
+<p>The adb shell user can write and execute under <code>/data/local/tmp</code>. <code>/sdcard</code> refused to execute the binary. The runner’s first lines create that directory, push, and <code>chmod +x</code>.</p>
+</details>
+<details class="check"><summary>How many core classes does this phone have?</summary>
+<p>Two frequency classes, eight cores, one CPU part. Cores 0–5 max out at 3.53 GHz. Cores 6–7 max out at 4.32 GHz. No efficiency cores.</p>
+</details>
+<details class="check"><summary>Which of those facts is a measurement, and which is a datasheet claim?</summary>
+<p>The frequencies, the CPU part, the feature flags, the model, and the SDK level were read off the phone. “Oryon”, the LPDDR5X line, and any cache size are from Qualcomm’s brief or launch coverage. Cache sizes were not read from sysfs in Phase 0. Do not treat them as measured until the working-set sweep shows the cliffs.</p>
+</details>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>

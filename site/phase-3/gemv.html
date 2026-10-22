@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEMV in three steps · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 03</p>
+<h1>GEMV in three steps</h1>
+<p class="lede">GEMV (general matrix-vector multiply) is decode's main cost: 97.6 % of the Phase 2 profile. Phase 3 rebuilt it in three steps, each removing one limit, and benchmarked every step on six matrices. This page goes through the steps, the measurements, and the one case where the “best” kernel loses.</p>
+<nav class="toc">
+  <a href="#measure">How it is measured</a>
+  <a href="#steps">The three steps</a>
+  <a href="#four-rows">Step 3: four rows at once</a>
+  <a href="#results">All six matrices</a>
+  <a href="#loses">When the last step loses</a>
+  <a href="#ceiling">How close to the ceiling?</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="measure">How it is measured</h2>
+<p><code>examples/gemv_bench.rs</code> runs each kernel on each matrix many times on prime core 7 and takes the median (<a href="../phase-0/measuring-time.html">Phase 0</a>). The result is given in <strong>GB/s of weights read</strong>: matrix bytes ÷ time. That unit makes the kernels comparable with Phase 1's memory bandwidth, which is the ceiling decode cannot beat. All numbers from <code>results/phase-3.md</code>, on battery caps <span class="tag m">measured</span>.</p>
+
+<h2 id="steps">The three steps</h2>
+<table>
+  <thead><tr><th>Step</th><th>Kernel</th><th>Removes</th><th>Still limited by</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>scalar (Phase 2)</td><td>—</td><td>one chain of adds, one number at a time</td></tr>
+    <tr><td>1</td><td><code>gemv_one_acc</code></td><td>width: 4 lanes per instruction</td><td>one chain of FMAs (<a href="chains.html">latency</a>)</td></tr>
+    <tr><td>2</td><td><code>gemv_row_4acc</code></td><td>the chain: 4 accumulators per row</td><td>loads: 2 loads for every FMA</td></tr>
+    <tr><td>3</td><td><code>gemv</code></td><td>half the loads: 4 rows share each <var>x</var></td><td>memory, or the access pattern</td></tr>
+  </tbody>
+</table>
+<div class="widget" data-gemvbars>
+  <h3>Each step, measured</h3>
+  <div class="controls"><label class="field">Matrix<select data-pick></select></label></div>
+  <div class="bars" data-bars></div>
+  <p class="note" data-note></p>
+</div>
+
+<h2 id="four-rows">Step 3: four rows at once</h2>
+<p>After step 2, each FMA needs two loads: 4 weights and 4 numbers of <var>x</var>. But every row multiplies by the <em>same</em> <var>x</var>. Load a piece of <var>x</var> once and use it for four rows, and each step does 8 FMAs (4 rows × 2 halves) from 8 weight loads + 2 <var>x</var> loads: 1.25 loads per FMA instead of 2.</p>
+<pre><code>for j in (0..n8).step_by(8) {
+    let (x0, x1) = (vld1q_f32(xp.add(j)), vld1q_f32(xp.add(j + 4)));  // x: loaded once
+    for k in 0..4 {                                                   // … used by 4 rows
+        lo[k] = vfmaq_f32(lo[k], vld1q_f32(r[k].add(j)), x0);
+        hi[k] = vfmaq_f32(hi[k], vld1q_f32(r[k].add(j + 4)), x1);
+    }
+}</code></pre>
+<p>Two accumulators per row × four rows = 8 independent chains, using 8 + 2 + a few registers. Rows left over when the count is not a multiple of 4 go through step 2's <code>dot_row</code>.</p>
+
+<h2 id="results">All six matrices</h2>
+<table>
+  <thead><tr><th>Matrix</th><th>scalar</th><th>1 acc</th><th>4 acc</th><th>4 rows (<code>gemv</code>)</th></tr></thead>
+  <tbody>
+    <tr><td>stories15M wq 288×288 (324 KB, in L2)</td><td class="num">5.3</td><td class="num">17.8</td><td class="num">41.6</td><td class="num"><strong>53.5</strong></td></tr>
+    <tr><td>stories15M w1 768×288 (864 KB, in L2)</td><td class="num">5.3</td><td class="num">17.8</td><td class="num">41.4</td><td class="num"><strong>52.9</strong></td></tr>
+    <tr><td>stories15M classifier 32000×288 (36.9 MB)</td><td class="num">5.3</td><td class="num">17.6</td><td class="num"><strong>41.4</strong></td><td class="num">29.0</td></tr>
+    <tr><td>Qwen2.5 up 4864×896 (17.4 MB)</td><td class="num">3.5</td><td class="num">13.3</td><td class="num"><strong>40.2</strong></td><td class="num">32.9</td></tr>
+    <tr><td>Qwen2.5 down 896×4864 (17.4 MB)</td><td class="num">3.1</td><td class="num">9.5</td><td class="num">36.2</td><td class="num"><strong>48.6</strong></td></tr>
+    <tr><td>synthetic 8192×8192 (256 MB, DRAM)</td><td class="num">3.0</td><td class="num">9.3</td><td class="num">36.0</td><td class="num"><strong>40.6</strong></td></tr>
+  </tbody>
+</table>
+<p>GB/s, one prime core <span class="tag m">measured</span>. Step 1 gives 3.1–3.8×, step 2 another 2.3–3.9×; together about 8–16× over scalar.</p>
+
+<h2 id="loses">When the last step loses</h2>
+<p>On two matrices, step 3 is <em>slower</em> than step 2: the classifier (29.0 vs 41.4) and Qwen's up projection (32.9 vs 40.2). What they have in common: they are big (they do not fit in cache) and their rows are short (288 and 896 floats, 1.1 and 3.5 KB).</p>
+<p>Step 2 reads one row after another: one straight stream through memory. Step 3 reads four rows at once: four streams, each jumping ahead by four rows after only 1–3.5 KB. The hardware prefetcher, which fetches lines before the code asks for them, follows one long stream easily. Four short interleaved streams that keep jumping seem to suit it less well. That explanation is likely, <strong>not measured</strong>; a <code>simpleperf</code> count of cache misses per kernel would test it.</p>
+<p>The lesson is a common one in performance work: the kernel that wins on one shape can lose on another, and only measuring every real shape finds out. The fix, choosing the kernel by row length, is not done yet.</p>
+
+<h2 id="ceiling">How close to the ceiling?</h2>
+<p>On the 256 MB matrix, which must come from DRAM, <code>gemv</code> reaches 40.6 GB/s. Phase 1 measured about 61 GB/s for a pure read on the same core: 67 % of it. The rest goes on the arithmetic and the final lane sums mixed in between the loads. For decode on one core, that is the point where the kernel is no longer the main problem; memory is. From here, the big gains come from <a href="../phase-1/memory.html">reading fewer bytes</a> (quantization, Phase 6) and <a href="../phase-4/index.html">more cores</a> (Phase 4).</p>
+<p>End to end: stories15M on core 7 went from 88.6 to <strong>422 tokens per second</strong> <span class="tag m">measured</span>.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does step 3 need fewer loads per FMA than step 2?</summary>
+<p>Each loaded piece of <var>x</var> is used by four rows instead of one: 8 weight loads + 2 <var>x</var> loads feed 8 FMAs (1.25 loads per FMA, vs 2).</p>
+</details>
+<details class="check"><summary>Why are the scalar numbers almost the same (5.3 GB/s) for the small and the 36.9 MB matrices?</summary>
+<p>The scalar loop is limited by its add chain, not by memory, so where the data comes from barely matters. The prefetcher keeps up easily with such a slow loop.</p>
+</details>
+<details class="check"><summary>Why measure in GB/s instead of FLOPs?</summary>
+<p>Because decode's ceiling is memory bandwidth: every weight is read once per token. GB/s compares the kernel directly with Phase 1's measured read speed.</p>
+</details>
+<details class="check"><summary>The engine uses step 3 everywhere. Is that the best choice for the classifier?</summary>
+<p>No: on the classifier step 2 is faster (41.4 vs 29.0 GB/s). Choosing by row length would recover it; it is a known open item.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

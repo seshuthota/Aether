@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 0 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · done</p>
+<div class="callout banner"><span class="lbl">Finished work</span><p>These pages describe the Phase 0 that is in the repo. The numbers tagged measured came off the iQOO 13 or the host during that work.</p></div>
+
+<h1>Phase 0 — code on the phone, and numbers you can trust</h1>
+<p class="lede">Phase 0’s job was not a model. It was the loop every later phase uses: compile for the phone, run there, time something without fooling yourself, and address a tensor as a flat buffer.</p>
+<div class="callout ok"><span class="lbl">Done</span><p>The success check in the plan is met: <code>cargo test --target aarch64-linux-android</code> runs a test on the phone and reports the result in the host terminal. The first commit is <code>5632c75</code>.</p></div>
+<nav class="toc">
+  <a href="#concepts">Concepts</a>
+  <a href="#files">What landed in the repo</a>
+  <a href="#numbers">Numbers worth keeping</a>
+  <a href="#not">What was left alone</a>
+</nav>
+
+<h2 id="concepts">The five concepts, in order</h2>
+<p>1 through 3 get a binary executing on the Snapdragon. 4 and 5 are about thinking in time and in bytes. The decode ceiling is the idea those two are building toward, so it has its own page even though it was taught inside concept 5.</p>
+<ol>
+  <li><a href="cross-compilation.html">Cross-compilation</a> — host versus target, the triple, Bionic versus glibc, API level 31.</li>
+  <li><a href="android.html">The phone</a> — adb, <code>/data/local/tmp</code>, and what <code>cpuinfo</code> actually said.</li>
+  <li><a href="cargo.html">Cargo and the runner</a> — profiles, the test executable, <code>scripts/adb-run.sh</code> line by line.</li>
+  <li><a href="measuring-time.html">Measuring time</a> — <code>Instant</code>, <code>black_box</code>, warm-up, median, the harness.</li>
+  <li><a href="tensors.html">Tensors</a> — shape, row-major strides, the <code>Tensor</code> invariants.</li>
+  <li><a href="decode-ceiling.html">The decode ceiling</a> — bytes per weight, and why unlimited compute does not help.</li>
+</ol>
+
+<h2 id="files">What landed in the repo</h2>
+<table>
+  <thead><tr><th>Path</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/lib.rs</code></td><td>The library crate. Placeholder <code>add</code>, plus a test that prints <code>std::env::consts::ARCH</code> so a run shows whether it is on the PC or the phone.</td></tr>
+    <tr><td><code>src/main.rs</code></td><td>Binary. Allocates a 4096×4096 f32 tensor and prints its size: 64 MiB, a real weight-matrix footprint.</td></tr>
+    <tr><td><code>src/bench.rs</code></td><td>Warm-up, per-call timing, min / median / mean / max.</td></tr>
+    <tr><td><code>src/tensor.rs</code></td><td>Owned f32 buffer, shape, stored row-major strides. Addressing only. No arithmetic.</td></tr>
+    <tr><td><code>examples/timing.rs</code></td><td>Throwaway experiments A, B, and C. Not part of the engine.</td></tr>
+    <tr><td><code>examples/bench_sum.rs</code></td><td>The same sum, through the harness.</td></tr>
+    <tr><td><code>scripts/adb-run.sh</code></td><td>Cargo runner. Push, run, delete, return the phone’s exit code.</td></tr>
+    <tr><td><code>.cargo/config.toml.example</code></td><td>Linker and runner for <code>aarch64-linux-android</code>. The real config is gitignored because the NDK path is this machine’s.</td></tr>
+    <tr><td><code>Cargo.toml</code></td><td>Release profile keeps debug symbols, uses fat LTO, one codegen unit.</td></tr>
+    <tr><td><code>tools/</code> <code>testdata/</code> <code>results/</code> <code>notes/</code></td><td>Empty placeholders. Golden files and benchmark logs come later. Large files in <code>testdata/</code> stay out of git.</td></tr>
+  </tbody>
+</table>
+<p><code>notes/phase-0.md</code> is still yours. The plan asks for that journal in your own words. This site is the reference, not a substitute for it.</p>
+
+<h2 id="numbers">Numbers worth keeping</h2>
+<div class="statrow">
+  <div class="stat"><b>45 ns</b><span>phone, one <code>Instant::now</code> <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>4.94 ms</b><span>median, 4M f32 sum <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>3.3 GB/s</b><span>that sum, not DRAM <span class="tag c">calculated</span></span></div>
+  <div class="stat"><b>64 MiB</b><span>4096×4096 f32 <span class="tag c">calculated</span></span></div>
+</div>
+<p>The 3.3 GB/s figure is 16×10<sup>6</sup> bytes in about 4.9 ms. It is far below what DRAM can do. The addition chain is waiting on itself. That distinction is the whole point of <a href="measuring-time.html">measuring time</a> and of the <a href="../phase-1/roofline.html">roofline</a> reading.</p>
+
+<h2 id="not">What was deliberately left alone</h2>
+<ul>
+  <li>No dtype enum. f32 only, until quantization needs more.</li>
+  <li>No aligned allocator. <code>Vec&lt;f32&gt;</code> is 4-byte aligned. Phase 1 replaces that.</li>
+  <li>No batch timer. The harness times one call. Fine while a call is milliseconds; wrong when a call is tens of nanoseconds.</li>
+  <li>No views or transpose. Strides are stored so a later transpose can swap them without moving bytes. That code does not exist yet.</li>
+  <li>Doc-tests still run on the host. Cargo limitation. We will not write doc-tests that need the phone.</li>
+</ul>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choosing the next token · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 09</p>
+<h1>Choosing the next token</h1>
+<p class="lede">The forward pass ends with 32,000 numbers, one score per token in the vocabulary. Something has to pick one. Always taking the best gives repetitive text; picking at random gives nonsense. Sampling sits between, with three dials: temperature, top-k and top-p. This page explains each, and how the engine's random choices can be replayed exactly.</p>
+<nav class="toc">
+  <a href="#logits">Logits and probabilities</a>
+  <a href="#greedy">Greedy</a>
+  <a href="#temperature">Temperature</a>
+  <a href="#topk">Top-k</a>
+  <a href="#topp">Top-p (nucleus)</a>
+  <a href="#play">Try the dials</a>
+  <a href="#rng">A random generator you can replay</a>
+  <a href="#loop">The generation loop</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="logits">Logits and probabilities</h2>
+<p>The classifier multiplies the final 288-number vector by the 32,000 × 288 table. Each of the 32,000 results is a <strong>logit</strong>: a raw score, any real number, higher meaning “more likely next”. <a href="attention.html#softmax">Softmax</a> turns logits into probabilities that add up to 1. Sampling is choosing a token from those probabilities.</p>
+
+<h2 id="greedy">Greedy</h2>
+<p>Pick the token with the highest logit (<code>argmax</code>). No randomness: the same prompt always gives the same text. That makes greedy the right mode for testing, and every correctness check in this project uses it (<code>-t 0</code>). For writing, it tends to loop: the model's single most likely continuation is often a phrase it has just said.</p>
+
+<h2 id="temperature">Temperature</h2>
+<p>Divide every logit by a number <var>T</var> before softmax.</p>
+<ul>
+  <li><var>T</var> &lt; 1 makes gaps between logits bigger, so the top tokens take more of the probability. Safer, duller.</li>
+  <li><var>T</var> = 1 leaves the model's own distribution.</li>
+  <li><var>T</var> &gt; 1 shrinks the gaps, so unlikely tokens get a real chance. More surprising, eventually incoherent.</li>
+  <li><var>T</var> → 0 approaches greedy, which is why <code>-t 0</code> means greedy.</li>
+</ul>
+
+<h2 id="topk">Top-k</h2>
+<p>Keep only the <var>k</var> most likely tokens, set the rest to zero, rescale the kept ones to add up to 1, and draw. It cuts off the long tail of thousands of tokens that are each unlikely but together add up to a real chance of a bad pick.</p>
+
+<h2 id="topp">Top-p (nucleus)</h2>
+<p>Sort the tokens by probability and keep the smallest set from the top whose probabilities add up to more than <var>p</var> (say 0.9). Draw from that set. Unlike top-k, the set adapts: when the model is confident, one or two tokens already make 90 %; when it is unsure, the set grows. This is llama2.c's default (<var>p</var> = 0.9), and Aether's.</p>
+<p>A neat speed trick from llama2.c, which the engine copies: a token with probability below (1 − <var>p</var>) ÷ (32,000 − 1) can never be in the nucleus, so those are dropped before sorting. A 32,000-item sort becomes a sort of a few hundred.</p>
+
+<h2 id="play">Try the dials</h2>
+<p>Eight made-up logits for the word after “Once upon a time, there was a little” <span class="tag a">illustration</span>. Greyed words cannot be drawn.</p>
+<div class="widget" data-sampler2>
+  <h3>Temperature, top-k, top-p</h3>
+  <div class="controls">
+    <label class="field">temperature <span data-t-label></span><input type="range" data-t min="0" max="2" step="0.05" value="1"></label>
+    <label class="field">top-k <span data-k-label></span><input type="range" data-k min="0" max="8" step="1" value="0"></label>
+    <label class="field">top-p <span data-p-label></span><input type="range" data-p min="0.05" max="1" step="0.05" value="0.9"></label>
+  </div>
+  <div data-weights></div>
+  <div class="controls">
+    <button class="btn" type="button" data-draw>Draw a word</button>
+    <button class="btn ghost" type="button" data-clear>Clear</button>
+  </div>
+  <div class="chips" data-chips></div>
+  <p class="note" data-note></p>
+</div>
+<p>Try temperature 0.3 and draw ten times, then 1.8 and draw ten times. Then set top-p to 0.5 and watch the tail disappear.</p>
+
+<h2 id="rng">A random generator you can replay</h2>
+<p>A computer has no dice. Sampling uses a <strong>pseudo-random number generator</strong>: a small formula that turns one 64-bit number (the state) into the next, producing a sequence that looks random. Start from the same <em>seed</em> and you get exactly the same sequence.</p>
+<p>Aether uses the same generator as llama2.c, <em>xorshift*</em>: three shifts and XORs to scramble the state, then one multiplication to produce the output:</p>
+<pre><code>fn next_u32(&amp;mut self) -&gt; u32 {
+    self.rng ^= self.rng &gt;&gt; 12;
+    self.rng ^= self.rng &lt;&lt; 25;
+    self.rng ^= self.rng &gt;&gt; 27;
+    (self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D) &gt;&gt; 32) as u32
+}
+fn next_f32(&amp;mut self) -&gt; f32 {
+    (self.next_u32() &gt;&gt; 8) as f32 / 16_777_216.0   // 24 bits → [0, 1)
+}</code></pre>
+<p>Then the draw itself: take a random number <var>r</var> in [0, 1), walk the kept tokens adding up their probabilities, and stop at the first one where the running total passes <var>r</var>. A token with probability 0.3 owns a stretch of 0.3 of that line, so it is hit 30 % of the time.</p>
+<p>Why copy llama2.c's generator and its exact top-p procedure? Because then sampled runs can be checked too, not just greedy ones. With <code>-t 0.8 -p 0.9 -s 42</code>, Aether and llama2.c pick the same 64 tokens <span class="tag m">measured</span>. The seed is the only thing that makes one sampled run differ from another. Pass <code>-s</code> to fix it; without it the CLI takes the current time, so every run is new.</p>
+
+<h2 id="loop">The generation loop</h2>
+<p>Put together, generating text is:</p>
+<ol class="steps">
+  <li>Tokenize the prompt: BOS + its tokens.</li>
+  <li>Feed the prompt tokens through the model one by one (or all at once, Phase 3's <a href="../phase-3/prefill.html">prefill</a>), filling the KV cache.</li>
+  <li>From the logits of the last prompt token, sample the next token. Print its text.</li>
+  <li>Feed that token in at the next position, get new logits, sample again.</li>
+  <li>Stop when the model emits BOS (llama2.c's models mark the end of a story by starting a new one) or at the length limit (<code>-n</code>, 256 by default).</li>
+</ol>
+<p>Step 3–4 is <em>decode</em>, and each turn of it is one full forward pass. Tokens per second, the number this project measures, counts those turns.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does every correctness test use temperature 0?</summary>
+<p>Greedy has no randomness, so the same model must produce the same tokens. Any difference from the reference is a bug, not chance.</p>
+</details>
+<details class="check"><summary>Logits [2, 1]. With <var>T</var> = 0.5, what are the probabilities?</summary>
+<p>Scaled logits [4, 2]: e⁴ ≈ 54.6, e² ≈ 7.39; probabilities ≈ 0.88, 0.12. At <var>T</var> = 1 they would be 0.73, 0.27: lower temperature sharpened them.</p>
+</details>
+<details class="check"><summary>The model is very sure: one token has probability 0.95. With top-p 0.9, how many tokens can be drawn?</summary>
+<p>One. That token alone already passes 0.9.</p>
+</details>
+<details class="check"><summary>Two runs with the same seed, prompt and settings give different text. What does that tell you?</summary>
+<p>Something other than the sampler differs: the logits themselves changed (a bug, a different kernel or summation order) or the generator was used differently. The sampler alone is deterministic for a given seed.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

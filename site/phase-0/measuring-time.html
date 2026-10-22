@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Measuring time · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · concept 4</p>
+
+
+<h1>Measuring time</h1>
+<p class="lede">A wrong timing is worse than no timing. It sends you off to optimize something that is not slow. Phase 0’s experiments were designed to show the three ways a number lies: the clock, the compiler, and a single noisy run.</p>
+<nav class="toc">
+  <a href="#instant">Monotonic time</a>
+  <a href="#clock">The clock has a cost</a>
+  <a href="#compiler">The compiler deletes work</a>
+  <a href="#warmup">Warm-up, and the run that did not show it</a>
+  <a href="#stats">Median, min, mean, max</a>
+  <a href="#harness">The harness</a>
+  <a href="#trap">The 3.3 GB/s trap</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="instant">Monotonic time</h2>
+<p><code>std::time::Instant</code> is a monotonic clock. On Linux and Android that is <code>CLOCK_MONOTONIC</code>: it does not jump backward when the wall clock is corrected by NTP or by the user. Wall-clock time is the wrong tool for “how long did this loop take.”</p>
+<p><code>Instant</code> is good enough for microbenchmarks once each timed call is much longer than a clock read. It is not a substitute for thinking about what the compiler did to the call.</p>
+
+<h2 id="clock">The clock has a cost</h2>
+<p>Experiment A timed a million calls to <code>Instant::now()</code>, wrapped in <code>black_box</code> so the calls were not deleted <span class="tag m">measured</span>:</p>
+<div class="statrow">
+  <div class="stat"><b>14 ns</b><span>per call, PC</span></div>
+  <div class="stat"><b>45 ns</b><span>per call, phone</span></div>
+</div>
+<p>If the thing you are timing takes 50 ns, a pair of clock reads is the same size as the work. The number is mostly the clock. The rule: only trust a timing when the operation takes much longer than one clock read. For a tiny kernel, time a batch and divide. The harness does not do that yet, on purpose. Add it when a kernel needs it, not before.</p>
+<div class="widget" data-clock>
+  <h3>How much of the number is the clock?</h3>
+  <p>Slide the length of the work you are timing. One clock read on the phone costs about 45 ns <span class="tag m">measured</span>, and roughly that much lands inside every timed interval.</p>
+  <div class="controls">
+    <label class="field">work being timed (log scale, 10 ns to 10 ms)
+      <input data-work type="range" min="1" max="7" step="0.05" value="2">
+    </label>
+  </div>
+  <div data-bars></div>
+  <div class="legend"><span><i style="background:var(--accent)"></i>the work</span><span><i style="background:var(--copper)"></i>clock overhead</span></div>
+  <p class="formula" data-out></p>
+</div>
+
+<h2 id="compiler">The compiler deletes work</h2>
+<p>Experiment B summed 4 million <code>f32</code>s, ten times, in a release build. The function is <code>#[inline(never)]</code>, and f32 addition is not associative, so the compiler may not reorder the adds inside one sum. It can still delete whole calls whose results nobody looks at.</p>
+<div class="bars" aria-label="Ten sums, phone">
+  <div class="bar alt"><span>result unused</span><i style="--w:10%"></i><b>4.9 ms</b></div>
+  <div class="bar"><span>black_box</span><i style="--w:100%"></i><b>49.9 ms</b></div>
+</div>
+<p>Phone numbers above. The PC was 1.8 ms unused and 18.6 ms with <code>black_box</code> <span class="tag m">measured</span>. The unused loop took about <em>one</em> sum, not zero and not ten. Compare 4.9 ms with the ~4.9 ms of a single sum in experiment C.</p>
+<div class="callout warn"><span class="lbl">Easy to get wrong</span><p>This was not the second <code>cargo run</code> reusing a result from the first. The reuse happened at compile time. The compiler saw ten identical calls, nothing observing the result, inputs unchanged, and emitted about one call. The benchmark then reported a time for ten sums while doing about one sum of work. A kernel that looks 10× faster than it is will send you to optimize the wrong thing.</p></div>
+<p><code>std::hint::black_box</code> hides a value from the optimizer. The compiler must assume it cannot predict the value and cannot prove the result is unused. It does not make the CPU do extra work. It is a best-effort hint, so a timing still has to be checked against a number you can predict. The harness matching the hand-written loop was that check.</p>
+
+<h2 id="warmup">Warm-up, and the run that did not show it</h2>
+<p>The first executions of a path pay costs that are real and not the steady state:</p>
+<ul>
+  <li><strong>Cold caches.</strong> Instructions and data are not in L1 yet.</li>
+  <li><strong>Page faults.</strong> The OS maps a heap page when it is first touched, not when <code>Vec</code> reserves it.</li>
+  <li><strong>Frequency ramp.</strong> A phone idles at a low clock and steps up under load. <code>scaling_cur_freq</code> is the file that moves.</li>
+</ul>
+<p>Experiment C, 30 sums on the phone, was tight: about 4929–4988 µs <span class="tag m">measured</span>. The ramp did not appear. Experiments A and B had already kept a core busy for ~100 ms, so the clock was already up by the time C started. The effect is real. That run is not evidence of it. To see it, sleep a few seconds at the start of <code>main</code> so the core drops, then time the first iteration. Phase 0 did not treat the small <code>max</code> gap in the harness runs as proof of warm-up either. A single slow sample among 30 can be the scheduler, not the clock ramp.</p>
+
+<h2 id="stats">Median, min, mean, max</h2>
+<p>The PC’s 30 runs had outliers (2446 µs and 2761 µs against a typical ~1740) because other programs compete for the CPU <span class="tag m">measured</span>. A few bad samples pull the mean up and barely move the median. The phone was quiet enough that min, median, and mean agreed. Report all of them anyway. The day the phone is not quiet, the mean will lie and the median will not.</p>
+<div class="widget" data-median>
+  <h3>Outlier versus median</h3>
+  <p>Four runs of 10 ms and one outlier. This is the harness test <code>outlier_moves_mean_but_not_median</code>, as a slider. At 100 ms the mean is 28 ms and the median stays 10.</p>
+  <div class="controls">
+    <label class="field">outlier, ms
+      <input data-outlier type="range" min="10" max="100" value="100">
+    </label>
+  </div>
+  <svg class="fig" viewBox="0 0 640 104" role="img" aria-label="Four samples at 10 ms, one outlier, with median and mean marked"></svg>
+  <p class="formula" data-out></p>
+</div>
+<p>Two harness runs of the same 4M sum, 30 iterations, on the phone <span class="tag m">measured</span>. <code>Stats</code> prints nanoseconds; they are shown here in milliseconds.</p>
+<table>
+  <thead><tr><th></th><th>min</th><th>median</th><th>mean</th><th>max</th></tr></thead>
+  <tbody>
+    <tr><td>run 1</td><td>4.926 ms</td><td>4.937 ms</td><td>4.971 ms</td><td>5.126 ms</td></tr>
+    <tr><td>run 2</td><td>4.931 ms</td><td>4.955 ms</td><td>4.978 ms</td><td>5.302 ms</td></tr>
+  </tbody>
+</table>
+<p>Min to median is a few tenths of a percent. Max sits 4–7% above the median. When two kernels are compared later, a 3% difference is noise if the max is already 7% above the median. The median is the headline. The min is the best the hardware did in that sample. The gap from median to max is the noise band.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 96" role="img" aria-label="Noise band of the first harness run">
+  <line x1="40" y1="48" x2="640" y2="48" stroke="var(--line)" stroke-width="2"/>
+  <line x1="80" y1="36" x2="80" y2="60" stroke="var(--accent)" stroke-width="2"/>
+  <line x1="110" y1="32" x2="110" y2="64" stroke="var(--ink)" stroke-width="2"/>
+  <line x1="160" y1="36" x2="160" y2="60" stroke="var(--blue)" stroke-width="2"/>
+  <line x1="520" y1="36" x2="520" y2="60" stroke="var(--copper)" stroke-width="2"/>
+  <text class="mono" x="80" y="82" text-anchor="middle" font-size="11">min 4.93</text>
+  <text class="mono" x="110" y="22" text-anchor="middle" font-size="11">median</text>
+  <text class="mono" x="160" y="82" text-anchor="middle" font-size="11">mean 4.97</text>
+  <text class="mono" x="520" y="82" text-anchor="middle" font-size="11">max 5.13</text>
+</svg>
+<figcaption>On a quiet phone the four statistics almost sit on top of each other. The stretched axis is so the max is visible at all. That closeness is the result, not a drawing error.</figcaption>
+</figure>
+
+<h2 id="harness">The harness</h2>
+<p><code>aether::bench</code> has two pieces.</p>
+<p><code>Stats::from_durations</code> sorts a copy and reports min, median, mean, max, in nanoseconds as <code>f64</code>. Even counts have no middle element, so the median is the mean of the middle two. Empty input panics: a benchmark with zero runs is a bug. Order of the input does not matter.</p>
+<p><code>bench(warmup, iters, f)</code> runs <code>f</code> untimed <code>warmup</code> times, then times each of <code>iters</code> calls. The closure is <code>FnMut</code>, so a benchmark can fill or drain a buffer. Every result, including warm-up, goes through <code>black_box</code>. The duration vector is allocated up front so a realloc is not folded into one sample.</p>
+<p>Per-call timing keeps an outlier visible in <code>max</code> without dragging the median. It also means each sample is one call, directly comparable. The cost is the clock overhead already measured. A call must be much longer than ~45 ns on this phone.</p>
+<p>The known tests lock the statistics, not the phone:</p>
+<ul>
+  <li>odd count: median is the middle element after sorting,</li>
+  <li>even count: average of the two middle values,</li>
+  <li>one 100 ms outlier among four 10 ms samples: median 10, mean 28,</li>
+  <li><code>bench(3, 7, …)</code> calls the closure 10 times and reports 7 runs.</li>
+</ul>
+
+<h2 id="trap">The 3.3 GB/s trap</h2>
+<p>4 million <code>f32</code>s are 16×10<sup>6</sup> bytes. One sum took ~4.9 ms. That is about 3.3 GB/s <span class="tag c">calculated</span>. The teaching ceiling we used for tokens per second was 30 GB/s, and even that was an assumption, not DRAM’s limit. So this sum is not a bandwidth measurement.</p>
+<p><code>s += x</code> cannot start the next add until the previous one finishes. The CPU’s width sits idle behind that chain. A rough latency model lands near the measurement; a bandwidth model does not. At 30 GB/s the same 16 MB would take about 0.53 ms <span class="tag c">calculated</span>, not 4.9. Multiple independent accumulators are how Phase 3 will hide that latency. The number to remember now is the gap, not a cycle count for this core, which we have not measured.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why is the median usually better than the mean?</summary>
+<p>Outliers hit some runs and not others. The mean includes them. The median is the middle of the sorted samples, so one slow run cannot drag it. On a quiet phone they agree, which is informative too: the noise band is small.</p>
+</details>
+<details class="check"><summary>The unused loop took about 1/10 of the time. Why isn’t that evidence the compiler is a better benchmarker than you?</summary>
+<p>Because it did not do ten sums. When it compiled the program, the compiler decided nine of the calls were unobservable and dropped them. At run time the phone did one sum, and the printed time was labeled as ten. A fast number is not evidence the code is fast until you know the work still happened.</p>
+</details>
+<details class="check"><summary>Name three reasons the first run can be slower.</summary>
+<p>Cold instruction and data caches, page faults on first touch, and the CPU frequency ramp. Phase 0’s experiment C did not show the third, because A and B had already warmed the core. Absence in that one run is not absence of the effect.</p>
+</details>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>

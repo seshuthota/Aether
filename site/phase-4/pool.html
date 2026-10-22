@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Threads that stay · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 4 · 01</p>
+<h1>Threads that stay</h1>
+<p class="lede">The phone has eight cores, and Phase 3's engine used one. Giving the others work sounds like one line of code: start a thread per core. It is not, because decode does not hand out one big job. It hands out a couple of hundred small ones per token, and the cost of handing one out has to be tiny next to the job itself. This page measures that cost three ways and shows why the engine starts its threads once and keeps them.</p>
+<nav class="toc">
+  <a href="#jobs">How many jobs per token</a>
+  <a href="#cost">Three ways to hand out a job</a>
+  <a href="#widget">What it costs per token</a>
+  <a href="#how">How the pool hands out a job</a>
+  <a href="#code">The code</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="jobs">How many jobs per token</h2>
+<p>A <a href="../start/llm.html">decode step</a> is a chain of matrix products, one after another, and each needs the result of the one before. Every matrix product can be split across cores, but the next one cannot start until all cores have finished this one. So the threads meet once per matrix product.</p>
+<p>Count them for one layer: the three projections Q, K and V, the attention itself, the output projection, then gate, up and down in the MLP. That is 8 parallel jobs per layer, plus one for the final logits <span class="tag c">calculated</span>:</p>
+<table>
+  <thead><tr><th>Model</th><th>Layers</th><th>Jobs per token</th></tr></thead>
+  <tbody>
+    <tr><td>stories15M</td><td>6</td><td>6 × 8 + 1 = 49</td></tr>
+    <tr><td>SmolLM2-135M</td><td>30</td><td>30 × 8 + 1 = 241</td></tr>
+    <tr><td>Qwen2.5-0.5B</td><td>24</td><td>24 × 8 + 1 = 193</td></tr>
+  </tbody>
+</table>
+<p>SmolLM2-135M Q4_0 decodes at 274.7 tokens per second on cores 2–7 <span class="tag m">measured</span>, which is 3.64 ms per token. Divided by 241 jobs, that is about <strong>15 µs per job</strong> on average <span class="tag c">calculated</span>, the serial work between jobs included. Whatever it costs to hand out a job has to be small next to 15 µs.</p>
+
+<h2 id="cost">Three ways to hand out a job</h2>
+<ol>
+  <li><strong>Start fresh threads for every job</strong>, and wait for them to end (<em>spawn</em> and <em>join</em>). Simple, and the operating system has to create a thread, schedule it, and tear it down every time.</li>
+  <li><strong>Keep the threads, wake them with a lock.</strong> Workers sleep on a <em>condition variable</em>; the caller takes a mutex, writes the job, and signals. Waking a sleeping thread is a system call, and so is putting it back to sleep.</li>
+  <li><strong>Keep the threads, and have them watch a counter.</strong> Each worker reads a shared number in a loop. The caller writes the job and adds one to the number. No system call at all, as long as the worker is still watching. This is Aether's <code>ThreadPool</code>.</li>
+</ol>
+<p><code>examples/pool_handoff.rs</code> times all three with an empty job, so only the hand-out is measured: the caller plus 3 workers, best of 5 runs. On the PC (an Intel i7-13620H, Linux) <span class="tag m">measured on the PC, not the phone</span>:</p>
+<div class="bars">
+  <div class="bar alt"><span>spawn + join</span><i style="--w:100%"></i><b>50–57 µs</b></div>
+  <div class="bar alt"><span>lock + condvar</span><i style="--w:9%"></i><b>3.2–5.2 µs</b></div>
+  <div class="bar"><span>Aether's pool</span><i style="--w:0.5%"></i><b>0.19–0.31 µs</b></div>
+</div>
+<p>The phone's numbers come with the Phase 4 sweep, which runs the same program on cores 6–7, 4–7, 2–7 and 0–7. Until then, the widget below uses the PC's numbers as a stand-in.</p>
+
+<h2 id="widget">What it costs per token</h2>
+<div class="widget" data-handoff>
+  <h3>Hand-out cost × jobs per token</h3>
+  <div class="controls">
+    <label class="field">Model
+      <select data-model>
+        <option value="49,667">stories15M f32 (49 jobs)</option>
+        <option value="241,274.7" selected>SmolLM2-135M Q4_0 (241 jobs)</option>
+        <option value="193,128.8">Qwen2.5-0.5B Q4_0 (193 jobs)</option>
+      </select>
+    </label>
+    <span class="seg" role="radiogroup" aria-label="Hand-out method">
+      <label><input type="radio" name="ho" data-ho value="54" checked>spawn</label>
+      <label><input type="radio" name="ho" data-ho value="4.2">condvar</label>
+      <label><input type="radio" name="ho" data-ho value="0.25">pool</label>
+    </span>
+  </div>
+  <div class="split" data-bar></div>
+  <div class="legend"><span><i style="background:var(--accent)"></i>the token's measured time</span><span><i style="background:var(--copper)"></i>hand-out cost added</span></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>The token times are measured speeds: stories15M on cores 6–7 (667 tok/s, the first threaded build), the other two on cores 2–7; the hand-out costs are the PC's middle values. Both are rough, so read the result as an order of magnitude <span class="tag c">calculated</span>.</p>
+
+<h2 id="how">How the pool hands out a job</h2>
+<p>The pool keeps one worker thread per core, pinned to it, for the whole life of the model. Two counters do all the talking:</p>
+<ul>
+  <li><strong><code>epoch</code></strong>, the job number. The caller stores a pointer to the job, then adds one to <code>epoch</code>. Each worker remembers the last epoch it ran; when the number changes, there is a new job.</li>
+  <li><strong><code>done</code></strong>, the finished count. Each worker adds one when its part is finished. The caller waits until it reaches the number of workers.</li>
+</ul>
+<p>The caller does not sit idle while it waits: it runs share 0 of the job itself. So “4 threads” means the caller plus 3 workers.</p>
+<p>Watching a counter in a loop is called <strong>spinning</strong>, and it keeps a whole core busy doing nothing useful. Between tokens, or while the user types, that would waste battery. So a worker spins only for a while and then goes to sleep; the next page, <a href="waiting.html">Waiting: spin, then park</a>, is about that choice.</p>
+
+<h2 id="code">The code</h2>
+<p><code>src/pool.rs</code>, the caller's side of <code>run</code>, shortened:</p>
+<pre><code>s.job.0.store(&amp;job as *const &amp;Job as *mut &amp;Job, Ordering::Relaxed);
+s.done.0.store(0, Ordering::Relaxed);
+s.epoch.0.fetch_add(1, Ordering::Release);   // "new job": publish it
+for w in &amp;self.workers {
+    w.thread().unpark();                       // no system call unless that worker sleeps
+}
+f(0, n);                                       // the caller does share 0
+while s.done.0.load(Ordering::Acquire) != n - 1 {
+    std::hint::spin_loop();                    // wait for the workers (then yield)
+}</code></pre>
+<p>And each worker:</p>
+<pre><code>loop {
+    let epoch = /* spin on s.epoch until it changes, then park */;
+    seen = epoch;
+    let f: &amp;Job = unsafe { *s.job.0.load(Ordering::Relaxed) };
+    f(share, n);                               // this worker's part
+    s.done.0.fetch_add(1, Ordering::Release);  // "finished"
+}</code></pre>
+<p>Two details carry the correctness:</p>
+<ul>
+  <li><strong>Release and Acquire.</strong> The caller writes the job pointer first, then the epoch, with <code>Release</code>. A worker that reads the new epoch with <code>Acquire</code> is guaranteed to also see the job pointer written before it. Without that pairing, the CPU or the compiler may reorder the two writes, and a worker could run the previous job.</li>
+  <li><strong>The job lives on the caller's stack.</strong> <code>run</code> does not return until every worker has counted itself done, so the workers can never use the job after it is gone. The <code>unsafe</code> block depends on that rule, and the comment above it in <code>src/pool.rs</code> says so.</li>
+</ul>
+<p>The tests in <code>src/pool.rs</code> run 2,000 jobs in a row and check that every share ran exactly once per job, and that a worker that went to sleep wakes up for the next one.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does decode need so many hand-outs, when prefill could do with few?</summary>
+<p>Each matrix product needs the previous one's result, so the threads must finish and meet after every one: 8 per layer, every token. Prefill meets after every matrix product too, but each one covers every prompt token at once, so there is far more work per meeting. (Its attention still runs one token at a time, one meeting each.)</p>
+</details>
+<details class="check"><summary>At 15 µs per job, what fraction of the time would spawning threads cost?</summary>
+<p>About 54 µs per job on the PC, more than three times the job itself. The token would take roughly four times as long as with no threads at all.</p>
+</details>
+<details class="check"><summary>Why is the worker's read of the job pointer allowed to be <code>Relaxed</code>?</summary>
+<p>Because it happens after the worker read the new epoch with <code>Acquire</code>, and the caller wrote the pointer before the epoch with <code>Release</code>. The pair of orderings already makes the pointer visible; the pointer read itself needs no extra ordering.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

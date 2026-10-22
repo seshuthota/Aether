@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bit-identical with llama2.c · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 11</p>
+<h1>Bit-identical with llama2.c</h1>
+<p class="lede">How do you know an inference engine is right? Plausible-looking text is not proof: a model with a small bug still writes sentences. This project checks against an external reference, number by number, at every step of the forward pass. In Phase 2 every one of those numbers matched llama2.c to the last bit. This page shows how, and why “the same maths” is not enough for that.</p>
+<nav class="toc">
+  <a href="#why">Why text is not enough</a>
+  <a href="#reference">The reference: llama2.c</a>
+  <a href="#dumps">Golden dumps</a>
+  <a href="#replay">Replaying the reference</a>
+  <a href="#order">Float addition depends on order</a>
+  <a href="#fma">The FMA trap</a>
+  <a href="#after">After Phase 2: tolerances</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="why">Why text is not enough</h2>
+<p>Swap two RoPE pairs, forget the √48, or read the wrong cache row, and the model still produces English-looking words for a while. Errors in a transformer often degrade quality instead of crashing. A test that only looks at the output text would miss them, or catch them so late that the cause is unclear.</p>
+<p>The rule in this project: <strong>correctness comes from external references only</strong>. Never a second implementation of our own (it would share our misunderstandings), always someone else's established code: llama2.c here, numpy for single kernels, Hugging Face <code>transformers</code> for SmolLM2 and Qwen, llama.cpp for quantized formats.</p>
+
+<h2 id="reference">The reference: llama2.c</h2>
+<p>llama2.c's <code>run.c</code> is about 1,000 lines of plain C that runs stories15M. It is simple enough to read completely and widely used, so it is a good answer key. Aether's code is written independently in Rust; llama2.c is only run, never translated.</p>
+
+<h2 id="dumps">Golden dumps</h2>
+<p>To compare intermediate numbers, not just tokens, llama2.c needs to report them. <code>tools/llama2c-dump.patch</code> adds a <code>dump()</code> call after each step of its forward pass, writing every activation to a file:</p>
+<pre><code>static void dump(const char* name, int layer, int pos, const float* data, int n);
+…
+rmsnorm(s-&gt;xb, x, w-&gt;rms_att_weight + l*dim, dim);
+dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
+<p><code>tools/stories15m_goldens.sh</code> builds the patched llama2.c, runs “Once upon a time” for 64 positions (greedy, and seeded sampling), and saves the dumps. These are the <em>golden files</em>. They are regenerated from the script, not committed, because they are large.</p>
+<p>The 14 names, in forward order: <code>embed</code>, <code>attn_norm</code>, <code>q</code>, <code>k</code>, <code>v</code>, <code>attn</code>, <code>attn_out</code>, <code>resid_attn</code>, <code>ffn_norm</code>, <code>swiglu</code>, <code>ffn_out</code>, <code>resid_ffn</code>, <code>final_norm</code>, <code>logits</code>. Aether's <a href="forward.html#observer">observer</a> taps the same 14 places under the same names.</p>
+
+<h2 id="replay">Replaying the reference</h2>
+<p>The test (<code>greedy_matches_llama2c_at_every_layer</code> in <code>src/model/llama2c.rs</code>) feeds Aether the same prompt tokens, lets it choose each next token itself, and checks two things:</p>
+<ol class="steps">
+  <li><strong>Every chosen token equals llama2.c's.</strong> The first difference stops the test with the position where it happened.</li>
+  <li><strong>Every activation is compared.</strong> For each of the 14 names, the worst error over all layers and positions is printed in forward order. A bug shows up as the first name where the error jumps from zero, which points to the step that is wrong.</li>
+</ol>
+<p>The Phase 2 result, on the PC and on the phone <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>14 activations × 6 layers × 64 positions</td><td>max error <strong>0</strong>: bit-identical</td></tr>
+    <tr><td>greedy tokens, 64 positions</td><td>identical</td></tr>
+    <tr><td>seeded sampling (<code>-t 0.8 -p 0.9 -s 42</code>)</td><td>identical</td></tr>
+    <tr><td>generated text vs llama2.c's <code>run</code></td><td>byte-identical</td></tr>
+  </tbody>
+</table>
+
+<h2 id="order">Float addition depends on order</h2>
+<p>Why is “bit-identical” worth aiming for, and why is it hard? Because computer floats are rounded after every operation, and so <strong>(a + b) + c is not always equal to a + (b + c)</strong>. Each addition rounds to the nearest representable <code>f32</code>, and different orders round at different moments.</p>
+<div class="widget" data-floatorder>
+  <h3>Twelve numbers, four orders</h3>
+  <p>The same twelve products, summed in <code>f32</code> in four different orders. The hex is the exact bit pattern.</p>
+  <pre data-out></pre>
+  <p class="note" data-note></p>
+</div>
+<p>All four are correct to about seven digits, and none is “the” answer. So two engines that compute the same formula in different orders will differ in the last bits, and those differences grow a little through 6 layers.</p>
+<p>That is why Aether's scalar kernels follow llama2.c's order exactly: left-to-right sums, <code>w * (scale * x)</code> in RMSNorm, the division by √48 after the dot product, <code>v * (1 / (1 + e<sup>−v</sup>))</code> in SiLU. With the order matched, any non-zero difference is a real bug, and it stands out against a background of exact zeros. With a tolerance, a small bug could hide inside it.</p>
+
+<h2 id="fma">The FMA trap</h2>
+<p>ARM CPUs have a <em>fused multiply-add</em> instruction: <code>a × b + c</code> with a single rounding at the end instead of two. It is faster and slightly more accurate, so compilers are sometimes allowed to use it for <code>acc += w * x</code>. That would round differently from llama2.c's separate multiply and add.</p>
+<p>Rust never fuses a multiply and an add on its own; and the NDK's C compiler, as configured for llama2.c here, did not either. Both sides did two roundings, so the bits matched. Phase 3 then uses FMA on purpose, and gives up bit-identity in exchange for speed.</p>
+
+<h2 id="after">After Phase 2: tolerances</h2>
+<p>Phase 3's NEON kernels sum with several accumulators and fused multiply-adds: a different order, so different last bits. From then on the same test runs with a <em>tolerance</em>: every activation must be within 10<sup>−4</sup> relative error of llama2.c's, and every greedy token must still be identical. The scalar build on the PC remains bit-identical, which keeps the zero-background check available.</p>
+<p>The same approach scales up: SmolLM2 and Qwen are compared layer by layer with Hugging Face <code>transformers</code> (Phase 5), quantized formats with llama.cpp (Phase 6), and model quality by perplexity and KL divergence against llama.cpp (Phase 7).</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why compare every activation, not only the final tokens?</summary>
+<p>A bug can change numbers without changing the greedy token, at least for a while. And when tokens do differ, the activations tell you <em>which step</em> went wrong: the first name, in forward order, with a non-zero error.</p>
+</details>
+<details class="check"><summary>Why not write a second, simple Rust version of the model and compare against that?</summary>
+<p>It would share our understanding, and so our misunderstandings: a misread formula would be wrong in both and the test would pass. An independent reference does not have our bugs.</p>
+</details>
+<details class="check"><summary>The four sums in the widget differ. Which one is wrong?</summary>
+<p>None. All are correctly rounded results of a sequence of correctly rounded additions; they just round at different moments. Only the exact (float64) value is “the” sum, and every f32 order approximates it.</p>
+</details>
+<details class="check"><summary>Why did Phase 3 accept losing bit-identity?</summary>
+<p>Several accumulators and FMA are what make the kernels fast (Phase 3, <a href="../phase-3/chains.html">dependency chains</a>), and both change the order of rounding. The check becomes a tolerance plus identical greedy tokens.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

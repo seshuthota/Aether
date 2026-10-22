@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embedding and RMSNorm · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 03</p>
+<h1>Embedding and RMSNorm</h1>
+<p class="lede">The first step of the forward pass turns a token id into a vector of 288 numbers. Then, before every block of work, RMSNorm rescales that vector to a standard size. One is a table lookup; the other is three lines of arithmetic. Both are worth understanding exactly.</p>
+<nav class="toc">
+  <a href="#embedding">The embedding: an id picks a row</a>
+  <a href="#vector">What the 288 numbers are</a>
+  <a href="#why-norm">Why vectors need normalising</a>
+  <a href="#rmsnorm">RMSNorm, step by step</a>
+  <a href="#gain">The learned gain</a>
+  <a href="#where">Where the norms sit</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="embedding">The embedding: an id picks a row</h2>
+<p>The embedding table is a matrix with one row per token: 32,000 rows of 288 numbers (<a href="model-file.html#map">page 1</a>). To embed token 9038 (“ Once”), copy row 9038. That is all; there is no multiplication.</p>
+<pre><code>w.token_embedding.row_f32(token, &amp;mut s.x);   // x = row `token` of the table</code></pre>
+<p>The result, <code>x</code>, is the token's starting point. It is called the <strong>residual stream</strong> because every block that follows reads from it and adds its result back into it (<a href="mlp.html#residual">page 8</a>). By the end of the six layers, <code>x</code> no longer describes “ Once” alone; it describes “ Once” in the context of everything before it, shaped to predict the next token.</p>
+<p>Copying one row reads 288 × 4 = 1,152 bytes out of 36.9 MB. This is the one weight table that decode does <em>not</em> read in full, except that stories15M reads all of it again at the end, as the <a href="model-file.html#tied">tied classifier</a>.</p>
+
+<h2 id="vector">What the 288 numbers are</h2>
+<p>Nobody chose them by hand. Training adjusted each row until tokens used in similar ways ended up with similar vectors. Individual numbers rarely mean anything on their own; directions in the 288-dimensional space do. A useful mental picture: each token is a point in a space with 288 axes, and nearby points behave alike.</p>
+<p>For this engine the meaning does not matter. What matters is that every token is a vector of exactly <code>dim</code> = 288 <code>f32</code>s, and that every later step is arithmetic on such vectors.</p>
+
+<h2 id="why-norm">Why vectors need normalising</h2>
+<p>Each block adds its output into the residual stream. After a dozen additions the numbers in <code>x</code> can be much larger (or smaller) than they were at the start, and different tokens end up at very different sizes. A matrix multiply scales with its input: double <code>x</code> and the output doubles. Without control, later layers would see inputs at unpredictable scales, which makes training unstable and the outputs meaningless.</p>
+<p>A normalisation layer fixes the scale <em>before</em> each block reads the vector. It keeps the vector's direction (the pattern of which numbers are big and which negative) and resets its overall size.</p>
+
+<h2 id="rmsnorm">RMSNorm, step by step</h2>
+<p>The size is measured by the <strong>root mean square</strong> (RMS): square every number, take the mean, take the square root.</p>
+<p class="formula">RMS(x) = √( (x₀² + x₁² + … + x₂₈₇²) ÷ 288 )</p>
+<p>Then every number is divided by it, so the result has RMS 1:</p>
+<p class="formula">out_i = gain_i × x_i ÷ √( mean(x²) + ε )</p>
+<p>ε (epsilon, 0.00001 here) is a tiny number added so that an all-zero vector does not cause a division by zero. Try it with six numbers instead of 288:</p>
+<div class="widget" data-rmsnorm>
+  <h3>Normalise six numbers</h3>
+  <p>Drag the inputs. The top bars are <var>x</var>, the bottom bars are RMSNorm(<var>x</var>) with every gain at 1. Copper bars are negative.</p>
+  <div class="sliders" data-sliders></div>
+  <div class="vbars mid" data-in></div>
+  <div class="vbars mid" data-out-bars></div>
+  <div class="controls">
+    <button class="btn" type="button" data-scale>Double every input</button>
+    <button class="btn ghost" type="button" data-reset>Reset</button>
+  </div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>Press “Double every input” and watch the bottom row: it does not move. Scaling the input by any factor gives the same output, which is exactly the point.</p>
+<p>The Rust code in <code>src/kernels/scalar.rs</code> is the formula written out, in the same order as llama2.c (that order matters, see <a href="correctness.html#order">page 11</a>):</p>
+<pre><code>let mut ss = 0.0f32;
+for &amp;v in x { ss += v * v; }          // sum of squares
+ss /= x.len() as f32;                 // mean
+ss += eps;
+let scale = 1.0 / ss.sqrt();          // 1 / RMS
+for ((o, &amp;v), &amp;w) in out.iter_mut().zip(x).zip(weight) {
+    *o = w * (scale * v);             // gain × normalised value
+}</code></pre>
+<div class="callout"><span class="lbl">RMSNorm vs LayerNorm</span><p>The original transformer used LayerNorm, which also subtracts the mean before dividing. RMSNorm skips that step. It is cheaper and works as well in practice, so Llama-family models use it. If you read older code, that is the difference.</p></div>
+
+<h2 id="gain">The learned gain</h2>
+<p>After normalising, each of the 288 numbers is multiplied by its own <em>gain</em>, a weight learned in training (<code>rms_att</code> and <code>rms_ffn</code> in the file). This lets the model turn some channels up and others down after the reset. These gain vectors are the 288-float slivers in the <a href="model-file.html#map">file map</a>.</p>
+
+<h2 id="where">Where the norms sit</h2>
+<p>Each layer normalises twice: once before attention, once before the MLP. One more norm runs after the last layer, before the classifier. That makes 6 × 2 + 1 = 13 RMSNorms per token.</p>
+<figure>
+<div class="flow">
+  <div>x<small>residual stream</small></div><span class="arr">→</span>
+  <div class="hot">RMSNorm<small>rms_att</small></div><span class="arr">→</span>
+  <div>attention<small>result added to x</small></div><span class="arr">→</span>
+  <div class="hot">RMSNorm<small>rms_ffn</small></div><span class="arr">→</span>
+  <div>MLP<small>result added to x</small></div>
+</div>
+<figcaption>“Pre-norm”: each block normalises its own copy of the input and leaves the residual stream itself un-normalised. Only the block's input is rescaled; the additions go to the original <code>x</code>.</figcaption>
+</figure>
+<p>In cost, the norms are nothing: 288 multiplies each, against 82,944 for one 288 × 288 matrix. On the <a href="baseline.html">profile</a> they do not even reach 0.4 % of the time.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What does the embedding step compute?</summary>
+<p>Nothing: it copies row <var>id</var> of the embedding table into the residual stream. No multiplications.</p>
+</details>
+<details class="check"><summary>x = [3, 4]. What is RMSNorm(x), with gains of 1 and ε ignored?</summary>
+<p>mean(x²) = (9 + 16) ÷ 2 = 12.5; RMS = √12.5 ≈ 3.536. Output ≈ [0.849, 1.131]. Its RMS is 1.</p>
+</details>
+<details class="check"><summary>Why does doubling every input leave the output unchanged?</summary>
+<p>Doubling <var>x</var> doubles its RMS too, and the output is <var>x</var> ÷ RMS. The factor of two cancels (up to the tiny ε).</p>
+</details>
+<details class="check"><summary>How many RMSNorms does one token go through in stories15M?</summary>
+<p>13: two per layer for six layers, plus the final one before the classifier.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waiting: spin, then park · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 4 · 03</p>
+<h1>Waiting: spin, then park</h1>
+<p class="lede">A worker with nothing to do has two choices. It can keep checking for new work, which reacts within a fraction of a microsecond but keeps a core busy doing nothing. Or it can ask the operating system to put it to sleep, which costs nothing while asleep but takes microseconds to wake. The engine does the first for a while, then the second. This page is about that trade, and two traps around it: a lost wake-up, and two counters sharing a cache line.</p>
+<nav class="toc">
+  <a href="#two">Two ways to wait</a>
+  <a href="#widget">How long is the gap?</a>
+  <a href="#lost">The lost wake-up</a>
+  <a href="#lines">One counter per cache line</a>
+  <a href="#cost">What spinning costs</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="two">Two ways to wait</h2>
+<p><strong>Spinning</strong>: read the <code>epoch</code> counter in a loop until it changes. The new job is seen almost the moment it is published. But the core is busy the whole time: it cannot run anything else, and it cannot drop into a low-power state.</p>
+<p><strong>Parking</strong>: <code>std::thread::park()</code> asks the kernel to take the thread off the core until someone calls <code>unpark</code> on it. While parked it costs nothing. Waking it is a system call on the caller's side, then the kernel has to schedule the thread again, which takes microseconds.</p>
+<p>Which is better depends on how long the wait will be. During decode the next job comes a few microseconds after the last; between two messages in a chat, it may come a minute later. So a worker spins first, and parks if nothing has come after <code>SPIN</code> = 20,000 polls. <code>src/pool.rs</code>, the worker's wait:</p>
+<pre><code>let epoch = loop {
+    let e = s.epoch.0.load(Ordering::Acquire);
+    if e != seen || s.stop.0.load(Ordering::Acquire) { break e; }
+    spins += 1;
+    if spins &lt; SPIN {
+        std::hint::spin_loop();     // tells the core "I am only waiting"
+    } else {
+        thread::park();             // sleep until unpark()
+    }
+};</code></pre>
+<p>How long 20,000 polls take on the phone is not measured. The comment in the code estimates tens of microseconds, so the widget assumes 40 µs <span class="tag a">assumption</span>.</p>
+
+<h2 id="widget">How long is the gap?</h2>
+<div class="widget" data-spinpark>
+  <h3>One worker between two jobs</h3>
+  <div class="controls">
+    <label class="field">Gap until the next job: <span data-gap-label></span>
+      <input type="range" data-gap min="0" max="100" step="1" value="20">
+    </label>
+    <span class="seg" role="radiogroup" aria-label="Waiting strategy">
+      <label><input type="radio" name="sp" data-sp value="spin">spin only</label>
+      <label><input type="radio" name="sp" data-sp value="park">park at once</label>
+      <label><input type="radio" name="sp" data-sp value="both" checked>spin, then park</label>
+    </span>
+  </div>
+  <div class="split" data-bar></div>
+  <div class="legend"><span><i style="background:var(--copper)"></i>core busy spinning</span><span><i class="hatch"></i>parked (core free)</span><span><i style="background:var(--blue)"></i>waking up</span></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>The wake-up costs are stand-ins from the PC (<a href="pool.html#cost">Threads that stay</a>): about 0.25 µs to see a new epoch while spinning, about 4 µs for a woken thread <span class="tag a">assumption</span>. The bar is drawn on a log scale for the gap, so short and long gaps both fit.</p>
+
+<h2 id="lost">The lost wake-up</h2>
+<p>There is a gap between a worker's last check of <code>epoch</code> and its call to <code>park()</code>. Suppose the caller publishes a job and calls <code>unpark</code> right inside that gap. The worker has not gone to sleep yet, so there is nobody to wake; then it parks, and sleeps through a job it should be running. The caller waits for it forever.</p>
+<p>Rust's <code>park</code> and <code>unpark</code> avoid this with a <strong>token</strong>: an <code>unpark</code> that arrives before the <code>park</code> is remembered, and the next <code>park</code> returns at once. The worker then loops, sees the new epoch, and runs the job. That is why the caller can call <code>unpark</code> on every worker after every job without checking whether it is asleep. For a worker that is still spinning, <code>unpark</code> only sets the token, without a system call.</p>
+
+<h2 id="lines">One counter per cache line</h2>
+<p>A core does not read or write single bytes from memory; it moves <a href="../phase-1/alignment.html#lines">64-byte cache lines</a>. While workers spin, each keeps a copy of the line holding <code>epoch</code> in its own cache. When any core writes to that line, every other copy is thrown away and has to be fetched again.</p>
+<p>If <code>done</code> sat in the same line as <code>epoch</code>, every worker finishing a job would write that line, and every spinning worker would lose its copy of <code>epoch</code>, although <code>epoch</code> itself did not change. That is <a href="../phase-1/alignment.html#false">false sharing</a>. The pool puts each counter in its own line:</p>
+<pre><code>#[repr(align(64))]
+struct Line&lt;T&gt;(T);
+
+struct Shared {
+    epoch: Line&lt;AtomicU64&gt;,     // read by spinning workers, written once per job
+    done: Line&lt;AtomicUsize&gt;,    // written by each worker once per job
+    stop: Line&lt;AtomicBool&gt;,
+    ...
+}</code></pre>
+<p>The 64 is the line size this phone reports in <code>CTR_EL0</code> <span class="tag m">measured in Phase 1</span>. How much time the padding saves here has not been measured.</p>
+
+<h2 id="cost">What spinning costs</h2>
+<p>A spinning core shows up in a profile as busy. In the equal-split build, the profile of SmolLM2 Q4_0 on all eight cores found <strong>58 %</strong> of samples in the worker loop; on the two prime cores, 17.5 % <span class="tag m">measured</span>. Most of that is spinning: a worker that finished its share early spins until the next job.</p>
+<p>On a phone, that waiting is not free. A spinning core draws power and makes heat, and it cannot take a slower clock or a sleep state while it spins. So a thread count that does not make decode faster can still make it more expensive per token. The Phase 4 sweep measures joules per token for cores 7, 6–7, 2–7 and 0–7 to put a number on it.</p>
+<p>The caller waits too, for the workers to finish. It spins and then calls <code>thread::yield_now()</code> instead of parking: it is always the one waiting for others, and the workers finish within microseconds.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why spin at all, if parking costs nothing while asleep?</summary>
+<p>Because waking takes microseconds, and decode hands out a job every 15 µs or so. Parking between every two jobs would add a large fraction to every token.</p>
+</details>
+<details class="check"><summary>Why park at all, if spinning reacts fastest?</summary>
+<p>Between tokens, or while the user is reading, nothing comes for seconds. A pool that spun forever would keep several cores busy and drain the battery while doing nothing.</p>
+</details>
+<details class="check"><summary>What would happen without the token in <code>park</code>/<code>unpark</code>?</summary>
+<p>A job published just before a worker parks would be missed: the worker would sleep, and the caller would wait forever for its <code>done</code>.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

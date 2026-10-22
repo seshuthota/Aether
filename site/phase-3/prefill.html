@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prefill: many tokens at once · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 05</p>
+<h1>Prefill: many tokens at once</h1>
+<p class="lede">Before the model can write anything, it has to read the prompt. Decode goes one token at a time because each token depends on the one before. The prompt is different: all its tokens are known up front. So they can go through each weight matrix together, and every weight loaded from memory gets used once per prompt token instead of once. That turns a memory problem into an arithmetic problem.</p>
+<nav class="toc">
+  <a href="#phases">Two phases of generation</a>
+  <a href="#reuse">Reuse: the whole idea</a>
+  <a href="#widget">Bytes per token as the prompt grows</a>
+  <a href="#batch">The batched forward pass</a>
+  <a href="#attention">What stays one-by-one</a>
+  <a href="#measured">Measured</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="phases">Two phases of generation</h2>
+<table>
+  <thead><tr><th></th><th>Prefill</th><th>Decode</th></tr></thead>
+  <tbody>
+    <tr><td>Input</td><td>the whole prompt, known in advance</td><td>one new token, just sampled</td></tr>
+    <tr><td>Matrix work</td><td>matrix × matrix (GEMM)</td><td>matrix × vector (GEMV)</td></tr>
+    <tr><td>Uses of each loaded weight</td><td>one per prompt token</td><td>one</td></tr>
+    <tr><td>Limited by</td><td>arithmetic</td><td>memory bandwidth</td></tr>
+    <tr><td>What the user feels</td><td>time to first token</td><td>tokens per second while it writes</td></tr>
+  </tbody>
+</table>
+<p>A chat app with a long system prompt and history spends much of its time in prefill, so both numbers matter.</p>
+
+<h2 id="reuse">Reuse: the whole idea</h2>
+<p>In decode, each weight <var>w</var><sub>ij</sub> is loaded and used for one multiply-add: <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub>. With <var>T</var> prompt tokens, the same weight is needed for <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(1)</sup>, <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(2)</sup>, … <var>w</var><sub>ij</sub> × <var>x</var><sub>j</sub><sup>(T)</sup>. Load it once, use it <var>T</var> times. The bytes per token fall by a factor of <var>T</var>, and the arithmetic per byte (the <a href="../phase-1/roofline.html">arithmetic intensity</a>) rises by <var>T</var>.</p>
+<p>On the roofline, decode sits far left, under the sloped memory roof. Prefill slides right as <var>T</var> grows, until it hits the flat compute roof. From there, only faster arithmetic helps, which is the <a href="gemm.html">GEMM micro-kernel</a>'s job.</p>
+
+<h2 id="widget">Bytes per token as the prompt grows</h2>
+<div class="widget" data-reuse>
+  <h3>stories15M, f32, one prime core</h3>
+  <p>Weight bytes 60.8 MB <span class="tag c">calculated</span>; DRAM read 61 GB/s <span class="tag m">measured</span> in Phase 1.</p>
+  <div class="controls"><label class="field">tokens processed together: <span data-t-label></span><input type="range" data-t min="1" max="64" value="1"></label></div>
+  <div class="statrow" data-stats></div>
+  <div class="bars" data-bars></div>
+  <p class="note" data-note></p>
+</div>
+<p>This is an idealised picture: it assumes the kernel really loads each weight only once for all <var>T</var> tokens. Whether it does depends on the loop order, which the next page is about.</p>
+
+<h2 id="batch">The batched forward pass</h2>
+<p><code>forward_batch(tokens, start)</code> in <code>src/model/transformer.rs</code> is the same forward pass, with every buffer turned into a matrix: one row per token. Where decode calls <code>matmul</code> (GEMV), prefill calls <code>matmul_batch</code> (GEMM):</p>
+<pre><code>// decode, one token:      out[d]    = W[d, n] · x[n]
+// prefill, T tokens:      out[T, d] = x[T, n] · Wᵀ
+k::matmul_batch(out, x, w, t);   // NEON gemm on the phone</code></pre>
+<p>The element-wise steps (RMSNorm, RoPE, SwiGLU, residual adds) simply run once per row. Each token's keys and values are written to the cache at its own position, exactly as decode would have done, so after prefill the cache is the same as after <var>T</var> decode steps, and decode carries on from there.</p>
+<p>The test <code>batched_prefill_matches_llama2c</code> checks this: it prefills in batches of 5, 12 and 13 tokens (deliberately not multiples of the 4-token tile), then decodes, and compares every activation at every position with llama2.c's one-token-at-a-time dump <span class="tag m">measured</span>.</p>
+
+<h2 id="attention">What stays one-by-one</h2>
+<p>Attention cannot be batched the same way, because token <var>t</var> may only look at tokens 0 to <var>t</var>. The batched pass runs attention for each prompt token in turn, against the keys written so far. For short prompts that is a small part of the work; for long prompts on bigger models it grows (attention is quadratic in prompt length), and it is one reason Aether's long-prompt prefill is far behind llama.cpp's (<code>results/phase-7.md</code>).</p>
+
+<h2 id="measured">Measured</h2>
+<p>f32, one prime core (core 7), on battery <span class="tag m">measured</span> (<code>results/phase-6/raw/model-speed.txt</code>):</p>
+<table>
+  <thead><tr><th>Model</th><th>Prefill</th><th>Decode</th><th>Ratio</th></tr></thead>
+  <tbody>
+    <tr><td>SmolLM2-135M, 65-token prompt</td><td class="num">231.8 tok/s</td><td class="num">39.2 tok/s</td><td class="num">5.9×</td></tr>
+    <tr><td>stories15M, 5-token prompt</td><td class="num">1,151 tok/s</td><td class="num">422 tok/s</td><td class="num">2.7×</td></tr>
+  </tbody>
+</table>
+<p>Even a 5-token prompt is 2.7 times faster per token, because each weight is used up to 4 times per load in the 4 × 4 tile. For SmolLM2, 231.8 tokens per second × about 270 million FLOPs per token is roughly 60 GFLOP/s on one core <span class="tag c">calculated</span>, versus about 11 GFLOP/s in its decode at 39.2 tok/s. The GEMM's own peak against the core's FMA limit has not been measured yet (<code>examples/gemm_bench.rs</code> exists; its phone output was not saved).</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why can the prompt be processed in one batch, but not the generated text?</summary>
+<p>All prompt tokens are known before starting. A generated token only exists after the previous step has been sampled, so decode is inherently one at a time.</p>
+</details>
+<details class="check"><summary>With <var>T</var> = 32, what happens to the weight bytes per token?</summary>
+<p>They fall 32-fold, from 60.8 MB to 1.9 MB per token, if each weight is loaded once for all 32 tokens.</p>
+</details>
+<details class="check"><summary>After prefilling 13 tokens, is the KV cache any different from 13 decode steps?</summary>
+<p>No (up to last-bit rounding from the different kernel): each token's k and v are written at its position, and attention for each token only sees tokens before it. The test compares this against llama2.c.</p>
+</details>
+<details class="check"><summary>Why is prefill limited by arithmetic and decode by memory, with the same weights?</summary>
+<p>Decode does 2 FLOPs per 4-byte weight; prefill does 2<var>T</var>. With enough reuse, the core runs out of arithmetic throughput before memory runs out of bandwidth.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

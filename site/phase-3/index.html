@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 3 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · NEON kernels</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>Every kernel on these pages is checked against numpy on the phone, and stories15M still produces the same greedy tokens as llama2.c. The speed numbers are measured on one prime core, on battery.</p></div>
+
+<h1>Phase 3 — NEON kernels</h1>
+<p class="lede">Phase 2 ended with a correct model that runs at 88.6 tokens per second, held back by one long chain of additions. Phase 3 rewrites the hot loops with the phone's vector instructions (NEON) and several independent accumulators. The same model on the same core goes to 422 tokens per second, and the main kernel to within reach of what memory can deliver.</p>
+<nav class="toc">
+  <a href="#idea">The idea in one paragraph</a>
+  <a href="#result">The result</a>
+  <a href="#order">Read in this order</a>
+  <a href="#done">What “done” meant</a>
+  <a href="#code">Where the code is</a>
+</nav>
+
+<h2 id="idea">The idea in one paragraph</h2>
+<p>A CPU core can do much more arithmetic per cycle than the scalar loop asked of it. Two things were missing. First, <strong>width</strong>: one NEON instruction multiplies and adds four floats at once. Second, <strong>independence</strong>: an addition takes several cycles to finish, so if each one waits for the last, the hardware sits idle; with four or eight separate running sums, new additions can start every cycle. Put both together and the matrix-vector product stops being limited by its own chain and starts being limited by how fast memory can feed it, which is the limit that matters for decode.</p>
+
+<h2 id="result">The result</h2>
+<div class="statrow">
+  <div class="stat"><b>5.3 → 53.5 GB/s</b><span>matrix-vector, one prime core, matrix in L2 <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>40.6 GB/s</b><span>the same on a 256 MB matrix, from DRAM: 67 % of the core's read bandwidth <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>88.6 → 422 tok/s</b><span>stories15M decode, core 7, ×4.8 <span class="tag m">measured</span></span></div>
+</div>
+
+<h2 id="order">Read in this order</h2>
+<ol>
+  <li><a href="simd.html">SIMD and NEON</a> — four floats per instruction, the 32 vector registers, and how Rust lets you use them.</li>
+  <li><a href="chains.html">Dependency chains</a> — latency versus throughput, and why four accumulators beat one.</li>
+  <li><a href="gemv.html">GEMV in three steps</a> — the main kernel built up one idea at a time, with every step measured.</li>
+  <li><a href="tails.html">Tails and testing floats</a> — sizes that are not multiples of 4, and checking against numpy with a tolerance.</li>
+  <li><a href="prefill.html">Prefill: many tokens at once</a> — reusing each weight for every prompt token.</li>
+  <li><a href="gemm.html">Inside the GEMM micro-kernel</a> — a 4 × 4 tile and the register budget.</li>
+  <li><a href="dispatch.html">One API, two machines</a> — NEON on the phone, scalar on the PC, and checking CPU features at run time.</li>
+</ol>
+
+<h2 id="done">What “done” meant</h2>
+<ul>
+  <li>Every kernel (GEMV, GEMM, RMSNorm, softmax, SwiGLU, both RoPE layouts, one attention head) matches numpy within a tolerance, on sizes from 1 up to the real layer shapes, including all the awkward sizes around multiples of 4, 8, 16 and 32.</li>
+  <li>stories15M's greedy tokens stay identical to llama2.c's, and every activation is within 10<sup>−4</sup> relative error. Bit-identity is given up on purpose: a different order of additions changes the last bits (<a href="../phase-2/correctness.html#order">why</a>).</li>
+  <li>Each step of the GEMV is benchmarked separately, so every speed-up can be explained, not just observed.</li>
+</ul>
+
+<h2 id="code">Where the code is</h2>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/kernels/neon.rs</code></td><td>NEON GEMV (all three steps), GEMM, attention head</td></tr>
+    <tr><td><code>src/kernels/mod.rs</code></td><td>The functions the model calls; picks NEON or scalar; the kernel tests</td></tr>
+    <tr><td><code>tools/gen_kernels.py</code></td><td>numpy goldens for every kernel and size</td></tr>
+    <tr><td><code>examples/gemv_bench.rs</code></td><td>The step-by-step GEMV benchmark</td></tr>
+    <tr><td><code>results/phase-3.md</code></td><td>Measurements and their conditions</td></tr>
+  </tbody>
+</table>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

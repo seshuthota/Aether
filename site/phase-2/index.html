@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 2 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · a whole model</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>Every page in this phase describes code that exists and runs on the phone. Its output was checked against llama2.c and is bit-identical: the same tokens, and every intermediate number equal down to the last bit.</p></div>
+
+<h1>Phase 2 — a whole model in plain Rust</h1>
+<p class="lede">Phase 2 builds every part of a real language model, in the simplest code that works: no vector instructions, no threads, one token at a time. When it is done, a 15-million-parameter model writes children's stories on the phone, and every number it computes matches a reference program exactly.</p>
+<nav class="toc">
+  <a href="#model">The model</a>
+  <a href="#map">One forward pass, as a map</a>
+  <a href="#order">Read in this order</a>
+  <a href="#done">What “done” meant</a>
+  <a href="#code">Where the code is</a>
+</nav>
+
+<h2 id="model">The model: stories15M</h2>
+<p>stories15M is a tiny model trained by Andrej Karpathy on simple children's stories. It is small enough to understand completely and big enough to be a real transformer: the same parts, in the same order, as the models in Phases 5 and 7. Only the sizes are smaller.</p>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td>dim</td><td class="num">288</td><td>Every token is a vector of 288 numbers while it moves through the model.</td></tr>
+    <tr><td>layers</td><td class="num">6</td><td>The same block (attention, then MLP) applied 6 times, each with its own weights.</td></tr>
+    <tr><td>attention heads</td><td class="num">6</td><td>Each layer's attention runs as 6 independent heads of 48 numbers.</td></tr>
+    <tr><td>hidden_dim</td><td class="num">768</td><td>The MLP widens the vector to 768 numbers, then narrows it back to 288.</td></tr>
+    <tr><td>vocabulary</td><td class="num">32,000</td><td>Tokens it knows. It outputs one score for each.</td></tr>
+    <tr><td>context</td><td class="num">256</td><td>The most tokens it can look back over.</td></tr>
+    <tr><td>parameters</td><td class="num">15.2 million</td><td>60.8 MB as f32 <span class="tag c">calculated</span> — the file is 60,816,028 bytes <span class="tag m">measured</span>.</td></tr>
+  </tbody>
+</table>
+<p>The reference is llama2.c: one C file that runs this model. Its job here is to be the answer key. Our code is written independently, in Rust, and then compared with it number by number.</p>
+
+<h2 id="map">One forward pass, as a map</h2>
+<p>Each page of this phase is one box below. Read it left to right: a token id goes in, scores for every possible next token come out.</p>
+<figure>
+<div class="flow">
+  <div>token id<small><a href="tokenizer.html">tokenizer</a></small></div><span class="arr">→</span>
+  <div>embedding<small><a href="embedding-norm.html">look up a row</a></small></div><span class="arr">→</span>
+  <div class="stack">one layer<small><a href="embedding-norm.html#rmsnorm">RMSNorm</a> → <a href="qkv.html">Q, K, V</a> → <a href="rope.html">RoPE</a> → <a href="attention.html">attention</a> → <a href="mlp.html">MLP</a></small><em>× 6</em></div><span class="arr">→</span>
+  <div>classifier<small>vector → 32,000 scores</small></div><span class="arr">→</span>
+  <div class="hot">next token<small><a href="sampling.html">sampling</a></small></div>
+</div>
+<figcaption>The KV cache (<a href="kv-cache.html">page 7</a>) sits beside attention: it holds what every earlier token contributed, so each new token only has to compute its own part.</figcaption>
+</figure>
+
+<h2 id="order">Read in this order</h2>
+<ol>
+  <li><a href="model-file.html">Inside a model file</a> — the 28-byte header and where each of the 15.2 million numbers lives.</li>
+  <li><a href="tokenizer.html">Text to tokens</a> — how “Once upon a time” becomes 1, 9038, 2501, 263, 931.</li>
+  <li><a href="embedding-norm.html">Embedding and RMSNorm</a> — from an id to a vector, and keeping that vector's size under control.</li>
+  <li><a href="qkv.html">Queries, keys, values, heads</a> — the three projections attention is built from.</li>
+  <li><a href="rope.html">RoPE</a> — how the model knows where each token is.</li>
+  <li><a href="attention.html">Attention, step by step</a> — the heart of the transformer.</li>
+  <li><a href="kv-cache.html">The KV cache</a> — memory traded for speed.</li>
+  <li><a href="mlp.html">The MLP and the residual stream</a> — where most of the weights are.</li>
+  <li><a href="sampling.html">Choosing the next token</a> — scores into a choice.</li>
+  <li><a href="forward.html">The forward pass in code</a> — all of it in one function.</li>
+  <li><a href="correctness.html">Bit-identical with llama2.c</a> — how we know every step is right.</li>
+  <li><a href="baseline.html">First speed: 88.6 tok/s</a> — what is slow, and why, which sets up Phase 3.</li>
+</ol>
+
+<h2 id="done">What “done” meant</h2>
+<p>The phase was finished when three things were true, all checked on the PC and on the phone:</p>
+<ul>
+  <li>For the prompt “Once upon a time”, 14 kinds of intermediate result (the embedding, each layer's q, k, v, attention output, MLP output, and so on, through to the final scores) equal llama2.c's for 6 layers × 64 positions, with an error of exactly <strong>0</strong> <span class="tag m">measured</span>.</li>
+  <li>Greedy generation and seeded random sampling produce the same tokens as llama2.c, and the same text byte for byte <span class="tag m">measured</span>.</li>
+  <li>The tokenizer gives the same ids as llama2.c's for 323 test strings: accents, Chinese, emoji, control characters <span class="tag m">measured</span>.</li>
+</ul>
+<p>Then one number for the record: <strong>88.6 tokens per second</strong> on one prime core, on battery <span class="tag m">measured</span>. llama2.c, compiled for the same phone, did 84.7. Page 12 explains why both are this slow, and why that is good news.</p>
+
+<h2 id="code">Where the code is</h2>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/model/llama2c.rs</code></td><td>Reads the model file</td></tr>
+    <tr><td><code>src/tokenizer/llama2c.rs</code></td><td>Text ↔ token ids</td></tr>
+    <tr><td><code>src/kernels/scalar.rs</code></td><td>Every operation: matmul, RMSNorm, RoPE, softmax, SwiGLU, attention</td></tr>
+    <tr><td><code>src/model/transformer.rs</code></td><td>The forward pass and the KV cache</td></tr>
+    <tr><td><code>src/model/sampler.rs</code></td><td>Choosing the next token</td></tr>
+    <tr><td><code>src/main.rs</code></td><td>The <code>aether</code> command-line program</td></tr>
+    <tr><td><code>results/phase-2.md</code></td><td>Every check and measurement, with conditions</td></tr>
+  </tbody>
+</table>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

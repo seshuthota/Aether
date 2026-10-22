@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raw memory in Rust · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · Rust tools 1</p>
+
+<h1>Raw memory in Rust</h1>
+<p class="lede">The aligned allocator is the first thing Phase 1 builds. <code>Vec&lt;f32&gt;</code> cannot promise 64-byte alignment, so you ask the allocator directly. That means a raw pointer, an <code>unsafe</code> block, and a few rules the compiler can no longer check for you.</p>
+<nav class="toc">
+  <a href="#why">Why not just Vec</a>
+  <a href="#unsafe">What unsafe means</a>
+  <a href="#layout">Layout: size and alignment</a>
+  <a href="#calls">The four calls</a>
+  <a href="#rules">The rules you now keep</a>
+  <a href="#wrapper">Why a wrapper type</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<div class="callout"><span class="lbl">How to use this page</span><p>This is the Rust you need before writing the allocator, shown as small separate pieces. The wrapper type itself is yours to write in the session. The snippets compile for <code>aarch64-linux-android</code> with Rust 1.99 <span class="tag m">measured</span>.</p></div>
+
+<h2 id="why">Why not just <code>Vec</code></h2>
+<p>A <code>Vec&lt;f32&gt;</code> asks the allocator for memory aligned to 4 bytes, because that is all an <code>f32</code> needs. The address you get might happen to be a multiple of 64. Nothing promises it. The <a href="alignment.html#rust">Alignment</a> page covers why you want 64.</p>
+<p>You also cannot allocate 64-aligned memory yourself and hand it to a <code>Vec</code>. <code>Vec::from_raw_parts</code> requires that the memory was allocated with the same alignment as <code>f32</code>, because when the <code>Vec</code> is dropped it frees with alignment 4. Freeing with a different layout than you allocated with is undefined behaviour. So the buffer needs its own type that remembers how it was allocated.</p>
+
+<h2 id="unsafe">What <code>unsafe</code> means</h2>
+<p>Safe Rust guarantees no dangling pointers, no double frees, and no data races. It can do that because it tracks who owns each value and how long each borrow lives. A raw pointer from the allocator, <code>*mut u8</code>, is just an address. The compiler does not know what it points at or for how long.</p>
+<p>An <code>unsafe { }</code> block lets you do five extra things. Two of them matter here:</p>
+<ul>
+  <li>call a function marked <code>unsafe</code>, such as <code>alloc</code> and <code>dealloc</code>,</li>
+  <li>read or write through a raw pointer.</li>
+</ul>
+<p>Everything else is still checked inside the block: types, borrows, bounds on slices. <code>unsafe</code> does not mean “anything goes.” It means “I have checked the rules the compiler can’t, and I wrote down why.” A short comment above each block saying what you checked is the habit to build now.</p>
+
+<h2 id="layout">Layout: size and alignment</h2>
+<p>Every allocation is described by a <code>std::alloc::Layout</code>: a size in bytes and an alignment, which must be a power of two. You pass the same <code>Layout</code> to allocate and to free.</p>
+<div class="widget" data-layout>
+  <h3>Build a Layout</h3>
+  <p>Pick how many floats you want and the alignment you ask for. The lines show what each call returns.</p>
+  <div class="controls">
+    <label class="field">floats (n)<input data-n type="number" min="0" max="1000000000" value="1000"></label>
+    <label class="field">align_to<select class="pick" data-align>
+      <option value="4">4</option><option value="16">16</option><option value="64" selected>64</option><option value="48">48</option>
+    </select></label>
+  </div>
+  <pre class="formula" data-out></pre>
+  <p class="note" data-note></p>
+</div>
+<p><code>Layout::array::&lt;f32&gt;(n)</code> fails only if <code>n × 4</code> is too large to describe. <code>.align_to(64)</code> keeps the size and raises the alignment. It never lowers it, so <code>.align_to(1)</code> still gives 4.</p>
+
+<h2 id="calls">The four calls</h2>
+<p>Allocate, check for failure, use the memory as a slice, free it. In one place, so you can see the shape:</p>
+<pre><code>use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
+
+let n = 1000;                                  // floats wanted
+let layout = Layout::array::&lt;f32&gt;(n)           // n × 4 bytes, alignment 4
+    .unwrap()
+    .align_to(64)                              // ask for 64 instead
+    .unwrap();
+let p = unsafe { alloc_zeroed(layout) };       // *mut u8, or null if out of memory
+if p.is_null() {
+    handle_alloc_error(layout);
+}
+assert_eq!(p as usize % 64, 0);
+
+let floats: &amp;mut [f32] = unsafe { std::slice::from_raw_parts_mut(p as *mut f32, n) };
+floats[0] = 1.5;
+
+unsafe { dealloc(p, layout) };                 // same layout, exactly once</code></pre>
+<table>
+  <thead><tr><th>Call</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>alloc_zeroed</code></td><td>Asks the global allocator for <code>layout.size()</code> bytes at <code>layout.align()</code>, filled with zero bits. Zero bits are <code>0.0</code> as an <code>f32</code>, so every float has a value. Plain <code>alloc</code> leaves the bytes uninitialised, and reading them as floats before writing is undefined behaviour.</td></tr>
+    <tr><td><code>is_null</code> / <code>handle_alloc_error</code></td><td>The allocator returns null when it cannot give you memory. <code>handle_alloc_error</code> aborts the program the same way <code>Vec</code> does on out-of-memory.</td></tr>
+    <tr><td><code>from_raw_parts_mut</code></td><td>Turns pointer plus length into an ordinary <code>&amp;mut [f32]</code>. From here on it is normal Rust with bounds checks. You promise the pointer is valid for <code>n</code> floats and nothing else is using it.</td></tr>
+    <tr><td><code>dealloc</code></td><td>Gives the memory back. It needs the exact <code>Layout</code> you allocated with.</td></tr>
+  </tbody>
+</table>
+<p>On Android the global allocator is the system one: Bionic’s <code>malloc</code> family underneath.</p>
+
+<figure>
+<svg class="fig" viewBox="0 0 680 150" role="img" aria-label="Lifetime of a raw allocation">
+  <rect x="16" y="40" width="130" height="48" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="81" y="60" text-anchor="middle">alloc_zeroed</text>
+  <text class="mono" x="81" y="78" text-anchor="middle" font-size="11">layout</text>
+  <rect x="186" y="40" width="300" height="48" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <text x="336" y="60" text-anchor="middle">use it as &amp;[f32] / &amp;mut [f32]</text>
+  <text class="muted" x="336" y="78" text-anchor="middle" font-size="11">bounds-checked, normal Rust</text>
+  <rect x="526" y="40" width="138" height="48" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="595" y="60" text-anchor="middle">dealloc</text>
+  <text class="mono" x="595" y="78" text-anchor="middle" font-size="11">same layout</text>
+  <path d="M146 64 H186 M486 64 H526" stroke="var(--ink)"/>
+  <rect x="526" y="104" width="138" height="30" rx="4" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="595" y="124" text-anchor="middle" font-size="12">any use after this</text>
+  <text class="muted" x="16" y="124" font-size="12">The compiler does not see this timeline. You do.</text>
+</svg>
+<figcaption>Nothing stops the slice from outliving <code>dealloc</code> in the loose code above. That is the hole the wrapper type closes.</figcaption>
+</figure>
+
+<h2 id="rules">The rules you now keep</h2>
+<table>
+  <thead><tr><th>Rule</th><th>What breaks if you don’t</th></tr></thead>
+  <tbody>
+    <tr><td>Free with the same <code>Layout</code> you allocated with.</td><td>The allocator’s bookkeeping is corrupted. It may crash later, somewhere unrelated.</td></tr>
+    <tr><td>Free exactly once.</td><td>Twice is a double free. Never is a leak.</td></tr>
+    <tr><td>No use after free.</td><td>You read memory that now belongs to someone else.</td></tr>
+    <tr><td>Never call <code>alloc</code> with size 0.</td><td>Undefined behaviour. For <code>n = 0</code>, skip the allocator and use a dangling pointer (<code>NonNull::dangling()</code>) with length 0, and skip <code>dealloc</code> too.</td></tr>
+    <tr><td>Initialise before reading.</td><td><code>alloc_zeroed</code> handles this. Plain <code>alloc</code> does not.</td></tr>
+  </tbody>
+</table>
+<p>None of these show up as compile errors. Some of them don’t even show up as crashes on the host and then crash on the phone, or the reverse. That is why the <a href="alignment.html#build">tests on the Alignment page</a> include awkward sizes and <code>n = 0</code>.</p>
+
+<h2 id="wrapper">Why a wrapper type</h2>
+<p>Put the pointer, the length and the layout in one struct. Then three things become automatic:</p>
+<ol class="steps">
+  <li><strong>Drop frees it.</strong> Implement <code>Drop</code> to call <code>dealloc</code> with the stored layout. Rust calls it exactly once when the value goes away. Double free and leak are gone.</li>
+  <li><strong>Borrows can’t outlive it.</strong> A method like <code>fn as_slice(&amp;self) -&gt; &amp;[f32]</code> ties the slice to the struct. The borrow checker now refuses use-after-free, which it could not see with a loose pointer.</li>
+  <li><strong>The unsafe is in one place.</strong> A handful of lines inside the type, each with a comment. Every caller writes safe code.</li>
+</ol>
+<p>A struct holding a raw pointer is not automatically shareable across threads (<code>Send</code>). For the Phase 1 parallel sweep you won’t need it to be: each worker borrows a plain <code>&amp;[f32]</code> chunk from <code>as_slice</code>, and slices of floats can be shared. See <a href="rust-threads.html#scope">Threads</a>.</p>
+<div class="callout"><span class="lbl">Another route</span><p>A type like <code>#[repr(align(64))] struct Line([f32; 16]);</code> is 64-byte aligned, so a <code>Vec&lt;Line&gt;</code> is too, with no <code>unsafe</code>. The cost is that lengths come in steps of 16 floats and you convert to a flat <code>&amp;[f32]</code> yourself. Worth knowing; the plan asks for the allocator wrapper, which is also the better lesson.</p></div>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why can’t you allocate 64-aligned memory and turn it into a <code>Vec&lt;f32&gt;</code>?</summary>
+<p>The <code>Vec</code> would free it with alignment 4, a different <code>Layout</code> from the one it was allocated with. That is undefined behaviour. <code>Vec::from_raw_parts</code> forbids it for this reason.</p>
+</details>
+<details class="check"><summary>Does code inside <code>unsafe { }</code> skip the borrow checker?</summary>
+<p>No. It allows a few extra operations, such as calling unsafe functions and dereferencing raw pointers. Types, borrows and slice bounds are still checked.</p>
+</details>
+<details class="check"><summary>Why <code>alloc_zeroed</code> and not <code>alloc</code>?</summary>
+<p>Reading uninitialised memory as <code>f32</code> is undefined behaviour in Rust. Zeroed bytes are valid floats (0.0), so the buffer is safe to read immediately. For a 64-byte alignment, Rust’s system allocator allocates and then writes the zeros itself: one pass over the memory at allocation time. That pass also touches every page, so the page faults happen there and not inside the timed loop.</p>
+</details>
+<details class="check"><summary>What should the wrapper do for <code>n = 0</code>?</summary>
+<p>Not call the allocator. Store a dangling, non-null pointer and length 0, and have <code>Drop</code> skip <code>dealloc</code>. An empty slice from it is fine.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>

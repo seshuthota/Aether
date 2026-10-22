@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Course outline · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Start here · 03</p>
+<h1>Course outline</h1>
+<p class="lede">Every page these notes still need, phase by phase, and how far each one has got. The engine is ahead of the notes: Phases 0–8 are built and verified, but the explanations stop at Phase 3. So for most rows the code and the measurements already exist and only the page is missing. The third column says which.</p>
+<nav class="toc">
+  <a href="#status">Where the notes stand</a>
+  <a href="#p-1">Before Phase 0</a>
+  <a href="#p0-3">Phases 0–3</a>
+  <a href="#p4">4 Threads</a>
+  <a href="#p5">5 Modern models</a>
+  <a href="#p6">6 Quantization</a>
+  <a href="#p7">7 GGUF and Qwen</a>
+  <a href="#p8">8 The app</a>
+  <a href="#p9">9 Accelerators</a>
+  <a href="#p10">10 Advanced</a>
+  <a href="#capstone">Capstone</a>
+  <a href="#site">Across the site</a>
+</nav>
+
+<h2 id="status">Where the notes stand</h2>
+<div class="statrow">
+  <div class="stat"><b>11</b><span>written</span></div>
+  <div class="stat"><b>4</b><span>partly covered</span></div>
+  <div class="stat"><b>29</b><span>to write</span></div>
+  <div class="stat"><b>44</b><span>items in all</span></div>
+</div>
+<p><span class="tag d">written</span> the page exists and is checked against the code and <code>results/</code>. <span class="tag c">partly</span> some of it is on an existing page, linked. <span class="tag a">to write</span> nothing yet.</p>
+<p>In the third column, <strong>built</strong> means the engine has the code and the measured numbers a page can teach from; <strong>not built</strong> means the page would have to explain something the engine does not do yet.</p>
+<div class="callout"><span class="lbl">Two choices behind this list</span><p>Phases 9 and 10 go past the <a href="roadmap.html">roadmap</a>, which ends with the Android app in Phase 8. The plan only lists those topics as “later”. They are kept here as optional. Also, this phone has no efficiency cores (<a href="../phase-1/topology.html">Phase 1</a>), so where the outline says prime/performance/efficiency, the pages compare prime with performance cores and say how other chips differ.</p></div>
+
+<h2 id="p-1">Before Phase 0: prerequisites</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag c">partly</span></td><td>Rust primer: ownership, slices, <code>unsafe</code> basics. Unsafe and raw memory are on <a href="../phase-1/rust-memory.html">Raw memory in Rust</a>; ownership and slices have no page.</td><td>—</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Floats, dot products, matmul, softmax. Spread over <a href="llm.html">How an LLM makes text</a>, <a href="../phase-2/attention.html">Attention</a> and <a href="../phase-2/correctness.html">Bit-identical with llama2.c</a>; no single page from first principles.</td><td>—</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>A tour of existing engines: llama.cpp/ggml, ExecuTorch, MLC-LLM, LiteRT, MNN, ncnn. What each does, and which Aether checks itself against.</td><td>llama.cpp is built for host and phone</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p0-3">Phases 0–3</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-0/index.html">Phase 0</a>: 6 pages</td><td>built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-1/index.html">Phase 1</a>: 12 pages</td><td>built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-2/index.html">Phase 2</a>: 12 pages</td><td>built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-3/index.html">Phase 3</a>: 7 pages</td><td>built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>Publish the real Phase 1 results: <a href="../phase-1/results.html">What Phase 1 measured</a>, with the sweeps as plots. The other Phase 1 pages now say they were written before measuring, and point to it.</td><td>measured · <code>results/phase-1.md</code></td></tr>
+    <tr><td><span class="tag d">written</span></td><td>Phase 2 code snippets show Phase 2’s code (<code>k::matmul</code>, from commit <code>98b5967</code>), not Phase 4’s <code>linear_on(pool, …)</code>; <a href="../phase-2/qkv.html">QKV</a> says what Phase 4 changes.</td><td>—</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>Moved <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a> to Phase 7, where the work happened and where Qwen’s long contexts make it matter.</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p4">Phase 4: threads</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-4/pool.html">Threads that stay</a>: why threads are started once and kept</td><td>built · <code>src/pool.rs</code></td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-4/split.html">Splitting the work</a> by rows or by heads</td><td>built · dynamic row blocks; attention by head</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-4/waiting.html">Waiting: spin, then park</a>, with false sharing in the pool (the idea itself is on <a href="../phase-1/alignment.html#false">Alignment</a>)</td><td>built · spin, then park</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-4/cores.html">Choosing cores</a>: prime vs performance here, efficiency cores on other chips</td><td>built · caller on the fastest core</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Speed and energy vs thread count</td><td>partly measured · the clean sweep is still open (<code>results/phase-4.md</code>)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p5">Phase 5: modern models</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>safetensors, <code>mmap</code> and the page cache</td><td>built · <code>src/format/</code></td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>bf16 weights</td><td>built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Grouped-query attention</td><td>built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Byte-level BPE, chat templates</td><td>built · checked on 433 strings against <code>tokenizers</code></td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Checking layer by layer against Hugging Face</td><td>built · within 5.5e-5 of <code>transformers</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="p6">Phase 6: quantization</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag c">partly</span></td><td>Block scales; the Q8_0 and Q4_0 layouts. Why fewer bytes per weight is faster is on <a href="../phase-0/decode-ceiling.html">Decode ceiling</a>.</td><td>built · byte-identical to llama.cpp</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Quantizing activations</td><td>built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td><code>sdot</code> and i8mm kernels</td><td><code>sdot</code> built; <code>smmla</code> (i8mm) not built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>K-quants: an overview</td><td>not built (reading only)</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Accuracy checks: perplexity and KL</td><td>built · matches <code>llama-perplexity</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="p7">Phase 7: GGUF and Qwen</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>The GGUF format and its metadata</td><td>built · <code>src/format/gguf.rs</code></td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>KV cache sizing and quantization. Sizing for all three models is on <a href="../phase-2/kv-cache.html">The KV cache</a>.</td><td>sizing built; quantized cache not built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Long context, tiled attention</td><td>not built · attention is split by head only (open item)</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>A sustained-speed and energy benchmark suite (joules per token)</td><td>built · 0.041 J/token, Qwen2.5 Q4_0</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p8">Phase 8: the app</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>C interface, JNI, streaming tokens to Kotlin</td><td>built · <code>include/aether.h</code>, <code>android/</code></td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Packaging the <code>.so</code> in the APK (16 KB page alignment)</td><td>built · linked with <code>max-page-size=16384</code></td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>App memory limits: the low-memory killer, RSS vs page cache</td><td>not measured</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Storing and downloading the model</td><td>stored in the app’s files folder, pushed with adb; download not built</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p9">Phase 9: accelerators <span class="tag a">optional</span></h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>GPUs: Vulkan and OpenCL on Adreno, Metal on iOS</td><td>not built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>NPUs: QNN/Hexagon, LiteRT delegates, Core ML and the ANE</td><td>not built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Why accelerators help prefill more than decode</td><td>not built · the CPU numbers to compare against exist</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p10">Phase 10: advanced <span class="tag a">optional</span></h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>Graph representation and memory planning</td><td>not built · the plan defers this until a GPU backend</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Op fusion</td><td>not built</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Speculative decoding, batching</td><td>not built</td></tr>
+  </tbody>
+</table>
+
+<h2 id="capstone">Capstone</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>A checklist from an empty repo to a chat APK, linking the code and the tests at each step</td><td>built through Phase 8</td></tr>
+  </tbody>
+</table>
+
+<h2 id="site">Across the site</h2>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag a">to write</span></td><td>Link the repo from every page that cites <code>src/</code> or <code>results/</code></td><td>blocked · the repo has no public remote yet</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Exercises: “implement X, pass test Y”, with starter code</td><td>the tests exist</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Notes for other phones and chips: big.LITTLE, SVE</td><td>—</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Search, a menu that works without JavaScript, “last updated” dates</td><td>—</td></tr>
+  </tbody>
+</table>
+<p>When a row is done, change its tag in <code>site/start/outline.html</code> and the counts at the top.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

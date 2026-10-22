@@ -1,0 +1,94 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.838
+The roofline. Is your code waiting on memory, or on math?
+
+00:00:06.688 --> 00:00:13.999
+A core needs two things. First, bytes. They arrive from memory at some rate: that's bandwidth, bytes per second.
+
+00:00:14.450 --> 00:00:23.259
+Second, arithmetic. The core adds and multiplies those numbers. Each add or multiply is one FLOP, and the core can do so many per second.
+
+00:00:23.709 --> 00:00:28.501
+So which one runs out first? It comes down to a single number.
+
+00:00:30.151 --> 00:00:38.658
+Take the Phase 0 sum. One float is four bytes, and it gets one add. One FLOP for four bytes: a quarter of a FLOP per byte.
+
+00:00:39.508 --> 00:00:47.620
+Decode's matrix times vector. Each four-byte weight gets a multiply and an add. Two FLOPs for four bytes: half a FLOP per byte.
+
+00:00:48.471 --> 00:00:56.978
+Prefill with thirty-two tokens reuses that same weight thirty-two times. Sixty-four FLOPs from the same four bytes: sixteen per byte.
+
+00:00:57.828 --> 00:01:03.827
+FLOPs per byte. It's called arithmetic intensity: how much work each byte brings with it.
+
+00:01:05.477 --> 00:01:12.835
+Now some made-up limits. Memory delivers thirty gigabytes per second. The core can do twenty-eight billion FLOPs per second.
+
+00:01:13.285 --> 00:01:19.366
+At half a FLOP per byte, thirty gigabytes a second can only feed fifteen billion FLOPs a second.
+
+00:01:19.816 --> 00:01:26.767
+The shorter bar is the limit. The core sits idle about half the time, waiting for bytes. That's memory-bound.
+
+00:01:27.767 --> 00:01:33.325
+Now slide up to sixteen FLOPs per byte. Memory could feed four hundred and eighty.
+
+00:01:33.776 --> 00:01:39.392
+Way more than the core can use. Now the core is the limit. That's compute-bound.
+
+00:01:41.592 --> 00:01:49.240
+Do that for every possible work per byte, and plot it. Work per byte along the bottom, the best possible speed up the side.
+
+00:01:49.690 --> 00:01:56.688
+On the left, more work per byte means more speed, because every byte brings more math with it. That's the bandwidth roof.
+
+00:01:57.138 --> 00:02:01.895
+Then it hits the core's peak, and goes flat. That's the compute roof.
+
+00:02:02.345 --> 00:02:07.659
+Where the two meet is the ridge. Left of it, memory-bound. Right of it, compute-bound.
+
+00:02:08.460 --> 00:02:14.819
+Each step along both axes is ten times bigger. That's what keeps the slope a straight line.
+
+00:02:15.269 --> 00:02:19.225
+Decode's matrix times vector lands here, low on the slope.
+
+00:02:19.675 --> 00:02:23.190
+Prefill lands up here, on the flat roof.
+
+00:02:23.640 --> 00:02:30.232
+Watch what happens if we double the core's speed. The flat roof rises. The decode dot doesn't move at all.
+
+00:02:31.032 --> 00:02:36.346
+For decode, faster math doesn't help. Reading fewer bytes does.
+
+00:02:36.796 --> 00:02:44.711
+Store each weight in four bits, and the same math needs about seven times fewer bytes. The dot slides right, and climbs the slope.
+
+00:02:45.161 --> 00:02:52.031
+Until it meets the flat roof. From there, the math is the limit again. Where exactly that happens, we'll have to measure.
+
+00:02:52.881 --> 00:02:58.753
+One last point. The Phase 0 sum, at a quarter of a FLOP per byte. Its roof is up here.
+
+00:02:59.203 --> 00:03:05.957
+But we measured it way down here: point eight two billion FLOPs per second. Far below its roof.
+
+00:03:06.757 --> 00:03:14.347
+A roof is a limit, not a promise. The sum wasn't waiting on memory. It was waiting on its own chain of adds.
+
+00:03:14.797 --> 00:03:20.796
+A point under the roof means something else is slowing it down. Finding out what, is the skill.
+
+00:03:22.997 --> 00:03:27.000
+So: work per byte decides which limit you hit.
+
+00:03:27.449 --> 00:03:31.045
+Left of the ridge, memory is the limit. Decode lives there.
+
+00:03:31.496 --> 00:03:35.986
+And the roof is only an upper bound. If you're below it, go find out why.

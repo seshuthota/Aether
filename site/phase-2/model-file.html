@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside a model file · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 01</p>
+<h1>Inside a model file</h1>
+<p class="lede">A trained model is just a long list of numbers on disk. This page opens <code>stories15M.bin</code>: 28 bytes that describe the shapes, then 15.2 million floats in a fixed order. Once you know the order, loading the model is reading the file front to back.</p>
+<nav class="toc">
+  <a href="#what">What “the weights” are</a>
+  <a href="#header">The 28-byte header</a>
+  <a href="#map">The map of the file</a>
+  <a href="#rowmajor">Row-major: how a matrix lies flat</a>
+  <a href="#tied">Tied embeddings</a>
+  <a href="#loader">The loader in Rust</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="what">What “the weights” are</h2>
+<p>Training a model means adjusting millions of numbers until the model predicts text well. When training stops, those numbers are frozen and saved. They are the <em>weights</em> (also called parameters). Running the model, which is all this engine does, never changes them; it only reads them.</p>
+<p>Almost all of them are arranged as <a href="../phase-0/tensors.html">matrices</a>: grids of numbers that turn one vector into another by <a href="../start/llm.html#matvec">matrix-vector multiplication</a>. A few are single vectors (the norm gains you will meet on <a href="embedding-norm.html">page 3</a>).</p>
+<p>A file format has to answer two questions: <strong>what shapes are these matrices?</strong> and <strong>where in the file does each one start?</strong> llama2.c's format answers the first with a tiny header and the second with a fixed order. There are no names, no offsets, no metadata. Phase 5 and Phase 6 meet richer formats (safetensors, GGUF) that do store names.</p>
+
+<h2 id="header">The 28-byte header</h2>
+<p>The file starts with seven 32-bit integers, 4 bytes each, little-endian (the least significant byte first, which is how ARM and x86 store numbers in memory):</p>
+<table>
+  <thead><tr><th>Bytes</th><th>Field</th><th>stories15M</th><th>Used for</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0–3</td><td><code>dim</code></td><td class="num">288</td><td>width of every token vector</td></tr>
+    <tr><td class="num">4–7</td><td><code>hidden_dim</code></td><td class="num">768</td><td>width inside the MLP</td></tr>
+    <tr><td class="num">8–11</td><td><code>n_layers</code></td><td class="num">6</td><td>how many blocks</td></tr>
+    <tr><td class="num">12–15</td><td><code>n_heads</code></td><td class="num">6</td><td>attention heads (head size = 288 ÷ 6 = 48)</td></tr>
+    <tr><td class="num">16–19</td><td><code>n_kv_heads</code></td><td class="num">6</td><td>key/value heads (equal here; fewer in Phase 5's models)</td></tr>
+    <tr><td class="num">20–23</td><td><code>vocab_size</code></td><td class="num">32000</td><td>number of tokens; its <em>sign</em> also matters (see <a href="#tied">tied</a>)</td></tr>
+    <tr><td class="num">24–27</td><td><code>seq_len</code></td><td class="num">256</td><td>longest context the model was trained on</td></tr>
+  </tbody>
+</table>
+<p>Those seven numbers fix the size of everything after them. If any of them is zero, or negative (except <code>vocab_size</code>), the file is broken and the loader refuses it.</p>
+<div class="callout"><span class="lbl">Try it on your PC</span><p><code>xxd -l 28 stories15M.bin</code> prints the header. The first four bytes are <code>20 01 00 00</code>: 0x0120 = 288, stored low byte first.</p></div>
+
+<h2 id="map">The map of the file</h2>
+<p>After the header the weights follow as raw 32-bit floats, one tensor after another, always in the same order. Each tensor holds that kind of weight for <em>all six layers</em> back to back: first all six <code>wq</code> matrices, then all six <code>wk</code>, and so on.</p>
+<div class="widget" data-filemap>
+  <h3>Click a region of stories15M.bin</h3>
+  <p>The bar is the whole 60.8 MB file drawn to scale. Colours: pale teal for the embedding, darker teal for attention, copper for the MLP, blue for the norm gains, grey for the header and the leftover RoPE table. Small regions are thin slivers; click near them.</p>
+  <div class="filemap" data-bar></div>
+  <p class="note" data-out></p>
+  <div class="statrow" data-stats></div>
+</div>
+<p>Two things stand out:</p>
+<ul>
+  <li><strong>The embedding is the biggest single tensor</strong>: 32,000 × 288 = 9.2 million floats, 36.9 MB, 61 % of the file. A small model with a big vocabulary spends most of its size on the vocabulary.</li>
+  <li><strong>The norm gains are tiny</strong>: 288 floats per norm. They matter for the maths, not for memory.</li>
+</ul>
+<p>Add up the matrices a token actually multiplies by (the 6 layers plus the classifier) and you get 15.19 million weights, 60.8 MB as <code>f32</code> <span class="tag c">calculated</span>. That is the number of bytes every generated token has to read, which is why it comes back on <a href="baseline.html">page 12</a>.</p>
+
+<h2 id="rowmajor">Row-major: how a matrix lies flat</h2>
+<p>A file is one-dimensional, so a 288 × 288 matrix has to be laid out as a line of 82,944 numbers. llama2.c uses <em>row-major</em> order: all of row 0, then all of row 1, and so on. Element (row <var>i</var>, column <var>j</var>) sits at index <var>i</var> × 288 + <var>j</var>.</p>
+<figure>
+<svg viewBox="0 0 560 120" role="img" aria-label="A 3 by 4 matrix laid out row after row">
+  <g font-size="12" text-anchor="middle">
+    <g fill="var(--accent-soft)" stroke="var(--accent)"><rect x="20" y="20" width="30" height="24"/><rect x="50" y="20" width="30" height="24"/><rect x="80" y="20" width="30" height="24"/><rect x="110" y="20" width="30" height="24"/></g>
+    <g fill="var(--copper-soft)" stroke="var(--copper)"><rect x="20" y="44" width="30" height="24"/><rect x="50" y="44" width="30" height="24"/><rect x="80" y="44" width="30" height="24"/><rect x="110" y="44" width="30" height="24"/></g>
+    <g fill="var(--surface)" stroke="var(--line)"><rect x="20" y="68" width="30" height="24"/><rect x="50" y="68" width="30" height="24"/><rect x="80" y="68" width="30" height="24"/><rect x="110" y="68" width="30" height="24"/></g>
+    <text x="35" y="37">a</text><text x="65" y="37">b</text><text x="95" y="37">c</text><text x="125" y="37">d</text>
+    <text x="35" y="61">e</text><text x="65" y="61">f</text><text x="95" y="61">g</text><text x="125" y="61">h</text>
+    <text x="35" y="85">i</text><text x="65" y="85">j</text><text x="95" y="85">k</text><text x="125" y="85">l</text>
+    <text x="165" y="61" fill="var(--muted)">→</text>
+    <g fill="var(--accent-soft)" stroke="var(--accent)"><rect x="190" y="44" width="28" height="24"/><rect x="218" y="44" width="28" height="24"/><rect x="246" y="44" width="28" height="24"/><rect x="274" y="44" width="28" height="24"/></g>
+    <g fill="var(--copper-soft)" stroke="var(--copper)"><rect x="302" y="44" width="28" height="24"/><rect x="330" y="44" width="28" height="24"/><rect x="358" y="44" width="28" height="24"/><rect x="386" y="44" width="28" height="24"/></g>
+    <g fill="var(--surface)" stroke="var(--line)"><rect x="414" y="44" width="28" height="24"/><rect x="442" y="44" width="28" height="24"/><rect x="470" y="44" width="28" height="24"/><rect x="498" y="44" width="28" height="24"/></g>
+    <text x="204" y="61">a</text><text x="232" y="61">b</text><text x="260" y="61">c</text><text x="288" y="61">d</text><text x="316" y="61">e</text><text x="344" y="61">f</text><text x="372" y="61">g</text><text x="400" y="61">h</text><text x="428" y="61">i</text><text x="456" y="61">j</text><text x="484" y="61">k</text><text x="512" y="61">l</text>
+    <text x="358" y="96" class="muted" font-size="11">index = row × 4 + column</text>
+  </g>
+</svg>
+<figcaption>Row-major: each row is one contiguous run. A matrix-vector multiply reads one row at a time, so it walks memory straight through, which is exactly what caches and prefetchers like (<a href="../phase-1/memory.html">Phase 1</a>).</figcaption>
+</figure>
+<p>Every matrix in this file is stored as <code>[outputs, inputs]</code>: one row per output number. To compute output <var>i</var> you take the dot product of row <var>i</var> with the input vector. So <code>wq</code> (288 × 288) has one row per number of the query, and <code>w1</code> (768 × 288) one row per number of the MLP's wide hidden vector.</p>
+
+<h2 id="tied">Tied embeddings</h2>
+<p>The model needs a table at both ends: the <em>embedding</em> turns a token id into a vector at the start, and the <em>classifier</em> turns the final vector back into one score per token at the end. Both are 32,000 × 288.</p>
+<p>Many small models use <strong>the same table for both</strong>; this is called tying the embeddings. It saves 36.9 MB here. The header says which case you are in through the sign of <code>vocab_size</code>: positive means tied, negative means the classifier has its own weights at the end of the file. stories15M is tied.</p>
+
+<h2 id="loader">The loader in Rust</h2>
+<p><code>src/model/llama2c.rs</code> reads the file in one go and walks it with a small cursor that hands out one tensor at a time, in file order:</p>
+<pre><code>let token_embedding = cursor.take(c.vocab_size * dim)?;
+let rms_att = cursor.take_layers(layers, dim)?;
+let wq = cursor.take_layers(layers, dim * dim)?;
+let wk = cursor.take_layers(layers, kv_dim * dim)?;
+// … wv, wo, rms_ffn, w1, w2, w3 …
+let final_norm = cursor.take(dim)?;
+cursor.skip(c.seq_len * c.head_size())?; // old RoPE table, not needed
+if cursor.remaining() != 0 { /* refuse: the shapes did not add up */ }</code></pre>
+<p>Three details are worth noticing:</p>
+<ul>
+  <li><strong>Every tensor is copied into an <a href="../phase-1/alignment.html">aligned buffer</a></strong> (<code>AlignedBuf</code>, 64-byte aligned). The bytes in the file are not aligned for vector loads; the copies are.</li>
+  <li><strong>The leftover RoPE table is skipped.</strong> Older llama2.c versions stored precomputed rotation angles. Aether computes them itself (<a href="rope.html">page 5</a>).</li>
+  <li><strong>The loader checks that nothing is left over.</strong> If the header's shapes do not account for every byte, the file is refused. That one check catches a wrong header, a truncated download and a file in another format.</li>
+</ul>
+<p>Loading copies 60.8 MB, which is fine for this model. Phase 5 switches to memory mapping (<code>mmap</code>) for files of hundreds of megabytes, so the operating system pages weights in on demand instead.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>How many bytes is one layer's <code>w1</code>, and where does that number come from?</summary>
+<p>768 rows × 288 columns × 4 bytes = 884,736 bytes, about 864 KB. Rows = outputs (the hidden width), columns = inputs (dim), 4 bytes per <code>f32</code>.</p>
+</details>
+<details class="check"><summary>The file has no names in it. How does the loader know which bytes are <code>wk</code>?</summary>
+<p>Only by position: the order is fixed by the format, and the header gives every size. <code>wk</code> starts right after the embedding, the six <code>rms_att</code> vectors and the six <code>wq</code> matrices.</p>
+</details>
+<details class="check"><summary>Why is the classifier missing from the end of stories15M.bin?</summary>
+<p>Because the model is tied: <code>vocab_size</code> in the header is positive, so the classifier reuses the embedding table. The forward pass multiplies the final vector by the embedding matrix.</p>
+</details>
+<details class="check"><summary>Element (row 2, column 5) of <code>wq</code> for layer 0. At what index inside the <code>wq</code> block is it?</summary>
+<p>2 × 288 + 5 = 581. For layer <var>l</var> you would add <var>l</var> × 288 × 288 first, because each layer's matrix follows the previous one.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

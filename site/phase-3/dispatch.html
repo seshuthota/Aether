@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One API, two machines · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 07</p>
+<h1>One API, two machines</h1>
+<p class="lede">The engine runs on the phone (ARM, with NEON) and its tests also run on the PC (x86, no NEON). The model code should not care which. So it calls one set of functions, and those functions pick the right kernel. This page shows the two ways that choice is made, at compile time and at run time, and the two places the engine drops to inline assembly.</p>
+<nav class="toc">
+  <a href="#api">One function, several bodies</a>
+  <a href="#compile">Choosing at compile time</a>
+  <a href="#detect">Choosing at run time</a>
+  <a href="#asm">When an intrinsic is not enough</a>
+  <a href="#why">Why this structure pays off</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="api">One function, several bodies</h2>
+<p><code>src/kernels/mod.rs</code> is the only kernel module the model talks to. It offers <code>matmul</code>, <code>matmul_batch</code>, <code>attention_head</code>, <code>rmsnorm</code> and so on. The transformer never imports <code>neon</code> or <code>scalar</code> directly. When a faster version arrives (NEON in Phase 3, threads in Phase 4, quantized weights in Phase 6) it replaces a body in this module, and the forward pass does not change.</p>
+<figure>
+<div class="flow">
+  <div>transformer.rs<small>calls k::matmul</small></div><span class="arr">→</span>
+  <div class="hot">kernels/mod.rs<small>picks a body</small></div><span class="arr">→</span>
+  <div>neon::gemv<small>on aarch64</small></div>
+  <div>scalar::matmul<small>elsewhere</small></div>
+</div>
+</figure>
+
+<h2 id="compile">Choosing at compile time</h2>
+<pre><code>#[inline]
+pub fn matmul(out: &amp;mut [f32], x: &amp;[f32], w: &amp;[f32]) {
+    #[cfg(target_arch = "aarch64")]
+    neon::gemv(out, x, w);
+    #[cfg(not(target_arch = "aarch64"))]
+    scalar::matmul(out, x, w);
+}</code></pre>
+<p><code>#[cfg(…)]</code> is decided when the program is compiled, for the target it is compiled for (<a href="../phase-0/cross-compilation.html">Phase 0</a>). Building for <code>aarch64-linux-android</code> keeps only the NEON line; building for the PC keeps only the scalar line. The other line is not just skipped; it does not exist in that binary. There is no run-time cost at all, and with <code>#[inline]</code> the call disappears too.</p>
+<p>This works for NEON because every AArch64 CPU has it. It is part of the architecture's baseline, so a binary built for <code>aarch64</code> may always use it. The <code>neon</code> module itself is only compiled on AArch64 (<code>#[cfg(target_arch = "aarch64")] pub mod neon;</code>), since its intrinsics do not exist elsewhere.</p>
+<p>One consequence: on the PC, <code>cargo test</code> tests the <em>scalar</em> kernels. The NEON kernels are only tested by running the tests on the phone. Both run against the same numpy goldens.</p>
+
+<h2 id="detect">Choosing at run time</h2>
+<p>Not every feature is baseline. The integer dot-product instruction <code>sdot</code>, which Phase 6's quantized kernels rely on, is an optional extension (<code>dotprod</code>). This phone has it; an older ARM phone might not. A binary that used it unconditionally would crash there with an “illegal instruction” error.</p>
+<p>So those kernels ask the CPU when they run:</p>
+<pre><code>pub fn has_dotprod() -&gt; bool {
+    std::arch::is_aarch64_feature_detected!("dotprod")
+}
+
+pub fn dot_q8_0_q8_0(row: &amp;[BlockQ8_0], x: &amp;[BlockQ8_0]) -&gt; f32 {
+    if !has_dotprod() {
+        return crate::quant::scalar::dot_q8_0_q8_0(row, x);   // safe fallback
+    }
+    unsafe { dot_q8_0_q8_0_sdot(row, x) }                    // fast path
+}
+
+#[target_feature(enable = "dotprod")]
+unsafe fn dot_q8_0_q8_0_sdot(…) { … }</code></pre>
+<ul>
+  <li><code>is_aarch64_feature_detected!</code> asks the operating system which features the CPU reported. The answer is cached after the first call, so checking it often is cheap.</li>
+  <li><code>#[target_feature(enable = "dotprod")]</code> lets the compiler use <code>sdot</code> inside that one function, even though the rest of the binary is built for plain AArch64.</li>
+  <li>Such a function is <code>unsafe</code> to call: calling it on a CPU without the feature is exactly the crash we are avoiding. The check right before the call is what makes it safe.</li>
+</ul>
+<p>Phase 0's look at the phone found <code>dotprod</code>, <code>i8mm</code>, <code>bf16</code> and <code>fp16</code> among its features, and no SVE. <code>i8mm</code> (the <code>smmla</code> matrix instruction) is not used yet; it is an open item for faster quantized prefill.</p>
+
+<h2 id="asm">When an intrinsic is not enough</h2>
+<p>Intrinsics cover almost everything. The engine has two exceptions, both written with Rust's <code>asm!</code> macro:</p>
+<table>
+  <thead><tr><th>Where</th><th>Instruction</th><th>Why assembly</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/sys/cpu.rs</code></td><td><code>mrs …, ctr_el0</code></td><td>reads a system register that reports the cache line size; there is no intrinsic for it</td></tr>
+    <tr><td><code>src/kernels/neon_quant.rs</code></td><td><code>fcvtl v.4s, v.4h</code></td><td>widens four <code>f16</code> numbers to <code>f32</code> in one instruction. It is part of base NEON, but Rust's intrinsic for it needs a half-precision type that was not usable on stable Rust, so one instruction is written by hand</td></tr>
+  </tbody>
+</table>
+<p>Each <code>asm!</code> block states what it touches (<code>nomem</code>: no memory; <code>pure</code>: same inputs give same output), so the compiler can still optimise around it. Writing whole kernels in assembly would give full control over registers and scheduling, but the intrinsic versions are already close to memory's limit for decode; the gain would not pay for the loss of readability.</p>
+
+<h2 id="why">Why this structure pays off</h2>
+<ul>
+  <li><strong>Every faster version is tested the same way.</strong> The tests call the public functions with numpy goldens; whichever body is compiled in gets tested.</li>
+  <li><strong>The slow version never goes away.</strong> The scalar kernels stay as the PC path and as the readable statement of what each kernel computes. They are not a test oracle (numpy and llama2.c are), but they are the easiest code to read first.</li>
+  <li><strong>Benchmarks can compare versions directly</strong>, since the steps (<code>gemv_one_acc</code>, <code>gemv_row_4acc</code>, <code>gemv</code>) stay public.</li>
+</ul>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why can NEON be chosen at compile time, but <code>sdot</code> needs a run-time check?</summary>
+<p>NEON is part of every AArch64 CPU. <code>dotprod</code> is optional, so the same binary may meet CPUs with and without it.</p>
+</details>
+<details class="check"><summary>On the PC, which matmul does <code>cargo test</code> test?</summary>
+<p>The scalar one. The <code>neon</code> module is not even compiled for x86. NEON kernels are tested by running the tests on the phone.</p>
+</details>
+<details class="check"><summary>What would happen if a function marked <code>#[target_feature(enable = "dotprod")]</code> ran on a CPU without it?</summary>
+<p>The CPU would hit an instruction it does not know and the program would die with an illegal-instruction signal. That is why calling it is <code>unsafe</code> and guarded by the feature check.</p>
+</details>
+<details class="check"><summary>Why does the transformer never call <code>neon::gemv</code> directly?</summary>
+<p>So that new kernel versions (threaded, quantized) can be swapped in at one place, without editing the model code, and so the model also builds on machines without NEON.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

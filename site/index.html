@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Reference</p>
+
+
+<h1>Notes for the engine you are building</h1>
+<p class="lede">Aether is a program that runs a language model on a phone, written from scratch in Rust. These pages explain every idea behind it, in the order you meet them. The engine itself lives in <code>src/</code>. This site is only the explanation.</p>
+
+<div class="callout ok"><span class="lbl">New here?</span><p>Start with <a href="start/llm.html">How an LLM makes text</a>. It assumes nothing and has two small simulations you can step through. Then the <a href="start/roadmap.html">roadmap</a> shows where each phase fits. Any word with a dotted underline has a definition: hover over it, or tap it on a phone. All of them are in the <a href="glossary.html">glossary</a>.</p></div>
+
+<p class="pull">Decode cannot go faster than memory bandwidth divided by the bytes of weights read for that token. Phase 0 exists to make that sentence precise, and to make the measurements you will hang on it trustworthy.</p>
+<nav class="toc" aria-label="On this page">
+  <a href="#start">Start here</a>
+  <a href="#how">How to read a number</a>
+  <a href="#why">Why this project</a>
+  <a href="#phase0">Phase 0</a>
+  <a href="#phase1">Phase 1</a>
+  <a href="#phase2">Phase 2</a>
+  <a href="#phase3">Phase 3</a>
+  <a href="#phase4">Phase 4</a>
+  <a href="#serve">Open it later</a>
+</nav>
+
+<h2 id="start">Start here</h2>
+<p>The foundations. Read these first if words like token, weight, or decode are new.</p>
+<div class="cards" data-cards="Start here"></div>
+
+<h2 id="how">How to read a number</h2>
+<p>Three kinds of number show up, and mixing them up is how a learning project lies to itself.</p>
+<table>
+  <thead><tr><th>Tag</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag m">measured</span></td><td>Observed on this machine or this phone. The clock cost, the sum timings, the core frequencies, the CPU feature flags.</td></tr>
+    <tr><td><span class="tag c">calculated</span></td><td>Arithmetic from a formula. 0.5 billion parameters times 4 bytes is 2 GB. The formula is the point; the number is not a benchmark.</td></tr>
+    <tr><td><span class="tag a">assumption</span></td><td>A stand-in used to learn the shape of an idea. 30 GB/s in the tokens-per-second exercise is one of these. It is not this phone’s bandwidth.</td></tr>
+  </tbody>
+</table>
+<p>Phase 0 pages describe work that is finished: the project builds, <code>cargo test</code> runs on the phone, the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for; the measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. The engine is built further, through Phase 8; the <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
+
+<h2 id="why">Why this project</h2>
+<p>The objective is to understand inference by building it, on a phone, from scratch. A fast engine at the end is a bonus. The plan is not a race against llama.cpp.</p>
+<p>Phone hardware is the design constraint, not a smaller desktop:</p>
+<ul>
+  <li><strong>Memory bandwidth</strong>, not peak FLOPs, limits token generation. A phone has far less of it than a desktop GPU.</li>
+  <li><strong>RAM is small and shared</strong> with Android. The OS will kill a process that uses too much.</li>
+  <li><strong>No fan.</strong> The first 10 seconds are not the speed after 5 minutes.</li>
+  <li><strong>Energy.</strong> Every token costs battery. Joules per token is a first-class number, not a footnote.</li>
+  <li><strong>Cores are not identical.</strong> On this phone they are all Oryon, in two frequency classes. Older Snapdragons also have efficiency cores. The plan’s general story has to be checked against this chip.</li>
+  <li><strong>CPU first.</strong> Every phone has ARM NEON. GPU and NPU come later, if at all.</li>
+</ul>
+<p>Correctness does not come from a second copy of our own code. Golden outputs come from outside: numpy and PyTorch for kernels, llama2.c for stories15M, Hugging Face for SmolLM2 and Qwen, llama.cpp for quantization formats. If both of our implementations share a bug, a test against ourselves cannot see it.</p>
+<p>A phase is finished when the engine is correct and the numbers can be explained: where the time went, and what limited it. A kernel at 40% of measured bandwidth is a finished lesson once the missing 60% has an explanation.</p>
+
+<h2 id="phase0">Phase 0, finished</h2>
+<p>Six concepts, in the order they were learned. Together they get code onto the phone, then make a timing believable, then make a tensor an address into a flat buffer. <a href="phase-0/index.html">The Phase 0 overview</a> maps them onto the files in the repo.</p>
+<div class="cards" data-cards="Phase 0 · done"></div>
+
+<h2 id="phase1">Phase 1, measured</h2>
+<p>Hardware and the memory model. The success criterion in the plan is a table in <code>results/</code>: cache bandwidths, single-core and all-core DRAM read bandwidth, throttled sustained bandwidth, and energy per GB on the two core classes. These pages are the concepts that table teaches, written before it was measured.</p>
+<div class="cards" data-cards="Phase 1 · concepts"></div>
+<h3>The Rust you need to build it</h3>
+<p>The pages above are the hardware ideas. These are the Rust tools the Phase 1 code needs: raw allocation, calling a C function, threads, reading <code>/sys</code>, and drawing the result.</p>
+<div class="cards" data-cards="Phase 1 · Rust tools"></div>
+<h3>The answers</h3>
+<p>The measured table, with the sweeps as plots: what one core, all cores, five minutes of heat and a gigabyte of reads cost on this phone.</p>
+<div class="cards" data-cards="Phase 1 · results"></div>
+
+<h2 id="phase2">Phase 2, a whole model</h2>
+<p>Every part of a real model (stories15M), written simply, checked bit for bit against llama2.c, and timed: 88.6 tokens per second on one prime core. Read in order; each page is one step of the forward pass.</p>
+<div class="cards" data-cards="Phase 2 · a whole model"></div>
+
+<h2 id="phase3">Phase 3, NEON kernels</h2>
+<p>The same model, made fast with four floats per instruction: dependency chains, GEMV, tails, prefill and GEMM. From 88.6 to 422 tokens per second on one core.</p>
+<div class="cards" data-cards="Phase 3 · NEON kernels"></div>
+
+<h2 id="phase4">Phase 4, threads</h2>
+<p>Each matrix product split across cores: a pool of threads that stay, work handed out in blocks, and which cores are worth using. From 123.9 tokens per second on one core to 274.7 on six, for SmolLM2-135M. The speed-and-energy sweep against core set is still to run.</p>
+<div class="cards" data-cards="Phase 4 · threads"></div>
+
+<h2 id="serve">Open it later</h2>
+<p>From the repo root:</p>
+<pre><code>python3 -m http.server 8765 --directory site</code></pre>
+<p>Then open <code>http://localhost:8765/</code>. Opening <code>site/index.html</code> as a file also works; the links are relative. The typefaces load from Google Fonts when the network is up and fall back to the system stack when it is not. On a phone on the same Wi-Fi, use the PC’s address instead of <code>localhost</code>.</p>
+<p>Later phases get a section here as their pages are written. Adding a page is two steps, written up in <code>site/README.md</code>: copy <code>_template.html</code>, and add one line to <code>js/pages.js</code>. The menu, the previous/next links and the cards above all update from that line.</p>
+<p>Do not skip ahead in the engine. The early measurements are what the later kernels get compared against.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="js/pages.js?v=8"></script>
+<script src="js/glossary.js?v=8"></script>
+<script src="js/site.js?v=8"></script>
+</body>
+</html>

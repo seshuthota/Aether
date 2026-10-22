@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plotting the sweep · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · Rust tools 5</p>
+
+<h1>Plotting the sweep</h1>
+<p class="lede">The working-set sweep produces about twenty numbers per core set. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
+<nav class="toc">
+  <a href="#path">From phone to picture</a>
+  <a href="#csv">A CSV with its conditions</a>
+  <a href="#log">Why the size axis is logarithmic</a>
+  <a href="#script">The plotting script</a>
+  <a href="#units">Bytes and gigabytes</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="path">From phone to picture</h2>
+<figure>
+<svg class="fig" viewBox="0 0 700 120" role="img" aria-label="Pipeline from phone output to a plot">
+  <rect x="10" y="30" width="140" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="80" y="52" text-anchor="middle">sweep binary</text>
+  <text class="muted" x="80" y="70" text-anchor="middle" font-size="11">on the phone</text>
+  <rect x="190" y="30" width="140" height="52" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <text x="260" y="52" text-anchor="middle">stdout</text>
+  <text class="muted" x="260" y="70" text-anchor="middle" font-size="11">through adb</text>
+  <rect x="370" y="30" width="140" height="52" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <text class="mono" x="440" y="52" text-anchor="middle">sweep-cpu6.csv</text>
+  <text class="muted" x="440" y="70" text-anchor="middle" font-size="11">results/, on the PC</text>
+  <rect x="550" y="30" width="140" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text class="mono" x="620" y="52" text-anchor="middle">sweep.png</text>
+  <text class="muted" x="620" y="70" text-anchor="middle" font-size="11">tools/plot_sweep.py</text>
+  <path d="M150 56 H190 M330 56 H370 M510 56 H550" stroke="var(--ink)"/>
+  <text class="mono" x="350" y="104" text-anchor="middle" font-size="11">cargo run … &gt; results/sweep-cpu6.csv</text>
+</svg>
+<figcaption>The runner passes the binary’s output straight back. Cargo’s own messages go to stderr, so <code>&gt;</code> captures only what your program printed.</figcaption>
+</figure>
+<p>The phone does no drawing. It doesn’t have Python, and it shouldn’t be busy with anything but the benchmark. The PC already has Python and matplotlib 3.10 <span class="tag m">measured</span>.</p>
+
+<h2 id="csv">A CSV with its conditions</h2>
+<p>CSV is a table as text: one row per line, values separated by commas. Rust can print it with <code>println!</code>, and Python can read it without help. Put the conditions at the top as <code>#</code> lines, so the numbers and the circumstances that produced them can never be separated:</p>
+<pre><code># sweep: pure read, f32, pinned cpu6
+# date=2026-10-20 screen=off charging=no start_temp_c=31.2
+# commit=5632c75
+bytes,gbps
+4096,88.41
+8192,92.07
+…</code></pre>
+<pre><code>println!("bytes,gbps");
+println!("{},{:.2}", bytes, gbps);</code></pre>
+<p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete on its own. The numbers above are an example of the format, not results.</p>
+
+<h2 id="log">Why the size axis is logarithmic</h2>
+<p>The sweep doubles the size each step: 4 KB, 8 KB, 16 KB … 256 MB. That is 17 sizes spanning a factor of 65,536. On an ordinary axis the first twelve points, everything up to 8 MB, crowd into the left 3% <span class="tag c">calculated</span>, which is exactly where the L1 and L2 cliffs are.</p>
+<div class="widget" data-axis>
+  <h3>Same points, two axes</h3>
+  <p>An illustrative curve with the shape from the <a href="bandwidth.html#sweep">Bandwidth</a> page, not data from this phone.</p>
+  <div class="controls">
+    <span class="seg" role="radiogroup" aria-label="Axis">
+      <label><input type="radio" name="axisscale" data-axisscale value="lin">Linear</label>
+      <label><input type="radio" name="axisscale" data-axisscale value="log" checked>Log (each step ×2)</label>
+    </span>
+  </div>
+  <svg class="fig" viewBox="0 0 640 236" role="img" aria-label="Sweep plotted on linear or log axis" data-svg></svg>
+  <p class="note" data-out></p>
+</div>
+<p>On a log axis, every doubling is the same distance, so each cache level gets room in proportion to how many doublings it covers. The y axis stays linear: you want to read GB/s directly and see that DRAM is a fraction of L1.</p>
+
+<h2 id="script">The plotting script</h2>
+<p>This goes in <code>tools/</code>, where host-side Python lives. Give it one or more CSV files and it draws them on the same axes:</p>
+<pre><code># Plot one or more sweep CSVs (bytes,gbps) on the same axes.
+# Usage: python3 tools/plot_sweep.py results/sweep-cpu6.csv results/sweep-cpu0-5.csv
+import csv
+import sys
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")                      # write a file; no window needed
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+
+def size_label(b, _pos):
+    return f"{b / 2**10:.0f} KiB" if b &lt; 2**20 else f"{b / 2**20:.0f} MiB"
+
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for path in sys.argv[1:]:
+    with open(path) as f:
+        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
+    x = [int(r["bytes"]) for r in rows]
+    y = [float(r["gbps"]) for r in rows]
+    ax.plot(x, y, marker="o", label=Path(path).stem)
+
+ax.set_xscale("log", base=2)               # each step right = twice the size
+ax.xaxis.set_major_formatter(FuncFormatter(size_label))
+ax.set_xlabel("working set")
+ax.set_ylabel("read bandwidth (GB/s)")
+ax.set_ylim(bottom=0)
+ax.grid(True, alpha=0.3)
+ax.legend()
+fig.tight_layout()
+fig.savefig("results/sweep.png", dpi=150)
+print("wrote results/sweep.png")</code></pre>
+<p>Tested on made-up CSVs, including Windows-style line endings <span class="tag m">measured</span>. Run it from the project root so <code>results/</code> resolves.</p>
+<ul>
+  <li><code>DictReader</code> uses the header line, so columns are found by name, not position.</li>
+  <li>The <code>#</code> lines are skipped before the CSV reader sees them.</li>
+  <li><code>set_ylim(bottom=0)</code> keeps the y axis from starting at, say, 10 GB/s, which would make a small drop look like a cliff.</li>
+  <li>A dot on every measured point shows where data exists. A line between two dots is not a measurement.</li>
+</ul>
+
+<h2 id="units">Bytes and gigabytes</h2>
+<p>The sizes are powers of two: 4096 bytes, 1,048,576 bytes. Those are KiB and MiB, which is how the script labels them. Bandwidth is the other convention: GB/s means 10<sup>9</sup> bytes per second, which is what the decode ceiling and published figures use. Both are fine. Mixing them silently is a 7% error at the gigabyte scale (2<sup>30</sup> / 10<sup>9</sup> ≈ 1.074) <span class="tag c">calculated</span>.</p>
+<p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>gbps</code>. Put it in a comment line too, if you like. Next month you won’t remember.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why do the conditions go inside the CSV, not in a separate notes file?</summary>
+<p>Files get copied, renamed and compared months later. A number separated from “which core, screen on or off, how hot” can’t be compared with anything. Inside the file, they travel together.</p>
+</details>
+<details class="check"><summary>On a linear axis, where is the 8 MB point if the axis ends at 256 MB?</summary>
+<p>At 8/256 ≈ 3% of the width. Everything from 4 KB to 8 MB, which covers both L1 and L2, fits in that 3%.</p>
+</details>
+<details class="check"><summary>A plateau sits at 45 “GB/s” computed with 2<sup>30</sup>. What is it in the site’s units?</summary>
+<p>45 × 1.074 ≈ 48.3 GB/s (10<sup>9</sup>). Pick one convention and say which.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>

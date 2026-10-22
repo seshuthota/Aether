@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The MLP and the residual stream · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 08</p>
+<h1>The MLP and the residual stream</h1>
+<p class="lede">After attention has mixed information between tokens, each layer's second half works on every token by itself: widen its vector to 768 numbers, let a gate decide what passes, narrow back to 288. This is the MLP, and it holds two thirds of each layer's weights. Both halves of the layer add their result into one running vector, the residual stream, which is the thread the whole model hangs on.</p>
+<nav class="toc">
+  <a href="#residual">The residual stream</a>
+  <a href="#shape">The MLP's shape</a>
+  <a href="#swiglu">SwiGLU: a gate on every channel</a>
+  <a href="#silu">The SiLU curve</a>
+  <a href="#code">The code</a>
+  <a href="#cost">Where the weights are</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="residual">The residual stream</h2>
+<p>Look at how each half of a layer ends:</p>
+<pre><code>k::add_inplace(&amp;mut s.x, &amp;s.xb2);   // after attention:  x += attention(x)
+k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</code></pre>
+<p>Neither block replaces <code>x</code>. Each reads a normalised copy of it, computes something, and <em>adds</em> that to it. So <code>x</code> is a running total: the embedding, plus what layer 0's attention contributed, plus layer 0's MLP, plus layer 1's attention, and so on. This is the <strong>residual stream</strong>; the additions are <em>residual connections</em>.</p>
+<figure>
+<div class="flow">
+  <div>embedding</div><span class="arr">→</span>
+  <div class="hot">x<small>+ attn₀ + mlp₀</small></div><span class="arr">→</span>
+  <div class="hot">x<small>+ attn₁ + mlp₁</small></div><span class="arr">→</span>
+  <div>…</div><span class="arr">→</span>
+  <div class="hot">x<small>+ attn₅ + mlp₅</small></div><span class="arr">→</span>
+  <div>final norm, classifier</div>
+</div>
+<figcaption>Twelve blocks, each adding a correction to the same 288 numbers.</figcaption>
+</figure>
+<p>Why build it this way? A block that has nothing useful to add can output nearly zero and leave <code>x</code> alone. Training a deep stack is much easier when each layer only has to learn a small correction instead of a whole new representation. For the engine, it means one buffer <code>x</code> lives through the whole token, and each block works in scratch buffers beside it.</p>
+
+<h2 id="shape">The MLP's shape</h2>
+<p>MLP stands for multi-layer perceptron, an old name for “matrix multiply, nonlinearity, matrix multiply”. Llama-family models use a variant with three matrices:</p>
+<table>
+  <thead><tr><th>Name in the code</th><th>llama2.c name</th><th>Shape</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><code>w_gate</code></td><td>w1</td><td>768 × 288</td><td>288 → 768, then through SiLU</td></tr>
+    <tr><td><code>w_up</code></td><td>w3</td><td>768 × 288</td><td>288 → 768, multiplied by the gate</td></tr>
+    <tr><td><code>w_down</code></td><td>w2</td><td>288 × 768</td><td>768 → 288, back to the stream</td></tr>
+  </tbody>
+</table>
+<p>Widening to 768 gives the layer room: 768 channels, each of which can respond to some pattern in the input. Narrowing back writes a 288-number correction into the stream.</p>
+
+<h2 id="swiglu">SwiGLU: a gate on every channel</h2>
+<p>Without something nonlinear between them, two matrix multiplies are just one bigger matrix multiply, and stacking layers would add nothing. The nonlinearity here is a <strong>gate</strong>:</p>
+<p class="formula">h<sub>i</sub> = SiLU(gate<sub>i</sub>) × up<sub>i</sub> &nbsp;&nbsp; for each of the 768 channels</p>
+<p>The input is projected twice. One projection, <code>gate</code>, goes through the SiLU function and decides <em>how much</em> of the channel gets through; the other, <code>up</code>, decides <em>what</em> gets through. A strongly negative gate shuts the channel (SiLU ≈ 0); a large positive gate passes <code>up</code> through nearly unchanged. This gated design is called SwiGLU (Swish-Gated Linear Unit; Swish is another name for SiLU).</p>
+
+<h2 id="silu">The SiLU curve</h2>
+<p class="formula">SiLU(x) = x × sigmoid(x) = x ÷ (1 + e<sup>−x</sup>)</p>
+<div class="widget" data-silu>
+  <h3>SiLU, and what the gate does</h3>
+  <p>The solid curve is SiLU; the dashed line is ReLU (max(0, x)), the older choice, for comparison. Move the gate value and the up value.</p>
+  <svg viewBox="0 0 540 200" role="img" aria-label="The SiLU curve"></svg>
+  <div class="controls">
+    <label class="field">gate = <span data-g-label></span><input type="range" data-g min="-6" max="6" step="0.1" value="1.5"></label>
+    <label class="field">up = <span data-u-label></span><input type="range" data-u min="-3" max="3" step="0.1" value="1"></label>
+  </div>
+  <div class="statrow" data-stats></div>
+</div>
+<p>For large positive <var>x</var>, SiLU is almost <var>x</var>; for large negative <var>x</var>, almost 0; near zero it is smooth, with a small dip below zero (lowest about −0.28, at <var>x</var> ≈ −1.28). The smoothness is what training likes about it compared with ReLU's sharp corner. At inference it is simply a function to compute, 768 times per layer.</p>
+
+<h2 id="code">The code</h2>
+<p>In the forward pass:</p>
+<pre><code>k::rmsnorm(&amp;mut s.xb, &amp;s.x, &amp;lw.ffn_norm, c.norm_eps);   // normalised copy of x
+k::matmul(&amp;mut s.hb,  &amp;s.xb, &amp;lw.w_gate);                  // gate: 768 numbers
+k::matmul(&amp;mut s.hb2, &amp;s.xb, &amp;lw.w_up);                    // up:   768 numbers
+k::swiglu(&amp;mut s.hb, &amp;s.hb2);                              // hb = silu(gate) × up
+k::matmul(&amp;mut s.xb, &amp;s.hb, &amp;lw.w_down);                   // back to 288
+k::add_inplace(&amp;mut s.x, &amp;s.xb);                            // x += mlp</code></pre>
+<p>And <code>swiglu</code> itself, in llama2.c's exact order of operations:</p>
+<pre><code>for (g, &amp;u) in gate.iter_mut().zip(up) {
+    let mut v = *g;
+    v *= 1.0 / (1.0 + (-v).exp());   // silu
+    v *= u;                           // × up
+    *g = v;
+}</code></pre>
+<p>Writing <code>v * (1 / (1 + e<sup>−v</sup>))</code> instead of <code>v / (1 + e<sup>−v</sup>)</code> is mathematically the same but can round differently in the last bit. To be <a href="correctness.html">bit-identical</a> with llama2.c, the code copies its form exactly.</p>
+
+<h2 id="cost">Where the weights are</h2>
+<table>
+  <thead><tr><th>Per layer</th><th>Multiply-adds</th><th>Share of the layer</th></tr></thead>
+  <tbody>
+    <tr><td>attention projections (q, k, v, o)</td><td class="num">331,776</td><td class="num">33 %</td></tr>
+    <tr><td>MLP (gate, up, down)</td><td class="num">663,552</td><td class="num">67 %</td></tr>
+  </tbody>
+</table>
+<p>The MLP holds two thirds of every layer's weights, and since <a href="baseline.html">decode time follows bytes read</a>, about two thirds of each layer's time <span class="tag c">calculated</span>. Larger models keep roughly that ratio: Qwen2.5-0.5B's MLP is 896 → 4,864 → 896.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What would go wrong if a block did <code>x = block(x)</code> instead of <code>x += block(x)</code>?</summary>
+<p>Each block would have to rebuild the whole representation instead of adding a correction, and a block with nothing to add could not simply pass <code>x</code> through. Deep stacks become much harder to train. (For the engine, the trained weights only work with the structure they were trained with.)</p>
+</details>
+<details class="check"><summary>SiLU(gate) is about 0. What does that channel contribute?</summary>
+<p>About nothing: SiLU(gate) × up ≈ 0 whatever <code>up</code> is. The gate has shut the channel.</p>
+</details>
+<details class="check"><summary>Why is a nonlinearity needed between the matrices at all?</summary>
+<p>Two matrix multiplies in a row are equivalent to one matrix (their product). Without a nonlinearity, the MLP and indeed the whole stack would collapse into a single linear map.</p>
+</details>
+<details class="check"><summary>The MLP multiplies by three matrices; attention by four. Why does the MLP still have more weights?</summary>
+<p>Its matrices are 768 × 288, attention's 288 × 288. Three of 221,184 is more than four of 82,944.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

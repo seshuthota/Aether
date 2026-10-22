@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dependency chains · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 02</p>
+<h1>Dependency chains</h1>
+<p class="lede">An instruction can take several cycles to produce its result, yet the core can start a new one every cycle. Those are two different numbers, latency and throughput, and the gap between them is where the scalar loop lost most of its speed. This page shows the gap, and the fix: several independent running sums instead of one.</p>
+<nav class="toc">
+  <a href="#latency">Latency and throughput</a>
+  <a href="#chain">One accumulator is one chain</a>
+  <a href="#widget">See the pipeline fill</a>
+  <a href="#code">Four accumulators in code</a>
+  <a href="#measured">What it did, measured</a>
+  <a href="#how-many">How many chains are enough?</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="latency">Latency and throughput</h2>
+<p>Think of a laundry with one washing machine that takes an hour, but where you can start a new load every 15 minutes because the machine is really four drums in a row. The <strong>latency</strong> is one hour: from putting a load in to getting it out. The <strong>throughput</strong> is four loads an hour, but only if you have four loads ready to go. If each load depends on the previous one coming out (you only own one shirt), you get one load per hour, whatever the machine can do.</p>
+<p>A CPU's floating-point unit works the same way. It is <em>pipelined</em>: an FMA passes through several stages, each taking a cycle, and a new FMA can enter the first stage every cycle. Take FMA latency as about 4 cycles <span class="tag a">assumption</span>, a typical value for this class of core, not measured here.</p>
+
+<h2 id="chain">One accumulator is one chain</h2>
+<pre><code>acc = vfmaq_f32(acc, w0, x0);   // needs acc
+acc = vfmaq_f32(acc, w1, x1);   // needs the acc from the line above
+acc = vfmaq_f32(acc, w2, x2);   // needs the acc from the line above
+…</code></pre>
+<p>Each FMA reads the accumulator the previous one wrote. It cannot start until that result exists, about 4 cycles later. So the unit starts one FMA every 4 cycles and sits idle the other 3. The core is not slow; the program gives it nothing else to do. This is a <strong>dependency chain</strong>, the same kind that limited the Phase 0 sum and the Phase 2 scalar matmul. (Those chained plain adds, which finish sooner than an FMA; that is how the scalar matmul reached <a href="../phase-2/baseline.html#chain">1.77 cycles per step</a>.)</p>
+
+<h2 id="widget">See the pipeline fill</h2>
+<p>Each row is one accumulator; each column a cycle. A coloured block is one FMA in flight (4 cycles) and “+” marks where it started; stripes are cycles where that accumulator has nothing in flight. Count the “+” signs: each is one FMA started <span class="tag a">illustration</span>.</p>
+<div class="widget" data-chains>
+  <h3>One, two or four accumulators</h3>
+  <div class="controls">
+    <span class="seg" role="radiogroup" aria-label="Accumulators">
+      <label><input type="radio" name="acc" data-acc value="1" checked>1 accumulator</label>
+      <label><input type="radio" name="acc" data-acc value="2">2</label>
+      <label><input type="radio" name="acc" data-acc value="4">4</label>
+    </span>
+  </div>
+  <div class="timeline" data-grid></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>With four accumulators, FMA 0 goes to accumulator 0, FMA 1 to accumulator 1, and so on; FMA 4 goes back to accumulator 0, whose previous result is just ready. A new FMA starts every cycle: four times the work in the same time, from exactly the same instructions.</p>
+<p>The price: four partial sums at the end instead of one, which must be added together. And the additions now happen in a different order than the scalar loop's, so the result differs in the last bits (<a href="../phase-2/correctness.html#order">why that is fine</a>).</p>
+
+<h2 id="code">Four accumulators in code</h2>
+<p><code>dot_row</code> in <code>src/kernels/neon.rs</code>: each step of 16 floats feeds four registers that never depend on each other:</p>
+<pre><code>let mut a = [vdupq_n_f32(0.0); 4];
+for j in (0..n16).step_by(16) {
+    for (k, acc) in a.iter_mut().enumerate() {
+        *acc = vfmaq_f32(*acc, vld1q_f32(row.add(j + 4 * k)), vld1q_f32(x.add(j + 4 * k)));
+    }
+}
+// … a 4-float loop and a scalar tail for what is left …
+let s = vaddvq_f32(vaddq_f32(vaddq_f32(a[0], a[1]), vaddq_f32(a[2], a[3])));</code></pre>
+<p>The inner <code>for k in 0..4</code> loop is unrolled by the compiler into four separate FMAs, each on its own register. Four accumulators × 4 lanes = 16 independent running sums.</p>
+
+<h2 id="measured">What it did, measured</h2>
+<p>The same 288 × 288 matrix (stories15M's <code>wq</code>), one prime core, GB/s of weights read <span class="tag m">measured</span>:</p>
+<div class="bars">
+  <div class="bar alt"><span>scalar (Phase 2)</span><i style="--w:7.6%"></i><b>5.3 GB/s</b></div>
+  <div class="bar alt"><span>NEON, 1 accumulator</span><i style="--w:25.5%"></i><b>17.8 GB/s</b></div>
+  <div class="bar"><span>NEON, 4 accumulators</span><i style="--w:59.5%"></i><b>41.6 GB/s</b></div>
+</div>
+<p>Going from one to four accumulators is a 2.3× gain with no extra arithmetic. On this L2-sized matrix the kernel is now limited by how fast it can load, not by latency. The <a href="gemv.html">next page</a> attacks the loads.</p>
+
+<h2 id="how-many">How many chains are enough?</h2>
+<p>Enough to cover latency × the number of FMAs the core can start per cycle. If FMA latency is 4 cycles and the core has several FMA units, you would want more than four chains to keep them all busy. In practice there is a ceiling from the other side: each chain needs a register, and the inputs need registers too, out of 32. The engine's GEMV uses 8 chains (4 rows × 2), the GEMM 16. Past that point, the limit is usually loads or memory, not chains.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What is the difference between latency and throughput?</summary>
+<p>Latency: how long one operation takes from start to result. Throughput: how many operations can be started per cycle when they do not depend on each other.</p>
+</details>
+<details class="check"><summary>Why can't the compiler add accumulators to the scalar loop by itself?</summary>
+<p>Several accumulators change the order of float additions, which changes the result's last bits. The compiler is not allowed to change your answer without permission.</p>
+</details>
+<details class="check"><summary>With FMA latency 4 and one FMA unit, how many accumulators do you need to keep it busy?</summary>
+<p>Four: while one waits 4 cycles for its result, the other three each start one FMA, and by then the first is ready again.</p>
+</details>
+<details class="check"><summary>Why can't you just use 32 accumulators?</summary>
+<p>There are only 32 registers, and the loaded weights and inputs need some. Accumulators that do not fit spill to memory, which costs more than the extra chains gain.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

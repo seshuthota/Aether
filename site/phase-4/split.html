@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splitting the work · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 4 · 02</p>
+<h1>Splitting the work</h1>
+<p class="lede">With threads that stay, the next question is how to divide one matrix product between them. The obvious answer, an equal share each, made eight cores slower than two. This page shows why an equal share fails when the cores are not equal, and the fix: small blocks handed out one at a time, so a faster core simply takes more of them.</p>
+<nav class="toc">
+  <a href="#rows">Split by rows, never inside a row</a>
+  <a href="#even">The equal split, and what it did</a>
+  <a href="#widget">Equal shares vs blocks</a>
+  <a href="#blocks">Blocks from a shared counter</a>
+  <a href="#heads">Attention: split by head</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="rows">Split by rows, never inside a row</h2>
+<p>A matrix-vector product makes one output number per row of the matrix: the <a href="../phase-2/qkv.html">dot product</a> of that row with the input vector. Rows do not depend on each other, so threads can take different rows and never need to talk until the end.</p>
+<p>The other way to split, cutting every row into pieces and giving each thread a piece, would need the partial sums added together afterwards. That costs another meeting, and it adds the numbers in a different order, so the last bits of the result would change with the thread count (<a href="../phase-2/correctness.html#order">why order matters</a>).</p>
+<p>Split by rows, each row's sum is still computed by one thread, in the same order as with one thread. The result is <strong>bit-identical</strong> whatever the number of threads. The test <code>threaded_matmuls_are_bit_identical</code> in <code>src/kernels/mod.rs</code> checks it for every matrix shape in the goldens with 2, 3 and 8 threads.</p>
+
+<h2 id="even">The equal split, and what it did</h2>
+<p>The first threaded build gave each thread an equal number of rows, rounded to blocks of 16. Decode speed in tokens per second, on battery <span class="tag m">measured</span> (<code>results/phase-6/raw/model-speed.txt</code>):</p>
+<table>
+  <thead><tr><th>Model, format</th><th>core 7</th><th>cores 6–7</th><th>cores 0–7</th></tr></thead>
+  <tbody>
+    <tr><td>stories15M f32</td><td>422</td><td>667</td><td>586</td></tr>
+    <tr><td>SmolLM2-135M f32</td><td>39.2</td><td>65.4</td><td>57.1</td></tr>
+    <tr><td>SmolLM2-135M Q8_0</td><td>116.7</td><td>162.0</td><td>97.0</td></tr>
+    <tr><td>SmolLM2-135M Q4_0</td><td>123.9</td><td>179.6</td><td><strong>98.4</strong></td></tr>
+  </tbody>
+</table>
+<p>Eight cores were slower than two in every row. A profile of SmolLM2 Q4_0 on eight cores (<code>simpleperf</code>) found 58 % of the samples in the worker loop, spinning, and 26 % in the actual kernel <span class="tag m">measured</span>. The threads spent most of their time waiting.</p>
+<p>The reason is in how a job ends. The caller cannot move on until every thread is finished, so <strong>every job takes as long as its slowest thread</strong>. With equal shares, any thread that is a little slower makes all the others wait, about 200 times per token. And the threads are not equal: one prime core reads 61 GB/s from memory, one performance core 43 GB/s <span class="tag m">measured in Phase 1</span>. A core that is also handling something else (another app, or interrupts) falls further behind. Which thread was the slow one in that profile was not recorded.</p>
+
+<h2 id="widget">Equal shares vs blocks</h2>
+<p>One matrix product of 1,536 rows (SmolLM2's gate projection) split across a set of cores. Each bar is one thread; its length is time. A prime core here works at 61, a performance core at 43, in proportion to the Phase 1 read speeds, and the slider slows one performance core further, as if it had other work <span class="tag a">illustration</span>. The real cores also share one memory bus, which this sketch leaves out.</p>
+<div class="widget" data-splitsim>
+  <h3>Who waits for whom</h3>
+  <div class="controls">
+    <span class="seg" role="radiogroup" aria-label="Cores">
+      <label><input type="radio" name="ss-set" data-set value="6,7">6–7</label>
+      <label><input type="radio" name="ss-set" data-set value="6,7,2,3,4,5" checked>2–7</label>
+      <label><input type="radio" name="ss-set" data-set value="6,7,0,1,2,3,4,5">0–7</label>
+    </span>
+    <span class="seg" role="radiogroup" aria-label="Split">
+      <label><input type="radio" name="ss-mode" data-mode value="even" checked>equal shares</label>
+      <label><input type="radio" name="ss-mode" data-mode value="blocks">blocks</label>
+    </span>
+    <label class="field">Slowest performance core: <span data-slow-label></span>
+      <input type="range" data-slow min="20" max="100" step="5" value="60">
+    </label>
+  </div>
+  <div class="lanes" data-lanes></div>
+  <div class="legend"><span><i style="background:var(--accent)"></i>prime core working</span><span><i style="background:var(--blue)"></i>performance core working</span><span><i class="hatch"></i>waiting for the slowest</span></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>Try 0–7 with equal shares and drag the slider left: the whole job stretches to the slow thread's finish, and every other bar ends in a stripe of waiting. Switch to blocks: the slow core takes fewer blocks and the stripes almost disappear.</p>
+
+<h2 id="blocks">Blocks from a shared counter</h2>
+<p>The fix (commit <code>67d334f</code>) stops deciding shares in advance. The rows are cut into small blocks, and a shared counter says which block is next. Every thread, the caller included, loops: take the next block number, compute those rows, repeat until the blocks run out. A fast thread comes back sooner and takes more. <code>src/pool.rs</code>:</p>
+<pre><code>pub fn for_blocks(&amp;self, len: usize, block: usize, f: &amp;(dyn Fn(Range&lt;usize&gt;) + Sync)) {
+    let next = AtomicUsize::new(0);
+    self.run(&amp;|_, _| loop {
+        let b = next.fetch_add(1, Ordering::Relaxed);   // "I take block b"
+        let start = b * block;
+        if start &gt;= len { break; }
+        f(start..(start + block).min(len));
+    });
+}</code></pre>
+<p><code>fetch_add</code> is one atomic instruction: two threads can never get the same number. How big should a block be? Too big and the end of the job is uneven again; too small and the threads spend their time fighting over the counter. <code>block_size</code> aims at about 8 blocks per thread, in whole multiples of 16 rows (the kernel's step). For the 1,536-row matrix on 6 threads that is 32 rows, 48 blocks <span class="tag c">calculated</span>.</p>
+<p>Which thread computes a block does not change what the block computes, so the result is still bit-identical. The same commit also put the caller on the fastest core (<a href="cores.html">Choosing cores</a>) and split attention by head. SmolLM2-135M Q4_0, same conditions <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Cores</th><th>equal shares</th><th>blocks</th></tr></thead>
+  <tbody>
+    <tr><td>6–7 (two prime)</td><td>179.6</td><td>214.9</td></tr>
+    <tr><td>2–7</td><td>—</td><td><strong>274.7</strong></td></tr>
+    <tr><td>0–7 (all eight)</td><td>98.4</td><td>227.9</td></tr>
+  </tbody>
+</table>
+<p>All eight cores went from 98 to 228 tokens per second. They are still slower than six; <a href="cores.html#zero-one">Choosing cores</a> is about that.</p>
+
+<h2 id="heads">Attention: split by head</h2>
+<p>Attention is not one matrix product, but its <a href="../phase-2/attention.html">heads</a> are independent: each reads its own slice of the query and writes its own slice of the output. So the engine hands out heads as blocks of one. The catch is that there are few of them. SmolLM2 has 9 query heads; if every head takes the same time, 9 heads on 6 threads take two rounds, and in the second round 3 threads have nothing to do <span class="tag c">calculated</span>:</p>
+<table>
+  <thead><tr><th>Threads</th><th>SmolLM2 (9 heads)</th><th>Qwen2.5 (14 heads)</th></tr></thead>
+  <tbody>
+    <tr><td>2</td><td>5 rounds, 90 % busy</td><td>7 rounds, 100 % busy</td></tr>
+    <tr><td>6</td><td>2 rounds, 75 % busy</td><td>3 rounds, 78 % busy</td></tr>
+    <tr><td>8</td><td>2 rounds, 56 % busy</td><td>2 rounds, 88 % busy</td></tr>
+  </tbody>
+</table>
+<p>(“Busy” = heads ÷ (threads × rounds).) Splitting each head's positions between threads would balance better at long contexts, at the price of combining partial softmax results. The engine does not do that yet.</p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why is splitting by rows bit-identical, but splitting each row into pieces not?</summary>
+<p>By rows, each row's sum is computed start to finish by one thread, in the original order. In pieces, the partial sums are added in a new order, and float addition is not associative, so the last bits change.</p>
+</details>
+<details class="check"><summary>Equal shares on two prime cores worked well. Why?</summary>
+<p>The two threads run at the same speed, so they finish at about the same time and neither waits long. Equal shares only hurt when the threads are unequal.</p>
+</details>
+<details class="check"><summary>Why not use blocks of one row, for perfect balance?</summary>
+<p>Every block costs one atomic <code>fetch_add</code> on a counter all threads share, and that counter's cache line has to move between cores each time. With 1,536 one-row blocks, that traffic would cost more than the imbalance it removes.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

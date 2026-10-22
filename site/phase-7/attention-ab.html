@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEON attention, measured honestly · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · 01</p>
+<h1>NEON attention, measured honestly</h1>
+<p class="lede">Attention was 1.1 % of stories15M's time, so Phase 3 left it scalar. On Qwen2.5-0.5B at long contexts it was not small any more, and a NEON version was written later. Measuring its benefit turned out to be the interesting part: a single before-and-after run overstated the problem it fixed, and only an alternating A/B test gave a number worth keeping.</p>
+<div class="callout banner"><span class="lbl">Jumping ahead</span><p>This page is Phase 7 work, and the pages for Phases 4–6 are not written yet. It only needs Phases 2 and 3 to follow: Qwen2.5-0.5B is a bigger model of the same shape, Q4_0 is a format that stores weights in about a seventh of the bytes, and “cores 2–7” means six threads, one per core.</p></div>
+<nav class="toc">
+  <a href="#why">Why attention grew</a>
+  <a href="#kernel">The NEON kernel</a>
+  <a href="#drift">The phone drifts</a>
+  <a href="#widget">Sequential vs alternating</a>
+  <a href="#result">The result</a>
+  <a href="#lesson">What changed in the record</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="why">Why attention grew</h2>
+<p>The weights cost the same every decode step. Attention's cost grows with the number of tokens in the <a href="../phase-2/kv-cache.html">KV cache</a>: each step scores the query against every cached key and mixes every cached value. Qwen2.5-0.5B has 24 layers and 14 query heads of 64 numbers. At depth 512, every step does 24 × 14 × 513 dot products of length 64, plus as many weighted adds. Meanwhile Q4_0 quantization had made the weights 7 times smaller to read, so attention's share went up from both sides.</p>
+<p>The scalar score loop is one dependency chain per key: the same problem <a href="../phase-3/chains.html">Phase 3’s chains page</a> solved for GEMV. The compiler cannot reorder float additions, so it cannot vectorize it either.</p>
+
+<h2 id="kernel">The NEON kernel</h2>
+<p><code>neon::attention_head</code> keeps the scalar version's four steps and changes two loops:</p>
+<pre><code>for (t, s) in scores.iter_mut().enumerate() {
+    *s = unsafe { dot_row(keys(t).as_ptr(), q.as_ptr(), hs) } * scale;   // 4 chains × 4 lanes
+}
+super::scalar::softmax(scores);                                          // unchanged
+for (t, &amp;a) in scores.iter().enumerate() {
+    let av = vdupq_n_f32(a);
+    for j in (0..hs4).step_by(4) {                                        // 4 lanes of out per FMA
+        vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+    }
+}</code></pre>
+<p>Scores reuse GEMV's <code>dot_row</code> (four accumulators). The weighted sum keeps the output in memory and adds four lanes per FMA: each value row is independent, so there is no chain to break. Softmax stays scalar because it needs <code>exp</code>, and is a small part of the work. It was checked against numpy goldens of up to 1,024 positions, and the model tests still pass.</p>
+
+<h2 id="drift">The phone drifts</h2>
+<p>The first measurement was a single table of runs: decode at depth 512 came out at 62.8 tokens per second with scalar attention, against 128.8 at depth 0. That looked like attention costing half the decode time. But the phone is not a stable machine:</p>
+<ul>
+  <li>It heats up under load, and the governor lowers clock caps as it does (<a href="../phase-1/power.html">Phase 1</a>).</li>
+  <li>The caps also change with battery level, screen state and whatever else is running. On the A/B day the prime-core cap under load was 1.96 GHz; the day before it had been 2.44 GHz.</li>
+  <li>Other apps run: during this session a picture-in-picture video was playing.</li>
+</ul>
+<p>If you run all of version A and then all of version B, any drift during the session is charged to whichever version ran later. The difference you measure is the real difference <em>plus</em> the drift.</p>
+
+<h2 id="widget">Sequential vs alternating</h2>
+<p>A simulated phone that slows down steadily as it warms. B is truly 10 % faster than A <span class="tag a">illustration</span>.</p>
+<div class="widget" data-abtest>
+  <h3>Same two versions, two run orders</h3>
+  <div class="controls">
+    <button class="btn" type="button" data-seq>AAAA then BBBB</button>
+    <button class="btn" type="button" data-alt>Alternate: ABBA BAAB</button>
+  </div>
+  <svg viewBox="0 0 480 155" role="img" aria-label="Bars for eight runs"></svg>
+  <p class="note" data-out></p>
+  <p class="note" data-note></p>
+</div>
+<p>The alternating order ABBABAAB is balanced: A's runs and B's runs have the same average position in time, so a steady drift falls on both equally and cancels out of the difference. Taking the median of several such rounds also discards a single disturbed run.</p>
+
+<h2 id="result">The result</h2>
+<p>Scalar attention (commit <code>0f56ed4</code>) and NEON attention (<code>8ae105c</code>) run alternately, three rounds, each run started only when the phone was below 48 °C. Qwen2.5-0.5B Q4_0, cores 2–7, median of three, tokens per second <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th></th><th>depth 0</th><th>depth 256</th><th>depth 512</th></tr></thead>
+  <tbody>
+    <tr><td>scalar attention</td><td class="num">110.6</td><td class="num">96.8</td><td class="num">87.0</td></tr>
+    <tr><td>NEON attention</td><td class="num">111.5</td><td class="num">103.8</td><td class="num"><strong>95.7</strong></td></tr>
+    <tr><td>llama.cpp, same session</td><td class="num">134.9 ± 6.6</td><td class="num">114.0 ± 12.2</td><td class="num">117.5 ± 8.5</td></tr>
+  </tbody>
+</table>
+<p>NEON attention is <strong>+10 % at depth 512</strong> and changes nothing at depth 0, which is what you would expect: with an empty cache there is almost no attention work. In time per token: at depth 512 scalar attention cost about 2.5 ms per token (11.5 vs 9.0 ms at depth 0), NEON attention about 1.5 ms (10.4 vs 9.0) <span class="tag c">calculated</span>.</p>
+
+<h2 id="lesson">What changed in the record</h2>
+<p>Scalar attention went from 110.6 to 87.0 between depth 0 and 512 in the A/B, a 21 % drop, not the 51 % that the single table suggested. The 62.8 did not reproduce, so <code>results/phase-7.md</code> now says so next to it, and the claim that attention cost half the decode time at depth 512 was withdrawn. The cause of that one slow run is not established (the memory bus frequency, a likely suspect, cannot be read from the shell).</p>
+<p>llama.cpp still loses less with depth (134.9 → 117.5). The next step on record is to split attention across positions as well as heads, since 14 heads over 6 threads leaves some threads idle.</p>
+<div class="callout"><span class="lbl">The habit to keep</span><p>A speed comparison on a phone needs: the two versions run alternately in a balanced order, several rounds, a median, a temperature gate before each run, and the conditions written down. And a number that cannot be reproduced gets corrected in the record, not quietly replaced.</p></div>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why did attention matter for Qwen at depth 512 but not for stories15M?</summary>
+<p>Attention grows with the number of cached tokens, and Qwen has more layers and heads; meanwhile quantization shrank the weight reads. stories15M never goes past 256 tokens and its weights are f32.</p>
+</details>
+<details class="check"><summary>Why is AAAABBBB a bad run order on a phone?</summary>
+<p>The phone's speed drifts (heat, clock caps, background work). All of B runs in a different state from all of A, so the drift is counted as a difference between the versions.</p>
+</details>
+<details class="check"><summary>Why did NEON attention change nothing at depth 0?</summary>
+<p>With an empty cache each step attends over one or a few positions: almost no work for the faster kernel to save.</p>
+</details>
+<details class="check"><summary>A single run says your change made things 20 % slower. What do you do before believing it?</summary>
+<p>Run old and new alternately in a balanced order, several rounds, from the same temperature, take medians, and record the conditions. Then compare.</p>
+</details>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+<script src="../js/widgets.js?v=8"></script>
+</body>
+</html>

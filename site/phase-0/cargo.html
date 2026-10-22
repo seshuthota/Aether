@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargo and the runner · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · concept 3</p>
+
+
+<h1>Cargo and the runner</h1>
+<p class="lede"><code>cargo test</code> does not have a special “run on device” mode. It compiles your tests into an ordinary executable and runs that executable. A runner is a script that replaces the “run it here” step. That is the whole trick.</p>
+<nav class="toc">
+  <a href="#crates">Library and binary</a>
+  <a href="#profiles">Profiles</a>
+  <a href="#inside">What the test file contains</a>
+  <a href="#manual">The manual three steps</a>
+  <a href="#script">The script, line by line</a>
+  <a href="#exit">Exit codes</a>
+  <a href="#check">Check yourself</a>
+</nav>
+
+<h2 id="crates">Library and binary</h2>
+<p><code>src/lib.rs</code> is the engine. <code>src/main.rs</code> is a small program that uses the library. Tests and examples link the library without going through the command-line program. Keeping them separate means a benchmark can call <code>Tensor</code> and <code>bench</code> directly.</p>
+<p>The library still has a placeholder <code>add</code>, so the crate was never empty, and a test that prints <code>std::env::consts::ARCH</code>. The same test printed <code>x86_64</code> on the PC and <code>aarch64</code> on the phone <span class="tag m">measured</span>. That print is how you know the runner is not secretly executing on the host.</p>
+
+<h2 id="profiles">Profiles</h2>
+<p><code>cargo build</code> is a debug build: little optimization, fast compiles. <code>--release</code> optimizes. For numeric code the gap can be 10–100×. A benchmark of a debug build measures the compiler’s lack of effort, not the phone.</p>
+<p>The release profile in <code>Cargo.toml</code> sets three things that are easy to skip:</p>
+<table>
+  <thead><tr><th>Setting</th><th>Why it is on</th></tr></thead>
+  <tbody>
+    <tr><td><code>debug = true</code></td><td>Keep symbols in the release binary. <code>simpleperf</code> can then name functions. Without this, a profile is a list of addresses.</td></tr>
+    <tr><td><code>lto = "fat"</code></td><td>Optimize across crate boundaries. A kernel that calls a helper can be inlined and scheduled as one unit.</td></tr>
+    <tr><td><code>codegen-units = 1</code></td><td>One compilation unit. Slower builds, better optimization. The compiler sees more of the program at once.</td></tr>
+  </tbody>
+</table>
+<p>Rule from here on: benchmarks are release builds. Correctness tests can be either; the on-device ones in this project are run with <code>--release</code> so the runner path matches the path you will time.</p>
+
+<h2 id="inside">What the test file contains</h2>
+<p><code>cargo test --no-run</code> compiles the tests and prints the path of the executable, then stops. That file is not “your test function.” It contains:</p>
+<ul>
+  <li>the library,</li>
+  <li>the test harness, which understands filters, <code>--nocapture</code>, and the pass/fail summary,</li>
+  <li>debug symbols.</li>
+</ul>
+<p>The Android test binary was about 5.4 MB <span class="tag m">measured</span>. Hello world was 482 KB. The extra size is the harness and the library, not the two assertions.</p>
+<p>Without a runner, <code>cargo test --target aarch64-linux-android</code> builds, then fails with <code>Exec format error</code>. Same error as running hello world on the PC. Cargo tries to execute the ARM binary locally.</p>
+
+<figure>
+<svg class="fig" viewBox="0 0 720 210" role="img" aria-label="Cargo hands the test binary to the runner">
+  <rect class="box" x="16" y="24" width="150" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="91" y="46" text-anchor="middle">cargo test</text>
+  <text class="muted" x="91" y="64" text-anchor="middle" font-size="11">on the PC</text>
+  <rect class="box" x="210" y="24" width="170" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="295" y="46" text-anchor="middle">test executable</text>
+  <text class="muted" x="295" y="64" text-anchor="middle" font-size="11">ARM ELF</text>
+  <rect class="box" x="424" y="24" width="170" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="509" y="46" text-anchor="middle">adb-run.sh</text>
+  <text class="muted" x="509" y="64" text-anchor="middle" font-size="11">push, run, delete</text>
+  <rect class="good" x="210" y="130" width="280" height="52" rx="6" fill="var(--ok-soft)" stroke="var(--ok)"/>
+  <text x="350" y="152" text-anchor="middle">phone exit code</text>
+  <text class="muted" x="350" y="170" text-anchor="middle" font-size="11">0 pass · 101 fail, back to Cargo</text>
+  <path d="M166 50 H210 M380 50 H424" stroke="var(--ink)" fill="none"/>
+  <path d="M509 76 V156 H490" stroke="var(--ok)" fill="none"/>
+  <text class="muted" x="640" y="50" font-size="11">not exec’d</text>
+  <text class="muted" x="640" y="66" font-size="11">on the PC</text>
+</svg>
+<figcaption>The runner setting replaces “execute this file” with “call this script and trust its exit code.”</figcaption>
+</figure>
+
+<h2 id="manual">The manual three steps</h2>
+<p>The script automates a sequence that was run by hand once, so the automation has a meaning:</p>
+<ol class="steps">
+  <li><code>cargo test --release --target aarch64-linux-android --no-run</code> builds the test binary and prints its path.</li>
+  <li><code>adb push</code> that path to <code>/data/local/tmp/aether</code>.</li>
+  <li><code>adb shell</code> runs it, with <code>--nocapture</code> if you want the <code>println</code>s. The shell’s exit code is the test binary’s exit code.</li>
+</ol>
+<p>Each build hashes a different filename. The script uses <code>basename</code> of whatever Cargo passed, then deletes that remote file. Without the delete, old hashes pile up in <code>/data/local/tmp</code>.</p>
+
+<h2 id="script">The script, line by line</h2>
+<p><code>scripts/adb-run.sh</code>. Cargo calls it as <code>adb-run.sh &lt;binary&gt; &lt;args…&gt;</code>.</p>
+<div class="filehead"><span>scripts/adb-run.sh</span><span>the runner</span></div>
+<pre><code>#!/usr/bin/env bash
+set -euo pipefail
+
+BIN="$1"      # path of the binary Cargo just built
+shift         # what's left in "$@" are the arguments meant for that binary
+
+# /data/local/tmp is the one place the adb shell user can both write and execute.
+REMOTE_DIR=/data/local/tmp/aether
+REMOTE_BIN="$REMOTE_DIR/$(basename "$BIN")"
+
+adb shell "mkdir -p $REMOTE_DIR"
+adb push "$BIN" "$REMOTE_BIN" &gt;/dev/null
+
+set +e
+adb shell "chmod +x $REMOTE_BIN &amp;&amp; $REMOTE_BIN $(printf '%q ' "$@")"
+STATUS=$?
+set -e
+
+adb shell "rm -f $REMOTE_BIN"
+exit $STATUS</code></pre>
+<table>
+  <thead><tr><th>Piece</th><th>Why it is there</th></tr></thead>
+  <tbody>
+    <tr><td><code>set -euo pipefail</code></td><td>Stop on the first real error. A failed push should not continue into a run of a missing file.</td></tr>
+    <tr><td><code>set +e</code> around the run</td><td>A failing test is not a script bug. Cleanup still has to happen, so the script must not exit before <code>rm</code>.</td></tr>
+    <tr><td><code>STATUS=$?</code></td><td>Save the exit code immediately. The next command overwrites <code>$?</code>.</td></tr>
+    <tr><td><code>printf '%q '</code></td><td><code>adb shell</code> joins its arguments into one string for the phone’s shell. Without quoting, <code>--test-threads 1</code> or a filter with a space splits in the wrong place.</td></tr>
+    <tr><td><code>exit $STATUS</code></td><td>Cargo decides pass or fail from the script’s exit code, not from text in the output.</td></tr>
+  </tbody>
+</table>
+<p>Before relying on step 3, this adb was checked: <code>true</code> returned 0, <code>false</code> returned 1, <code>exit 7</code> returned 7 <span class="tag m">measured</span>. Not every adb version passes the remote code back. This one does, which is why the script can be this short.</p>
+
+<h2 id="exit">Exit codes</h2>
+<p>The test harness exits 0 when every test passes. A deliberately failing test on the phone came back to Cargo as exit code 101 <span class="tag m">measured</span>. 101 is rustc’s “tests failed” code. If the script had exited 0 after a failure, the host would have printed success for a phone that failed. That is the bug the <code>STATUS</code> line exists to prevent.</p>
+<p>Doc-tests are the exception. Cargo runs those on the host, not through the runner. Harmless here, because we will not write doc-tests that depend on the phone. If a doc-test ever prints <code>x86_64</code> while the unit tests print <code>aarch64</code>, that is this limitation, not a broken runner.</p>
+<div class="callout"><span class="lbl">Commands</span>
+<p>On the PC: <code>cargo test</code></p>
+<p>On the phone: <code>cargo test --release --target aarch64-linux-android</code></p>
+<p>One module: add a name filter, for example <code>--lib tensor::</code></p>
+<p>An example: <code>cargo run --release --target aarch64-linux-android --example bench_sum</code></p>
+</div>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What is inside the file <code>cargo test</code> produces, besides your assertion?</summary>
+<p>The library, the test harness, and debug symbols. The harness is what prints the summary and honors <code>--nocapture</code>. That is why the file is megabytes.</p>
+</details>
+<details class="check"><summary>Why must the runner return the phone’s exit code?</summary>
+<p>Cargo does not parse the phone’s stdout to decide pass or fail. It trusts the process it spawned. A script that always exits 0 hides a failing test.</p>
+</details>
+<details class="check"><summary>Why keep debug symbols in a release build?</summary>
+<p>Profiling. <code>simpleperf</code> needs names. The symbols are not there to make the benchmark slower in a way we care about yet; they are there so a later profile is readable. Never benchmark a debug <em>profile</em>, which is a different switch: that one turns optimization off.</p>
+</details>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=8"></script>
+<script src="../js/glossary.js?v=8"></script>
+<script src="../js/site.js?v=8"></script>
+</body>
+</html>
