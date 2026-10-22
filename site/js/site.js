@@ -797,6 +797,9 @@ function initLayout() {
   if (!root) return;
   const nIn = root.querySelector("[data-n]"), alignIn = root.querySelector("[data-align]");
   const out = root.querySelector("[data-out]"), note = root.querySelector("[data-note]");
+  // Start from the defaults in the markup, not from values a browser restored into the fields.
+  nIn.value = "1000";
+  alignIn.value = "64";
   function render() {
     const n = Math.max(0, Math.floor(Number(nIn.value) || 0));
     const want = Number(alignIn.value);
