@@ -67,7 +67,7 @@
   <div class="statrow" data-stats></div>
   <p class="note" data-note></p>
 </div>
-<p>The wake-up costs are stand-ins from the PC (<a href="pool.html#cost">Threads that stay</a>): about 0.25 µs to see a new epoch while spinning, about 4 µs for a woken thread <span class="tag a">assumption</span>. The bar is drawn on a log scale for the gap, so short and long gaps both fit.</p>
+<p>The wake-up costs are stand-ins from the phone's hand-out timings (<a href="pool.html#cost">Threads that stay</a>): about 1.3 µs for the whole hand-out while the workers spin, about 48 µs through a lock and condition variable on two threads <span class="tag a">assumption</span>. Both include more than one worker waking, so they overstate a single wake-up. The bar is drawn on a log scale for the gap, so short and long gaps both fit.</p>
 
 <h2 id="lost">The lost wake-up</h2>
 <p>There is a gap between a worker's last check of <code>epoch</code> and its call to <code>park()</code>. Suppose the caller publishes a job and calls <code>unpark</code> right inside that gap. The worker has not gone to sleep yet, so there is nobody to wake; then it parks, and sleeps through a job it should be running. The caller waits for it forever.</p>
@@ -89,7 +89,7 @@ struct Shared {
 
 <h2 id="cost">What spinning costs</h2>
 <p>A spinning core shows up in a profile as busy. In the equal-split build, the profile of SmolLM2 Q4_0 on all eight cores found <strong>58 %</strong> of samples in the worker loop; on the two prime cores, 17.5 % <span class="tag m">measured</span>. Most of that is spinning: a worker that finished its share early spins until the next job.</p>
-<p>On a phone, that waiting is not free. A spinning core draws power and makes heat, and it cannot take a slower clock or a sleep state while it spins. So a thread count that does not make decode faster can still make it more expensive per token. The Phase 4 sweep measures joules per token for cores 7, 6–7, 2–7 and 0–7 to put a number on it.</p>
+<p>On a phone, that waiting is not free. A spinning core draws power and makes heat, and it cannot take a slower clock or a sleep state while it spins. So a thread count that does not make decode faster could still make it more expensive per token. The sweep measured joules per token over five minutes of decoding for cores 7, 6–7, 2–7 and 0–7: 0.013, 0.011, 0.011 and 0.011 <span class="tag m">measured</span>. The phone was throttled during those runs, and the charge counter it comes from is coarse (it disagreed with the other power reading by up to 30 %), so the honest reading is that the three multi-core sets cost about the same per token, and one prime core alone costs a little more. Whether the spinning shows up in the energy is not resolved by this.</p>
 <p>The caller waits too, for the workers to finish. It spins and then calls <code>thread::yield_now()</code> instead of parking: it is always the one waiting for others, and the workers finish within microseconds.</p>
 
 <h2 id="check">Check yourself</h2>
@@ -107,9 +107,9 @@ struct Shared {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=8"></script>
-<script src="../js/glossary.js?v=8"></script>
-<script src="../js/site.js?v=8"></script>
-<script src="../js/widgets.js?v=8"></script>
+<script src="../js/pages.js?v=10"></script>
+<script src="../js/glossary.js?v=10"></script>
+<script src="../js/site.js?v=10"></script>
+<script src="../js/widgets.js?v=10"></script>
 </body>
 </html>

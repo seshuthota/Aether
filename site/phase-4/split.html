@@ -23,7 +23,7 @@
 <main id="content">
 <p class="kicker">Phase 4 · 02</p>
 <h1>Splitting the work</h1>
-<p class="lede">With threads that stay, the next question is how to divide one matrix product between them. The obvious answer, an equal share each, made eight cores slower than two. This page shows why an equal share fails when the cores are not equal, and the fix: small blocks handed out one at a time, so a faster core simply takes more of them.</p>
+<p class="lede">With threads that stay, the next question is how to divide one matrix product between them. The obvious answer, an equal share each, let six extra cores add almost nothing. This page shows why an equal share wastes cores that are not equal, and the fix: small blocks handed out one at a time, so a faster core simply takes more of them.</p>
 <nav class="toc">
   <a href="#rows">Split by rows, never inside a row</a>
   <a href="#even">The equal split, and what it did</a>
@@ -39,7 +39,7 @@
 <p>Split by rows, each row's sum is still computed by one thread, in the same order as with one thread. The result is <strong>bit-identical</strong> whatever the number of threads. The test <code>threaded_matmuls_are_bit_identical</code> in <code>src/kernels/mod.rs</code> checks it for every matrix shape in the goldens with 2, 3 and 8 threads.</p>
 
 <h2 id="even">The equal split, and what it did</h2>
-<p>The first threaded build gave each thread an equal number of rows, rounded to blocks of 16. Decode speed in tokens per second, on battery <span class="tag m">measured</span> (<code>results/phase-6/raw/model-speed.txt</code>):</p>
+<p>The first threaded build gave each thread an equal number of rows, rounded to blocks of 16. Its first measurements, decode speed in tokens per second, on battery, one short run per cell <span class="tag m">measured</span> (<code>results/phase-6/raw/model-speed.txt</code>):</p>
 <table>
   <thead><tr><th>Model, format</th><th>core 7</th><th>cores 6–7</th><th>cores 0–7</th></tr></thead>
   <tbody>
@@ -49,8 +49,18 @@
     <tr><td>SmolLM2-135M Q4_0</td><td>123.9</td><td>179.6</td><td><strong>98.4</strong></td></tr>
   </tbody>
 </table>
-<p>Eight cores were slower than two in every row. A profile of SmolLM2 Q4_0 on eight cores (<code>simpleperf</code>) found 58 % of the samples in the worker loop, spinning, and 26 % in the actual kernel <span class="tag m">measured</span>. The threads spent most of their time waiting.</p>
+<p>Eight cores were slower than two in every row. That run was taken on a throttled phone, though: its log records the performance cores capped at 1.79 GHz and the prime cores at 1.02 GHz, against 2.40 and 2.44 GHz on a cool phone. So the size of the slowdown is not reliable (see the repeat below). A profile of SmolLM2 Q4_0 on eight cores (<code>simpleperf</code>) found 58 % of the samples in the worker loop, spinning, and 26 % in the actual kernel <span class="tag m">measured</span>. The threads spent most of their time waiting.</p>
 <p>The reason is in how a job ends. The caller cannot move on until every thread is finished, so <strong>every job takes as long as its slowest thread</strong>. With equal shares, any thread that is a little slower makes all the others wait, about 200 times per token. And the threads are not equal: one prime core reads 61 GB/s from memory, one performance core 43 GB/s <span class="tag m">measured in Phase 1</span>. A core that is also handling something else (another app, or interrupts) falls further behind. Which thread was the slow one in that profile was not recorded.</p>
+<p><strong>The repeat.</strong> To check, the old equal-share code was rebuilt and run next to the current code, one after the other, three rounds, phone cool and caps at 2.40 and 2.44 GHz. SmolLM2-135M Q4_0 decode in tokens per second, rounds 1, 2 and 3 <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Cores</th><th>equal shares</th><th>blocks</th></tr></thead>
+  <tbody>
+    <tr><td>6–7 (two prime)</td><td>255 · 254 · 257</td><td>261 · 262 · 260</td></tr>
+    <tr><td>2–7</td><td>264 · 268 · <em>133</em></td><td><strong>342 · 344 · 331</strong></td></tr>
+    <tr><td>0–7 (all eight)</td><td>270 · 241 · 240</td><td>346 · <em>237</em> · 317</td></tr>
+  </tbody>
+</table>
+<p>Equal shares were <em>not</em> slower with more cores here: they stayed near 250 whether two or eight cores were used. Four more cores added nothing, which is the same waste seen from another side. Blocks got 25 to 30 % more on 2–7. The italic cells are single outliers (the first run of a round can hit a hot or busy moment); 0–7 with blocks is noisy, from 237 to 346.</p>
 
 <h2 id="widget">Equal shares vs blocks</h2>
 <p>One matrix product of 1,536 rows (SmolLM2's gate projection) split across a set of cores. Each bar is one thread; its length is time. A prime core here works at 61, a performance core at 43, in proportion to the Phase 1 read speeds, and the slider slows one performance core further, as if it had other work <span class="tag a">illustration</span>. The real cores also share one memory bus, which this sketch leaves out.</p>
@@ -89,16 +99,8 @@
     });
 }</code></pre>
 <p><code>fetch_add</code> is one atomic instruction: two threads can never get the same number. How big should a block be? Too big and the end of the job is uneven again; too small and the threads spend their time fighting over the counter. <code>block_size</code> aims at about 8 blocks per thread, in whole multiples of 16 rows (the kernel's step). For the 1,536-row matrix on 6 threads that is 32 rows, 48 blocks <span class="tag c">calculated</span>.</p>
-<p>Which thread computes a block does not change what the block computes, so the result is still bit-identical. The same commit also put the caller on the fastest core (<a href="cores.html">Choosing cores</a>) and split attention by head. SmolLM2-135M Q4_0, same conditions <span class="tag m">measured</span>:</p>
-<table>
-  <thead><tr><th>Cores</th><th>equal shares</th><th>blocks</th></tr></thead>
-  <tbody>
-    <tr><td>6–7 (two prime)</td><td>179.6</td><td>214.9</td></tr>
-    <tr><td>2–7</td><td>—</td><td><strong>274.7</strong></td></tr>
-    <tr><td>0–7 (all eight)</td><td>98.4</td><td>227.9</td></tr>
-  </tbody>
-</table>
-<p>All eight cores went from 98 to 228 tokens per second. They are still slower than six; <a href="cores.html#zero-one">Choosing cores</a> is about that.</p>
+<p>Which thread computes a block does not change what the block computes, so the result is still bit-identical. The same commit also put the caller on the fastest core (<a href="cores.html">Choosing cores</a>) and split attention by head. The table above is the result: on two equal prime cores blocks make no difference (255 against 261, within noise, as expected), and on six or eight cores they turn extra cores that added nothing into 25 to 30 % more speed.</p>
+<p>The first version of this page said all eight cores went from 98 to 228 tokens per second. That compared the throttled first run (98) with a later run whose conditions were not recorded (228), and the repeat above, under the same conditions for both, shows a smaller gain; <a href="cores.html">Choosing cores</a> has the full sweep.</p>
 
 <h2 id="heads">Attention: split by head</h2>
 <p>Attention is not one matrix product, but its <a href="../phase-2/attention.html">heads</a> are independent: each reads its own slice of the query and writes its own slice of the output. So the engine hands out heads as blocks of one. The catch is that there are few of them. SmolLM2 has 9 query heads; if every head takes the same time, 9 heads on 6 threads take two rounds, and in the second round 3 threads have nothing to do <span class="tag c">calculated</span>:</p>
@@ -127,9 +129,9 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=8"></script>
-<script src="../js/glossary.js?v=8"></script>
-<script src="../js/site.js?v=8"></script>
-<script src="../js/widgets.js?v=8"></script>
+<script src="../js/pages.js?v=10"></script>
+<script src="../js/glossary.js?v=10"></script>
+<script src="../js/site.js?v=10"></script>
+<script src="../js/widgets.js?v=10"></script>
 </body>
 </html>

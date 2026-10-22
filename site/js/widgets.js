@@ -564,15 +564,15 @@ function initHandoff() {
   const sbox = root.querySelector("[data-stats]"), note = root.querySelector("[data-note]");
   function render() {
     const [jobs, tps] = pick.value.split(",").map(Number);
-    const cost = Number(root.querySelector("[data-ho]:checked").value); // µs per job (PC stand-in)
+    const cost = Number(root.querySelector("[data-ho]:checked").value); // µs per job, phone, cores 2-7
     const token = 1000 / tps, extra = jobs * cost / 1000; // ms
     const total = token + extra;
     bar.innerHTML = "";
     bar.append(el("i", { style: "width:" + (100 * token / total) + "%;background:var(--accent)" }), el("i", { style: "width:" + (100 * extra / total) + "%;background:var(--copper)" }));
     stats(sbox, [[token.toFixed(2) + " ms", "token, measured"], [extra.toFixed(extra < 0.1 ? 3 : 2) + " ms", jobs + " jobs × " + cost + " µs"], [(100 * extra / token).toFixed(extra / token < 0.1 ? 1 : 0) + " %", "added to every token"], [(1000 / total).toFixed(0), "tok/s if this were the only change"]]);
-    note.textContent = cost > 10 ? "Starting threads per job costs more than the job itself: the hand-out alone takes longer than the token's whole measured time." :
-      cost > 1 ? "Waking sleeping workers through the kernel every job adds a large slice to every token, before any imbalance between threads is counted." :
-      "Watching a counter keeps the hand-out to a percent or two of the token. The remaining costs of threading are elsewhere: waiting for the slowest thread, and the serial work between jobs.";
+    note.textContent = cost > 100 ? "Starting threads per job, or waking them through a lock, costs far more than the job itself: the hand-out alone takes many times the token's whole measured time." :
+      cost > 10 ? "Waking sleeping workers through the kernel every job would add a large slice to every token." :
+      "Watching a counter keeps the hand-out to about a tenth of the token. The remaining costs of threading are elsewhere: waiting for the slowest thread, and the serial work between jobs.";
   }
   root.addEventListener("change", render);
   render();
@@ -644,8 +644,8 @@ function initSplitSim() {
 function initSpinPark() {
   const root = document.querySelector("[data-spinpark]");
   if (!root) return;
-  // Assumptions: spin window 40 µs (20,000 polls, not measured); wake-up 0.25 µs spinning, 4 µs parked (PC stand-ins).
-  const W = 40, FAST = 0.25, SLOW = 4;
+  // Assumptions: spin window 40 µs (20,000 polls, not measured); wake-up 1.3 µs spinning (the pool's hand-out on 6 threads), 48 µs parked (the lock-and-condvar hand-out on 2 threads), both phone figures for a whole hand-out, not for one wake-up alone.
+  const W = 40, FAST = 1.3, SLOW = 48;
   const gap = root.querySelector("[data-gap]"), bar = root.querySelector("[data-bar]");
   const sbox = root.querySelector("[data-stats]"), note = root.querySelector("[data-note]");
   const fmt = (us) => us >= 1e6 ? (us / 1e6).toFixed(1) + " s" : us >= 1000 ? (us / 1000).toFixed(us >= 1e4 ? 0 : 1) + " ms" : (us >= 10 ? us.toFixed(0) : us.toFixed(1)) + " µs";
@@ -662,7 +662,7 @@ function initSpinPark() {
     bar.append(el("i", { style: "width:" + (100 * lg(spin) / tot) + "%;background:var(--copper)" }), el("i", { class: "hatch", style: "width:" + (100 * lg(parked) / tot) + "%" }), el("i", { style: "width:" + (100 * lg(wake) / tot) + "%;background:var(--blue)" }));
     stats(sbox, [[fmt(wake), "delay before the job starts"], [fmt(spin), "core kept busy spinning"], [Math.round(100 * spin / g) + " %", "of the gap burned"]]);
     note.textContent = mode === "spin" && g > 1e4 ? "Spinning through a long gap: the job starts instantly, but the core burned the whole gap doing nothing. Between chat messages that is seconds per core." :
-      mode === "park" && g < 100 ? "Parking for a short gap: the core is free, but every job now starts several microseconds late. During decode that is added about 200 times per token." :
+      mode === "park" && g < 100 ? "Parking for a short gap: the core is free, but every job now starts tens of microseconds late. During decode that is added about 240 times per token." :
       mode === "both" && g <= W ? "A decode-length gap: the new job arrives while the worker is still spinning, so it starts at once." :
       mode === "both" ? "A long gap: the worker spun for its window, then parked. It wastes at most the window, and pays the wake-up only when the wait was long anyway." :
       "Try a gap of a few microseconds (decode) and of several seconds (between messages).";
@@ -677,10 +677,15 @@ function initSpinPark() {
 function initCoreSets() {
   const root = document.querySelector("[data-coresets]");
   if (!root) return;
-  // SmolLM2-135M Q4_0 decode, tok/s, on battery: results/phase-4.md (block split) and phase-6 raw (core 7).
-  const MEAS = { "7": 123.9, "6,7": 214.9, "4,5,6,7": 229.5, "2,3,4,5,6,7": 274.7, "0,1,2,3,4,5,6,7": 227.9 };
-  const SWEEP = ["7", "6,7", "5,6,7", "4,5,6,7", "3,4,5,6,7", "2,3,4,5,6,7", "1,2,3,4,5,6,7", "0,1,2,3,4,5,6,7", "0", "0,1", "2,3,4,5", "0,1,2,3,4,5"];
-  const MB = 75.8, ALL = 67, top = 300;
+  // SmolLM2-135M Q4_0 decode, tok/s, two passes (second in reverse order), on battery, caps 2.40/2.44 GHz:
+  // results/phase-4.md, clean sweep.
+  const MEAS = {
+    "7": [160.0, 158.9], "6,7": [262.8, 261.3], "5,6,7": [276.2, 279.9], "4,5,6,7": [310.6, 299.0],
+    "3,4,5,6,7": [326.2, 327.1], "2,3,4,5,6,7": [326.4, 343.4], "1,2,3,4,5,6,7": [347.8, 338.0],
+    "0,1,2,3,4,5,6,7": [340.6, 310.5], "0": [83.3, 81.8], "0,1": [135.7, 144.8], "2,3,4,5": [219.3, 200.2], "0,1,2,3,4,5": [247.5, 184.4],
+  };
+  const mean = (k) => (MEAS[k][0] + MEAS[k][1]) / 2;
+  const MB = 75.8, ALL = 67, top = 360;
   const box = root.querySelector("[data-cores]"), bars = root.querySelector("[data-bars]");
   const sbox = root.querySelector("[data-stats]"), note = root.querySelector("[data-note]");
   const on = new Set([2, 3, 4, 5, 6, 7]);
@@ -709,16 +714,16 @@ function initCoreSets() {
     btns.forEach((b, c) => b.setAttribute("aria-pressed", String(on.has(c))));
     const list = [...on].sort((a, b) => a - b), key = list.join(",");
     bars.innerHTML = "";
-    for (const [k, v] of Object.entries(MEAS)) {
-      bars.append(el("div", { class: "bar" + (k === key ? "" : " alt") }, [el("span", { text: "cores " + name(k) }), el("i", { style: "--w:" + (100 * v / top) + "%" }), el("b", { text: v.toFixed(1) })]));
+    for (const k of ["7", "6,7", "5,6,7", "4,5,6,7", "3,4,5,6,7", "2,3,4,5,6,7", "1,2,3,4,5,6,7", "0,1,2,3,4,5,6,7", "0", "0,1", "2,3,4,5", "0,1,2,3,4,5"]) {
+      const v = mean(k);
+      bars.append(el("div", { class: "bar" + (k === key ? "" : " alt") }, [el("span", { text: "cores " + name(k) }), el("i", { style: "--w:" + (100 * v / top) + "%" }), el("b", { text: v.toFixed(0) })]));
     }
     // The pool's caller: the fastest core by top clock (prime first), ties in the order given.
     const caller = list.length ? (list.find((c) => c >= 6) ?? list[0]) : null;
-    const v = MEAS[key];
-    stats(sbox, [[list.length ? name(key) : "none", list.length + (list.length === 1 ? " thread" : " threads")], [caller === null ? "—" : "core " + caller, "runs the caller"], [v ? v.toFixed(1) + " tok/s" : "not measured", "decode, measured"], [v ? (MB * v / 1000).toFixed(1) + " GB/s · " + Math.round(100 * MB * v / 1000 / ALL) + " %" : "—", "weights read · share of 67 GB/s"]]);
-    note.textContent = !list.length ? "Pick at least one core." : v ? "The highlighted bar is this set. GB/s is calculated: 75.8 MB of weights read once per token." :
-      SWEEP.includes(key) ? "Not measured yet, but in the Phase 4 sweep: its number will appear here once the phone has run it." :
-      "Not measured, and not in the planned sweep.";
+    const v = MEAS[key] ? mean(key) : 0;
+    stats(sbox, [[list.length ? name(key) : "none", list.length + (list.length === 1 ? " thread" : " threads")], [caller === null ? "—" : "core " + caller, "runs the caller"], [v ? v.toFixed(0) + " tok/s" : "not measured", v ? "decode, mean of passes " + MEAS[key][0].toFixed(0) + " and " + MEAS[key][1].toFixed(0) : "decode"], [v ? (MB * v / 1000).toFixed(1) + " GB/s · " + Math.round(100 * MB * v / 1000 / ALL) + " %" : "—", "weights read · share of 67 GB/s"]]);
+    note.textContent = !list.length ? "Pick at least one core." : v ? "The highlighted bar is this set. The two passes of one set can differ by 10 % or more, so small gaps between bars mean nothing. GB/s is calculated: 75.8 MB of weights read once per token." :
+      "Not measured: the sweep ran the twelve sets shown as bars.";
   }
   render();
 }

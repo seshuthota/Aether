@@ -22,10 +22,10 @@
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
 <p class="kicker">Phase 4 · threads</p>
-<div class="callout ok"><span class="lbl">Built and verified</span><p>The thread pool and the split matmuls are in the engine, and threaded results are bit-identical to single-threaded ones, checked against the same numpy, llama2.c and Hugging Face goldens. The speeds on these pages are measured on battery. The clean sweep of speed and energy against core set is still to run.</p></div>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The thread pool and the split matmuls are in the engine, and threaded results are bit-identical to single-threaded ones, checked against the same numpy, llama2.c and Hugging Face goldens. The speeds on these pages are measured on battery. A clean sweep of twelve core sets, run twice, is in; it corrected several of the first measurements, and the pages say where.</p></div>
 
 <h1>Phase 4 — threads</h1>
-<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores. The hard part is not the arithmetic; it is that decode hands out a couple of hundred small jobs per token, and every one ends when its slowest thread does. The first threaded build was slower on eight cores than on two. Fixing that taught most of what this phase is about.</p>
+<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores. The hard part is not the arithmetic; it is that decode hands out a couple of hundred small jobs per token, and every one ends when its slowest thread does. The first threaded build gained almost nothing from cores beyond two. Fixing that taught most of what this phase is about.</p>
 <nav class="toc">
   <a href="#idea">The idea in one paragraph</a>
   <a href="#result">The result</a>
@@ -35,13 +35,13 @@
 </nav>
 
 <h2 id="idea">The idea in one paragraph</h2>
-<p>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching, because starting threads or waking them through the kernel costs more than a job is worth. Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change. Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end. Put the thread that does the serial work on the fastest core. Then measure which cores are worth using, because on this phone the answer is not “all of them”.</p>
+<p>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching, because starting threads or waking them through the kernel costs more than a job is worth. Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change. Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end. Put the thread that does the serial work on the fastest core. Then measure which cores are worth using: on this phone, speed stops growing at about six cores, and the last two add nothing measurable.</p>
 
 <h2 id="result">The result</h2>
 <div class="statrow">
-  <div class="stat"><b>123.9 → 274.7 tok/s</b><span>SmolLM2-135M Q4_0 decode, core 7 alone → cores 2–7 <span class="tag m">measured</span></span></div>
-  <div class="stat"><b>98.4 → 227.9 tok/s</b><span>all eight cores, equal shares → blocks <span class="tag m">measured</span></span></div>
-  <div class="stat"><b>0.2 vs 54 µs</b><span>handing out one job: the pool vs fresh threads, on the PC <span class="tag m">measured on the PC</span></span></div>
+  <div class="stat"><b>160 → 335 tok/s</b><span>SmolLM2-135M Q4_0 decode, core 7 alone → cores 2–7, mean of two passes <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>265 → 343 tok/s</b><span>cores 2–7, equal shares → blocks, same day, same conditions <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>1.3 vs 506 µs</b><span>handing out one job on cores 2–7: the pool vs fresh threads <span class="tag m">measured</span></span></div>
 </div>
 
 <h2 id="order">Read in this order</h2>
@@ -54,9 +54,10 @@
 
 <h2 id="open">Still open</h2>
 <ul>
-  <li><strong>The clean sweep</strong>: decode and prefill against every core set from one core to eight, twice in opposite orders, with nothing else running; the hand-out cost on the phone; and joules per token for four sets over five minutes each. It needs the phone, and its results get their own page.</li>
-  <li><strong>Why cores 0–1 slow things down</strong>: the interrupt hypothesis, tested by counting <code>/proc/interrupts</code> per core in every run of the sweep.</li>
-  <li><strong>Where the rest of the time goes</strong>: SmolLM2 on six cores reads its weights at about a third of the memory bandwidth (<a href="cores.html#roof">Choosing cores</a>).</li>
+  <li><strong>A steadier sweep</strong>: the phone throttled during the Qwen and five-minute runs (clock caps fell to 1.6–2.0 GHz), and some runs started with another app in the foreground. A repeat on a cooler phone would settle the energy comparison and the 6–7 against 2–7 gap on Qwen.</li>
+  <li><strong>Why 0–7 swings so much</strong>: with blocks it ran from 237 to 346 tokens per second between runs (<a href="split.html">Splitting the work</a>).</li>
+  <li><strong>Where the rest of the time goes</strong>: SmolLM2 on six cores reads its weights at about 38 % of the memory bandwidth (<a href="cores.html#roof">Choosing cores</a>).</li>
+  <li><strong>Multi-thread bandwidth</strong>: the GB/s numbers are calculated from tokens per second; <code>gemv_bench</code> only runs one thread.</li>
 </ul>
 
 <h2 id="code">Where the code is</h2>
@@ -76,9 +77,9 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=8"></script>
-<script src="../js/glossary.js?v=8"></script>
-<script src="../js/site.js?v=8"></script>
-<script src="../js/widgets.js?v=8"></script>
+<script src="../js/pages.js?v=10"></script>
+<script src="../js/glossary.js?v=10"></script>
+<script src="../js/site.js?v=10"></script>
+<script src="../js/widgets.js?v=10"></script>
 </body>
 </html>

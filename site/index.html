@@ -95,7 +95,7 @@
 <div class="cards" data-cards="Phase 3 · NEON kernels"></div>
 
 <h2 id="phase4">Phase 4, threads</h2>
-<p>Each matrix product split across cores: a pool of threads that stay, work handed out in blocks, and which cores are worth using. From 123.9 tokens per second on one core to 274.7 on six, for SmolLM2-135M. The speed-and-energy sweep against core set is still to run.</p>
+<p>Each matrix product split across cores: a pool of threads that stay, work handed out in blocks, and which cores are worth using. From 160 tokens per second on one core to 335 on six, for SmolLM2-135M, measured in a sweep of twelve core sets; the speed stops growing at about six cores.</p>
 <div class="cards" data-cards="Phase 4 · threads"></div>
 
 <h2 id="serve">Open it later</h2>
@@ -109,8 +109,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="js/pages.js?v=8"></script>
-<script src="js/glossary.js?v=8"></script>
-<script src="js/site.js?v=8"></script>
+<script src="js/pages.js?v=10"></script>
+<script src="js/glossary.js?v=10"></script>
+<script src="js/site.js?v=10"></script>
 </body>
 </html>

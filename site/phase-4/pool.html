@@ -44,7 +44,7 @@
     <tr><td>Qwen2.5-0.5B</td><td>24</td><td>24 × 8 + 1 = 193</td></tr>
   </tbody>
 </table>
-<p>SmolLM2-135M Q4_0 decodes at 274.7 tokens per second on cores 2–7 <span class="tag m">measured</span>, which is 3.64 ms per token. Divided by 241 jobs, that is about <strong>15 µs per job</strong> on average <span class="tag c">calculated</span>, the serial work between jobs included. Whatever it costs to hand out a job has to be small next to 15 µs.</p>
+<p>SmolLM2-135M Q4_0 decodes at about 335 tokens per second on cores 2–7 (326.4 and 343.4 in two passes) <span class="tag m">measured</span>, which is 3.0 ms per token. Divided by 241 jobs, that is about <strong>12 µs per job</strong> on average <span class="tag c">calculated</span>, the serial work between jobs included. Whatever it costs to hand out a job has to be small next to 12 µs.</p>
 
 <h2 id="cost">Three ways to hand out a job</h2>
 <ol>
@@ -52,13 +52,23 @@
   <li><strong>Keep the threads, wake them with a lock.</strong> Workers sleep on a <em>condition variable</em>; the caller takes a mutex, writes the job, and signals. Waking a sleeping thread is a system call, and so is putting it back to sleep.</li>
   <li><strong>Keep the threads, and have them watch a counter.</strong> Each worker reads a shared number in a loop. The caller writes the job and adds one to the number. No system call at all, as long as the worker is still watching. This is Aether's <code>ThreadPool</code>.</li>
 </ol>
-<p><code>examples/pool_handoff.rs</code> times all three with an empty job, so only the hand-out is measured: the caller plus 3 workers, best of 5 runs. On the PC (an Intel i7-13620H, Linux) <span class="tag m">measured on the PC, not the phone</span>:</p>
+<p><code>examples/pool_handoff.rs</code> times all three with an empty job, so only the hand-out is measured: the caller plus the workers on the other cores, best of 5 runs. On the phone, microseconds per hand-out <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Cores</th><th>spawn + join</th><th>lock + condvar</th><th>Aether's pool</th></tr></thead>
+  <tbody>
+    <tr><td>6–7 (2 threads)</td><td>70</td><td>48</td><td>0.15</td></tr>
+    <tr><td>4–7 (4 threads)</td><td>425</td><td>184</td><td>0.86</td></tr>
+    <tr><td>2–7 (6 threads)</td><td>506</td><td>276</td><td>1.26</td></tr>
+    <tr><td>0–7 (8 threads)</td><td>659</td><td>441</td><td>1.88</td></tr>
+  </tbody>
+</table>
 <div class="bars">
-  <div class="bar alt"><span>spawn + join</span><i style="--w:100%"></i><b>50–57 µs</b></div>
-  <div class="bar alt"><span>lock + condvar</span><i style="--w:9%"></i><b>3.2–5.2 µs</b></div>
-  <div class="bar"><span>Aether's pool</span><i style="--w:0.5%"></i><b>0.19–0.31 µs</b></div>
+  <div class="bar alt"><span>spawn + join</span><i style="--w:100%"></i><b>506 µs</b></div>
+  <div class="bar alt"><span>lock + condvar</span><i style="--w:55%"></i><b>276 µs</b></div>
+  <div class="bar"><span>Aether's pool</span><i style="--w:0.5%"></i><b>1.26 µs</b></div>
 </div>
-<p>The phone's numbers come with the Phase 4 sweep, which runs the same program on cores 6–7, 4–7, 2–7 and 0–7. Until then, the widget below uses the PC's numbers as a stand-in.</p>
+<p>(The bars show cores 2–7.) Two things stand out. The pool is 200 to 400 times cheaper than the other two. And every method gets dearer with more threads: the pool's own cost is 13 times higher on eight threads than on two, because more workers have to notice the change and report back. On the PC the same program gave 50–57, 3–5 and 0.2–0.3 µs with 4 threads <span class="tag m">measured on the PC</span>; the phone is much slower at every step, the lock-based method most of all, probably because the phone's cores are slower to wake (not examined).</p>
+<p>These runs were on battery with the clock caps at 2.40 and 2.44 GHz and the phone idle, but the hand-out cost moves with the caps and with what else runs, so read it as the right order of magnitude. The pool figure was measured with workers that were still spinning; it is the cost during decode, not after the workers have gone to sleep.</p>
 
 <h2 id="widget">What it costs per token</h2>
 <div class="widget" data-handoff>
@@ -66,15 +76,14 @@
   <div class="controls">
     <label class="field">Model
       <select data-model>
-        <option value="49,667">stories15M f32 (49 jobs)</option>
-        <option value="241,274.7" selected>SmolLM2-135M Q4_0 (241 jobs)</option>
-        <option value="193,128.8">Qwen2.5-0.5B Q4_0 (193 jobs)</option>
+        <option value="241,334.9" selected>SmolLM2-135M Q4_0 (241 jobs)</option>
+        <option value="193,121.2">Qwen2.5-0.5B Q4_0 (193 jobs)</option>
       </select>
     </label>
     <span class="seg" role="radiogroup" aria-label="Hand-out method">
-      <label><input type="radio" name="ho" data-ho value="54" checked>spawn</label>
-      <label><input type="radio" name="ho" data-ho value="4.2">condvar</label>
-      <label><input type="radio" name="ho" data-ho value="0.25">pool</label>
+      <label><input type="radio" name="ho" data-ho value="506" checked>spawn</label>
+      <label><input type="radio" name="ho" data-ho value="276">condvar</label>
+      <label><input type="radio" name="ho" data-ho value="1.26">pool</label>
     </span>
   </div>
   <div class="split" data-bar></div>
@@ -82,7 +91,7 @@
   <div class="statrow" data-stats></div>
   <p class="note" data-note></p>
 </div>
-<p>The token times are measured speeds: stories15M on cores 6–7 (667 tok/s, the first threaded build), the other two on cores 2–7; the hand-out costs are the PC's middle values. Both are rough, so read the result as an order of magnitude <span class="tag c">calculated</span>.</p>
+<p>The token times are measured speeds on cores 2–7 (SmolLM2 from the clean sweep, Qwen from a run where the clocks had already dropped); the hand-out costs are the phone's figures for 6 threads. Both are rough, so read the result as an order of magnitude <span class="tag c">calculated</span>. With the pool, 241 hand-outs of 1.26 µs add about 0.3 ms to a 3.0 ms token: a tenth, which is the price of threading before any waiting is counted.</p>
 
 <h2 id="how">How the pool hands out a job</h2>
 <p>The pool keeps one worker thread per core, pinned to it, for the whole life of the model. Two counters do all the talking:</p>
@@ -124,8 +133,8 @@ while s.done.0.load(Ordering::Acquire) != n - 1 {
 <details class="check"><summary>Why does decode need so many hand-outs, when prefill could do with few?</summary>
 <p>Each matrix product needs the previous one's result, so the threads must finish and meet after every one: 8 per layer, every token. Prefill meets after every matrix product too, but each one covers every prompt token at once, so there is far more work per meeting. (Its attention still runs one token at a time, one meeting each.)</p>
 </details>
-<details class="check"><summary>At 15 µs per job, what fraction of the time would spawning threads cost?</summary>
-<p>About 54 µs per job on the PC, more than three times the job itself. The token would take roughly four times as long as with no threads at all.</p>
+<details class="check"><summary>At 12 µs per job, what would spawning threads cost?</summary>
+<p>About 506 µs per job on the phone, forty times the job itself. A token of 241 jobs would take about 122 ms instead of 3 ms.</p>
 </details>
 <details class="check"><summary>Why is the worker's read of the job pointer allowed to be <code>Relaxed</code>?</summary>
 <p>Because it happens after the worker read the new epoch with <code>Acquire</code>, and the caller wrote the pointer before the epoch with <code>Release</code>. The pair of orderings already makes the pointer visible; the pointer read itself needs no extra ordering.</p>
@@ -135,9 +144,9 @@ while s.done.0.load(Ordering::Acquire) != n - 1 {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=8"></script>
-<script src="../js/glossary.js?v=8"></script>
-<script src="../js/site.js?v=8"></script>
-<script src="../js/widgets.js?v=8"></script>
+<script src="../js/pages.js?v=10"></script>
+<script src="../js/glossary.js?v=10"></script>
+<script src="../js/site.js?v=10"></script>
+<script src="../js/widgets.js?v=10"></script>
 </body>
 </html>
