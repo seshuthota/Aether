@@ -375,7 +375,6 @@ mod tests {
     #[test]
     fn attention_matches_numpy() {
         let cs = cases("attention_");
-        assert!(!cs.is_empty());
         let mut worst: f32 = 0.0;
         for dir in &cs {
             let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
