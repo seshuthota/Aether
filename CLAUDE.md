@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Aether is a from-scratch LLM inference engine in Rust for Snapdragon Android phones (CPU / ARM NEON first). `From_Scratch_Android_Inference_Engine_Plan.md` is the source of truth for scope, phase order, and success criteria — read the relevant phase before working on anything.
 
-**Current state:** Phase 0 done (Cargo project, on-device test runner, `src/bench.rs`, `src/tensor.rs`); `notes/phase-0.md` is still the user's to write. Phase 1 started: `src/aligned.rs` (`AlignedBuf`, piece 1). Build order and per-item status: `IMPLEMENTATION.md`.
+**Current state (2026-10-22):** the implementation track has built and verified Phases 0–8 (llama2.c, SmolLM2 and Qwen2.5 models; f32/Q8_0/Q4_0; GGUF; NEON + threads; C ABI and an Android app), all merged to `master`. Per-phase status and open items: section 0 of `IMPLEMENTATION.md`; measured numbers: `results/phase-N.md`. The learning track (site, films, `notes/phase-N.md`) is at Phase 1.
 
 ## Two tracks (agreed 2026-10-21)
 

@@ -1,0 +1,41 @@
+# Phase 5 — SmolLM2-135M (GQA, safetensors, byte-level BPE)
+
+Code: `format/json.rs` (hand-written JSON), `format/mmap.rs`,
+`format/safetensors.rs`, `model/hf.rs` (Hugging Face Llama/Qwen2
+checkpoints), `tokenizer/bytelevel.rs` (+ `unicode_tables.rs`, `nfc.rs`).
+References: Hugging Face `transformers` (activations, generation) and
+`tokenizers`, through `tools/hf_dump.py` and `tools/gen_unicode_tables.py`.
+
+## What SmolLM2 adds over stories15M
+
+- **Grouped-query attention**: 9 query heads share 3 key/value heads, so
+  the KV cache is a third of the size.
+- **Tied embeddings**: the output classifier reuses the token embedding.
+- **Rotate-half RoPE** (θ = 100,000): Hugging Face pairs element `i` with
+  `i + head_size/2`, where llama2.c pairs adjacent elements.
+- **Byte-level BPE** from `tokenizer.json`: a GPT-2 pre-tokenizer regex,
+  every byte mapped to a printable character, merges applied by rank.
+- **safetensors + bf16**: weights memory-mapped, bf16/f16 widened to f32
+  exactly.
+
+## Verification
+
+| Check | Result | Test |
+| --- | --- | --- |
+| Every layer's activations vs `transformers` | within 5.5e-5 relative error | `model::hf::tests` |
+| Greedy generation vs `generate(do_sample=False)` | 48 tokens identical | `model::hf::tests` |
+| Tokenizer vs HF `tokenizers` | 433 strings encode and decode identically (scripts, emoji, ZWJ sequences, flags, code, chat markup) | `tokenizer::bytelevel::tests` |
+| JSON parser | escapes, surrogate pairs, error positions | `format::json::tests` |
+| bf16 → f32 widening | exact | `format::safetensors::tests` |
+
+These pass on the host and on the phone (85/85 on 2026-10-22).
+
+## Speed
+
+Measured with the threading work: `results/phase-4.md` (SmolLM2-135M
+f32 39 tok/s on one prime core; Q4_0 275 tok/s on cores 2–7).
+
+## Pending
+
+- SmolLM2-360M (item 5.6): same code path, not yet verified against
+  `transformers`.

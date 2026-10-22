@@ -13,25 +13,29 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started · `(phone)`
 
 ---
 
-## 0. Where the repo is today (2026-10-21)
+## 0. Where the engine is today (2026-10-22)
 
-| Piece | State |
-| --- | --- |
-| Cargo project, lib `aether` + bin, release profile with symbols | done |
-| `.cargo/config.toml` (NDK 27.3 clang, API 31) + `scripts/adb-run.sh` runner | done |
-| `src/bench.rs` — warm-up, per-call timing, min/median/mean/max | done |
-| `src/tensor.rs` — row-major f32, shape + strides, no arithmetic | done |
-| `src/aligned.rs` — `AlignedBuf`: alloc/drop/zero-length (piece 1 of 3) | done, Miri clean |
-| `examples/timing.rs`, `examples/bench_sum.rs` — Phase 0 experiments | done |
-| `tools/`, `testdata/`, `results/`, `notes/` | empty |
-| `site/` notes for Phase 0 + Phase 1 reading, 5 Phase 1 films | uncommitted |
+All nine phases have working, verified code; `master` has everything up to `dc636d9`.
+85 tests pass on the phone and 83 on the host. Each phase's numbers, conditions and raw data are in
+`results/phase-N.md`.
 
-Phase 0 success criterion (tests run on the phone) is met. Phase 1 has no code beyond `AlignedBuf`.
+| Phase | What works | Verified against | Key numbers (phone, on battery) | Open |
+| --- | --- | --- | --- | --- |
+| 0 Setup | Cargo project, phone runner, timing harness, `Tensor` | — | — | `notes/phase-0.md` (user) |
+| 1 Hardware | `AlignedBuf`, pinning, sysfs/battery readers, sampler, bandwidth kernels | — (measurements) | DRAM read 61 GB/s one prime core, 67 GB/s all cores; 0.066 J/GB prime | — |
+| 2 Scalar | llama2.c loader + tokenizer, forward pass, KV cache, sampler, CLI | llama2.c, bit-identical | stories15M 88.6 tok/s on one prime core | — |
+| 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s | kernel choice for short rows; GEMM GFLOPS |
+| 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
+| 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5), `tokenizers` (433 strings) | — | 360M |
+| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s; PPL matches llama.cpp | `smmla` GEMM (6.5) |
+| 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token | prefill 2–6× behind llama.cpp |
+| 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Host tooling found: numpy 2.4, safetensors, tokenizers, matplotlib, uv, cmake; llama.cpp host build at
-`~/llama.cpp` (`d00685831`, Apr 2026) with `llama-bench`, `llama-perplexity`, `llama-quantize`;
-wikitext in the HF cache. **Missing:** torch, transformers, `gguf` (py), llama2.c, llama.cpp Android
-build, stories15M, HF safetensors models. **Disk: 14 GB free** — budget below.
+Biggest open items: quantized prefill GEMM with `smmla` (6.5), attention split across positions as
+well as heads, SmolLM2-360M (5.6), a clean Phase 4 sweep.
+
+Reference tooling in place: llama.cpp host + Android builds (`~/llama.cpp`, `d00685831`), patched
+llama2.c (`third_party/`), `tools/.venv` with numpy, torch, transformers, tokenizers, gguf.
 
 ---
 
