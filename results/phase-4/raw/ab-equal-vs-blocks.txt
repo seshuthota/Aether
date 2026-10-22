@@ -1,0 +1,19 @@
+# round,build,cores,tg64 tok/s,pp64 tok/s,cpu0 cap,cpu6 cap,battery,foreground
+1,equal,6-7,254.8,351.7,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+1,blocks,6-7,260.7,380.2,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+1,equal,2-7,264.4,322.6,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+1,blocks,2-7,342.3,497.8,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+1,equal,0-7,269.6,334.6,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+1,blocks,0-7,345.7,543.9,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,equal,6-7,254.3,348.9,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,blocks,6-7,261.6,377.1,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,equal,2-7,267.8,333.8,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,blocks,2-7,343.9,429.7,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,equal,0-7,241.4,345.2,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+2,blocks,0-7,237.4,498.1,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,equal,6-7,256.8,347.1,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,blocks,6-7,259.5,380.3,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,equal,2-7,133.4,332.2,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,blocks,2-7,330.6,526.5,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,equal,0-7,239.6,308.1,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher
+3,blocks,0-7,317.1,489.6,2400000 2438400,level:70,com.android.launcher3/com.bbk.launcher2.Launcher

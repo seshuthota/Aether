@@ -1,0 +1,18 @@
+# 2026-10-22T20:23:20+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 80
+# Capacity level: -1
+# cpu0 cap 1996800 kHz
+# cpu6 cap 2246400 kHz
+# foreground: topResumedActivity=ActivityRecord{141922477 u0 in.swiggy.android/.track.activities.TrackOrderActivity t29955 d0}
+# media sessions playing: 0
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [0, 1, 2, 3, 4, 5] (6 threads) | load 65 ms
+test,tok_per_s,ms
+pp64,117.1,546.5
+tg64@d0,78.8,812.2
+tg64@d512,66.9,956.1
+ttft_pp64,2.0,506.0
+# peak RSS 341572 kB

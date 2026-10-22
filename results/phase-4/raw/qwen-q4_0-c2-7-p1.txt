@@ -1,0 +1,18 @@
+# 2026-10-22T20:21:59+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 80
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# foreground: topResumedActivity=ActivityRecord{4159373 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+# media sessions playing: 0
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 58 ms
+test,tok_per_s,ms
+pp64,114.8,557.4
+tg64@d0,117.3,545.7
+tg64@d512,118.1,541.9
+ttft_pp64,3.2,312.1
+# peak RSS 341468 kB

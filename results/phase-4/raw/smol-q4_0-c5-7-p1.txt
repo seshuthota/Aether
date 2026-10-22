@@ -1,0 +1,17 @@
+# 2026-10-22T20:13:10+05:30, commit e39d14c
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 81
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# foreground: topResumedActivity=ActivityRecord{248473618 u0 in.swiggy.android/.track.activities.TrackOrderActivity t29955 d0}
+# media sessions playing: 0
+# bench_suite testdata/models/SmolLM2-135M | q4_0 | weights 75.8 MB | cores [5, 6, 7] (3 threads) | load 616 ms
+test,tok_per_s,ms
+pp64,397.8,160.9
+tg64@d0,276.2,231.7
+ttft_pp64,5.9,168.5
+# peak RSS 793316 kB
