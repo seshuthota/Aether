@@ -155,7 +155,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       token at a time), so prefill becomes GEMM.
 - [x] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
       theoretical peak FMA.
-- [~] **3.5 NEON vector ops** (attention scores + weighted values done: Qwen decode at depth 512 was attention-bound; rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
+- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
       silu/swiglu, rope.
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
@@ -215,7 +215,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       special tokens; ChatML chat template.
 - [x] **7.4 Benchmark suite** (`scripts/phase7-bench.sh`): prefill tok/s at several prompt lengths, decode tok/s at several
       context lengths, TTFT, peak RSS (`VmHWM`), J/token, 5-minute sustained tok/s trace.
-- [~] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; PPL/KLD for f32, Q8_0, Q4_0 match llama.cpp; results/phase-7.md written; speed re-run with NEON attention pending): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
+- [~] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; PPL/KLD for f32, Q8_0, Q4_0 match llama.cpp; results/phase-7.md written; NEON attention A/B done): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
       tokenizer exact vs HF; `llama-bench` on the phone under the same conditions →
       `results/phase-7.md` with a written account of where time and energy go (phone).
 
@@ -223,9 +223,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 - [x] **8.1 cdylib + C ABI** (`include/aether.h`, `examples/c/smoke.c`; round-trip test reproduces llama2.c text) `ffi.rs`: opaque handle, create/load/generate(callback)/free, error
       codes, `catch_unwind` at every boundary.
-- [~] **8.2 JNI + Kotlin app** (APK builds: `scripts/android-native.sh`, `android/README.md`; on-phone run pending) in `android/`: load Qwen2.5-0.5B Q4_0 from app storage, generate off
+- [x] **8.2 JNI + Kotlin app** (`scripts/android-native.sh`, `android/README.md`) in `android/`: load Qwen2.5-0.5B Q4_0 from app storage, generate off
       the main thread, stream tokens to the UI.
-- [ ] **8.3 Verify**: installable APK; tok/s matches the CLI.
+- [x] **8.3 Verify** (app within run-to-run spread of the CLI; results/phase-8.md): installable APK; tok/s matches the CLI.
 
 ---
 
