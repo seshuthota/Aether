@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=15">
+<link rel="stylesheet" href="css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -111,7 +111,7 @@
 <p>From the repo root, run this command. It starts a small web server on port 8765 that serves the <code>site</code> folder:</p>
 <pre><code>python3 -m http.server 8765 --directory site</code></pre>
 <p>Then open <code>http://localhost:8765/</code>. Opening <code>site/index.html</code> as a file also works, because the links are relative. The typefaces load from Google Fonts when the network is up, and fall back to the system fonts when it is not. On a phone on the same Wi-Fi, use the PC’s address instead of <code>localhost</code>.</p>
-<p>Later phases get a section here as their pages are written. Adding a page takes two steps, written up in <code>site/README.md</code>: copy <code>_template.html</code>, and add one line to <code>js/pages.js</code>. The menu, the previous and next links, and the cards above all update from that line.</p>
+<p>Later phases get a section here as their pages are written.</p>
 <p>Do not skip ahead in the engine. The early measurements are what the later kernels get compared against.</p>
 <p><strong>Takeaway: serve the folder over HTTP, and read the phases in order, because the early measurements are the baseline.</strong></p>
 
@@ -124,8 +124,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="js/pages.js?v=15"></script>
-<script src="js/glossary.js?v=15"></script>
-<script src="js/site.js?v=15"></script>
+<script src="js/pages.js?v=17"></script>
+<script src="js/glossary.js?v=17"></script>
+<script src="js/site.js?v=17"></script>
 </body>
 </html>

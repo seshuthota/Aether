@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -80,7 +80,7 @@
   <p class="note" data-note></p>
 </div>
 
-<p>Notice the order. In “Once upon a time” the first merge is “ t”, then “ a”, then “on”: short, very common pairs, which have the highest scores. Whole words like “ Once” come last, because they need their pieces to exist first. Each loop looks at every pair, so this simple version does about <var>n</var> merges × <var>n</var> pairs of work. That is fine: a prompt is tokenized once, and it takes microseconds next to the model. Merging in a different order can give a different split, and then the ids no longer match llama2.c’s.</p>
+<p>The merges run from common to rare. In “Once upon a time” the first merge is “ t”, then “ a”, then “on”: short, very common pairs, which have the highest scores. Whole words like “ Once” come last, because they need their pieces to exist first. Each loop looks at every pair, so this simple version does about <var>n</var> merges × <var>n</var> pairs of work. That is fine: a prompt is tokenized once, and it takes microseconds next to the model. Merging in a different order can give a different split, and then the ids no longer match llama2.c’s.</p>
 <p><strong>Takeaway: merge the highest-scoring neighbouring pair, repeat until none is left, and keep the order exact.</strong></p>
 
 <h2 id="bytes">What if a character is not in the vocabulary?</h2>
@@ -156,9 +156,9 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

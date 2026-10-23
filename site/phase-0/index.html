@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -28,15 +28,15 @@
 <p class="lede">Phase 0’s job was not a model. It was the loop every later phase uses: compile for the phone, run there, time something without fooling yourself, and address a tensor as a flat buffer.</p>
 <div class="callout ok"><span class="lbl">Done</span><p>The success check in the plan is met: <code>cargo test --target aarch64-linux-android</code> runs a test on the phone and reports the result in the host terminal. The first commit is <code>5632c75</code>.</p></div>
 <nav class="toc">
-  <a href="#concepts">What are the five concepts, in order?</a>
+  <a href="#concepts">What are the six concepts, in order?</a>
   <a href="#files">What did Phase 0 add to the repo?</a>
   <a href="#numbers">Which numbers should you keep?</a>
   <a href="#not">What did Phase 0 leave out on purpose?</a>
   <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="concepts">What are the five concepts, in order?</h2>
-<p>Phase 0 teaches five ideas. Concepts 1 to 3 get a binary running on the Snapdragon. Concepts 4 and 5 are about thinking in time and in bytes. The decode ceiling is the idea those two build toward, so it has its own page, even though it was taught inside concept 5.</p>
+<h2 id="concepts">What are the six concepts, in order?</h2>
+<p>Phase 0 teaches six ideas. Concepts 1 to 3 get a binary running on the Snapdragon. Concepts 4 and 5 are about thinking in time and in bytes. Concept 6, the decode ceiling, is the idea those two build toward.</p>
 <ol>
   <li><a href="cross-compilation.html">Cross-compilation</a> — host versus target, the triple, Bionic versus glibc, API level 31.</li>
   <li><a href="android.html">The phone</a> — adb, <code>/data/local/tmp</code>, and what <code>cpuinfo</code> actually said.</li>
@@ -45,7 +45,7 @@
   <li><a href="tensors.html">Tensors</a> — shape, row-major strides, the <code>Tensor</code> invariants.</li>
   <li><a href="decode-ceiling.html">The decode ceiling</a> — bytes per weight, and why unlimited compute does not help.</li>
 </ol>
-<p><strong>Takeaway: concepts 1 to 3 get code running on the phone; 4 and 5 teach you to reason about time and bytes.</strong></p>
+<p><strong>Takeaway: concepts 1 to 3 get code running on the phone; 4 and 5 teach you to reason about time and bytes; 6 turns them into a speed limit.</strong></p>
 
 <h2 id="files">What did Phase 0 add to the repo?</h2>
 <p>Each row is one file or folder and its job. Use this table to find a piece before you change it.</p>
@@ -76,7 +76,7 @@
   <div class="stat"><b>64 MiB</b><span>4096×4096 f32 <span class="tag c">calculated</span></span></div>
 </div>
 <p>Take 16×10<sup>6</sup> bytes read in about 4.9 ms. That gives 3.3 GB/s. DRAM is the main memory, the large pool of RAM outside the CPU, and 3.3 GB/s is far below what it can do. The addition chain waits on itself, one step after another. Telling a slow chain from a slow memory bus is what <a href="measuring-time.html">measuring time</a> and the <a href="../phase-1/roofline.html">roofline</a> reading are for.</p>
-<p><strong>Takeaway: 3.3 GB/s is far below DRAM because the sum waits on itself.</strong></p>
+<p><strong>Takeaway: keep 45 ns, 4.94 ms, 3.3 GB/s and 64 MiB; the 3.3 GB/s is far below DRAM because the sum waits on itself, so it is not a memory number.</strong></p>
 
 <h2 id="not">What did Phase 0 leave out on purpose?</h2>
 <p>Phase 0 skipped several features on purpose. Each one below is a shortcut with a known limit.</p>
@@ -98,8 +98,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

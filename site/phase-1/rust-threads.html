@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -38,7 +38,7 @@
 <div class="callout"><span class="lbl">How to use this page</span><p>Two patterns, each shown once. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>. <code>read_power</code>, <code>run_benchmark</code>, <code>read_sum</code> and <code>pin_to</code> are placeholders for code you write.</p></div>
 
 <h2 id="what">What is a thread?</h2>
-<p>You want the sampler to run while the benchmark runs. One stream of instructions cannot do both. A program starts with one <strong>thread</strong>: one stream of instructions, running on one core at a time. A second thread is a second stream, which the operating system can run on another core at the same moment.</p>
+<p>The sampler has to run while the benchmark runs, and one stream of instructions cannot do both. A program starts with one <strong>thread</strong>: one stream of instructions, running on one core at a time. A second thread is a second stream, which the operating system can run on another core at the same moment.</p>
 <p>Threads in one program share its memory. That is what makes them useful, and why Rust is strict about them. Two threads writing the same value at once is a <strong>data race</strong>, and Rust refuses to compile code that could have one.</p>
 <p><strong>Takeaway: a thread is a second stream of instructions that shares memory, and Rust refuses data races at compile time.</strong></p>
 
@@ -161,7 +161,7 @@ for h in handles {
 }
 t0.elapsed()</code></pre>
 <ul>
-  <li>The main thread arrives at the barrier last, which releases everyone together, and starts the clock at that moment.</li>
+  <li>The barrier opens when the last of the n + 1 threads (the n workers and the main thread) has arrived, whichever thread that is. The main thread starts the clock as soon as its own <code>wait()</code> returns.</li>
   <li>The GB/s is the bytes actually read over <code>elapsed</code>.</li>
 </ul>
 
@@ -213,8 +213,8 @@ let elapsed = thread::scope(|s| {
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

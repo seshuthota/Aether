@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -84,7 +84,7 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
 <p><strong>Takeaway: one CSV per core set, with the conditions as <code>#</code> lines at the top.</strong></p>
 
 <h2 id="log">Why is the size axis logarithmic?</h2>
-<p>The sweep doubles the size each step: 4 KB, 8 KB, 16 KB … 256 MB. That is 17 sizes spanning a factor of 65,536. On an ordinary axis the first twelve points, everything up to 8 MB, crowd into the left 3% <span class="tag c">calculated</span>, which is exactly where the L1 and L2 cliffs are.</p>
+<p>The sweep takes four sizes per doubling; counting only the doublings themselves (4 KB, 8 KB, 16 KB … 256 MB) gives 17 sizes spanning a factor of 65,536. On an ordinary axis the first twelve power-of-two sizes (about 45 points), everything up to 8 MB, crowd into the left 3% <span class="tag c">calculated</span>, which is exactly where the L1 and L2 cliffs are.</p>
 <div class="widget" data-axis>
   <h3>Same points, two axes</h3>
   <p>An illustrative curve with the shape from the <a href="bandwidth.html#sweep">Bandwidth</a> page, not data from this phone.</p>
@@ -221,8 +221,8 @@ print("wrote results/sweep.png")</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

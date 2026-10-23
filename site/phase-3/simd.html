@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -78,7 +78,7 @@
 <p><strong>Takeaway: a NEON dot product needs only loads, fused multiply-adds and one final lane sum.</strong></p>
 
 <h2 id="intrinsics">How do you call NEON from Rust?</h2>
-<p>You want the NEON instructions inside ordinary Rust code, not in a separate assembly file. An <strong>intrinsic</strong> is a Rust function that looks like a function but compiles to (usually) one specific instruction. Rust provides ARM’s standard names in <code>std::arch::aarch64</code>, with a type for each register shape. <code>float32x4_t</code> is a register of four <code>f32</code> lanes. The compiler still chooses which physical registers to use and schedules the instructions; you choose the operations. This is the same API C programmers use from <code>arm_neon.h</code>, so ARM’s documentation applies directly.</p>
+<p>The NEON instructions should live inside ordinary Rust code, not in a separate assembly file. An <strong>intrinsic</strong> is a Rust function that looks like a function but compiles to (usually) one specific instruction. Rust provides ARM’s standard names in <code>std::arch::aarch64</code>, with a type for each register shape. <code>float32x4_t</code> is a register of four <code>f32</code> lanes. The compiler still chooses which physical registers to use and schedules the instructions; you choose the operations. This is the same API C programmers use from <code>arm_neon.h</code>, so ARM’s documentation applies directly.</p>
 <p>The code below is the inner loop of the GEMV in <code>src/kernels/neon.rs</code>. Build it up one step at a time.</p>
 
 <h3>Step 1: start the running sum at zero</h3>
@@ -158,9 +158,9 @@ for j in n4..n { s += row[j] * x[j]; }                // leftovers, one by one</
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

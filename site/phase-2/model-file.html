@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -154,7 +154,7 @@ let wk = cursor.take_layers(layers, kv_dim * dim)?;
 let final_norm = cursor.take(dim)?;
 cursor.skip(c.seq_len * c.head_size())?; // old RoPE table, not needed
 if cursor.remaining() != 0 { /* refuse: the shapes did not add up */ }</code></pre>
-<p>Three details are worth noticing:</p>
+<p>Three details of the code:</p>
 <ul>
   <li><strong>Every tensor is copied into an <a href="../phase-1/alignment.html">aligned buffer</a></strong> (<code>AlignedBuf</code>, 64-byte aligned). The bytes in the file are not aligned for vector loads; the copies are.</li>
   <li><strong>The leftover RoPE table is skipped.</strong> Aether does not use it.</li>
@@ -177,17 +177,15 @@ if cursor.remaining() != 0 { /* refuse: the shapes did not add up */ }</code></p
 <p>2 × 288 + 5 = 581. For layer <var>l</var> you would add <var>l</var> × 288 × 288 first, because each layer's matrix follows the previous one.</p>
 </details>
 <h2 id="takeaway">What you should take away</h2>
-<p>The weights are frozen numbers, and the file gives their shapes and their order.</p>
-<p>The header's seven integers set the size of every block, and the blocks come in a fixed order.</p>
-<p>The loader walks the file with a cursor and checks that every byte was used.</p>
-
+<p>A model file is just numbers, so the loader needs a map to them.</p>
+<p>The header gives the sizes, the fixed block order gives each position, and the loader checks that the map and the file agree to the last byte.</p>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

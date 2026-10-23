@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -72,7 +72,7 @@
         thread::park();             // sleep until unpark()
     }
 };</code></pre>
-<p>How long 20,000 polls take on the phone is not measured. The comment in the code estimates tens of microseconds, so the widget assumes 40 µs <span class="tag a">assumption</span>.</p>
+<p>How long 20,000 polls take on the phone is not measured. The comment in the code estimates tens of microseconds, so the widget assumes 40 µs <span class="tag a">assumption</span>. The poll itself may not be cheap: on ARM, <code>spin_loop</code> can compile to an instruction that waits (<code>ISB</code>), so the time per poll is not a guess to trust until it is timed.</p>
 
 <p><strong>Takeaway: a worker spins briefly for a fast reaction, then parks so a long wait costs no core time.</strong></p>
 
@@ -148,9 +148,9 @@ struct Shared {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

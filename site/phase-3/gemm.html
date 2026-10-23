@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -46,7 +46,7 @@
   <li>Load 4 weight vectors (one per row) and 4 token vectors (one per token): 8 loads.</li>
   <li>Multiply every weight vector with every token vector, each pair into its own accumulator: 4 × 4 = 16 FMAs.</li>
 </ol>
-<p>Each load now feeds 2 FMAs instead of 1 (GEMV’s step 2) or 0.8 (GEMV’s step 3: 1.25 loads per FMA). After the last slice, accumulator (<var>r</var>, <var>c</var>) holds row <var>r</var> · token <var>c</var> in 4 lanes, which <code>vaddvq_f32</code> folds into the output.</p>
+<p>Each load now feeds 2 FMAs, against 0.5 for GEMV’s step 2 (2 loads per FMA) and 0.8 for GEMV’s step 3 (1.25 loads per FMA). After the last slice, accumulator (<var>r</var>, <var>c</var>) holds row <var>r</var> · token <var>c</var> in 4 lanes, which <code>vaddvq_f32</code> folds into the output.</p>
 <div class="widget" data-tile>
   <h3>Tile size vs register budget</h3>
   <p>Copper: weight rows loaded per step. Blue: token vectors. Teal: one accumulator per pair.</p>
@@ -152,9 +152,9 @@ for j in (0..n4).step_by(4) {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

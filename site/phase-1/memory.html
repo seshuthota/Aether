@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -163,7 +163,7 @@
   <li>Several cores issuing misses together can fill a bus that one core cannot. They also compete with each other, and a slow core makes the others wait at the end of a shared job. <a href="topology.html">Pinning</a> (fixing each thread to a chosen core) lets you choose which cores run.</li>
 </ul>
 <div class="callout warn"><span class="lbl">Do not import the laptop number</span><p>Chips and Cheese and Qualcomm’s Hot Chips talk describe first-generation Oryon in a laptop. This phone is a later mobile core, with two clusters, a phone memory controller and a thermal budget with no fan. Single-thread DRAM bandwidth here is an open question. Write your guess down before the run, or you cannot tell later whether it was right. Then run the read benchmark.</p></div>
-<p><strong>Takeaway: one core may run out of misses to track before the bus is full, and this phone’s one-core number is still unmeasured.</strong></p>
+<p><strong>Takeaway: one core may run out of misses to track before the bus is full, and this phone’s one prime core was measured at about 61 GB/s from DRAM.</strong></p>
 
 <h2 id="sweep">What will Phase 1 measure?</h2>
 <p>The plan needs the real cache sizes and the real DRAM bandwidth, and the working-set sweep finds both. The <a href="bandwidth.html#sweep">sweep</a> reads a buffer over and over and records bytes per second, starting with a tiny buffer and doubling it each step. While the buffer fits in L1, every pass after the first hits L1 and the number is high. When it outgrows L1, it drops to L2 speed. When it outgrows L2 and SLC, it drops again to DRAM speed. Those drops, the cliffs, are where the real cache sizes are. The DRAM level is the bandwidth that sets the decode ceiling.</p>
@@ -209,8 +209,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

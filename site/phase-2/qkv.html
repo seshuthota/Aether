@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -71,7 +71,7 @@
 <pre><code>k::matmul(&amp;mut s.q, &amp;s.xb, &amp;lw.wq);
 k::matmul(&amp;mut s.key_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wk);
 k::matmul(&amp;mut s.value_cache[at..at + kv_dim], &amp;s.xb, &amp;lw.wv);</code></pre>
-<p>This is the Phase 2 code. <a href="../phase-4/pool.html">Phase 4</a> later adds one argument, the thread pool (<code>k::linear_on(pool, …)</code>), so that several cores share the rows; the arithmetic stays the same. One matrix here is 82,944 multiply-adds (a multiply, then an add).</p>
+<p>This is the Phase 2 code. <a href="../phase-4/split.html#reach">Phase 4</a> later adds the pool argument and switches from <code>matmul</code> to <code>linear_on</code> (<code>k::linear_on(pool, …)</code>), so that several cores share the rows; the arithmetic stays the same. One matrix here is 82,944 multiply-adds (a multiply, then an add).</p>
 <p><strong>Takeaway: three matrix multiplies turn <code>xb</code> into q, k and v, and the key and value go into the cache.</strong></p>
 
 <h2 id="heads">Why cut the vectors into six heads?</h2>
@@ -157,9 +157,9 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb2);        // x += attention's contributio
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

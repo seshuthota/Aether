@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -67,7 +67,7 @@
 
 <h2 id="lines">2. Why does the cache fetch 64 bytes at a time?</h2>
 <p>The cache is a small, fast copy of memory kept close to the core. As the <a href="memory.html#cache">memory hierarchy page</a> showed, it never fetches a single byte. It fetches a whole <strong>cache line</strong>: 64 bytes, which is 16 <code>f32</code>s.</p>
-<p>The important part: <strong>the line edges are fixed by the hardware</strong>. Lines always start at addresses 0, 64, 128, 192, and so on, every multiple of 64. You cannot move them. You can only choose where your array starts relative to them.</p>
+<p><strong>The line edges are fixed by the hardware.</strong> Lines always start at addresses 0, 64, 128, 192, and so on, every multiple of 64. You cannot move them. You can only choose where your array starts relative to them.</p>
 <p>Almost every ARM64 core uses 64-byte lines. The CPU reports its line size in a register called <code>CTR_EL0</code>; we will read it when we write the allocator instead of trusting this number blindly.</p>
 <p><strong>Takeaway: cache lines are 64 bytes and their edges are fixed, so you choose only where your array starts.</strong></p>
 
@@ -179,8 +179,8 @@ Start 4 bytes off (2052):
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

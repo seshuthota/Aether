@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -22,7 +22,7 @@
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
 <p class="kicker">Phase 1 · concept 7</p>
-<div class="callout banner"><span class="lbl">Written before measuring</span><p>Written before any profile was taken. simpleperf has since been used for Phase 2’s profile and counters (<a href="../phase-2/baseline.html">First speed</a>). On this phone, kernel events are not available to the shell user and <code>cpu-clock</code> is not supported; <code>cpu-cycles:u</code> works.</p></div>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>Written before any profile was taken. simpleperf has since been used for Phase 2’s profile and counters (<a href="../phase-2/baseline.html">First speed</a>). On this phone, kernel events are not available to the shell user and <code>cpu-clock</code> is not supported; user-mode events work: <code>cpu-cycles:u</code>, <code>instructions:u</code> and L1 data-cache counts were read in Phase 2.</p></div>
 
 <h1>simpleperf</h1>
 <p class="lede">A benchmark says how long. A profile says where, inside that time, the cycles went. If you optimize before you have both, you may speed up a function that was never the cost.</p>
@@ -73,7 +73,7 @@
 <ul>
   <li>The percentages are shares of samples, which approximate CPU time. A thread that is asleep or descheduled is not running, so it collects no samples at all. The profile cannot show you time spent off the CPU. If the benchmark’s wall-clock time is much longer than its sampled CPU time, something took the core away, and the profile will not say what.</li>
   <li>The DSO and symbol columns tell you if time is in your binary, in <code>libc</code>, or in the Linux kernel. Waiting on memory does not move samples into the kernel: a stalled load is still your instruction, so a DRAM-bound read loop shows up as samples in your own loop, often piled on the load or the instruction right after it. Large kernel time instead means page faults, system calls, or interrupts. For the bandwidth kernel, that usually means the buffer was touched for the first time inside the timed region.</li>
-  <li>To tell “stalled on memory” from “too many instructions,” count events instead of time: <code>simpleperf stat -e cpu-cycles,instructions</code>. Few instructions per cycle on a streaming loop is the signature of waiting on memory.</li>
+  <li>To tell “stalled on memory” from “too many instructions,” count events instead of time: <code>simpleperf stat -e cpu-cycles:u,instructions:u</code> (the <code>:u</code> counts user-mode events only, the ones this phone allows the shell user). Few instructions per cycle on a streaming loop is the signature of waiting on memory.</li>
 </ul>
 <p>Call-graph mode (<code>-g</code>) attributes samples to callers, so it shows which function called which. It helps when LTO has inlined everything into <code>main</code>. It is also heavier, so turn it on when the flat report is a single blob.</p>
 <p>The exact invocation will move with the NDK’s <code>simpleperf</code> version. Treat the manual on the machine as the flag list. The idea will not move: sample a pinned release run, name the functions, decide whether the time is where you thought.</p>
@@ -110,8 +110,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

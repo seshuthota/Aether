@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -39,7 +39,7 @@
 </nav>
 
 <h2 id="what">What does a language model do?</h2>
-<p>You want to know how a phone can write a reply at all. The answer starts with one small job. A language model takes some text and scores every possible next piece of text. It picks a high-scoring piece, sticks it on the end, and asks again. Repeat until you have a paragraph. That is all “generating” means.</p>
+<p>How can a phone write a reply at all? The answer starts with one small job. A language model takes some text and scores every possible next piece of text. It picks a high-scoring piece, sticks it on the end, and asks again. Repeat until you have a paragraph. That is all “generating” means.</p>
 <p>The keyboard on your phone suggesting the next word is the same idea at a tiny scale. An LLM (large language model) does it with hundreds of millions of learned numbers, so its guesses take the whole conversation into account.</p>
 <div class="callout"><span class="lbl">Training vs inference</span><p>Training is how those numbers were learned, on huge computers, once. Inference is using them. This project is only inference: the numbers arrive in a file, and our job is to do the arithmetic with them correctly and quickly on a phone.</p></div>
 <p><strong>Takeaway: generating text is a loop that scores the next piece, appends it, and repeats.</strong></p>
@@ -175,7 +175,7 @@
   </tbody>
 </table>
 <p>The <a href="roadmap.html">roadmap</a> has the same parts as a diagram, lit up phase by phase.</p>
-<p><strong>Takeaway: each row of this table is one piece of the story on this page, built in a later phase.</strong></p>
+<p><strong>Takeaway: an inference engine is a toolchain, a loader, a tokenizer, kernels, a KV cache with a generation loop, threads, quantization and an app, and this project builds them in that order.</strong></p>
 
 <h2 id="check">Check yourself</h2>
 <details class="check"><summary>Generating 50 tokens after a 10-token prompt takes how many forward passes?</summary>
@@ -200,8 +200,8 @@
 </main>
 </div>
 <p class="colophon">Model sizes are parameter counts × 4 bytes. Guesses and probabilities in the demo are illustrative. Teal is measured, blue is calculated, amber is an assumption.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

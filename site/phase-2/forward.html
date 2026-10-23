@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -38,7 +38,7 @@
 <p>Generation calls the model once per token, and each call needs to know where in the text it is. So the function takes two numbers and returns one array:</p>
 <pre><code>pub fn forward(&amp;mut self, token: usize, pos: usize) -&gt; &amp;[f32]</code></pre>
 <ul>
-  <li><code>token</code> is the id from page 3, such as 9038.</li>
+  <li><code>token</code> is the id from the <a href="tokenizer.html">tokenizer page</a>, such as 9038.</li>
   <li><code>pos</code> is the position: 0 for the first token, 1 for the second, and so on.</li>
   <li><code>&amp;[f32]</code> is a slice, a borrowed view of 32,000 floats: the logits.</li>
 </ul>
@@ -133,17 +133,16 @@ obs.tap("attn_norm", Some(l), pos, &amp;s.xb);</code></pre>
 </details>
 
 <h2 id="takeaway">What you should take away</h2>
-<p>One call takes a token id and a position, and returns 32,000 logits.</p>
-<p>Almost all the work is matrix-vector products, and the classifier is most of it for this small model.</p>
-<p>The observer is compiled away in normal runs, so the tests can check each step without slowing generation.</p>
+<p>A token costs one call, and nearly all of it is weights streaming through matrix-vector products.</p>
+<p>Because the call runs in a fixed order and writes known buffers, a test can compare it step by step against a reference at no cost to normal runs.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

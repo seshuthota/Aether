@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -29,6 +29,7 @@
   <a href="#even">What did the equal split do?</a>
   <a href="#widget">Why do equal shares waste cores?</a>
   <a href="#blocks">How do blocks fix it?</a>
+  <a href="#reach">How does the pool reach the matrix products?</a>
   <a href="#heads">How do you split attention?</a>
   <a href="#check">Check yourself</a>
   <a href="#takeaway">What you should take away</a>
@@ -51,7 +52,7 @@
     <tr><td>SmolLM2-135M Q4_0</td><td>123.9</td><td>179.6</td><td><strong>98.4</strong></td></tr>
   </tbody>
 </table>
-<p>Eight cores were slower than two in every row. That run was taken on a throttled phone, though. Its log records the performance cores capped at 1.79 GHz and the prime cores at 1.02 GHz, against 2.40 and 2.44 GHz on a cool phone. So the size of the slowdown is not reliable (see the repeat below). A <code>simpleperf</code> profile of SmolLM2 Q4_0 on eight cores found 58 % of the samples in the worker loop, spinning, and 26 % in the actual kernel <span class="tag m">measured</span>. The threads spent most of their time waiting.</p>
+<p>Eight cores were slower than two in every row. The conditions of that run are only partly known, though. Its log records the clock caps once, at the start, before the phone was woken: 1.79 GHz for the performance cores and 1.02 GHz for the prime cores, the caps Phase 1 saw with the screen off, against 2.40 and 2.44 GHz with it on. The caps during the runs themselves are not known, so the size of the slowdown is not reliable (see the repeat below). The core 7 column is the same run as the Phase 3 headline numbers (422 and 39.2 tokens per second), because one file holds both. It sits under the Phase 6 results because that sweep over models, formats and core sets was run during Phase 6; its threaded columns are the first Phase 4 build. A <code>simpleperf</code> profile of SmolLM2 Q4_0 on eight cores found 58 % of the samples in the worker loop, spinning, and 26 % in the actual kernel <span class="tag m">measured</span>. The threads spent most of their time waiting.</p>
 <p>The reason is in how a job ends. The caller cannot move on until every thread is finished, so <strong>every job takes as long as its slowest thread</strong>. With equal shares, any thread that is a little slower makes all the others wait, about 200 times per token. And the threads are not equal: one prime core reads 61 GB/s from memory, one performance core 43 GB/s <span class="tag m">measured in Phase 1</span>. A core that is also handling something else, such as another app or interrupts, falls further behind. Which thread was the slow one in that profile was not recorded.</p>
 <p><strong>The repeat.</strong> To check, the old equal-share code was rebuilt and run next to the current code, one after the other, three rounds, phone cool and caps at 2.40 and 2.44 GHz. SmolLM2-135M Q4_0 decode in tokens per second, rounds 1, 2 and 3 <span class="tag m">measured</span>:</p>
 <table>
@@ -62,7 +63,7 @@
     <tr><td>0–7 (all eight)</td><td>270 · 241 · 240</td><td>346 · <em>237</em> · 317</td></tr>
   </tbody>
 </table>
-<p>Equal shares were <em>not</em> slower with more cores here. They stayed near 250 whether two or eight cores were used, so four more cores added nothing. Blocks got 25 to 30 % more on 2–7. The italic cells are single outliers, since the first run of a round can hit a hot or busy moment. 0–7 with blocks is noisy, from 237 to 346.</p>
+<p>Equal shares were <em>not</em> slower with more cores here. They stayed near 250 whether two or eight cores were used, so four more cores added nothing. Blocks got 25 to 30 % more on 2–7. The italic cells are single outliers, and the cause is not established: both runs started with Reddit as the foreground app, but so did other round 3 runs that came out normal. 0–7 with blocks is noisy, from 237 to 346.</p>
 <p><strong>Takeaway: an equal split waits for its slowest thread, so the extra cores added almost nothing.</strong></p>
 
 <h2 id="widget">Why do equal shares waste cores?</h2>
@@ -124,8 +125,57 @@ if start &gt;= len { break; }</code></pre>
 }</code></pre>
 <p>How big should a block be? Too big and the end of the job is uneven again. Too small and the threads spend their time fighting over the counter. <code>block_size</code> aims at about 8 blocks per thread, in whole multiples of 16 rows (the kernel's step). For the 1,536-row matrix on 6 threads, that is 32 rows and 48 blocks <span class="tag c">calculated</span>.</p>
 <p>Which thread computes a block does not change what the block computes, so the result is still bit-identical. The same commit also put the caller on the fastest core (<a href="cores.html">Choosing cores</a>) and split attention by head. The table above is the result. On two equal prime cores, blocks make no difference (255 against 261, within noise, as expected). On six or eight cores, they turn extra cores that added nothing into 25 to 30 % more speed.</p>
-<p>The first version of this page said all eight cores went from 98 to 228 tokens per second. That compared the throttled first run (98) with a later run whose conditions were not recorded (228). The repeat above, under the same conditions for both, shows a smaller gain. <a href="cores.html">Choosing cores</a> has the full sweep.</p>
+<p>The first version of this page said all eight cores went from 98 to 228 tokens per second. That compared the first run (98, conditions only partly recorded) with a later run whose conditions were not recorded (228). The repeat above, under the same conditions for both, shows a smaller gain. <a href="cores.html">Choosing cores</a> has the full sweep.</p>
 <p><strong>Takeaway: a shared counter hands out small blocks, so faster threads simply take more of them.</strong></p>
+
+<h2 id="reach">How does the pool reach the matrix products?</h2>
+<p>The pool exists, and the matrix products need to use it. The forward pass from Phase 2 has to be handed the pool somehow, and each product has to split its rows across it. Four short steps in <code>src/</code> do that.</p>
+
+<h3>Step 1: the model keeps the pool</h3>
+<pre><code>// src/model/transformer.rs
+pub fn set_pool(&amp;mut self, pool: ThreadPool) {
+    self.pool = Some(pool);
+}</code></pre>
+<ul>
+  <li><code>pool</code> is a field of the model, an <code>Option&lt;ThreadPool&gt;</code>: <code>None</code> until <code>set_pool</code> is called, so a model without a pool runs on one thread as before.</li>
+  <li>Callers such as <code>src/session.rs</code> and <code>examples/bench_suite.rs</code> build a <code>ThreadPool</code> for the cores given with <code>-c</code> and call this.</li>
+</ul>
+
+<h3>Step 2: the forward pass passes it on</h3>
+<pre><code>let pool = self.pool.as_ref();                      // Option&lt;&amp;ThreadPool&gt;
+k::linear_on(pool, &amp;mut s.q, &amp;s.xb, &amp;lw.wq);       // was k::matmul(…) in Phase 2</code></pre>
+<ul>
+  <li><code>as_ref()</code> turns <code>&amp;Option&lt;ThreadPool&gt;</code> into <code>Option&lt;&amp;ThreadPool&gt;</code>, a borrow that can be handed to every call.</li>
+  <li>So the call sites in the forward pass <em>do</em> change: each gains the <code>pool</code> argument. The arithmetic does not. The attention step takes the pool too, to split heads.</li>
+</ul>
+
+<h3>Step 3: <code>linear_on</code> picks the kernel for the weight format</h3>
+<ul>
+  <li><code>linear_on(pool, out, x, w)</code> works for any storage format of the weights <code>w</code> (the formats are Phase 6). It calls <code>linear_batch_on</code> with one token.</li>
+  <li>For <code>f32</code> weights and one token, that ends in <code>matmul_on(pool, out, x, f)</code>. The other formats have their own <code>_on</code> versions.</li>
+</ul>
+
+<h3>Step 4: <code>matmul_on</code> splits the rows</h3>
+<pre><code>pub fn matmul_on(pool: Option&lt;&amp;ThreadPool&gt;, out: &amp;mut [f32], x: &amp;[f32], w: &amp;[f32]) {
+    let Some(pool) = pool.filter(|p| p.threads() &gt; 1) else { return matmul(out, x, w) };
+    let n = x.len();
+    assert_eq!(w.len(), out.len() * n, "W must be out.len() x x.len()");
+    let o = SharedOut(out.as_mut_ptr());
+    let block = crate::pool::block_size(out.len(), pool.threads(), ROW_BLOCK);
+    pool.for_blocks(out.len(), block, &amp;|r| {
+        // SAFETY: `for_blocks` hands each block of rows to exactly one thread.
+        let mine = unsafe { std::slice::from_raw_parts_mut(o.ptr().add(r.start), r.len()) };
+        matmul(mine, x, &amp;w[r.start * n..r.end * n]);
+    });
+}</code></pre>
+<ul>
+  <li>The <code>let … else</code> line is the fallback: with no pool, or a pool of one thread, it calls the plain single-threaded <code>matmul</code>.</li>
+  <li><code>SharedOut</code> wraps the output’s raw pointer so that every thread may write into <code>out</code>. Each thread writes only its own rows, and the <code>SAFETY</code> comment gives the reason it is allowed.</li>
+  <li><code>block_size</code> and <code>for_blocks</code> hand out blocks of 16 rows or more; <a href="#blocks">How do blocks fix it?</a> above shows both.</li>
+  <li>Inside a block, the closure calls the ordinary <code>matmul</code> on just those rows: <code>w[r.start * n..r.end * n]</code> is the rows <code>r.start</code> up to <code>r.end</code> of the weight matrix. That is why the result is bit-identical.</li>
+</ul>
+<p>Without that line <code>pool</code> is still an <code>Option</code>, so the calls below would not compile. The fallback is what makes the no-pool and one-thread cases run single-threaded; an <code>unwrap()</code> would compile but panic, and an <code>if let</code> with no <code>else</code> would silently skip the product. If a thread wrote outside its own rows, two threads would write the same numbers at once.</p>
+<p><strong>Takeaway: the model stores an optional pool, the forward pass hands it to <code>linear_on</code>, and <code>matmul_on</code> splits the rows across it.</strong></p>
 
 <h2 id="heads">How do you split attention?</h2>
 <p>Attention is not one matrix product, but its <a href="../phase-2/attention.html">heads</a> are independent. Each head reads its own slice of the query and writes its own slice of the output. So the engine hands out heads as blocks of one. The catch is that there are few of them. SmolLM2 has 9 query heads. If every head takes the same time, 9 heads on 6 threads take two rounds, and in the second round 3 threads have nothing to do <span class="tag c">calculated</span>:</p>
@@ -152,17 +202,15 @@ if start &gt;= len { break; }</code></pre>
 </details>
 
 <h2 id="takeaway">What you should take away</h2>
-<p>Splitting by rows keeps every sum in one thread, so the result is bit-identical for any thread count.</p>
-<p>An equal split waits for its slowest thread, and a shared counter of small blocks lets faster threads take more.</p>
-<p>Attention splits by head, but with few heads some threads sit idle.</p>
-
+<p>Threads help only when the split is both correct and balanced.</p>
+<p>Rows keep every sum in one thread, small blocks from a shared counter keep fast cores busy, and attention is limited by how many heads there are to share out.</p>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

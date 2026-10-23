@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -93,7 +93,7 @@ DRAM        64 MB and up           ~61 GB/s    the bus is the limit</code></pre>
 
 <h2 id="one-core">Does one core nearly fill the bus?</h2>
 <p>Decode reads the weights for every token, so the question is how many cores it takes to read them fast enough. The plan expected one core to fall well short, so decode would need several threads. On this phone that is true only for a performance core: 43 of ~67 GB/s, about 64 %. One prime core gets 61 of ~67, about 90 % <span class="tag c">calculated</span>.</p>
-<p>So decode on one prime core is close to the memory limit already, <em>if the kernel keeps up</em>. Phase 2’s scalar loop read only 5.4 GB/s, and Phase 3’s NEON GEMV reached 41–49 GB/s from DRAM. The yardstick says how much is left: about 61. A kernel that reads at 5.4 GB/s leaves most of the bus unused.</p>
+<p>So decode on one prime core is close to the memory limit already, <em>if the kernel keeps up</em>. Phase 2’s scalar loop read only 5.4 GB/s, and Phase 3’s NEON GEMV reached 40.6 GB/s on a 256 MB matrix that must come from DRAM (about 29–49 GB/s on smaller matrices of 17–37 MB). The yardstick says how much is left: about 61. A kernel that reads at 5.4 GB/s leaves most of the bus unused.</p>
 <p>For stories15M in f32, 60.8 MB per token and 61 GB/s give a ceiling of about 1,000 tokens per second on one prime core <span class="tag c">calculated</span>. In numbers: 61,000 MB per second ÷ 60.8 MB per token ≈ 1,000 tokens per second. Phase 3 reached 422.</p>
 <p><strong>Takeaway: one prime core is already close to the memory limit, so the kernel’s own efficiency decides how much of it you use.</strong></p>
 
@@ -170,9 +170,9 @@ copy, what the bus carries:                      read 1 + line fetch 1 + write 1
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

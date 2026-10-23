@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -133,7 +133,7 @@ shapes = [(d, n) for d in (1, 3, 8, 17) for n in odd] + [
 let bound = 1e-6 * (x.len() as f32).sqrt().max(4.0);
 assert!(rel &lt;= bound, …);</code></pre>
 
-<p>Two choices in those lines are worth understanding:</p>
+<p>Two choices in those lines:</p>
 <ul>
   <li><strong>Relative to the vector’s largest value</strong>, not element by element. An output that happens to be 0.000001 would otherwise turn a harmless tiny difference into a huge “relative” error.</li>
   <li><strong>Growing with √n.</strong> A dot product of <var>n</var> terms accumulates <var>n</var> rounding errors. They are random in sign, so they grow roughly like √<var>n</var>, not like <var>n</var>. An <code>f32</code> has about 7 decimal digits (relative precision about 6 × 10<sup>−8</sup>), so 10<sup>−6</sup> × √<var>n</var> leaves headroom without letting a real bug through.</li>
@@ -165,9 +165,9 @@ assert!(rel &lt;= bound, …);</code></pre>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

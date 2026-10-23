@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -33,7 +33,7 @@
 </nav>
 
 <h2 id="engine">What parts does the engine have?</h2>
-<p>You want to know which part of the engine belongs to which phase. A <em>kernel</em> is a small routine that does one heavy job, such as a matrix multiply. Pick a phase to see which parts it builds. Most parts get built once simply, and then rebuilt later to be faster or more general.</p>
+<p>Which part of the engine belongs to which phase? A <em>kernel</em> is a small routine that does one heavy job, such as a matrix multiply. Pick a phase to see which parts it builds. Most parts get built once simply, and then rebuilt later to be faster or more general.</p>
 <div class="widget" data-roadmap="1">
   <div class="phasebtns" role="group" aria-label="Phase">
     <button type="button" data-phase-btn="0" data-says="Phase 0: a build that runs on the phone, an honest timer, and a tensor type. No model yet.">Phase 0</button>
@@ -68,47 +68,47 @@
 <p>Each phase builds on the one before it. The plan is the source of truth, and effort is its rough guess, not a deadline. Each item ends with a <em>Done when</em> line, the test for moving on.</p>
 <ol class="timeline">
   <li class="st-done">
-    <h3><a href="../phase-0/index.html">Phase 0 — setup</a> <span class="tag d">done</span></h3>
+    <h3><a href="../phase-0/index.html">Phase 0 — setup</a> <span class="tag d">built, notes written</span></h3>
     <p>Cross-compile Rust for the phone, run <code>cargo test</code> there, time code without fooling yourself, and store a tensor as a flat buffer.</p>
     <p class="meta">Done when: a test runs on the phone and reports back to the PC.</p>
   </li>
-  <li class="st-now">
-    <h3><a href="../phase-1/index.html">Phase 1 — hardware and the memory model</a> <span class="tag a">reading</span></h3>
+  <li class="st-done">
+    <h3><a href="../phase-1/index.html">Phase 1 — hardware and the memory model</a> <span class="tag d">built, notes written</span></h3>
     <p>Caches, memory bandwidth, cores, alignment, the roofline, power and heat. Measured, not looked up.</p>
     <p class="meta">Done when: a results table of cache and DRAM bandwidth, one core vs all, hot vs cold, and joules per GB, that you can explain. Phases 0–1 together: 1–2 weeks.</p>
   </li>
   <li>
-    <h3>Phase 2 — a real tiny model, scalar</h3>
+    <h3><a href="../phase-2/index.html">Phase 2 — a real tiny model, scalar</a> <span class="tag d">built, notes written</span></h3>
     <p>stories15M end to end in plain Rust: loader, tokenizer, every layer operation, KV cache, generation loop.</p>
     <p class="meta">Done when: the text on the phone is token-for-token identical to llama2.c. 2–3 weeks.</p>
   </li>
   <li>
-    <h3>Phase 3 — NEON kernels</h3>
+    <h3><a href="../phase-3/index.html">Phase 3 — NEON kernels</a> <span class="tag d">built, notes written</span></h3>
     <p>Rewrite matrix × vector (and matrix × matrix for prefill) with ARM’s vector instructions.</p>
     <p class="meta">Done when: same tokens, a measured speed-up, and an explanation of how close GEMV gets to single-core bandwidth. 2–4 weeks.</p>
   </li>
   <li>
-    <h3>Phase 4 — threads and cores</h3>
+    <h3><a href="../phase-4/index.html">Phase 4 — threads and cores</a> <span class="tag d">built, notes written</span></h3>
     <p>A thread pool pinned to chosen cores; tokens per second and energy per token against thread count.</p>
     <p class="meta">Done when: you can explain the speed-vs-threads curve and the energy-vs-core-set trade-off. 1–2 weeks.</p>
   </li>
   <li>
-    <h3>Phase 5 — a modern architecture</h3>
+    <h3>Phase 5 — a modern architecture <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
     <p>SmolLM2-135M: safetensors, memory-mapped weights, grouped-query attention, byte-level BPE tokenizer.</p>
     <p class="meta">Done when: output matches Hugging Face, and the tokenizer matches exactly. 2–4 weeks.</p>
   </li>
   <li>
-    <h3>Phase 6 — quantization</h3>
+    <h3>Phase 6 — quantization <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
     <p>Q8_0 and Q4_0 weights, integer dot-product kernels, and measuring how much accuracy the fewer bits cost.</p>
     <p class="meta">Done when: perplexity and KL divergence match llama.cpp on the same file. 3–6 weeks.</p>
   </li>
   <li>
-    <h3>Phase 7 — a real small model</h3>
-    <p>Qwen2.5-0.5B from a GGUF file, its tokenizer and chat template, and a full benchmark suite including sustained and energy numbers.</p>
+    <h3>Phase 7 — a real small model <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
+    <p>Qwen2.5-0.5B from a GGUF file, its tokenizer and chat template, and a full benchmark suite including sustained and energy numbers. One page is written so far: <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a>.</p>
     <p class="meta">Done when: usable chat on the phone, with a written explanation of where the time and energy go. 3–5 weeks.</p>
   </li>
   <li>
-    <h3>Phase 8 — Android app</h3>
+    <h3>Phase 8 — Android app <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
     <p>A C interface, a thin JNI layer, a small Kotlin app that streams tokens.</p>
     <p class="meta">Done when: an installable APK streams a chat reply at the same speed as the command-line binary.</p>
   </li>
@@ -136,9 +136,9 @@
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo as of the Phase 0 commit.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo on 2026-10-23: the engine is built through Phase 8, and the notes cover Phases 0–4.</p>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

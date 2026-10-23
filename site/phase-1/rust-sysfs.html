@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -38,13 +38,13 @@
 <div class="callout"><span class="lbl">How to use this page</span><p><a href="power.html#files">Power and heat</a> lists which files the plan wants. This page is how the Rust code reads them. Before writing any code, read each one by hand with <code>adb shell cat</code>.</p></div>
 
 <h2 id="files">Is a sysfs file stored anywhere?</h2>
-<p>You want the current clock speed, and a file called <code>scaling_cur_freq</code> has it. But <code>ls -l</code> shows 4096 bytes for most of these files, and the text inside is a few characters. <strong>sysfs</strong> is the part of the filesystem under <code>/sys</code> where the kernel shows its state as files. The size is a placeholder, not the length of the text.</p>
+<p>The current clock speed is in a file called <code>scaling_cur_freq</code>. But <code>ls -l</code> shows 4096 bytes for most of these files, and the text inside is a few characters. <strong>sysfs</strong> is the part of the filesystem under <code>/sys</code> where the kernel shows its state as files. The size is a placeholder, not the length of the text.</p>
 <p>Nothing under <code>/sys</code> is stored on disk. When you open <code>scaling_cur_freq</code>, the kernel works out the current clock and hands you text, such as <code>3532800</code> and a newline. Read it again a millisecond later and you may get a different number.</p>
 <p>So reading is the measurement. The value is true for the moment of the read and nothing longer. Keep an old reading and you are reporting the past.</p>
 <p><strong>Takeaway: a sysfs file is computed when you read it, so every read is a fresh measurement.</strong></p>
 
 <h2 id="read">How do you read a number from one?</h2>
-<p>The file gives you text like <code>"3532800\n"</code>. You want an <code>i64</code>. Four small steps get there.</p>
+<p>The file gives you text like <code>"3532800\n"</code>. The program needs an <code>i64</code>. Four small steps get there.</p>
 
 <h3>Step 1: read the text</h3>
 <pre><code>let text = std::fs::read_to_string(path)?;     // "3532800\n"</code></pre>
@@ -101,6 +101,7 @@
     <tr><td><code>power_supply/battery/voltage_now</code></td><td>µV</td><td>÷ 1,000,000 → V</td></tr>
   </tbody>
 </table>
+<p>On this phone SELinux denies the shell user the <code>power_supply</code> files, so the two battery rows cannot be read here (<a href="power.html">Power and heat</a> says what was used instead).</p>
 <div class="widget" data-units>
   <h3>Raw text to real units</h3>
   <p>Type what <code>cat</code> printed. The defaults are made-up examples, not readings from this phone.</p>
@@ -157,8 +158,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

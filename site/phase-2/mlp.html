@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -75,7 +75,7 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);    // after the MLP:    x += mlp(x)</co
 <h2 id="swiglu">What does the gate do to each channel?</h2>
 <p>Without a <strong>nonlinearity</strong>, a step that bends the numbers instead of only scaling and adding them, two matrix multiplies are just one bigger matrix multiply, and stacking layers would add nothing. Here the nonlinearity is a <strong>gate</strong>:</p>
 <p class="formula">h<sub>i</sub> = SiLU(gate<sub>i</sub>) × up<sub>i</sub> &nbsp;&nbsp; for each of the 768 channels</p>
-<p>The input is projected twice. The <code>gate</code> projection goes through the SiLU function and decides <em>how much</em> of the channel gets through; the <code>up</code> projection decides <em>what</em> gets through. A strongly negative gate shuts the channel (SiLU ≈ 0); a large positive gate passes <code>up</code> through nearly unchanged. This gated design is called SwiGLU (Swish-Gated Linear Unit; Swish is another name for SiLU).</p>
+<p>The input is projected twice. The <code>gate</code> projection goes through the SiLU function and decides <em>how much</em> of the channel gets through; the <code>up</code> projection decides <em>what</em> gets through. A strongly negative gate shuts the channel (SiLU ≈ 0); a large positive gate lets <code>up</code> through, scaled by about the gate’s own value, because SiLU(<var>g</var>) ≈ <var>g</var> there. This gated design is called SwiGLU (Swish-Gated Linear Unit; Swish is another name for SiLU).</p>
 <p><strong>Takeaway: SiLU of the gate decides how much of each channel passes, and up decides what passes.</strong></p>
 
 <h2 id="silu">What does the SiLU curve look like?</h2>
@@ -159,9 +159,9 @@ k::add_inplace(&amp;mut s.x, &amp;s.xb);                            // x += mlp<
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

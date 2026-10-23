@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -203,7 +203,7 @@ unsafe { dealloc(p, layout) };                 // same layout, exactly once</cod
   <li><strong>The unsafe is in one place.</strong> A handful of lines inside the type, each with a comment. Every caller writes safe code.</li>
 </ol>
 <p>A struct holding a raw pointer is not automatically shareable across threads (<code>Send</code>, the marker for “can move to another thread”). For the Phase 1 parallel sweep you won’t need it to be: each worker borrows a plain <code>&amp;[f32]</code> chunk from <code>as_slice</code>, and slices of floats can be shared. See <a href="rust-threads.html#scope">Threads</a>.</p>
-<div class="callout"><span class="lbl">Another route</span><p>A type like <code>#[repr(align(64))] struct Line([f32; 16]);</code> is 64-byte aligned, so a <code>Vec&lt;Line&gt;</code> is too, with no <code>unsafe</code>. The cost is that lengths come in steps of 16 floats and you convert to a flat <code>&amp;[f32]</code> yourself. Worth knowing; the plan asks for the allocator wrapper, which is also the better lesson.</p></div>
+<div class="callout"><span class="lbl">Another route</span><p>A type like <code>#[repr(align(64))] struct Line([f32; 16]);</code> is 64-byte aligned, so a <code>Vec&lt;Line&gt;</code> is too, with no <code>unsafe</code>. The cost is that lengths come in steps of 16 floats and you convert to a flat <code>&amp;[f32]</code> yourself. The plan asks for the allocator wrapper, which is also the better lesson.</p></div>
 <p><strong>Takeaway: one type holds the unsafe code, so <code>Drop</code> and the borrow checker enforce the rules for every caller.</strong></p>
 
 <h2 id="check">Check yourself</h2>
@@ -229,8 +229,8 @@ unsafe { dealloc(p, layout) };                 // same layout, exactly once</cod
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

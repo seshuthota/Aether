@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -132,12 +132,18 @@ f(0, n);                                       // the caller does share 0</code>
 </ul>
 
 <h3>Step 3: wait for the workers</h3>
-<pre><code>while s.done.0.load(Ordering::Acquire) != n - 1 {
-    std::hint::spin_loop();                    // wait for the workers (then yield)
+<pre><code>let mut spins = 0u32;                          // a fresh local: it restarts at 0 for every job
+while s.done.0.load(Ordering::Acquire) != n - 1 {
+    spins += 1;
+    if spins &lt; SPIN {
+        std::hint::spin_loop();                // spin for the first SPIN polls ...
+    } else {
+        thread::yield_now();                   // ... then give the core up between polls
+    }
 }</code></pre>
 <ul>
   <li><code>n - 1</code> is the number of workers. With 4 threads, <code>done</code> must reach 3.</li>
-  <li><code>spin_loop</code> tells the CPU that this is a wait loop. The comment notes that the loop yields after a while, which means the thread gives up its turn on the core to others.</li>
+  <li><code>spin_loop</code> tells the CPU that this is a wait loop. After <code>SPIN</code> polls the loop calls <code>yield_now</code> instead, which means the thread gives up its turn on the core to others. <code>spins</code> is declared inside <code>run</code>, so it starts at 0 again for every job.</li>
 </ul>
 
 <h3>All three together</h3>
@@ -148,8 +154,10 @@ for w in &amp;self.workers {
     w.thread().unpark();                       // no system call unless that worker sleeps
 }
 f(0, n);                                       // the caller does share 0
+let mut spins = 0u32;
 while s.done.0.load(Ordering::Acquire) != n - 1 {
-    std::hint::spin_loop();                    // wait for the workers (then yield)
+    spins += 1;
+    if spins &lt; SPIN { std::hint::spin_loop(); } else { thread::yield_now(); }
 }</code></pre>
 
 <p>And each worker:</p>
@@ -163,7 +171,7 @@ while s.done.0.load(Ordering::Acquire) != n - 1 {
 }</code></pre>
 <p>Two details carry the correctness:</p>
 <ul>
-  <li><strong>Release and Acquire.</strong> These are memory-ordering rules: they say which writes another core must see before which reads. The caller writes the job pointer first, then the epoch, with <code>Release</code>. A worker that reads the new epoch with <code>Acquire</code> is guaranteed to also see the job pointer written before it. Without that pairing, the CPU or the compiler may reorder the two writes, and a worker could run the previous job.</li>
+  <li><strong>Release and Acquire.</strong> These are memory-ordering rules: they say which writes another core must see before which reads. The caller writes the job pointer first, then the epoch, with <code>Release</code>. A worker that reads the new epoch with <code>Acquire</code> is guaranteed to also see the job pointer written before it. Without that pairing, the CPU or the compiler may reorder the two writes, and a worker could run a stale or dangling job pointer.</li>
   <li><strong>The job lives on the caller's stack.</strong> <code>run</code> does not return until every worker has counted itself done, so the workers can never use the job after it is gone. The <code>unsafe</code> block depends on that rule, and the comment above it in <code>src/pool.rs</code> says so. If the caller returned early, a worker would read a job that no longer exists.</li>
 </ul>
 <p>The tests in <code>src/pool.rs</code> run 2,000 jobs in a row and check that every share ran exactly once per job, and that a worker that went to sleep wakes up for the next one.</p>
@@ -181,17 +189,16 @@ while s.done.0.load(Ordering::Acquire) != n - 1 {
 </details>
 
 <h2 id="takeaway">What you should take away</h2>
-<p>Each token needs about 200 small hand-outs, so each one must cost far less than a 12 µs job.</p>
-<p>Keeping threads and having them watch a counter makes a hand-out about a microsecond, where spawning costs hundreds.</p>
-<p>The caller publishes a job by bumping a counter, and the workers see it by watching that counter.</p>
+<p>A pool pays off only when a hand-out costs far less than the job: about a microsecond against a 12 µs job, where spawning costs hundreds.</p>
+<p>It stays cheap because one counter carries the job to the workers, and it stays correct only because the job is written before that counter moves and outlives its last worker.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -95,7 +95,7 @@
   <li>A sampler, in a background thread, of battery current, voltage, core frequencies, and temperatures. Report average power and joules for the run. <a href="rust-threads.html#stop">Threads</a> and <a href="rust-sysfs.html">reading /sys</a>.</li>
 </ol>
 <p>Record, every time: which cores, screen on or off, charging or not, starting temperature. A number without those conditions cannot be compared with next week’s number.</p>
-<p><strong>Takeaway: a number without its conditions (cores, screen, charging, starting temperature) cannot be compared later.</strong></p>
+<p><strong>Takeaway: Phase 1 built an aligned allocator, bandwidth kernels, sweeps, pinning and a sampler, and every number they produce is recorded with its conditions so it can be compared later.</strong></p>
 
 <h2 id="takeaway">What you should take away</h2>
 <p>Phase 1 is finished when you can explain the table in <code>results</code>, not when a percentage of peak is reached.</p>
@@ -106,8 +106,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

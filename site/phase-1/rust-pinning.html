@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -40,7 +40,7 @@
 <div class="callout"><span class="lbl">How to use this page</span><p><a href="topology.html#pin">Cores and pinning</a> explains what pinning is for. This page is the Rust side. The snippets compile for <code>aarch64-linux-android</code> against <code>libc</code> 0.2.190 <span class="tag m">measured</span>; they have not been run on the phone as written. The engine’s own version, <code>src/sys/affinity.rs</code>, pins every benchmark since Phase 1.</p></div>
 
 <h2 id="ffi">How can Rust call a C function?</h2>
-<p>You want to pin a thread, and the function that does it is written in C. Android’s C library, Bionic, already contains <code>sched_setaffinity</code>. It is compiled machine code with a C calling convention. Rust can call it, as long as Rust is told the function’s exact name, argument types and return type. That declaration is the “foreign function interface,” or <strong>FFI</strong>.</p>
+<p>Pinning a thread needs a function that is written in C. Android’s C library, Bionic, already contains <code>sched_setaffinity</code>. It is compiled machine code with a C calling convention. Rust can call it, as long as Rust is told the function’s exact name, argument types and return type. That declaration is the “foreign function interface,” or <strong>FFI</strong>.</p>
 <p>The compiler can’t check that the declaration matches the real C function, or that you passed valid pointers. If you get either wrong, nothing warns you. So every FFI call is <code>unsafe</code>, for the same reason as on the <a href="rust-memory.html#unsafe">raw memory</a> page: you are vouching for something the compiler cannot see.</p>
 <p><strong>Takeaway: FFI means telling Rust a C function’s signature, and every call is <code>unsafe</code> because you vouch for it.</strong></p>
 
@@ -149,8 +149,8 @@ libc::CPU_ZERO(&amp;mut set);</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>

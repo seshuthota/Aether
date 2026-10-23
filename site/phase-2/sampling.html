@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -165,17 +165,17 @@ fn next_f32(&amp;mut self) -&gt; f32 {
 
 
 <h2 id="takeaway">What you should take away</h2>
-<p>Softmax turns scores into probabilities, and sampling draws one token from them.</p>
-<p>Greedy is repeatable but tends to repeat itself; temperature, top-k and top-p trade that off.</p>
-<p>A seeded generator makes sampled runs replayable, which lets them be checked against llama2.c.</p>
+<p>Generation is a loop: the model scores every token, a sampler picks one, and the pick goes back in as the next input.</p>
+<p>The sampler is a choice between repeatable (greedy, for tests) and varied (temperature, top-k, top-p, for writing).</p>
+<p>Seeding the random generator makes even the varied mode replayable, so it can be checked against llama2.c.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

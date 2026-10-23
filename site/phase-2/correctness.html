@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -124,17 +124,15 @@ dump("attn_norm", l, pos, s-&gt;xb, dim);</code></pre>
 </details>
 
 <h2 id="takeaway">What you should take away</h2>
-<p>The reference is llama2.c, run and never copied, and a patch makes it report every activation.</p>
-<p>Float sums depend on order, so an exact check needs the same order, and FMA breaks that.</p>
-<p>From Phase 3 on, the check uses a tolerance and identical greedy tokens.</p>
-
+<p>Aether is correct when its numbers match an outside reference, not when its text looks plausible.</p>
+<p>Phase 2 demands an exact match, which fixes the order of every sum and rules out FMA. From Phase 3 on, a tolerance plus identical greedy tokens takes its place.</p>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

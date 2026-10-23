@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -35,7 +35,7 @@
 </nav>
 
 <h2 id="api">What does the model call, and what sits behind it?</h2>
-<p>The model needs a matrix multiply, but it should not know which version runs. <code>src/kernels/mod.rs</code> is the only kernel module the model talks to. It offers <code>matmul</code>, <code>matmul_batch</code>, <code>attention_head</code>, <code>rmsnorm</code> and so on. The transformer never imports <code>neon</code> or <code>scalar</code> directly. When a faster version arrives (NEON in Phase 3, threads in Phase 4, quantized weights in Phase 6), it replaces a body in this module, and the forward pass does not change.</p>
+<p>The model needs a matrix multiply, but it should not know which version runs. <code>src/kernels/mod.rs</code> is the only kernel module the model talks to. It offers <code>matmul</code>, <code>matmul_batch</code>, <code>attention_head</code>, <code>rmsnorm</code> and so on. The transformer never imports <code>neon</code> or <code>scalar</code> directly. When a faster version arrives (NEON in Phase 3), it replaces a body in this module, and the forward pass does not change. Threads (Phase 4) and quantized weights (Phase 6) need extra arguments, a thread pool and a weight format, so the module gains <code>_on</code> versions such as <code>matmul_on</code> and <code>linear_on</code>, and the forward pass’s call sites gain the pool argument (<a href="../phase-4/split.html#reach">how the pool reaches the matrix products</a>). The model still calls only this module.</p>
 <figure>
 <div class="flow">
   <div>transformer.rs<small>calls k::matmul</small></div><span class="arr">→</span>
@@ -170,9 +170,9 @@ unsafe fn dot_q8_0_q8_0_sdot(…) { … }</code></pre>
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
-<script src="../js/widgets.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
+<script src="../js/widgets.js?v=17"></script>
 </body>
 </html>

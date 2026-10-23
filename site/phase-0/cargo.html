@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=15">
+<link rel="stylesheet" href="../css/site.css?v=17">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,7 +25,7 @@
 
 
 <h1>Cargo and the runner</h1>
-<p class="lede">You want your tests to run on the phone, but <code>cargo test</code> only knows how to run programs on the PC. It has no “run on device” mode. It builds an ordinary executable and runs that. A runner is a script that replaces the “run it here” step, and that is the whole trick.</p>
+<p class="lede">Tests should run on the phone, but <code>cargo test</code> only knows how to run programs on the PC. It has no “run on device” mode. It builds an ordinary executable and runs that. A runner is a script that replaces the “run it here” step, and that is the whole trick.</p>
 <nav class="toc">
   <a href="#crates">Why is the engine a library and not one program?</a>
   <a href="#profiles">Why must you benchmark a release build?</a>
@@ -102,7 +102,7 @@
   <li><code>adb shell</code> runs it, with <code>--nocapture</code> if you want the <code>println</code>s. The shell’s exit code is the test binary’s exit code.</li>
 </ol>
 <p>Each build gives its file a different name, a hash that changes with the build. The script uses <code>basename</code> of whatever Cargo passed, then deletes that remote file. Without the delete, old hashes pile up in <code>/data/local/tmp</code>.</p>
-<p><strong>Takeaway: the runner automates build, push and run by hand, then deletes its copy.</strong></p>
+<p><strong>Takeaway: Cargo builds, and the runner pushes the binary, runs it on the phone, then deletes its copy.</strong></p>
 
 <h2 id="script">What does each line of the runner do?</h2>
 <p>The file is <code>scripts/adb-run.sh</code>. Cargo calls it as <code>adb-run.sh &lt;binary&gt; &lt;args…&gt;</code>. Read it in six small steps, then see the whole file.</p>
@@ -226,8 +226,8 @@ exit $STATUS</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=15"></script>
-<script src="../js/glossary.js?v=15"></script>
-<script src="../js/site.js?v=15"></script>
+<script src="../js/pages.js?v=17"></script>
+<script src="../js/glossary.js?v=17"></script>
+<script src="../js/site.js?v=17"></script>
 </body>
 </html>
