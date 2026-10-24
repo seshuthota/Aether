@@ -141,7 +141,19 @@ function initNav() {
         document.body.classList.toggle("nav-locked", open);
         btn.setAttribute("aria-expanded", String(open));
       };
-      btn.addEventListener("click", () => setOpen(!side.classList.contains("open")));
+      // Wide screens: the same button hides or shows the menu column, remembered per browser.
+      const wide = window.matchMedia("(min-width: 861px)");
+      const collapsedKey = "aether-nav-collapsed";
+      const setCollapsed = (c) => {
+        document.documentElement.classList.toggle("nav-collapsed", c);
+        if (c) store.set(collapsedKey, "1"); else store.remove(collapsedKey);
+        if (wide.matches) btn.setAttribute("aria-expanded", String(!c));
+      };
+      if (store.get(collapsedKey)) setCollapsed(true);
+      btn.addEventListener("click", () => {
+        if (wide.matches) setCollapsed(!document.documentElement.classList.contains("nav-collapsed"));
+        else setOpen(!side.classList.contains("open"));
+      });
       scrim.addEventListener("click", () => setOpen(false));
       document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
       side.addEventListener("click", (e) => {
