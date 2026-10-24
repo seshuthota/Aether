@@ -6,14 +6,15 @@
 <title>Raw memory in Rust · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
 <script>
-// Scripts run: CSS hides each quiz until learn.js builds it. If learn.js
-// never builds them (it hangs or throws), fall back to the scripts-off view.
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
 document.documentElement.classList.add("js");
 setTimeout(function () {
-  if (document.querySelector(".quiz") && !document.querySelector(".quiz.is-ready")) document.documentElement.classList.remove("js");
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
 }, 5000);
 </script>
-<link rel="stylesheet" href="../css/site.css?v=29">
+<link rel="stylesheet" href="../css/site.css?v=30">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -392,9 +393,9 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=29"></script>
-<script src="../js/glossary.js?v=29"></script>
-<script src="../js/site.js?v=29"></script>
-<script src="../js/learn.js?v=29" onerror="document.documentElement.classList.remove('js')"></script>
+<script src="../js/pages.js?v=30"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
 </html>

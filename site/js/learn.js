@@ -32,14 +32,34 @@ const CONFIDENCE = [["guess", "Guessing"], ["fair", "Fairly sure"], ["sure", "Ce
   const changed = () => { store.set(key, JSON.stringify(saved)); listeners.forEach(f => f()); };
   const ctx = { saved, changed, onChange: f => listeners.push(f) };
 
-  const quizzes = [...document.querySelectorAll("[data-quiz]")].map(q => initQuiz(q, ctx));
-  initProbe(quizzes, ctx);
-  initStepMap(quizzes, ctx);
-  initRecord(quizzes, ctx);
+  // Each quiz is built on its own: one with bad markup is restored to its
+  // original HTML and shown the scripts-off way (question, answer, note),
+  // and the rest of the page still works.
+  const quizzes = [];
+  for (const root of document.querySelectorAll("[data-quiz]")) {
+    const original = root.innerHTML;
+    try {
+      quizzes.push(initQuiz(root, ctx));
+      root.classList.add("is-ready");
+    } catch (e) {
+      console.error("learn.js: quiz #" + (root.id || "(no id)") + " could not be built:", e);
+      root.innerHTML = original;
+      root.classList.add("is-fallback");
+    }
+  }
+  for (const [name, init] of [["skim test", initProbe], ["step map", initStepMap], ["answer record", initRecord]]) {
+    try { init(quizzes, ctx); } catch (e) { console.error("learn.js: " + name + " could not be built:", e); }
+  }
 })();
 
 function initQuiz(root, ctx) {
   const kind = root.dataset.quiz, id = root.id;
+  // Check the markup before changing anything, so a failure leaves it intact.
+  const qp = root.querySelector(":scope > p"), ul = root.querySelector(":scope > ul");
+  if (!id) throw new Error("quiz has no id");
+  if (!["predict", "check", "probe"].includes(kind)) throw new Error("unknown data-quiz " + JSON.stringify(kind));
+  if (!qp || !ul) throw new Error("quiz needs a <p> question and a <ul> of options");
+  if (ul.querySelectorAll(":scope > li[data-right]").length !== 1) throw new Error("quiz needs exactly one data-right option");
   const items = [...root.querySelectorAll(":scope > ul > li")].map(li => {
     const why = li.querySelector(".why");
     const label = li.cloneNode(true);
@@ -47,10 +67,10 @@ function initQuiz(root, ctx) {
     if (w) w.remove();
     return { label: label.innerHTML.trim(), why: why ? why.innerHTML : "", right: li.hasAttribute("data-right") };
   });
-  const question = root.querySelector(":scope > p").innerHTML;
-  const text = root.querySelector(":scope > p").textContent.trim();
-  root.querySelector(":scope > ul").remove();
-  root.querySelector(":scope > p").remove();
+  const question = qp.innerHTML;
+  const text = qp.textContent.trim();
+  ul.remove();
+  qp.remove();
 
   const body = el("div", { class: "quiz-body" });
   const tag = { predict: "Predict first", check: "Check your understanding", probe: "" }[kind];
@@ -153,7 +173,6 @@ function initQuiz(root, ctx) {
 
   render();
   paintState();
-  root.classList.add("is-ready");
   return q;
 }
 

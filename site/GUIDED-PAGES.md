@@ -64,9 +64,14 @@ It enforces the items marked ✔︎. The rest need a human read.
       never flash while the page loads. ✔︎
 - [ ] **Fallback if `learn.js` doesn't run:** the `learn.js` `<script>` has
       `onerror="document.documentElement.classList.remove('js')"`, and the
-      `<head>` script drops the class after 5 s if no quiz is `is-ready`. Either
-      way the page shows the scripts-off view instead of blank gaps. Copy both
-      from `_template.html`. ✔︎
+      `<head>` script drops the class after 5 s if any quiz is neither
+      `is-ready` nor `is-fallback`. Either way the page shows the scripts-off
+      view instead of blank gaps. Copy both from `_template.html`. ✔︎
+- [ ] **One broken quiz doesn't blank the page:** `learn.js` builds each quiz on
+      its own. A quiz with bad markup is restored, marked `is-fallback` and
+      shown as question, answer and note; the error is in the browser console.
+      `scripts/test-guided-fallback.mjs site/phase-N/topic.html` checks this in
+      headless Chrome (it breaks one quiz on a copy of the page).
 - [ ] Anything that only makes sense with scripts running (instructions to
       guess or answer, the skim test) gets `class="js-only"`; text meant only
       for readers with scripts off gets `class="nojs-only"`. With scripts off,

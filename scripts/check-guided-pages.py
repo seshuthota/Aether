@@ -98,8 +98,8 @@ def check(path):
     js_at, css_at = head.find('classList.add("js")'), head.find("css/site.css")
     if js_at < 0 or js_at > css_at:
         errors.append('add the classList.add("js") script in <head>, before site.css (copy it from _template.html)')
-    if "is-ready" not in head:
-        errors.append("the <head> script needs the timeout that drops \"js\" when no quiz gets is-ready (copy it from _template.html)")
+    if "is-ready" not in head or "is-fallback" not in head:
+        errors.append("the <head> script needs the timeout that drops \"js\" when a quiz is neither is-ready nor is-fallback (copy it from _template.html)")
     if p.learn_js and not p.learn_js_fallback:
         errors.append("the learn.js <script> needs onerror=\"document.documentElement.classList.remove('js')\"")
 

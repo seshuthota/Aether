@@ -536,17 +536,18 @@ main [id] { scroll-margin-top: 4.5rem; }
 /* Scripts off: each quiz reads as "question, answer: X" with the right
    option's note; the wrong options, the how-to instructions, the skim test
    and the answer record are hidden. */
-html:not(.js) .quiz > ul { list-style: none; padding: 0; margin: .3rem 0 0; }
-html:not(.js) .quiz > ul > li:not([data-right]) { display: none; }
-html:not(.js) .quiz > ul > li[data-right]::before { content: "Answer: "; font-weight: 600; color: var(--ok); }
-html:not(.js) .quiz > p { font-weight: 600; margin: .2rem 0; }
-html:not(.js) .quiz .why { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
+/* A quiz learn.js could not build (.is-fallback) is shown the same way. */
+html:not(.js) .quiz > ul, .quiz.is-fallback > ul { list-style: none; padding: 0; margin: .3rem 0 0; }
+html:not(.js) .quiz > ul > li:not([data-right]), .quiz.is-fallback > ul > li:not([data-right]) { display: none; }
+html:not(.js) .quiz > ul > li[data-right]::before, .quiz.is-fallback > ul > li[data-right]::before { content: "Answer: "; font-weight: 600; color: var(--ok); }
+html:not(.js) .quiz > p, .quiz.is-fallback > p { font-weight: 600; margin: .2rem 0; }
+html:not(.js) .quiz .why, .quiz.is-fallback .why { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
 html:not(.js) .js-only, html:not(.js) [data-record] { display: none; }
 html.js .nojs-only { display: none; }
 html:not(.js) .toc[data-stepmap] a[href="#check"] { display: none; }
 /* Scripts on: pages with the "js" class set in <head> keep each quiz and the
    plain step-map links out of sight until learn.js has built them. */
-html.js .quiz:not(.is-ready) { visibility: hidden; }
+html.js .quiz:not(.is-ready):not(.is-fallback) { visibility: hidden; }
 html.js .toc[data-stepmap] { display: none; }
 .linkbtn { font: inherit; font-size: .86rem; background: none; border: 0; padding: .2rem .1rem; color: var(--accent-ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .quiz textarea { margin: .2rem 0 .3rem; }
