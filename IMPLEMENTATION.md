@@ -27,7 +27,7 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s | kernel choice for short rows; GEMM GFLOPS |
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
 | 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5), `tokenizers` (433 strings) | — | 360M |
-| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s; PPL matches llama.cpp | `smmla` GEMM (6.5) |
+| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s; PPL matches llama.cpp | `smmla` GEMM (6.5): 2×2 first step done |
 | 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token | prefill 2–6× behind llama.cpp |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
@@ -201,7 +201,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
-- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla not yet) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 2×2 done: Q4_0 prefill +22–37 %, Q8_0 unchanged, results/phase-6.md; next: activations interleaved once, 4×4 tile, repacked weights — paused 2026-10-24) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
 - [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md pending): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →

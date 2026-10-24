@@ -60,3 +60,54 @@ unpack before each `sdot` and stays compute-bound on one core at 12–15 GB/s.
 attention. On the 2 prime cores the kernel rises to 49 % and attention to
 11 %. That spin share is what Phase 4's dynamic row blocks and pinning the
 caller to the fastest core went after.
+
+## Prefill with `smmla` (item 6.5, first step; `raw/prefill-ab/`)
+
+`smmla` (i8mm) multiplies a 2×8 int8 block by another 2×8 block and adds the
+2×2 int32 result: two weight rows × two tokens per instruction, so each
+weight value loaded serves two tokens where `sdot` serves one. First version
+(`mmla2_q8_0`, `mmla2_q4_0` in `src/kernels/neon_quant.rs`): 2 rows × 2
+tokens, rows and tokens interleaved 8 bytes at a time inside the loop
+(`zip1`/`zip2`), used by `quant_rows` whenever more than one token is
+multiplied (prefill). Decode (one token) keeps the `sdot` kernels.
+
+**Correctness.** Batched goldens (`testdata/quant_batch/`, 9 shapes with
+odd row and token counts, t = 2…64; `dequant(X_q8_0) @ dequant(W)ᵀ` from
+llama.cpp's quantizers): pass on the phone, threaded output bit-identical to
+one thread (`quantized_linear_batch_matches_reference`). Perplexity on the
+phone, wikitext-2, 20 × 512 (`ppl-q4_0.txt`, `ppl-q8_0.txt`):
+
+| Format | ours, `smmla` (phone) | ours before (host, scalar) | llama.cpp |
+| --- | --- | --- | --- |
+| Q4_0 | 19.7499 | 19.7441 | 19.7283 ± 0.836 |
+| Q8_0 | 16.3471 | 16.3404 | 16.3425 ± 0.671 |
+
+**Speed.** Qwen2.5-0.5B, cores 2–7, 2026-10-24, on battery (51 %), screen on,
+every run started below 48 °C; per round the new build, the previous commit
+(`a077c63`, `sdot`) and llama-bench ran back to back (`scripts/prefill-ab.sh`).
+Prefill tok/s, round 1 / round 2:
+
+| | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 `smmla` | 272 / 242 | 264 / 231 | 230 / 209 |
+| Q4_0 `sdot` (before) | 208 / 176 | 196 / 169 | 188 / 159 |
+| Q4_0 llama.cpp | 709 / 631 | 734 / 614 | 552 / 473 |
+| Q8_0 `smmla` | 218 / 223 | 248 / 218 | 221 / 194 |
+| Q8_0 `sdot` (before) | 222 / 224 | 252 / 224 | 225 / 204 |
+| Q8_0 llama.cpp | 711 / 622 | 765 / 649 | 535 / 478 |
+
+- Q4_0: +22–37 %. The nibbles are now unpacked once per pair of tokens
+  instead of once per token.
+- Q8_0: unchanged to −5 %. Per 32-value block the 2×2 kernel spends 8
+  interleaving instructions and 4 `smmla` for 4 outputs; the 4-row `sdot`
+  kernel spends 8 `sdot` and no interleaving for 4 outputs. The interleaving
+  eats what `smmla` saves.
+- Every build ran faster than in `results/phase-7.md` (old Q4_0 pp256 196
+  against 111 then) and round 2 ran ~10 % slower than round 1, so only
+  same-round comparisons hold.
+- Gap to llama.cpp: ~2.4–3× (was ~3.4–4× in the same session).
+
+Not done yet (paused 2026-10-24 so the learning track can catch up):
+interleave the activations once per call instead of once per row pair, a
+4 rows × 4 tokens tile, then — if the profile still shows interleaving —
+repack the weights at load as llama.cpp does.
