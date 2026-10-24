@@ -113,19 +113,51 @@ function initNav() {
         side.append(a);
       }
     }
-    // Phone layout: the nav becomes a panel opened from the header.
+    // Phone layout: the nav becomes a drawer opened from the header. It starts
+    // with this page's own sections (copied from its .toc), then every page.
     const top = document.querySelector(".top");
     const theme = top && top.querySelector("[data-theme-toggle]");
+    const pageToc = document.querySelector("main .toc");
+    if (pageToc) {
+      const links = [...pageToc.querySelectorAll("a[href^='#']")];
+      if (links.length) {
+        const first = side.firstChild;
+        const group = [el("p", { class: "nav-label onpage", text: "On this page" })];
+        for (const l of links) group.push(el("a", { class: "onpage", href: l.getAttribute("href"), text: l.textContent }));
+        group.push(el("p", { class: "nav-label onpage", text: "All pages" }));
+        for (const n of group) side.insertBefore(n, first);
+      }
+    }
     if (top && theme) {
-      const btn = el("button", { class: "navtoggle", type: "button", "aria-expanded": "false", text: "Contents" });
-      theme.before(btn);
-      btn.addEventListener("click", () => {
-        const open = side.classList.toggle("open");
+      const btn = el("button", { class: "navtoggle", type: "button", "aria-expanded": "false", "aria-controls": "site-nav", "aria-label": "Menu" });
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h14M3 10h14M3 14.5h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      side.id = "site-nav";
+      const scrim = el("div", { class: "scrim" });
+      document.body.append(scrim);
+      top.prepend(btn);
+      const setOpen = (open) => {
+        side.classList.toggle("open", open);
+        scrim.classList.toggle("open", open);
+        document.body.classList.toggle("nav-locked", open);
         btn.setAttribute("aria-expanded", String(open));
-      });
+      };
+      btn.addEventListener("click", () => setOpen(!side.classList.contains("open")));
+      scrim.addEventListener("click", () => setOpen(false));
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
       side.addEventListener("click", (e) => {
-        if (e.target.closest("a")) { side.classList.remove("open"); btn.setAttribute("aria-expanded", "false"); }
+        const a = e.target.closest("a");
+        if (!a) return;
+        // Unlock scrolling before jumping to a section, or the jump is ignored.
+        const hash = a.getAttribute("href");
+        const target = hash && hash.startsWith("#") && document.getElementById(hash.slice(1));
+        if (target) {
+          e.preventDefault();
+          setOpen(false);
+          history.replaceState(null, "", hash);
+          target.scrollIntoView();
+        } else setOpen(false);
       });
+      window.matchMedia("(min-width: 861px)").addEventListener("change", (e) => { if (e.matches) setOpen(false); });
     }
   }
 
