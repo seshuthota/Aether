@@ -29,6 +29,7 @@ class Page(HTMLParser):
         self.in_toc = False
         self.stepmap = False
         self.learn_js = False
+        self.learn_js_fallback = False
         self.quiz_stack = []  # open quiz divs, to collect their options
         self.depth = 0
         self.strong = False
@@ -42,6 +43,7 @@ class Page(HTMLParser):
             self.toc.append(a.get("href", ""))
         if tag == "script" and "learn.js" in a.get("src", ""):
             self.learn_js = True
+            self.learn_js_fallback = "classList.remove" in a.get("onerror", "")
         if tag == "h2":
             self.events.append(("h2", a))
         if tag == "div":
@@ -95,7 +97,11 @@ def check(path):
     head = text[:text.find("</head>")]
     js_at, css_at = head.find('classList.add("js")'), head.find("css/site.css")
     if js_at < 0 or js_at > css_at:
-        errors.append('add <script>document.documentElement.classList.add("js")</script> in <head>, before site.css')
+        errors.append('add the classList.add("js") script in <head>, before site.css (copy it from _template.html)')
+    if "is-ready" not in head:
+        errors.append("the <head> script needs the timeout that drops \"js\" when no quiz gets is-ready (copy it from _template.html)")
+    if p.learn_js and not p.learn_js_fallback:
+        errors.append("the learn.js <script> needs onerror=\"document.documentElement.classList.remove('js')\"")
 
     h2s = [a for k, a in p.events if k == "h2"]
     ids = [a.get("id") for a in h2s]

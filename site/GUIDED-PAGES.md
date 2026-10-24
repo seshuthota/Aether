@@ -59,9 +59,14 @@ It enforces the items marked ✔︎. The rest need a human read.
 ## Wiring
 
 - [ ] Load `js/learn.js` only on pages with quizzes, after `site.js`. ✔︎
-- [ ] Keep the one-line `classList.add("js")` script in `<head>`, before
-      `site.css`. It lets the CSS hide each quiz until `learn.js` has built it,
-      so answers never flash while the page loads. ✔︎
+- [ ] Keep the `classList.add("js")` script in `<head>`, before `site.css`.
+      It lets the CSS hide each quiz until `learn.js` has built it, so answers
+      never flash while the page loads. ✔︎
+- [ ] **Fallback if `learn.js` doesn't run:** the `learn.js` `<script>` has
+      `onerror="document.documentElement.classList.remove('js')"`, and the
+      `<head>` script drops the class after 5 s if no quiz is `is-ready`. Either
+      way the page shows the scripts-off view instead of blank gaps. Copy both
+      from `_template.html`. ✔︎
 - [ ] Anything that only makes sense with scripts running (instructions to
       guess or answer, the skim test) gets `class="js-only"`; text meant only
       for readers with scripts off gets `class="nojs-only"`. With scripts off,

@@ -23,6 +23,8 @@
 const CONFIDENCE = [["guess", "Guessing"], ["fair", "Fairly sure"], ["sure", "Certain"]];
 
 (function () {
+  // The <head> script drops "js" if this file is slow to run; it is running now.
+  document.documentElement.classList.add("js");
   const key = "aether-answers:" + pageKey(location.href);
   let saved = {};
   try { saved = JSON.parse(store.get(key) || "{}") || {}; } catch (e) { saved = {}; }

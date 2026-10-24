@@ -543,6 +543,7 @@ html:not(.js) .quiz > p { font-weight: 600; margin: .2rem 0; }
 html:not(.js) .quiz .why { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
 html:not(.js) .js-only, html:not(.js) [data-record] { display: none; }
 html.js .nojs-only { display: none; }
+html:not(.js) .toc[data-stepmap] a[href="#check"] { display: none; }
 /* Scripts on: pages with the "js" class set in <head> keep each quiz and the
    plain step-map links out of sight until learn.js has built them. */
 html.js .quiz:not(.is-ready) { visibility: hidden; }
