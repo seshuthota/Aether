@@ -2,7 +2,7 @@
 (the `gguf` Python package from the llama.cpp repository, bit-exact with
 ggml-quants.c).
 
-    tools/.venv/bin/python -I tools/gen_quant.py testdata/quant
+    tools/.venv/bin/python -I tools/gen_quant.py testdata/quant testdata/quant_batch
 
 Per case directory quant_<d>x<n>/ (n is a multiple of 32, the block size):
 
@@ -17,6 +17,13 @@ Per case directory quant_<d>x<n>/ (n is a multiple of 32, the block size):
 "a" is the reference for kernels that dequantize weights and multiply by the
 f32 activation; "b" for kernels that quantize the activation and use int8
 dot products (sdot / smmla).
+
+Batched cases (prefill: t tokens at once) go to the second directory, one
+quant_<d>x<n>_t<t>/ each, with odd row and token counts for the tails of
+2×2 and 4×4 tiles:
+
+  w.npy  [d, n] f32          x.npy  [t, n] f32 (each row quantized on its own)
+  out_q8_0_b.npy, out_q4_0_b.npy   [t, d]: dequant(X_q8_0) @ dequant(W)ᵀ
 """
 
 import sys
@@ -51,6 +58,27 @@ def main():
             np.save(out / f"out_{name}_a.npy", (wd @ x.astype(np.float64)).astype(np.float32))
             np.save(out / f"out_{name}_b.npy", (wd @ xd).astype(np.float32))
     print(f"wrote {len(shapes)} cases to {root}")
+    if len(sys.argv) > 2:
+        batch(Path(sys.argv[2]))
+
+
+def batch(root):
+    # Own generator, so the single-vector cases above stay byte-identical.
+    rng = np.random.default_rng(607)
+    cases = [(1, 32, 2), (3, 64, 3), (5, 160, 4), (6, 96, 5), (17, 576, 8), (18, 2048, 3), (130, 896, 17), (64, 576, 64), (896, 896, 7)]
+    for d, n, t in cases:
+        w = (rng.standard_normal((d, n)) * 0.05).astype(np.float32)
+        w[0, :32] = 0.0
+        x = rng.standard_normal((t, n)).astype(np.float32)
+        out = root / f"quant_{d}x{n}_t{t}"
+        out.mkdir(parents=True, exist_ok=True)
+        np.save(out / "w.npy", w)
+        np.save(out / "x.npy", x)
+        xd = quants.dequantize(quants.quantize(x, T.Q8_0), T.Q8_0).astype(np.float64)
+        for typ, name in [(T.Q8_0, "q8_0"), (T.Q4_0, "q4_0")]:
+            wd = quants.dequantize(quants.quantize(w, typ), typ).astype(np.float64)
+            np.save(out / f"out_{name}_b.npy", (xd @ wd.T).astype(np.float32))
+    print(f"wrote {len(cases)} cases to {root}")
 
 
 if __name__ == "__main__":

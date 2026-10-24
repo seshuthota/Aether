@@ -340,6 +340,38 @@ mod tests {
         .unwrap();
     }
 
+    /// The batched quantized path (prefill: `t` tokens, each activation
+    /// quantized to Q8_0 on its own) against the same "b" reference.
+    /// Odd row and token counts exercise every tile's tails; 1 to 3
+    /// threads must give the same bits as one.
+    #[test]
+    fn quantized_linear_batch_matches_reference() {
+        let Some(root) = golden("quant_batch") else { return };
+        std::thread::spawn(move || {
+            let online = crate::sys::affinity::online_cpus().unwrap();
+            let pool = ThreadPool::new(&online[..3.min(online.len())]).unwrap();
+            for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+                let ((ws, w), (xs, x)) = (read_npy(&dir.join("w.npy")), read_npy(&dir.join("x.npy")));
+                let t = xs[0];
+                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
+                    let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
+                    buf.copy_from_slice(&w);
+                    let q = Weight::from(buf).convert(ws[1], format);
+                    let want = arr(&dir, &format!("out_{name}_b"));
+                    let mut one = vec![f32::NAN; t * ws[0]];
+                    linear_batch_on(None, &mut one, &x, &q, t);
+                    let (_, rel) = max_errors(&one, &want);
+                    assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} {name}: rel {rel:.2e}", dir.display());
+                    let mut many = vec![f32::NAN; t * ws[0]];
+                    linear_batch_on(Some(&pool), &mut many, &x, &q, t);
+                    assert_eq!(one, many, "{} {name}: threads changed the result", dir.display());
+                }
+            }
+        })
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn rmsnorm_softmax_swiglu_match_numpy() {
         for dir in cases("rmsnorm_") {
