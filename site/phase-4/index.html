@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=20">
+<link rel="stylesheet" href="../css/site.css?v=21">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,7 +26,7 @@
 
 <h1>Phase 4 — threads</h1>
 <p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores, using <strong>threads</strong>: streams of work that the operating system runs on separate cores. The hard part is not the arithmetic. Decode hands out a couple of hundred small jobs per token, and each job ends only when its slowest thread does. The first threaded build gained almost nothing beyond two cores. Fixing that taught most of what this phase is about.</p>
-<div class="callout"><span class="lbl">Models used here</span><p>Most speeds on these pages come from Q4_0 models, whose weights are stored in 4 bits (32 weights in 18 bytes instead of 128), and the quantized kernels first turn the input into Q8_0, an 8-bit format. Those formats are taught in Phases 5–6, which have no pages yet. Here they only matter because fewer bytes per weight make each job shorter.</p></div>
+<div class="callout"><span class="lbl">Models used here</span><p>Most speeds on these pages come from Q4_0 models, whose weights are stored in 4 bits (32 weights in 18 bytes instead of 128), and the quantized kernels first turn the input into Q8_0, an 8-bit format. Those formats are taught on <a href="../phase-6/blocks.html">Block quantization</a> in Phase 6. Here they only matter because fewer bytes per weight make each job shorter.</p></div>
 <nav class="toc">
   <a href="#idea">How do you share the work without waiting?</a>
   <a href="#result">How much faster did threads make it?</a>
@@ -102,9 +102,9 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=20"></script>
-<script src="../js/glossary.js?v=20"></script>
-<script src="../js/site.js?v=20"></script>
-<script src="../js/widgets.js?v=20"></script>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+<script src="../js/widgets.js?v=21"></script>
 </body>
 </html>

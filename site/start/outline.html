@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=20">
+<link rel="stylesheet" href="../css/site.css?v=21">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -43,15 +43,15 @@
 <h2 id="status">Where do the notes stand?</h2>
 <p>Start with the counts.</p>
 <div class="statrow">
-  <div class="stat"><b>12</b><span>written</span></div>
-  <div class="stat"><b>4</b><span>partly covered</span></div>
-  <div class="stat"><b>28</b><span>to write</span></div>
+  <div class="stat"><b>17</b><span>written</span></div>
+  <div class="stat"><b>10</b><span>partly covered</span></div>
+  <div class="stat"><b>17</b><span>to write</span></div>
   <div class="stat"><b>44</b><span>items in all</span></div>
 </div>
 <p><span class="tag d">written</span> the page exists and is checked against the code and <code>results/</code>. <span class="tag c">partly</span> some of it is on an existing page, linked. <span class="tag a">to write</span> nothing yet.</p>
 <p>In the third column, <strong>built</strong> means the engine has the code and the measured numbers a page can teach from; <strong>not built</strong> means the page would have to explain something the engine does not do yet.</p>
 <div class="callout"><span class="lbl">Two choices behind this list</span><p>Phases 9 and 10 go past the <a href="roadmap.html">roadmap</a>, which ends with the Android app in Phase 8. The plan only lists those topics as “later”. They are kept here as optional. Also, this phone has no efficiency cores (<a href="../phase-1/topology.html">Phase 1</a>), so where the outline says prime/performance/efficiency, the pages compare prime with performance cores and say how other chips differ.</p></div>
-<p><strong>Takeaway: 12 pages are written, 4 are partly covered, and 28 still need writing.</strong></p>
+<p><strong>Takeaway: 17 items are written, 10 are partly covered, and 17 still need writing.</strong></p>
 
 <h2 id="p-1">What must I know before Phase 0?</h2>
 <p>Phase 0 assumes some Rust and arithmetic. A <em>primer</em> is a short first introduction to a subject.</p>
@@ -96,52 +96,52 @@
 <p><strong>Takeaway: Phase 4 is written, but a steadier repeat of the thread-count measurements is still open.</strong></p>
 
 <h2 id="p5">Phase 5: what do modern models add?</h2>
-<p>Every row here is still to write, but the engine has the code for each one. <em>bf16</em> is a 16-bit number format.</p>
+<p>The engine has the code for every row. The <a href="../phase-5/index.html">Phase 5 overview</a> covers each topic in one section; the full topic pages are still to write. <em>bf16</em> is a 16-bit number format.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
-    <tr><td><span class="tag a">to write</span></td><td>safetensors, <code>mmap</code> and the page cache</td><td>built · <code>src/format/</code></td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>bf16 weights</td><td>built</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Grouped-query attention</td><td>built</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Byte-level BPE, chat templates</td><td>built · checked on 433 strings against <code>tokenizers</code></td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Checking layer by layer against Hugging Face</td><td>built · within 5.5e-5 of <code>transformers</code></td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>safetensors, <code>mmap</code> and the page cache: <a href="../phase-5/index.html#safetensors">overview section</a></td><td>built · <code>src/format/</code></td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>bf16 weights: <a href="../phase-5/index.html#bf16">overview section</a></td><td>built</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Grouped-query attention: <a href="../phase-5/index.html#gqa">overview section</a></td><td>built</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Byte-level BPE, chat templates: <a href="../phase-5/index.html#bpe">overview section</a></td><td>built · checked on 433 strings against <code>tokenizers</code></td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Checking layer by layer against Hugging Face: <a href="../phase-5/index.html#verified">overview section</a></td><td>built · within 5.5e-5 of <code>transformers</code></td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: all five Phase 5 topics are built, and none of them has a page yet.</strong></p>
+<p><strong>Takeaway: all five Phase 5 topics are built and summarised on the overview; none has its own page yet.</strong></p>
 
 <h2 id="p6">Phase 6: how are the weights made smaller?</h2>
 <p>Quantization stores each weight in fewer bits. A <em>block scale</em> is one number that a small group of weights shares, so each weight can be a short integer.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
-    <tr><td><span class="tag c">partly</span></td><td>Block scales; the Q8_0 and Q4_0 layouts. Why fewer bytes per weight is faster is on <a href="../phase-0/decode-ceiling.html">Decode ceiling</a>.</td><td>built · byte-identical to llama.cpp</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Quantizing activations</td><td>built</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td><code>sdot</code> and i8mm kernels</td><td><code>sdot</code> built; <code>smmla</code> (i8mm) not built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-6/blocks.html">Block quantization</a>: block scales, the Q8_0 and Q4_0 layouts. Why fewer bytes per weight is faster is on <a href="../phase-0/decode-ceiling.html">Decode ceiling</a>.</td><td>built · byte-identical to llama.cpp</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>Quantizing activations: <a href="../phase-6/dot-products.html#style-b">Multiplying quantized weights</a></td><td>built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><code>sdot</code> and i8mm kernels: <a href="../phase-6/dot-products.html">Multiplying quantized weights</a></td><td><code>sdot</code> built; <code>smmla</code> 2×2 built and measured; 4×4 tile and repacked weights not built</td></tr>
     <tr><td><span class="tag a">to write</span></td><td>K-quants: an overview</td><td>not built (reading only)</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Accuracy checks: perplexity and KL</td><td>built · matches <code>llama-perplexity</code></td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-6/perplexity.html">Perplexity and KL</a></td><td>built · matches <code>llama-perplexity</code></td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: Q8_0 and Q4_0 are built and match llama.cpp byte for byte; the other rows are still to write.</strong></p>
+<p><strong>Takeaway: Phase 6 has its overview and three topic pages; only the K-quants overview is still to write.</strong></p>
 
 <h2 id="p7">Phase 7: what is in a GGUF file?</h2>
 <p><em>GGUF</em> is the file format llama.cpp uses. A <em>KV cache</em> holds the keys and values from earlier tokens. <em>J/token</em> is joules per generated token.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
-    <tr><td><span class="tag a">to write</span></td><td>The GGUF format and its metadata</td><td>built · <code>src/format/gguf.rs</code></td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-7/gguf.html">GGUF: one file for everything</a></td><td>built · <code>src/format/gguf.rs</code></td></tr>
     <tr><td><span class="tag c">partly</span></td><td>KV cache sizing and quantization. Sizing for all three models is on <a href="../phase-2/kv-cache.html">The KV cache</a>.</td><td>sizing built; quantized cache not built</td></tr>
     <tr><td><span class="tag a">to write</span></td><td>Long context, tiled attention</td><td>not built · attention is split by head only (open item)</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>A sustained-speed and energy benchmark suite (joules per token)</td><td>built · 0.041 J/token, Qwen2.5 Q4_0</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>A sustained-speed and energy benchmark suite (joules per token): <a href="../phase-7/index.html#sustained">overview section</a></td><td>built · 0.041 J/token, Qwen2.5 Q4_0</td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: the GGUF reader and the energy benchmark are built; long context and the quantized cache are not.</strong></p>
+<p><strong>Takeaway: GGUF has its page and the energy benchmark an overview section; long context and the quantized cache are not built.</strong></p>
 
 <h2 id="p8">Phase 8: how does Kotlin reach the engine?</h2>
 <p>The app is written in Kotlin, and the engine is written in Rust. <em>JNI</em> is the bridge that lets Kotlin call native code, and an <em>APK</em> is the package file Android installs.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
-    <tr><td><span class="tag a">to write</span></td><td>C interface, JNI, streaming tokens to Kotlin</td><td>built · <code>include/aether.h</code>, <code>android/</code></td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>C interface, JNI, streaming tokens to Kotlin: <a href="../phase-8/index.html">Phase 8 overview</a></td><td>built · <code>include/aether.h</code>, <code>android/</code></td></tr>
     <tr><td><span class="tag a">to write</span></td><td>Packaging the <code>.so</code> in the APK (16 KB page alignment)</td><td>built · linked with <code>max-page-size=16384</code></td></tr>
     <tr><td><span class="tag a">to write</span></td><td>App memory limits: the low-memory killer, RSS vs page cache</td><td>not measured</td></tr>
     <tr><td><span class="tag a">to write</span></td><td>Storing and downloading the model</td><td>stored in the app’s files folder, pushed with adb; download not built</td></tr>
@@ -205,9 +205,9 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=20"></script>
-<script src="../js/glossary.js?v=20"></script>
-<script src="../js/site.js?v=20"></script>
-<script src="../js/widgets.js?v=20"></script>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+<script src="../js/widgets.js?v=21"></script>
 </body>
 </html>

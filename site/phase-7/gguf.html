@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GGUF: one file for everything · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · concept 1</p>
+
+<h1>GGUF: one file for everything</h1>
+<p class="lede">A model is a set of weights plus the facts needed to run them: layer count, head count, the vocabulary and the merge rules. Before GGUF, a Hugging Face model came as several files that had to be read together. GGUF (the file format llama.cpp uses) puts all of it in one file with a small typed header, and it can be read in place from the memory map. This page builds the parser step by step from the code in <code>src/format/gguf.rs</code>.</p>
+<nav class="toc">
+  <a href="#problem">Why not keep the safetensors files?</a>
+  <a href="#layout">What is inside one GGUF file?</a>
+  <a href="#header">How does the parser read the header?</a>
+  <a href="#metadata">Which metadata types exist?</a>
+  <a href="#arch">How does the architecture come from metadata?</a>
+  <a href="#align">Why must the data be aligned?</a>
+  <a href="#inplace">Are the weights copied into memory?</a>
+  <a href="#fair">Why compare two engines on the same bytes?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="problem">Why not keep the safetensors files?</h2>
+<p>The SmolLM2 and Qwen2.5 checkpoints from Hugging Face come as a <code>config.json</code> (the sizes), a <code>tokenizer.json</code> (the vocabulary and merges) and one or more <code>.safetensors</code> files (the numbers). The loader has to open all of them, and their names and layouts are defined by other programs. A quantized model adds a fourth question: which tensors were converted, and to what.</p>
+<p>A GGUF file answers all of that in one place. Its header holds <em>metadata</em>, typed key and value pairs such as the layer count, and <em>tensor infos</em>, one entry per weight that gives its name, shape, storage type and position. A <em>tensor</em> is a named block of numbers, here a weight matrix or a vector. One file means one path to open, one thing to copy to the phone, and one place where the tokenizer lives too.</p>
+<div class="callout"><span class="lbl">Illustration</span><p>Think of a parcel with an itemised list on top. The list says what is inside, how big each item is and where it starts. The reader never has to guess the layout, because the list is part of the parcel.</p></div>
+<p><strong>Takeaway: GGUF moves the config, the tokenizer and the weight index into the same file that holds the weights.</strong></p>
+
+<h2 id="layout">What is inside one GGUF file?</h2>
+<p>Read the file from the top. Each part is followed by the next, and the last part is the big block of tensor data. Here is the layout the parser reads, drawn from <code>Gguf::open</code>:</p>
+<pre><code>offset 0   "GGUF"                      4 bytes   magic: rejects other files
+           u32 version                  must be 3, or the loader refuses
+           u64 tensor_count
+           u64 metadata_kv_count
+           metadata_kv_count × KV
+             string key                 u64 length, then UTF-8 bytes
+             u32 type                   which value layout follows
+             value                      layout chosen by the type
+           tensor_count × tensor info
+             string name                e.g. "blk.0.attn_q.weight"
+             u32 n_dims
+             u64 dims[n_dims]           fastest-varying first
+             u32 ggml_type              F32, F16, Q4_0, Q8_0, ...
+             u64 offset                 relative to data_start
+           zero padding up to a multiple of general.alignment (default 32)
+data_start tensor data, each tensor at data_start + its offset</code></pre>
+<p>Three things the diagram hides:</p>
+<ul>
+  <li>The offsets in the tensor infos are <strong>relative to the start of the data</strong>, not to the start of the file. The parser adds <code>data_start</code> to each one.</li>
+  <li>A <strong>string</strong> has no terminator. It is a <code>u64</code> length followed by that many bytes, and the parser rejects bytes that are not UTF-8.</li>
+  <li><strong>Dimensions run fastest-varying first</strong>, the reverse of the <code>[rows, cols]</code> PyTorch prints. The module comment gives the example: a weight with 896 columns and 4864 rows has <code>dims = [896, 4864]</code> <span class="tag a">assumption</span>.</li>
+</ul>
+<p><strong>Takeaway: the reader can walk the whole header without knowing any tensor name in advance.</strong></p>
+
+<h2 id="header">How does the parser read the header?</h2>
+<p>A parser reads the bytes in order and checks each one before using it. The first step is the magic and the version. Start with a small piece of <code>open</code>:</p>
+<pre><code>let mut r = Reader { b: map.as_bytes(), at: 0 };
+if r.take(4)? != b"GGUF" {
+    return Err(bad(format!("{}: not a GGUF file", path.as_ref().display())));
+}
+let version = r.u32()?;
+if version != 3 {
+    return Err(bad(format!("GGUF version {version} (only 3 is supported)")));
+}</code></pre>
+<ul>
+  <li><code>Reader</code> holds the mapped bytes and a position <code>at</code>. Each read moves the position forward.</li>
+  <li><code>take(4)</code> returns the next four bytes, or an error if the file ends first. It never reads past the end.</li>
+  <li>If you skip the version check and the file is version 2, the next fields are read at the wrong offsets and the parser returns nonsense sizes. Refusing early keeps that from happening.</li>
+</ul>
+
+<p>Next come the two counts, then the metadata loop:</p>
+<pre><code>let (n_tensors, n_kv) = (r.u64()? as usize, r.u64()? as usize);
+let mut metadata = Vec::with_capacity(n_kv);
+for _ in 0..n_kv {
+    let key = r.string()?;
+    let ty = r.u32()?;
+    metadata.push((key, r.value(ty)?));
+}</code></pre>
+<ul>
+  <li>The counts come first, so the parser knows how many entries to expect.</li>
+  <li>Each entry is read in the same order as the file: key, then type, then value. The value's size depends on the type, so the type has to be read first.</li>
+  <li><code>Vec::with_capacity</code> reserves room for the entries up front. It does not make the entries exist.</li>
+</ul>
+
+<p>Then the tensor infos. The parser reads them into a plain tuple, and only converts them after the alignment is known:</p>
+<pre><code>let mut infos = Vec::with_capacity(n_tensors);
+for _ in 0..n_tensors {
+    let name = r.string()?;
+    let n_dims = r.u32()? as usize;
+    let dims = (0..n_dims).map(|_| r.u64().map(|d| d as usize)).collect::&lt;io::Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+    let ty = GgmlType::from_id(r.u32()?);
+    let offset = r.u64()? as usize;
+    infos.push((name, dims, ty, offset));
+}</code></pre>
+<ul>
+  <li><code>dims</code> has <code>n_dims</code> entries, so the number of dimensions is in the file, not fixed at two.</li>
+  <li><code>GgmlType::from_id</code> maps the number to a type. Unknown numbers become <code>GgmlType::Other(id)</code> instead of an error, so the file still loads and only that tensor is refused when its data is asked for.</li>
+  <li>The offset is stored here as written, relative to the data start. Nothing has been placed in memory yet.</li>
+</ul>
+
+<p>The full <code>open</code> function, with the alignment step and the bounds check added. The rest of the code is shortened only where marked:</p>
+<pre><code>pub fn open(path: impl AsRef&lt;Path&gt;) -&gt; io::Result&lt;Gguf&gt; {
+    let map = Arc::new(Mmap::open(path.as_ref())?);
+    let mut r = Reader { b: map.as_bytes(), at: 0 };
+    if r.take(4)? != b"GGUF" {
+        return Err(bad(format!("{}: not a GGUF file", path.as_ref().display())));
+    }
+    let version = r.u32()?;
+    if version != 3 {
+        return Err(bad(format!("GGUF version {version} (only 3 is supported)")));
+    }
+    let (n_tensors, n_kv) = (r.u64()? as usize, r.u64()? as usize);
+    let mut metadata = Vec::with_capacity(n_kv);
+    for _ in 0..n_kv {
+        let key = r.string()?;
+        let ty = r.u32()?;
+        metadata.push((key, r.value(ty)?));
+    }
+    let mut infos = Vec::with_capacity(n_tensors);
+    for _ in 0..n_tensors {
+        let name = r.string()?;
+        let n_dims = r.u32()? as usize;
+        let dims = (0..n_dims).map(|_| r.u64().map(|d| d as usize)).collect::&lt;io::Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+        let ty = GgmlType::from_id(r.u32()?);
+        let offset = r.u64()? as usize;
+        infos.push((name, dims, ty, offset));
+    }
+    let mut g = Gguf { map: map.clone(), version, metadata, tensors: Vec::new() };
+    let align = g.get("general.alignment").and_then(Value::as_u64).unwrap_or(32) as usize;
+    let data_start = r.at.div_ceil(align) * align;
+    for (name, dims, ty, offset) in infos {
+        let info = TensorInfo { name, dims, ty, offset: data_start + offset };
+        if let Some(n) = info.ty.bytes(info.numel())
+            &amp;&amp; info.offset + n &gt; map.len()
+        {
+            return Err(bad(format!("{}: data runs past the end of the file", info.name)));
+        }
+        g.tensors.push(info);
+    }
+    Ok(g)
+}</code></pre>
+<ul>
+  <li>The loop that stores each tensor checks its size against the file length. A truncated download fails here, with the tensor's name, instead of crashing later.</li>
+  <li><code>info.ty.bytes(info.numel())</code> gives the byte size from the type and the element count. For a block type it is a formula, not a stored number (see the next section on why).</li>
+  <li><code>r.at.div_ceil(align) * align</code> rounds the end of the header up to the next multiple of the alignment. That is where the data starts.</li>
+</ul>
+<p><strong>Takeaway: every size the parser trusts is either read from the file and checked against its length, or computed from a known type.</strong></p>
+
+<h2 id="metadata">Which metadata types exist?</h2>
+<p>Each metadata value has a type number, and the type says how many bytes follow. The list is in <code>Reader::value</code>. Here are the cases, with the layouts they read:</p>
+<table>
+  <thead><tr><th>Type id</th><th>Layout</th><th>Stored as</th></tr></thead>
+  <tbody>
+    <tr><td>0, 1</td><td>u8, i8</td><td><code>U64</code>, <code>I64</code></td></tr>
+    <tr><td>2, 3</td><td>u16, i16</td><td><code>U64</code>, <code>I64</code></td></tr>
+    <tr><td>4, 5</td><td>u32, i32</td><td><code>U64</code>, <code>I64</code></td></tr>
+    <tr><td>6</td><td>f32</td><td><code>F64</code></td></tr>
+    <tr><td>7</td><td>bool (1 byte)</td><td><code>Bool</code></td></tr>
+    <tr><td>8</td><td>string (u64 length, bytes)</td><td><code>Str</code></td></tr>
+    <tr><td>9</td><td>array: element type u32, count u64, then the elements</td><td><code>Arr</code></td></tr>
+    <tr><td>10, 11</td><td>u64, i64</td><td><code>U64</code>, <code>I64</code></td></tr>
+    <tr><td>12</td><td>f64</td><td><code>F64</code></td></tr>
+  </tbody>
+</table>
+<p>The parser folds the widths into three number kinds: unsigned integers become <code>U64</code>, signed become <code>I64</code>, floats become <code>F64</code>. Bool, string and array keep their own variants. Two lines show the pattern. The first reads a fixed-width number, the second reads a string:</p>
+<pre><code>4 =&gt; Value::U64(self.u32()? as u64),
+8 =&gt; Value::Str(self.string()?),</code></pre>
+<ul>
+  <li>The <code>Value</code> enum has six variants: <code>U64</code>, <code>I64</code>, <code>F64</code>, <code>Bool</code>, <code>Str</code> and <code>Arr</code>.</li>
+  <li>An array holds values of one element type, which the parser reads once and reuses for every element.</li>
+  <li>A type number that is not in the table stops the load with <code>unknown metadata type</code>. The parser cannot skip a value whose size it does not know, so it stops rather than guess.</li>
+</ul>
+<p><strong>Takeaway: the type number tells the reader how many bytes to take, so the reader never has to guess a size.</strong></p>
+
+<h2 id="arch">How does the architecture come from metadata?</h2>
+<p>The model's shape is not written in the code. It comes from keys. The prefix is the architecture name, and the loader reads the rest of the key from the same file. In <code>src/model/gguf.rs</code>, the architecture name picks the code path:</p>
+<pre><code>let arch = g.get("general.architecture").and_then(Value::as_str)...;
+let rope_layout = match arch.as_str() {
+    "llama" =&gt; RopeLayout::AdjacentPairs,
+    "qwen2" =&gt; RopeLayout::Halves,
+    other =&gt; return Err(bad(format!("architecture {other:?} is not supported (llama, qwen2)"))),
+};
+let key = |k: &amp;str| g.get(&amp;format!("{arch}.{k}"));</code></pre>
+<ul>
+  <li><code>general.architecture</code> is the key that names the model family. For these files it is <code>"llama"</code> or <code>"qwen2"</code>.</li>
+  <li>The closure <code>key</code> joins the prefix and the name, so <code>attention.head_count</code> means <code>qwen2.attention.head_count</code> for a Qwen file.</li>
+  <li>The rope layout is the one thing the numbers do not tell the loader. Only the architecture name does. A Qwen file read with the llama layout still loads and runs, and it produces garbage. The module comment in <code>src/model/gguf.rs</code> gives the details.</li>
+</ul>
+<p>The numbers come from keys the loader reads by name. These are the ones in the code:</p>
+<table>
+  <thead><tr><th>Key (with the prefix)</th><th>Becomes</th></tr></thead>
+  <tbody>
+    <tr><td><code>embedding_length</code></td><td><code>dim</code>, the width of the residual stream</td></tr>
+    <tr><td><code>feed_forward_length</code></td><td><code>hidden_dim</code></td></tr>
+    <tr><td><code>block_count</code></td><td><code>n_layers</code></td></tr>
+    <tr><td><code>attention.head_count</code></td><td><code>n_heads</code></td></tr>
+    <tr><td><code>attention.head_count_kv</code></td><td><code>n_kv_heads</code>; if missing, equal to <code>n_heads</code></td></tr>
+    <tr><td><code>context_length</code></td><td><code>seq_len</code>, capped by the caller's maximum</td></tr>
+    <tr><td><code>rope.freq_base</code></td><td><code>rope_theta</code>; default 10000 if missing</td></tr>
+    <tr><td><code>attention.layer_norm_rms_epsilon</code></td><td><code>norm_eps</code>; required</td></tr>
+  </tbody>
+</table>
+<p>The vocabulary size is not a key at all. The loader reads it from the shape of the embedding tensor, <code>token_embd.weight</code>. Qwen2.5 has no separate output matrix when its embeddings are tied, so the loader checks for <code>output.weight</code> and reuses the embedding table when it is missing:</p>
+<pre><code>classifier: if g.tensor("output.weight").is_some() {
+    Some(matrix("output.weight", c.vocab_size, dim)?)
+} else {
+    None
+},</code></pre>
+<ul>
+  <li><code>None</code> means tied: the output projection is the embedding table. That saves one matrix, and it is why the Qwen file has no <code>output.weight</code>.</li>
+  <li>Keys with a default (such as <code>rope.freq_base</code>) can be missing. Keys without one stop the load with a message naming the key.</li>
+</ul>
+<p><strong>Takeaway: the same parser reads a Llama and a Qwen file, and the architecture name decides only the few things the files really differ on.</strong></p>
+
+<h2 id="align">Why must the data be aligned?</h2>
+<p>Alignment means an address is a multiple of a size. A 4-byte <code>f32</code> should start at an address divisible by 4. Many processors are fastest when that holds, and some instructions need it. Rust's rules are stricter: a reference such as <code>&amp;[f32]</code> must always point at an aligned address. Creating a misaligned one is undefined behaviour, even before any element is read, so the compiler is free to assume it never happens.</p>
+<p>The file is written so the data is aligned. The header ends, the parser rounds up to <code>general.alignment</code> (32 by default), and every tensor offset is itself a multiple of that. Illustration: if the header ends at byte 1234, the next multiple of 32 is 1248, so the data starts there <span class="tag c">calculated</span>.</p>
+<p>The parser still checks, because a file can be wrong. <code>Mapped::new</code> is the function that turns a byte range of the file into a typed slice. It refuses a range that runs past the end or an address that is not aligned for its type:</p>
+<pre><code>pub fn new(map: Arc&lt;Mmap&gt;, offset: usize, len: usize) -&gt; std::io::Result&lt;Mapped&lt;T&gt;&gt; {
+    let bytes = len * std::mem::size_of::&lt;T&gt;();
+    let bad = |m: String| std::io::Error::new(std::io::ErrorKind::InvalidData, m);
+    if offset + bytes &gt; map.len() {
+        return Err(bad(format!("tensor at {offset} (+{bytes} B) beyond the file")));
+    }
+    if !(map.as_bytes().as_ptr() as usize + offset).is_multiple_of(std::mem::align_of::&lt;T&gt;()) {
+        return Err(bad(format!("tensor at {offset} is not aligned for its type")));
+    }
+    Ok(Mapped { map, offset, len, _t: PhantomData })
+}</code></pre>
+<ul>
+  <li>The doc comment above the function gives the reason: "a misaligned <code>&amp;[T]</code> would be undefined behaviour".</li>
+  <li><code>size_of::&lt;T&gt;()</code> is the byte size of one element, so <code>bytes</code> is the whole range.</li>
+  <li>The address check adds the mapping's start address to the offset. The mapping starts on a page boundary, so in practice the offset decides the result.</li>
+  <li>Only after both checks does the function build a <code>Mapped</code>. Every later use of the slice relies on these checks having passed.</li>
+</ul>
+<p>The unsafe code that turns the bytes into the slice has its own comment, which states what the check guaranteed:</p>
+<pre><code>impl&lt;T&gt; Deref for Mapped&lt;T&gt; {
+    type Target = [T];
+    fn deref(&amp;self) -&gt; &amp;[T] {
+        // SAFETY: `new` checked bounds and alignment; T is a plain-old-data
+        // type (f32 or a block of integers) for which any bytes are valid;
+        // the mapping lives as long as `self.map`.
+        unsafe { std::slice::from_raw_parts(self.map.as_bytes().as_ptr().add(self.offset) as *const T, self.len) }
+    }
+}</code></pre>
+<ul>
+  <li>The three facts in the SAFETY comment are the three things that make the cast sound: the bounds, the alignment, and the lifetime.</li>
+  <li>"Any bytes are valid" holds for <code>f32</code> and for the block types, but not for <code>bool</code> or a reference. That is why the module only stores plain numbers this way.</li>
+  <li>If the comment's last fact were false, the slice could point into unmapped memory after the file was closed.</li>
+</ul>
+<p><strong>Takeaway: alignment is a rule of the format, the loader checks it, and the one unsafe cast depends on that check.</strong></p>
+
+<h2 id="inplace">Are the weights copied into memory?</h2>
+<p>For the quantized and f32 weights, no. The file is mapped with <code>mmap</code> (the operating system makes a file appear in the address space, and pages are read from storage when first touched), and a weight is just a slice into that mapping. The loader's <code>matrix</code> helper decides per tensor:</p>
+<pre><code>GgmlType::F32 =&gt; Weight::F32(Floats::Mapped(Mapped::new(g.map.clone(), t.offset, n)?)),
+GgmlType::Q8_0 =&gt; Weight::Q8_0(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 32)?)),
+GgmlType::Q4_0 =&gt; Weight::Q4_0(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 32)?)),
+GgmlType::F16 | GgmlType::BF16 =&gt; Weight::from(widen(g.data(t)?, t.ty, n)),</code></pre>
+<ul>
+  <li>F32, Q8_0 and Q4_0 all use <code>Mapped::new</code>. No bytes are copied, so the kernel can evict those pages under memory pressure and read them again later.</li>
+  <li>F16 and BF16 are converted to f32 and copied, because the kernels here read f32 only for those types. The copy costs memory, which is why the quantized files are the ones used on the phone.</li>
+  <li>For a Q4_0 matrix, <code>n / 32</code> is the number of <em>blocks</em>, not the number of weights. A block is 32 weights stored together with one scale.</li>
+</ul>
+<p>How much a block holds follows from its size. Q4_0 stores 18 bytes per 32 weights, Q8_0 stores 34 bytes per 32 <span class="tag c">calculated</span>:</p>
+<pre><code>Q4_0: 18 bytes / 32 weights = 0.5625 bytes per weight
+Q8_0: 34 bytes / 32 weights = 1.0625 bytes per weight
+f32:   4 bytes /  1 weight  = 4 bytes per weight</code></pre>
+<ul>
+  <li>The block sizes are asserted in <code>src/quant.rs</code> at compile time, so a change to the struct layout fails the build.</li>
+  <li>The reader works out a block tensor's size from the type and the element count, as shown earlier. The file does not store a byte count for each tensor.</li>
+  <li>Smaller per weight means fewer bytes to stream each token. That is the whole reason for quantization on a phone, and <a href="../phase-0/decode-ceiling.html">the decode ceiling page</a> works through the arithmetic.</li>
+</ul>
+<p><strong>Takeaway: a quantized weight in a GGUF file is used where it sits in the file, so the Q4_0 weights of this model (278 MB) are not copied into a second buffer.</strong></p>
+
+<h2 id="fair">Why compare two engines on the same bytes?</h2>
+<p>A speed or accuracy comparison is only fair if both programs read the same numbers. If each engine converted the model itself, the rounding and the block layout could differ, and the comparison would measure the conversion. So the test files are made once, by llama.cpp's own tools: <code>convert_hf_to_gguf.py</code> writes an f32 GGUF from the Hugging Face checkpoint, and <code>llama-quantize</code> makes the Q8_0 and Q4_0 versions from it.</p>
+<p>Both engines then read those files. Ours is the parser on this page. llama.cpp's <code>llama-bench</code> and <code>llama-perplexity</code> read the same bytes. The benchmark script says so in its header: "on the <strong>same GGUF files</strong>" <span class="tag m">measured</span>, <code>scripts/phase7-bench.sh</code>.</p>
+<p>The result is that a difference in perplexity or speed comes from the engine, not from the file. The perplexity table on the Phase 7 overview is built this way: our Q8_0 and llama.cpp's Q8_0 agree to within llama.cpp's error bar, and both read the same Q8_0 file <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: one file, two readers. Any difference between them is the reader's, not the file's.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does the parser store each tensor's offset as relative to <code>data_start</code>?</summary>
+<p>Because the header's length changes with the metadata and the number of tensors. The tensor data starts after the header and its padding, so an offset counted from the start of the data stays the same whatever the header size is. The parser adds <code>data_start</code> once per tensor.</p>
+</details>
+<details class="check"><summary>A file has a type 13 metadata value. What happens, and why is stopping better than skipping?</summary>
+<p>The reader does not know the size of type 13, so it cannot find the next key. It returns <code>unknown metadata type 13</code>. Skipping would read the following bytes at the wrong position, and the rest of the header would be garbage without any error.</p>
+</details>
+<details class="check"><summary>Why does a Qwen file have no <code>output.weight</code> tensor, and what does the loader use instead?</summary>
+<p>The embeddings are tied: the output projection uses the same numbers as the token embedding. The loader sets <code>classifier</code> to <code>None</code> and reuses the embedding table for the final projection. Saving one matrix in the file is the point.</p>
+</details>
+<details class="check"><summary>The loader reads a Q4_0 matrix through <code>Mapped::new</code> with <code>n / 32</code> elements. Why not <code>n</code>?</summary>
+<p>Q4_0 is stored as blocks, and <code>Mapped&lt;BlockQ4_0&gt;</code> is a slice of blocks. Each block covers 32 weights, so a matrix of <code>n</code> weights has <code>n / 32</code> blocks. Passing <code>n</code> would read eight times too far, since the slice counts blocks, not weights.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A GGUF file is a typed header, a tensor index and an aligned block of data, all in one file.</p>
+<p>The parser checks every size it trusts. The one unsafe cast depends on the alignment and bounds checks that come before it.</p>
+<p>Both engines read the same bytes, which is what makes the Phase 7 comparisons fair.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 7 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · GGUF and Qwen</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>Qwen2.5-0.5B-Instruct runs from a GGUF file, with its own tokenizer and the ChatML chat template. Its logits match Hugging Face <code>transformers</code> at every layer, its tokenizer matches <code>tokenizers</code> on 433 strings, and its perplexity and KL divergence match llama.cpp's <code>llama-perplexity</code> on the same files. Speed and energy are measured against <code>llama-bench</code> on the same phone. The detailed page on the file format is written: <a href="gguf.html">GGUF: one file for everything</a>. The rest of this phase is covered here.</p></div>
+
+<h1>Phase 7 — a real chat model: Qwen2.5 and GGUF</h1>
+<p class="lede">Phases 2 to 6 ran on SmolLM2 and stories15M, small models with simple tokenizers. Phase 7 runs Qwen2.5-0.5B-Instruct, a chat model in the format llama.cpp uses, so the engine has to read a real GGUF file, a different architecture, and a much larger tokenizer. Then it has to match llama.cpp in speed, accuracy and energy, on the same bytes.</p>
+<nav class="toc">
+  <a href="#changes">What changed from SmolLM2?</a>
+  <a href="#checked">How do we know it is right?</a>
+  <a href="#speed">How fast is it next to llama.cpp?</a>
+  <a href="#sustained">What happens over five minutes, and what does a token cost?</a>
+  <a href="#reading">Which pages should I read next?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#files">Which files hold the code?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="changes">What changed from SmolLM2?</h2>
+<p>The model is the same kind of thing: a decoder that predicts the next token. Four things differ, and each one needed code.</p>
+<ul>
+  <li><strong>The file.</strong> SmolLM2 was read from Hugging Face's <code>safetensors</code> and <code>config.json</code>. Qwen comes as a single GGUF file that holds the config, the tokenizer and the weights. The reader is in <code>src/format/gguf.rs</code>, and <a href="gguf.html">the GGUF page</a> walks through it.</li>
+  <li><strong>The architecture.</strong> Qwen2 has biases on the query, key and value projections, and the loader reads them when the file has them. Its RoPE base (θ, the number that sets how fast position rotations change) is 1,000,000 <span class="tag a">assumption</span>, read from the file's <code>rope.freq_base</code>. Its rotation pairs the two halves of each head, not adjacent numbers, so the loader picks the layout from <code>general.architecture</code>. The embeddings are tied: no separate output matrix is stored, and the loader reuses the token embedding table for the final projection (<code>src/model/gguf.rs</code>).</li>
+  <li><strong>The tokenizer.</strong> Qwen's tokenizer is byte-level BPE like SmolLM2's, but with a different pre-tokenizer: the rule that cuts text into words before merges happen. It is written by hand (<code>qwen2_split</code> in <code>src/tokenizer/bytelevel.rs</code>), and it needs Unicode category tables generated from Python's <code>unicodedata</code>. Its text is also normalised to NFC first (<code>src/tokenizer/nfc.rs</code>), so that the same accented letter always becomes the same bytes.</li>
+  <li><strong>The chat format.</strong> Qwen is trained on ChatML, where each turn is wrapped in <code>&lt;|im_start|&gt;</code> and <code>&lt;|im_end|&gt;</code> markers. Without them the model continues the text instead of answering. <code>src/chat.rs</code> builds the prompt, and the <code>--chat</code> flag turns it on.</li>
+</ul>
+<p><strong>Takeaway: a new architecture is mostly a few config switches, but the tokenizer and the file format each needed a new piece of code.</strong></p>
+
+<h2 id="checked">How do we know it is right?</h2>
+<p>Four checks, each against an outside reference. None of them compares the engine with a second copy of itself.</p>
+<ul>
+  <li><strong>Hugging Face, every layer.</strong> The model loaded from <code>safetensors</code> and from the f32 GGUF both match <code>transformers</code> at every layer, to within 1.4e-4 relative <span class="tag m">measured</span>. Greedy decoding gives the same 48 tokens as HF <span class="tag m">measured</span>.</li>
+  <li><strong>Tokenizer.</strong> 433 strings tokenize to the same ids as <code>tokenizers</code> <span class="tag m">measured</span>. NFC matches Python's <code>unicodedata</code> on 17,253 cases <span class="tag m">measured</span>. The ChatML prompt tokenizes exactly like <code>apply_chat_template</code>.</li>
+  <li><strong>Perplexity and KL against llama.cpp.</strong> Perplexity is how surprised the model is by a text (lower is better). KL divergence says how far one model's probabilities are from another's. Both were run on wikitext-2 (20 chunks of 512 tokens), with the f32 GGUF as the base <span class="tag m">measured</span>.</li>
+</ul>
+<table>
+  <thead><tr><th>Format</th><th>PPL ours</th><th>PPL llama.cpp</th><th>Mean KLD ours</th><th>Mean KLD llama.cpp</th><th>Same top token, ours / llama.cpp</th></tr></thead>
+  <tbody>
+    <tr><td>f32</td><td>16.2745</td><td>16.2744 ± 0.667</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Q8_0</td><td>16.3404 ± 0.670</td><td>16.3425 ± 0.671</td><td>0.002366</td><td>0.002368 ± 0.000032</td><td>96.51 % / 96.88 ± 0.24 %</td></tr>
+    <tr><td>Q4_0</td><td>19.7441 ± 0.837</td><td>19.7283 ± 0.836</td><td>0.180924</td><td>0.181010 ± 0.002752</td><td>77.18 % / 76.98 ± 0.59 %</td></tr>
+  </tbody>
+</table>
+<p class="note"><span class="tag m">measured</span> from <code>results/phase-7.md</code>. Every pair agrees within llama.cpp's error bar, except the Q8_0 same-top rate, which is 1.5 standard errors apart on tokens where two candidates are nearly tied.</p>
+<p>The Q4_0 numbers show something useful. Q4_0 cost this model less than it cost SmolLM2-135M: perplexity rose by about 1.21 times here (19.7441 ÷ 16.2745 <span class="tag c">calculated</span>), against about 1.41 times for SmolLM2 <span class="tag m">measured</span> (the SmolLM2 figure is in <code>results/phase-6.md</code>).</p>
+<p><strong>Takeaway: the engine matches llama.cpp to the reported error on the same files, so a speed difference is not an accuracy difference.</strong></p>
+
+<h2 id="speed">How fast is it next to llama.cpp?</h2>
+<p>Decode and prefill are different kinds of work, and they land in different places. Decode makes one token at a time, and it has to read every weight once per token, so it is limited by memory bandwidth. Prefill processes the whole prompt in one batch, so each weight is reused for every prompt token, and it is limited by arithmetic. The table is for Q4_0 on cores 2–7, from <code>results/phase-7.md</code>. <code>pp64</code> means a 64-token prompt; <code>tg64 @ d0</code> means 64 decode steps from an empty cache, and <code>@ d256</code> means after 256 tokens are already cached. Tokens per second, median of three runs:</p>
+<table>
+  <thead><tr><th>Test</th><th>Ours</th><th>llama.cpp</th><th>llama.cpp ÷ ours <span class="tag c">calculated</span></th></tr></thead>
+  <tbody>
+    <tr><td>pp64 (prefill)</td><td>92.0</td><td>536 ± 12</td><td>5.8</td></tr>
+    <tr><td>pp256 (prefill)</td><td>111.1</td><td>631 ± 4</td><td>5.7</td></tr>
+    <tr><td>pp512 (prefill)</td><td>165.0</td><td>432 ± 51</td><td>2.6</td></tr>
+    <tr><td>tg64 @ d0 (decode)</td><td>128.8</td><td>125.0 ± 15.9</td><td>0.97</td></tr>
+    <tr><td>tg64 @ d256 (decode)</td><td>113.2</td><td>123.2 ± 13.1</td><td>1.09</td></tr>
+    <tr><td>tg64 @ d512 (decode)</td><td>62.8</td><td>122.6 ± 8.1</td><td>1.95</td></tr>
+  </tbody>
+</table>
+<p class="note">Conditions: 2026-10-21, on battery (75 → 73 %), screen on, every run started below 48 °C. Clock caps from the battery apply. The d512 row is probably a bad run: the same commit later gave 87.0 tok/s at that depth, and the results file does not trust this number. A ratio above 1 means llama.cpp is faster.</p>
+<ul>
+  <li><strong>Decode is close.</strong> At short context the two engines are level. On 2026-10-22 the same engine was about 20 % behind in a re-run, so "within about 20 %" is the fair statement. Run-to-run spread is as large as that gap.</li>
+  <li><strong>Prefill is 2.1 to 5.8 times slower.</strong> Our quantized prefill still uses a row-by-row <code>sdot</code> kernel for each group of tokens. llama.cpp uses <code>smmla</code>, an instruction that multiplies two 2 × 8 blocks of 8-bit numbers at once, on repacked weights.</li>
+  <li><strong>The <code>smmla</code> follow-up.</strong> Two rows by two tokens per instruction, so each weight loaded serves two tokens. On 2026-10-24, Q4_0 prefill rose by 22 to 37 % over the <code>sdot</code> build, and the gap to llama.cpp in the same session fell from 2.9–3.7 times to 2.3–2.8 times <span class="tag c">calculated</span> from <code>results/phase-6.md</code>. The Q8_0 prefill did not change, because its interleaving costs what the instruction saves. See the Phase 6 dot-products page, <a href="../phase-6/dot-products.html">dot products and smmla</a>.</li>
+  <li><strong>Cores 6–7 are different.</strong> On the two prime cores, llama.cpp decodes 1.6 times faster (123.7 against 78.8 tok/s). Two of its threads already saturate the bandwidth decode needs, while our Q4_0 kernel spends instructions unpacking nibbles before every multiply.</li>
+</ul>
+<p><strong>Takeaway: decode is a memory problem and we are close to llama.cpp on it; prefill is an arithmetic problem and the gap is real.</strong></p>
+
+<h2 id="sustained">What happens over five minutes, and what does a token cost?</h2>
+<p>A single burst can flatter a phone. Heat builds, and the system lowers the clock. So the benchmark also runs decode for five minutes, back to back, and records the speed over time and the battery's energy use. The conditions are the Q4_0 model on cores 2–7, starting from position 0.</p>
+<div class="statrow">
+  <div class="stat"><b>85.7 tok/s</b><span>average over 301 s, 25,792 tokens <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>112 → 60–89</b><span>10-second windows: 112 for the first 40 s, then dips as the SoC throttles <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>84.5 °C</b><span>hottest CPU zone during the run <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>0.041 J</b><span>per token: 3.49 W average from the battery counter, divided by tokens per second <span class="tag c">calculated</span></span></div>
+</div>
+<p>The energy figure is easy to misread. It is <strong>total phone power with the screen on</strong>, measured from the battery's charge counter. It is not the energy of the CPU alone, so the display and everything else on the phone are counted too. It works out to about 24 tokens per joule <span class="tag c">calculated</span>. This benchmark does not measure the CPU's share on its own.</p>
+<p><strong>Takeaway: the sustained number is lower than the first burst, and the energy number is for the whole phone.</strong></p>
+
+<h2 id="reading">Which pages should I read next?</h2>
+<p>Two pages go deeper on this phase. Read them in this order.</p>
+<ol>
+  <li><a href="gguf.html">GGUF: one file for everything</a>: the header, the typed metadata, the alignment rule, and why the weights are used in place from the memory map.</li>
+  <li><a href="attention-ab.html">NEON attention, measured honestly</a>: a NEON version of attention that looked faster in one run and was measured properly with an alternating A/B test. The result is +10 % at depth 512 and no change at depth 0.</li>
+</ol>
+<p><strong>Takeaway: the file format explains how the model loads, and the attention page explains how a speed claim should be tested.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<p>Four things this phase did not finish. Each one is a question for a later run, not a result.</p>
+<ul>
+  <li><strong>Prefill.</strong> The gap to llama.cpp is 2 to 3 times at best. The <code>smmla</code> kernel with interleaved activations, a 4 × 4 tile, and repacked weights are the next steps. The Phase 6 log says this work was paused on 2026-10-24.</li>
+  <li><strong>Attention across positions.</strong> Work is split by head, so 14 heads over 6 threads gives some threads three heads and others two. Splitting across positions as well would even that out. It has not been done.</li>
+  <li><strong>Decode at depth 512.</strong> The first table's 62.8 tok/s is probably a bad run. The later same-commit runs gave 110.6 → 87.0 with scalar attention. The cause of the drop at depth is not established.</li>
+  <li><strong>The file writer.</strong> The engine reads GGUF files, but it has no writer. The files come from llama.cpp's converter and <code>llama-quantize</code>. The tracker still lists item 7.5 as in progress.</li>
+</ul>
+<p><strong>Takeaway: the open questions are prefill speed, attention balance and one unexplained depth result.</strong></p>
+
+<h2 id="files">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds the measurements, with the conditions they were taken under.</p>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/format/gguf.rs</code></td><td>The GGUF parser: header, typed metadata, tensor infos, alignment, bounds checks</td></tr>
+    <tr><td><code>src/model/gguf.rs</code></td><td>Reads the architecture and its keys; <code>llama</code> and <code>qwen2</code> rope layouts; tied embeddings; QKV biases</td></tr>
+    <tr><td><code>src/weight.rs</code></td><td><code>Mapped</code>, <code>Store</code> and <code>Weight</code>: tensors used in place from the mapping</td></tr>
+    <tr><td><code>src/tokenizer/bytelevel.rs</code></td><td>Byte-level BPE; <code>qwen2_split</code>, the hand-written Qwen2 pre-tokenizer; <code>from_gguf</code>, the tokenizer read from the file</td></tr>
+    <tr><td><code>src/tokenizer/nfc.rs</code></td><td>Unicode NFC normalisation, applied before tokenizing Qwen text</td></tr>
+    <tr><td><code>src/tokenizer/unicode_tables.rs</code></td><td>Generated Unicode tables (from <code>tools/gen_unicode_tables.py</code>)</td></tr>
+    <tr><td><code>src/chat.rs</code></td><td>The ChatML template and Qwen's default system message</td></tr>
+    <tr><td><code>examples/bench_suite.rs</code></td><td>Prefill, decode, time to first token, peak memory, and the sustained run</td></tr>
+    <tr><td><code>scripts/phase7-bench.sh</code></td><td>Runs both engines on the phone with the same files and settings</td></tr>
+    <tr><td><code>results/phase-7.md</code></td><td>Every number on this page, with its conditions</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the file format lives in <code>src/format/gguf.rs</code>, and the tokenizer for Qwen spans three files in <code>src/tokenizer/</code>.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does the loader need to know the architecture name, when the tensors already say what shape they are?</summary>
+<p>The shapes do not say how the rotation pairs its numbers. Llama files have their query and key rows permuted by the converter, so adjacent-pair rotation is correct; Qwen files are not permuted, so the halves layout is correct. The shapes are the same either way, so only <code>general.architecture</code> tells the loader which one to use. The wrong layout still loads and runs, and it gives garbage.</p>
+</details>
+<details class="check"><summary>Decode is close to llama.cpp but prefill is 2 to 6 times slower. Why do the two differ so much?</summary>
+<p>Decode reads every weight once per token, so its speed is set by memory bandwidth, and our Q4_0 decode reaches about 36 GB/s, half of what the phone can read. Prefill reuses each weight across the prompt tokens, so its speed is set by arithmetic. Our quantized prefill still uses a row kernel per token group, while llama.cpp uses a blocked integer multiply, so it does more work per weight load.</p>
+</details>
+<details class="check"><summary>The energy figure is 0.041 J per token. Is that how much energy the CPU used?</summary>
+<p>No. It is the battery's measured power for the whole phone, with the screen on, divided by the tokens per second. The display and everything else are included, so the CPU's share is smaller. The page's sustained run says so for that reason.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A new model family is mostly config switches and a tokenizer, but the file format and the chat template each need their own code.</p>
+<p>The engine matches llama.cpp's accuracy on the same files, so the speed gap is about the kernels.</p>
+<p>Decode is close, prefill is not. The next work is the batched integer kernel for prefill.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+</body>
+</html>

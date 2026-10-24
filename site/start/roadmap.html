@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=20">
+<link rel="stylesheet" href="../css/site.css?v=21">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -93,23 +93,23 @@
     <p class="meta">Done when: you can explain the speed-vs-threads curve and the energy-vs-core-set trade-off. 1–2 weeks.</p>
   </li>
   <li>
-    <h3>Phase 5 — a modern architecture <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
-    <p>SmolLM2-135M: safetensors, memory-mapped weights, grouped-query attention, byte-level BPE tokenizer.</p>
+    <h3>Phase 5 — a modern architecture <span class="tag d">built</span> <span class="tag c">overview written</span></h3>
+    <p>SmolLM2-135M: safetensors, memory-mapped weights, grouped-query attention, byte-level BPE tokenizer. The <a href="../phase-5/index.html">overview</a> is written; the topic pages are still to write.</p>
     <p class="meta">Done when: output matches Hugging Face, and the tokenizer matches exactly. 2–4 weeks.</p>
   </li>
   <li>
-    <h3>Phase 6 — quantization <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
-    <p>Q8_0 and Q4_0 weights, integer dot-product kernels, and measuring how much accuracy the fewer bits cost.</p>
+    <h3>Phase 6 — quantization <span class="tag d">built</span> <span class="tag c">notes started</span></h3>
+    <p>Q8_0 and Q4_0 weights, integer dot-product kernels, and measuring how much accuracy the fewer bits cost. Written: the <a href="../phase-6/index.html">overview</a> and three topic pages.</p>
     <p class="meta">Done when: perplexity and KL divergence match llama.cpp on the same file. 3–6 weeks.</p>
   </li>
   <li>
-    <h3>Phase 7 — a real small model <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
-    <p>Qwen2.5-0.5B from a GGUF file, its tokenizer and chat template, and a full benchmark suite including sustained and energy numbers. One page is written so far: <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a>.</p>
+    <h3>Phase 7 — a real small model <span class="tag d">built</span> <span class="tag c">notes started</span></h3>
+    <p>Qwen2.5-0.5B from a GGUF file, its tokenizer and chat template, and a full benchmark suite including sustained and energy numbers. Written: the <a href="../phase-7/index.html">overview</a>, <a href="../phase-7/gguf.html">GGUF</a> and <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a>.</p>
     <p class="meta">Done when: usable chat on the phone, with a written explanation of where the time and energy go. 3–5 weeks.</p>
   </li>
   <li>
-    <h3>Phase 8 — Android app <span class="tag d">built</span> <span class="tag a">notes to write</span></h3>
-    <p>A C interface, a thin JNI layer, a small Kotlin app that streams tokens.</p>
+    <h3>Phase 8 — Android app <span class="tag d">built</span> <span class="tag c">overview written</span></h3>
+    <p>A C interface, a thin JNI layer, a small Kotlin app that streams tokens. The <a href="../phase-8/index.html">overview</a> is written.</p>
     <p class="meta">Done when: an installable APK streams a chat reply at the same speed as the command-line binary.</p>
   </li>
 </ol>
@@ -136,9 +136,9 @@
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo on 2026-10-23: the engine is built through Phase 8, and the notes cover Phases 0–4.</p>
-<script src="../js/pages.js?v=20"></script>
-<script src="../js/glossary.js?v=20"></script>
-<script src="../js/site.js?v=20"></script>
+<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo on 2026-10-24: the engine is built through Phase 8; the notes cover Phases 0–4 in full, and Phases 5–8 with an overview each plus the first topic pages.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
 </body>
 </html>

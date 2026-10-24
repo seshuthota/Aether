@@ -23,6 +23,8 @@
   initSplitSim();
   initSpinPark();
   initCoreSets();
+  initQuantBlock();
+  initPplCalc();
 })();
 
 function stats(box, rows) {
@@ -725,5 +727,137 @@ function initCoreSets() {
     note.textContent = !list.length ? "Pick at least one core." : v ? "The highlighted bar is this set. The two passes of one set can differ by 10 % or more, so small gaps between bars mean nothing. GB/s is calculated: 75.8 MB of weights read once per token." :
       "Not measured: the sweep ran the twelve sets shown as bars.";
   }
+  render();
+}
+
+// ---------------------------------------------------------------- Phase 6: block quantization
+
+// Phase 6: block quantization. Same math as src/quant.rs (quantize_q8_0,
+// quantize_q4_0); the scale d is kept exact here, not rounded to f16.
+function initQuantBlock() {
+  const root = document.querySelector("[data-quantblock]");
+  if (!root) return;
+  const OUT = 0; // index of the outlier
+  const fmt = root.querySelector("[data-fmt]"), rand = root.querySelector("[data-rand]");
+  const outBox = root.querySelector("[data-outlier]"), wrap = root.querySelector("[data-table]");
+  const scaleLine = root.querySelector("[data-scale]"), sbox = root.querySelector("[data-stats]"), note = root.querySelector("[data-note]");
+  const xs = [], inputs = [], qCells = [], dCells = [], eCells = [];
+  let saved = null; // value at OUT before the outlier replaced it
+  const roundAway = (v) => Math.sign(v) * Math.floor(Math.abs(v) + 0.5); // f32::round: halves away from 0
+  function quantize(vals, f) {
+    let amax = 0, max = 0;
+    if (f === "q8") {
+      amax = Math.max(...vals.map(Math.abs));
+      const d = amax / 127, id = d !== 0 ? 1 / d : 0;
+      const q = vals.map((v) => Math.max(-127, Math.min(127, roundAway(v * id))));
+      return { d, max: amax, q, deq: q.map((k) => k * d) };
+    }
+    // Q4_0: the element of largest magnitude (first on ties), sign kept.
+    for (const v of vals) if (amax < Math.abs(v)) { amax = Math.abs(v); max = v; }
+    const d = max / -8, id = d !== 0 ? 1 / d : 0;
+    const q = vals.map((v) => Math.min(15, Math.floor(Math.max(0, v * id + 8.5))));
+    return { d, max, q, deq: q.map((k) => (k - 8) * d) };
+  }
+  function setOutlier() {
+    let others = 0;
+    xs.forEach((v, i) => { if (i !== OUT) others = Math.max(others, Math.abs(v)); });
+    xs[OUT] = 8 * others;
+    inputs[OUT].value = xs[OUT].toFixed(2);
+  }
+  function randomise() {
+    for (let i = 0; i < 32; i++) {
+      xs[i] = Math.round((Math.random() * 2 - 1) * 100) / 100;
+      inputs[i].value = xs[i].toFixed(2);
+    }
+    saved = xs[OUT];
+    if (outBox.checked) setOutlier();
+    render();
+  }
+  function render() {
+    const f = fmt.value, r = quantize(xs, f), q8 = f === "q8";
+    let maxErr = 0, sumErr = 0;
+    for (let i = 0; i < 32; i++) {
+      const e = r.deq[i] - xs[i];
+      maxErr = Math.max(maxErr, Math.abs(e)); sumErr += Math.abs(e);
+      qCells[i].textContent = String(r.q[i]);
+      dCells[i].textContent = r.deq[i].toFixed(3);
+      eCells[i].textContent = e.toFixed(3);
+    }
+    const bytes = q8 ? 34 : 18;
+    scaleLine.textContent = q8 ? "d = max |x| ÷ 127 = " + r.d.toPrecision(3) + ", so the largest value gets q = ±127."
+      : "d = max ÷ −8 = " + r.d.toPrecision(3) + ", where max = " + r.max.toFixed(2) + " is the value with the largest magnitude.";
+    stats(sbox, [[r.d.toPrecision(3), "scale d"], [maxErr.toFixed(3), "max error"], [(sumErr / 32).toFixed(3), "mean abs error"], [bytes + " B", "for 32 weights (f32: 128 B)"]]);
+    note.textContent = (q8 ? "Q8_0: q = round(x / d), value = q · d. 2 bytes of d plus 32 int8 values = 34 bytes."
+      : "Q4_0: q = min(15, trunc(x / d + 8.5)), value = (q − 8) · d. 2 bytes of d plus 16 bytes of nibbles = 18 bytes.")
+      + " d is kept exact here; the file stores it as f16, which moves each value slightly.";
+  }
+  // Build the table once; render() only rewrites the computed cells.
+  const row = (label, cells) => el("tr", {}, [el("th", { text: label, scope: "row" }), ...cells]);
+  const head = el("tr", {}, [el("th", { text: "i" }), ...Array.from({ length: 32 }, (_, i) => el("th", { text: String(i) }))]);
+  for (let i = 0; i < 32; i++) {
+    xs[i] = Math.round((Math.random() * 2 - 1) * 100) / 100;
+    const inp = el("input", { type: "number", step: "0.01", "aria-label": "value " + i });
+    inp.style.width = "4.4rem";
+    inp.value = xs[i].toFixed(2);
+    inp.addEventListener("input", () => { xs[i] = parseFloat(inp.value) || 0; if (i === OUT) saved = null; render(); });
+    inputs.push(inp);
+    qCells.push(el("td", { class: "num" }));
+    dCells.push(el("td", { class: "num" }));
+    eCells.push(el("td", { class: "num" }));
+  }
+  const body = [
+    row("x", inputs.map((inp) => el("td", {}, [inp]))),
+    row("q", qCells), row("x̂", dCells), row("error", eCells)
+  ];
+  const table = el("table", {}, [el("thead", {}, [head]), el("tbody", {}, body)]);
+  wrap.style.overflowX = "auto";
+  wrap.append(table);
+  fmt.addEventListener("change", render);
+  rand.addEventListener("click", randomise);
+  outBox.addEventListener("change", () => {
+    if (outBox.checked) { saved = xs[OUT]; setOutlier(); }
+    else if (saved !== null) { xs[OUT] = saved; inputs[OUT].value = saved.toFixed(2); saved = null; }
+    render();
+  });
+  render();
+}
+
+// ---------------------------------------------------------------- Phase 6: perplexity
+
+// Phase 6: perplexity from five next-token guesses. Illustration only, not a
+// measurement. Needs el() from site.js and stats() from widgets.js.
+
+function initPplCalc() {
+  const root = document.querySelector("[data-pplcalc]");
+  if (!root) return;
+  // "The cat sat on the mat": the five words the model had to guess, with
+  // the probability it gave each one (made-up values for the example).
+  const TOKENS = [
+    { ctx: "The", word: "cat", p: 0.4 },
+    { ctx: "The cat", word: "sat", p: 0.25 },
+    { ctx: "The cat sat", word: "on", p: 0.6 },
+    { ctx: "The cat sat on", word: "the", p: 0.8 },
+    { ctx: "The cat sat on the", word: "mat", p: 0.1 },
+  ];
+  const box = root.querySelector("[data-sliders]"), sbox = root.querySelector("[data-stats]"), note = root.querySelector("[data-note]");
+  const rows = TOKENS.map((t) => {
+    const r = el("input", { type: "range", min: "0.01", max: "0.99", step: "0.01", value: String(t.p), "aria-label": "probability of " + t.word });
+    const out = el("span", { class: "pv" });
+    box.append(el("label", { class: "field" }, [el("span", { text: "after “" + t.ctx + "”: " + t.word }), r, out]));
+    return { r, out, start: t.p };
+  });
+  function render() {
+    const p = rows.map((x) => Number(x.r.value));
+    const s = p.map((v) => -Math.log(v));
+    const mean = s.reduce((a, v) => a + v, 0) / s.length;
+    const ppl = Math.exp(mean);
+    rows.forEach((x, i) => (x.out.textContent = "p " + p[i].toFixed(2) + " → surprise " + s[i].toFixed(3)));
+    stats(sbox, [[mean.toFixed(3), "mean surprise, nats"], [ppl.toFixed(2), "perplexity = exp(mean)"]]);
+    const n = Math.max(1, Math.round(ppl));
+    note.textContent = "Perplexity " + ppl.toFixed(2) + ": as uncertain as choosing uniformly among about " + n + " tokens. A higher p on any token lowers its surprise, and the mean and the perplexity follow.";
+  }
+  const reset = root.querySelector("[data-reset]");
+  if (reset) reset.addEventListener("click", () => { rows.forEach((x) => (x.r.value = String(x.start))); render(); });
+  root.addEventListener("input", render);
   render();
 }

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 5 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 5 · real model files</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine now loads a real Hugging Face checkpoint, SmolLM2-135M, from its <code>config.json</code>, its <code>model.safetensors</code> file and its <code>tokenizer.json</code>. Every layer's activations match <code>transformers</code> within a relative error of 5.5e-5, the 48 greedy tokens match exactly, and 433 test strings encode and decode exactly as HF <code>tokenizers</code> does it. The checks pass on the host and on the phone. SmolLM2-360M is not verified yet. The detailed pages for this phase are still to write; this overview covers what was built and measured.</p></div>
+
+<h1>Phase 5 — real model files (SmolLM2)</h1>
+<p class="lede">Phases 2 to 4 ran one tiny model from one small llama2.c file. Phase 5 reads the files that Hugging Face publishes: a JSON config, a weights file in a format called safetensors, and a tokenizer described by a JSON file. The model is SmolLM2-135M. Reading these files adds three new ideas: how to map a file into memory without copying it, how a config file can decide the shape of the model, and how a byte-level tokenizer splits text. Most of the model's maths did not change.</p>
+<nav class="toc">
+  <a href="#change">What changed from stories15M, and why?</a>
+  <a href="#safetensors">How do you read a weights file without copying it?</a>
+  <a href="#bf16">Why is bf16 converted to f32, and is it exact?</a>
+  <a href="#config">How does one code path serve two model families?</a>
+  <a href="#gqa">Why do 9 query heads share 3 key/value heads?</a>
+  <a href="#rope">Which pairs does RoPE rotate?</a>
+  <a href="#bpe">How does a byte-level tokenizer turn text into ids?</a>
+  <a href="#verified">How do you know it matches Hugging Face?</a>
+  <a href="#speed">How fast is it?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#code">Which files hold the code?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="change">What changed from stories15M, and why?</h2>
+<p>stories15M was a model made for llama2.c: a small file with a fixed layout, a tokenizer whose scores come from the same file, and one key/value head for each query head. SmolLM2 is a bigger model published by Hugging Face, with its own file layout and some different architecture choices. The engine could not run it until it read the new files and handled the new choices.</p>
+<table>
+  <thead><tr><th>Item</th><th>stories15M (Phases 2–4)</th><th>SmolLM2-135M (Phase 5)</th></tr></thead>
+  <tbody>
+    <tr><td>Width of one token's vector</td><td>288</td><td>576</td></tr>
+    <tr><td>Layers</td><td>6</td><td>30</td></tr>
+    <tr><td>Query heads, width of one head</td><td>6, 48 numbers each</td><td>9, 64 numbers each</td></tr>
+    <tr><td>Key/value heads</td><td>6 (one per query head)</td><td>3 (three query heads share each)</td></tr>
+    <tr><td>Vocabulary</td><td>32,000</td><td>49,152</td></tr>
+    <tr><td>RoPE base θ</td><td>10,000</td><td>100,000</td></tr>
+    <tr><td>RoPE pairing</td><td>adjacent pairs</td><td>rotate-half</td></tr>
+    <tr><td>Weights file</td><td>llama2.c binary, f32</td><td>safetensors, bf16</td></tr>
+    <tr><td>Tokenizer</td><td>llama2.c vocabulary with scores</td><td>byte-level BPE from <code>tokenizer.json</code></td></tr>
+  </tbody>
+</table>
+<p>The SmolLM2 values come from its <code>config.json</code>. The stories15M values come from Phase 2 and the llama2.c loader. Each row is a choice that the code had to read or handle, not something that changes the arithmetic of one layer.</p>
+<p>Three things were new to the engine: the file formats, the grouped-query attention, and the byte-level tokenizer. The rest of the model (RMSNorm, the matrix products, SwiGLU, the residual stream) is the code from Phases 2 to 4, with the new numbers.</p>
+<p><strong>Takeaway: SmolLM2 changed the file formats, the head layout and the tokenizer; the layer maths stayed the same.</strong></p>
+
+<h2 id="safetensors">How do you read a weights file without copying it?</h2>
+<p>A model file of this size is too big to read into a buffer you copy around. Hugging Face's format, <strong>safetensors</strong>, is simple enough to read in place. It starts with a length, then a JSON header that names every tensor (its data type, its shape and where its bytes sit), then the raw numbers packed one after another.</p>
+<pre><code>offset 0       8 bytes   N, a u64 (little-endian): the length of the header
+offset 8       N bytes   JSON header: name, dtype, shape, data_offsets
+offset 8 + N  rest       tensor bytes, packed, no padding; offsets count from here</code></pre>
+<p>An entry in the header looks like this. The numbers are the arithmetic for one tensor, the final norm of SmolLM2:</p>
+<pre><code>{"model.norm.weight": {"dtype": "BF16", "shape": [576],
+                       "data_offsets": [0, 1152]}}</code></pre>
+<ul>
+  <li>The shape says 576 numbers. Each bf16 number takes 2 bytes, so the data is 576 × 2 = 1152 bytes <span class="tag c">calculated</span>.</li>
+  <li>The offsets are measured from the end of the header, not from the start of the file. Getting this wrong reads the header as weights.</li>
+  <li>The header is plain text, so the engine needs a JSON parser. Phase 5 writes one by hand, in <code>src/format/json.rs</code>. It handles escapes, surrogate pairs and reports where an error sits.</li>
+</ul>
+<p>Now the second idea. <strong>mmap</strong> (memory mapping) asks the operating system to make a file appear in the program's address space. Nothing is read at that moment. The first time a page of the file is touched, the kernel reads it from storage. The engine maps the file read-only and privately, with one system call:</p>
+<pre><code>// SAFETY: a fresh private read-only mapping of an open file; the
+// kernel checks the arguments and reports failure as MAP_FAILED.
+let ptr = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0) };</code></pre>
+<ul>
+  <li><code>PROT_READ</code> makes the memory read-only. A write to it crashes the program, so nothing can change the weights by accident.</li>
+  <li>The pages can be dropped under memory pressure and read again later. Heap memory is anonymous: the kernel cannot drop it, and on Android the low-memory killer can stop the app instead. The comment in <code>mmap.rs</code> makes this point for phones.</li>
+  <li>The mapping is the only copy. <code>SafeTensors::get</code> returns a slice that points into it, with no new allocation:</li>
+</ul>
+<pre><code>pub fn get(&amp;self, name: &amp;str) -> Option&lt;View&lt;'_&gt;&gt; {
+    let info = self.info(name)?;
+    Some(View { dtype: info.dtype, shape: &amp;info.shape, bytes: &amp;self.map.as_bytes()[info.bytes.clone()] })
+}</code></pre>
+<ul>
+  <li><code>View</code> holds the dtype, the shape and a slice of bytes. No number is converted until a caller asks.</li>
+  <li><code>info.bytes</code> was checked when the header was read: the range must lie inside the file, and its length must equal the shape times the element size. A bad file fails at open, not in the middle of a forward pass.</li>
+  <li>What breaks without the checks: an offset past the end of the file would read memory the mapping does not own.</li>
+</ul>
+<p><strong>Takeaway: the header says where each tensor sits, and mmap lets the engine read those bytes in place without a copy.</strong></p>
+
+<h2 id="bf16">Why is bf16 converted to f32, and is it exact?</h2>
+<p>SmolLM2's file stores its weights in <strong>bf16</strong> (bfloat16): 16 bits per number. The engine's kernels from Phases 2 to 4 compute in f32, 32 bits per number. A bf16 number has to be turned into an f32 before the maths can use it.</p>
+<p>The trick is that bf16 is the top 16 bits of an f32. Both have the same sign bit and the same 8-bit exponent; bf16 keeps only 7 of the 23 mantissa bits. So converting is just putting the 16 bits back on top and filling the bottom 16 with zeros:</p>
+<pre><code>pub fn bf16_to_f32(b: u16) -&gt; f32 {
+    f32::from_bits((b as u32) &lt;&lt; 16)
+}</code></pre>
+<ul>
+  <li>Example: the bf16 value <code>0x3F80</code> becomes the f32 bits <code>0x3F800000</code>, which is exactly 1.0. The unit test in <code>src/format/safetensors.rs</code> checks this and three other values.</li>
+  <li>The conversion loses nothing, because every bf16 value is already an f32 value. The loss happened when the model was trained, not here.</li>
+  <li>f16 (IEEE half precision) is handled the same way, with its own bit layout. Every f16 value is also exactly an f32.</li>
+  <li>What breaks if you skip the shift: the bits are read as the wrong number, and every weight is wrong by a large factor. The model still runs, and writes nonsense.</li>
+</ul>
+<p>The cost is memory. A bf16 weight takes 2 bytes in the file and 4 bytes after conversion <span class="tag c">calculated</span>. Phase 6 later avoids the f32 copy by quantizing at load.</p>
+<p><strong>Takeaway: bf16 to f32 is a shift of 16 bits, and it is exact; the price is that the weights take twice the file size in memory.</strong></p>
+
+<h2 id="config">How does one code path serve two model families?</h2>
+<p>The shapes of a model are not in the code. They are in <code>config.json</code>: the width, the number of layers, the number of heads, the vocabulary size and the RoPE base. The engine reads that file into one struct, <code>Config</code>, and every loop and buffer size comes from it. stories15M and SmolLM2 use the same forward pass with different numbers.</p>
+<ul>
+  <li>Hugging Face's key names differ from llama2.c's, but the loader maps them into the same struct. <code>hidden_size</code> becomes <code>dim</code>, and <code>num_key_value_heads</code> becomes <code>n_kv_heads</code>.</li>
+  <li>If <code>num_key_value_heads</code> is missing, the loader uses <code>num_attention_heads</code>. A config without grouping then means one key/value head per query head.</li>
+  <li>If <code>lm_head.weight</code> is missing, the classifier reuses the token embedding table. SmolLM2 sets <code>tie_word_embeddings: true</code>, so it has no separate classifier. The loader checks for the tensor, so it does not need to read the flag.</li>
+  <li>The loader checks each tensor's shape against what the config implies. A wrong shape fails with a message that names the tensor. Without this check, the engine would read the wrong bytes and produce wrong output without any error.</li>
+</ul>
+<p>Two derived sizes do most of the work. They are short methods on <code>Config</code>:</p>
+<pre><code>/// Width of one attention head.
+pub fn head_size(&amp;self) -&gt; usize {
+    self.dim / self.n_heads
+}
+
+/// How many query heads share each K/V head.
+pub fn kv_group(&amp;self) -&gt; usize {
+    self.n_heads / self.n_kv_heads
+}</code></pre>
+<ul>
+  <li>For SmolLM2, <code>head_size</code> is 576 ÷ 9 = 64 <span class="tag c">calculated</span>.</li>
+  <li><code>kv_group</code> is 9 ÷ 3 = 3 for SmolLM2 and 6 ÷ 6 = 1 for stories15M <span class="tag c">calculated</span>. The attention code uses this one number, and never asks which model it is running.</li>
+</ul>
+<p><strong>Takeaway: the config file gives the shapes, and one code path reads them; a second model needs a new config, not new maths.</strong></p>
+
+<h2 id="gqa">Why do 9 query heads share 3 key/value heads?</h2>
+<p>Each token's key and value vectors are kept in the KV cache from Phase 2, for every layer and every position. The cache grows with the number of key/value heads. Phase 2 gave every query head its own key/value head, so the cache held one pair per query head. <strong>Grouped-query attention</strong> (GQA) lets several query heads read the same key/value head. The cache then shrinks by the size of the group.</p>
+<pre><code>query heads:   q0  q1  q2  |  q3  q4  q5  |  q6  q7  q8
+                 \  |  /       \  |  /       \  |  /
+kv heads:           kv0           kv1           kv2</code></pre>
+<p>Query head <var>h</var> reads key/value head <code>h / kv_group</code>, with integer division. Head 7 is 7 ÷ 3 = 2, so it reads <code>kv2</code>, the same keys and values as heads 6 and 8. The forward pass uses this one formula for every model: with a group of 1, it is just head <var>h</var>.</p>
+<p>What the sharing saves, for SmolLM2 with the full 8192-position cache that the model allows:</p>
+<ul>
+  <li>The key/value width is 3 × 64 = 192 numbers per token, against 9 × 64 = 576 with one head per query head <span class="tag c">calculated</span>.</li>
+  <li>The cache in f32 is 30 layers × 8192 positions × 192 numbers × 2 (keys and values) × 4 bytes = 377 MB <span class="tag c">calculated</span>. With one head per query head it would be three times that, about 1.13 GB <span class="tag c">calculated</span>.</li>
+  <li>The loader sizes the cache to the smaller of the model's limit and the <code>max_seq</code> the caller asks for, so a short run uses less.</li>
+</ul>
+<div class="callout warn"><span class="lbl">Easy to get wrong</span><p>The query heads of one group must read the same key/value head. A wrong group size, or a loop that reads <code>h</code> instead of <code>h / kv_group</code>, does not crash. It gives a model that writes fluent but wrong text, because each query compares itself with the wrong keys.</p></div>
+<p><strong>Takeaway: GQA saves cache memory by reusing key/value heads, and SmolLM2's 9-to-3 layout cuts the cache to a third.</strong></p>
+
+<h2 id="rope">Which pairs does RoPE rotate?</h2>
+<p>Phase 2 explained RoPE: each pair of numbers in a head is rotated by an angle that depends on the token's position, so attention can tell how far apart two tokens are. The rotation is the same in both families. The difference is <em>which two numbers form a pair</em>. There are two common layouts, and a model must be run with the one it was trained with.</p>
+<pre><code>llama2.c (adjacent):   (0,1)  (2,3)  (4,5)  ...  (62,63)
+Hugging Face (halves): (0,32) (1,33) (2,34) ...  (31,63)</code></pre>
+<p>The pairs above are for a head of 64 numbers, as in SmolLM2 <span class="tag c">calculated</span>. The rotation of pair <var>i</var> uses the angle <code>pos × θ^(−2i/head_size)</code>, with θ = 100,000 for SmolLM2 from its config (stories15M uses 10,000). Here is the halves version from <code>src/kernels/scalar.rs</code>, shortened:</p>
+<pre><code>pub fn rope_halves(v: &amp;mut [f32], pos: usize, head_size: usize, theta: f32) {
+    let half = head_size / 2;
+    for head in v.chunks_exact_mut(head_size) {
+        for i in 0..half {
+            let freq = 1.0 / theta.powf((2 * i) as f32 / head_size as f32);
+            let angle = pos as f32 * freq;
+            let (sin, cos) = (angle.sin(), angle.cos());
+            let (v0, v1) = (head[i], head[i + half]);
+            head[i] = v0 * cos - v1 * sin;
+            head[i + half] = v0 * sin + v1 * cos;
+        }
+    }
+}</code></pre>
+<ul>
+  <li>The loop runs over half the head. Each step takes element <code>i</code> and element <code>i + half</code>, the two halves of the head.</li>
+  <li>The angle is the same formula as the adjacent version. Only the indices differ.</li>
+  <li>The engine has both functions, <code>rope_adjacent</code> and <code>rope_halves</code>. The loader sets the halves layout for Hugging Face checkpoints. GGUF files from llama.cpp use the adjacent layout, because the converter permutes the query and key weights when it writes them.</li>
+  <li>What breaks: mixing the two layouts still runs and writes garbage. There is no crash to point at, so the check that catches it is the comparison with <code>transformers</code> below.</li>
+</ul>
+<p>If you want the rotation itself again, read <a href="../phase-2/rope.html">RoPE: position as rotation</a>. That page explains the adjacent layout, which llama2.c uses.</p>
+<p><strong>Takeaway: the rotation is the same in both layouts, but the pairs are not, so the layout must match how the weights were saved.</strong></p>
+
+<h2 id="bpe">How does a byte-level tokenizer turn text into ids?</h2>
+<p>Phase 2's tokenizer started from characters and merged the pairs with the best score. SmolLM2's tokenizer is <strong>byte-level BPE</strong>: it starts from the UTF-8 bytes of the text, not from characters, and it applies merges by their rank in a list. Its rules are in <code>tokenizer.json</code>. The engine reads them in <code>src/tokenizer/bytelevel.rs</code>, in four steps:</p>
+<ol>
+  <li><strong>Special tokens</strong> such as <code>&lt;|im_start|&gt;</code> are cut out first and become their ids directly.</li>
+  <li><strong>Pre-tokenization</strong> splits the text into words that BPE never merges across. SmolLM2 splits every digit on its own, then applies GPT-2's regular expression for contractions, words, numbers, symbols and whitespace. The engine implements that regex by hand.</li>
+  <li><strong>Byte-level mapping</strong> turns each word's bytes into printable stand-in characters. A space becomes <code>Ġ</code>, a newline becomes <code>Ċ</code>.</li>
+  <li><strong>BPE</strong> starts with one symbol per byte and repeatedly merges the adjacent pair with the lowest rank in the merge list, until no listed pair is left.</li>
+</ol>
+<p>Step 3 is why nothing is unknown. Every one of the 256 byte values gets its own stand-in character, so any text, including emoji, has an id to start from:</p>
+<pre><code>fn bytes_to_unicode() -&gt; [char; 256] {
+    // printable Latin-1 bytes map to themselves; the rest to U+0100 onward
+    let printable = |b: u32| (0x21..=0x7E).contains(&amp;b) || (0xA1..=0xAC).contains(&amp;b) || (0xAE..=0xFF).contains(&amp;b);
+    // ... fills table[b] with the printable char, or 255 + extra for the others
+}</code></pre>
+<ul>
+  <li>The table is GPT-2's. Its printable bytes keep their own letters, which is why ordinary English looks normal in the vocabulary.</li>
+  <li>Merges use rank, not score. Phase 2's tokenizer ranked pairs by a score stored with each token. SmolLM2's list says which pair merges first, so a lower rank wins.</li>
+  <li>What breaks if you skip step 2: BPE would merge across word boundaries, and the same word would get different ids in different positions.</li>
+</ul>
+<div class="callout"><span class="lbl">Illustration, not a measurement</span><p>Take the text “Hello 👋”. The emoji is four UTF-8 bytes, so step 1 starts it with four symbols. Only the merges in the list can join them, and only as far as the list allows. Several tokens for one emoji is normal for byte-level BPE, and it is not an error.</p></div>
+<p>The tokenizer's decode step runs the mapping backwards: it joins the stand-in characters and turns them back into bytes, then into text.</p>
+<p><strong>Takeaway: byte-level BPE starts from bytes, so no input is unknown, and merges are applied by rank in the file's own list.</strong></p>
+
+<h2 id="verified">How do you know it matches Hugging Face?</h2>
+<p>The reference is Hugging Face <code>transformers</code> for the model and <code>tokenizers</code> for the tokenizer. <code>tools/hf_dump.py</code> runs both on a fixed prompt and writes the results to files the engine can read with its own parser. It records the output of each layer with forward hooks, runs greedy generation, and encodes a corpus of test strings. The model runs in f32 with eager attention, so the only differences left are the order of additions.</p>
+<table>
+  <thead><tr><th>Check</th><th>Result</th><th>Where it is tested</th></tr></thead>
+  <tbody>
+    <tr><td>Every layer's activations, every prompt position, against <code>transformers</code></td><td>worst relative error 5.5e-5 <span class="tag m">measured</span> (the test fails above 1e-3)</td><td><code>model::hf::tests</code>, through <code>model::reference</code></td></tr>
+    <tr><td>Greedy generation of 48 tokens, against <code>generate(do_sample=False)</code></td><td>identical <span class="tag m">measured</span></td><td><code>model::hf::tests</code></td></tr>
+    <tr><td>Tokenizer, encode and decode, against HF <code>tokenizers</code></td><td>433 strings identical, including scripts, emoji, ZWJ sequences, flags, code and chat markup <span class="tag m">measured</span></td><td><code>tokenizer::bytelevel::tests</code></td></tr>
+    <tr><td>JSON parser</td><td>escapes, surrogate pairs and error positions</td><td><code>format::json::tests</code></td></tr>
+    <tr><td>bf16 to f32 widening</td><td>exact</td><td><code>format::safetensors::tests</code></td></tr>
+  </tbody>
+</table>
+<p>The totals are 85 of 85 tests passing on 2026-10-22, on the host and on the phone <span class="tag m">measured</span>.</p>
+<p>Why a tolerance and not exact equality for the layers? Hugging Face adds the numbers of a matrix product in a different order from ours, and f32 addition is not associative. So the layers differ in the last few bits. The greedy tokens are still compared for exact equality, and they match. The tokenizer has no maths to reorder, so it must match exactly.</p>
+<div class="callout warn"><span class="lbl">The gotcha</span><p>Greedy generation in <code>transformers</code> still applies a repetition penalty if <code>generation_config.json</code> sets one. Qwen2.5-Instruct sets 1.05 there. <code>tools/hf_dump.py</code> passes <code>repetition_penalty=1.0</code> so the reference matches the engine's greedy decoding. SmolLM2's <code>generation_config.json</code> sets only the special token ids. If the reference and the engine disagree on tokens, check the generation settings before the code.</p></div>
+<p>The method is the one from <a href="../phase-2/correctness.html">Bit-identical with llama2.c</a>, now against a second reference.</p>
+<p><strong>Takeaway: the layers are compared to a tolerance because the order of additions differs, and the tokens and the tokenizer must match exactly.</strong></p>
+
+<h2 id="speed">How fast is it?</h2>
+<p>Phase 5 adds no speed of its own: the loader runs once, and the decode loop is the one from Phase 4. The speeds below are for SmolLM2-135M in Q4_0, a 4-bit format that Phase 6 explains. They come from the clean Phase 4 sweep, on battery, at about 2.4 GHz. The Phase 4 page explains the thread work behind them.</p>
+<div class="statrow">
+  <div class="stat"><b>about 160 tok/s</b><span>decode, core 7 alone (a prime core), two passes <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>326 and 343 tok/s</b><span>decode on cores 2–7, the two passes of the same set <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>310 and 341 tok/s</b><span>decode on all eight cores, the two passes; no faster than 2–7 <span class="tag m">measured</span></span></div>
+</div>
+<p>Those numbers are a summary of <code>results/phase-4.md</code>. Two passes of one set can differ by 10 % or more, so the gap between the top sets is inside the noise. Read the numbers as "about 330 tokens per second on six cores", not as a precise figure.</p>
+<p><strong>Takeaway: SmolLM2 Q4_0 decodes at about 330 tokens per second on cores 2–7 on this phone, and the thread work, not the loader, set that speed.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<p>Three things are not settled by Phase 5. Each one is a task, not a result.</p>
+<ul>
+  <li><strong>SmolLM2-360M</strong> (item 5.6 in <code>IMPLEMENTATION.md</code>) uses the same code path, but it has not been checked against <code>transformers</code>. The check is the same as for 135M: every layer, the greedy tokens and the tokenizer corpus.</li>
+  <li><strong>First-touch cost</strong>: the first use of a mapped page reads it from storage, so the first answer after launch can be slower. Phase 5 does not measure that; the app that uses the engine is covered in Phase 8.</li>
+  <li><strong>The f32 copy</strong>: converting the weights at load doubles their size in memory. Phase 6 quantizes them instead.</li>
+</ul>
+<p><strong>Takeaway: the 360M check is the one gap in the verification; the other two are costs that later phases take on.</strong></p>
+
+<h2 id="code">Which files hold the code?</h2>
+<p>Find the file for the part you are reading. Each one is named where its idea is explained above.</p>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/format/mmap.rs</code></td><td>Maps a file read-only with <code>mmap</code>; unmaps it on drop</td></tr>
+    <tr><td><code>src/format/json.rs</code></td><td>The hand-written JSON parser for <code>config.json</code>, safetensors headers and <code>tokenizer.json</code></td></tr>
+    <tr><td><code>src/format/safetensors.rs</code></td><td>Reads the header, checks the offsets, gives tensor views; bf16 and f16 to f32</td></tr>
+    <tr><td><code>src/model/config.rs</code></td><td>The <code>Config</code> struct; <code>head_size</code>, <code>kv_dim</code>, <code>kv_group</code>; the RoPE layout enum</td></tr>
+    <tr><td><code>src/model/hf.rs</code></td><td>Loads the config and every weight from a Hugging Face directory, with shape checks; tests against <code>transformers</code></td></tr>
+    <tr><td><code>src/model/reference.rs</code></td><td>Compares the layers and the greedy tokens with the dumped reference</td></tr>
+    <tr><td><code>src/kernels/scalar.rs</code></td><td><code>rope_adjacent</code> and <code>rope_halves</code></td></tr>
+    <tr><td><code>src/tokenizer/bytelevel.rs</code></td><td>The byte-level BPE tokenizer: special tokens, pre-tokenizers, the byte table, merges by rank, decode</td></tr>
+    <tr><td><code>src/tokenizer/unicode_tables.rs</code></td><td>Letter and number tables for the pre-tokenizer, generated by <code>tools/gen_unicode_tables.py</code></td></tr>
+    <tr><td><code>tools/hf_dump.py</code></td><td>Writes the <code>transformers</code> activations, greedy tokens and tokenizer outputs the tests read</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the file formats live in <code>src/format/</code>, the model loader in <code>src/model/hf.rs</code>, and the tokenizer in <code>src/tokenizer/bytelevel.rs</code>.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does the engine read the shapes from config.json instead of writing them into the code?</summary>
+<p>Because the same forward pass serves stories15M and SmolLM2, which differ in width, layer count, head count and vocabulary. The config gives those numbers, and the code uses them everywhere. A new model then needs a new config, not new maths.</p>
+</details>
+<details class="check"><summary>If you use the adjacent RoPE layout on a Hugging Face checkpoint, what do you see?</summary>
+<p>The program runs and produces text, but the text is wrong. Nothing crashes, because the rotation is the same and only the pairs differ. The comparison with <code>transformers</code> is what catches it.</p>
+</details>
+<details class="check"><summary>SmolLM2 has 9 query heads and 3 key/value heads. Which key/value head does query head 7 read?</summary>
+<p>Head 2, because 7 ÷ 3 = 2 with integer division. Query heads 6, 7 and 8 all read it.</p>
+</details>
+<details class="check"><summary>Why are the layers compared with a tolerance, but the tokens with exact equality?</summary>
+<p>The layers are floating-point sums, and the order of additions differs from <code>transformers</code>, so the last bits differ. The tokens and the tokenizer are discrete: an id is either the same or it is not.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A Hugging Face model is a config file, a safetensors file and a tokenizer file. The engine reads each with a small parser, maps the weights without copying them, and uses the config for every shape.</p>
+<p>SmolLM2 needed three new ideas: grouped-query attention, the rotate-half layout of RoPE, and a byte-level tokenizer. Each one is checked against Hugging Face, not against our own code.</p>
+<p>SmolLM2-360M is the one model in this family that is not yet verified.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise; the decode speeds are from the Phase 4 sweep on battery. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+</body>
+</html>

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Copy this file to phase-N/topic.html, change the title, kicker and content,
+     then add one line for it to js/pages.js. The menu, breadcrumb and
+     previous/next links come from that list. This template assumes the page
+     sits one folder deep; for a page at the top level, drop the "../". -->
+<title>Multiplying quantized weights: sdot and smmla · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 6 · concept 2</p>
+
+<h1>Multiplying quantized weights: sdot and smmla</h1>
+<p class="lede">A matrix-vector product is one dot product per output row: the row's weights against the activation vector. Quantized weights make the rows smaller to read. The kernels still have to multiply them, and how they multiply depends on how the activation is stored. The last step is a matrix instruction, <code>smmla</code>, that serves two tokens at once for prefill.</p>
+<nav class="toc">
+  <a href="#why">Why do the weights need their own multiply?</a>
+  <a href="#style-a">Option a: turn the weights back into floats</a>
+  <a href="#style-b">Option b: quantize the activation too</a>
+  <a href="#prefill">What changes with many tokens?</a>
+  <a href="#smmla">How does smmla work, and why is it written in asm?</a>
+  <a href="#ab">Did smmla make prefill faster?</a>
+  <a href="#next">What comes next?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="why">Why do the weights need their own multiply?</h2>
+<p>Decode reads every weight once per generated token. The fewer bytes each weight takes, the less memory is read. A quantized format stores a small integer per weight and one shared scale per <em>block</em> of 32 weights. A block is 32 consecutive weights that share one scale <code>d</code>. The real weight is <code>d × q</code>, where <code>q</code> is the stored integer.</p>
+<p>Two formats matter here. <code>Q8_0</code> stores 32 int8 values (one signed byte each) plus one f16 scale: 34 bytes per block, which is <span class="tag c">calculated</span> 8.5 bits per weight. <code>Q4_0</code> packs two 4-bit values into each byte, plus the same f16 scale: 18 bytes per block, <span class="tag c">calculated</span> 4.5 bits per weight.</p>
+<p>Illustration (not a measurement): a block with <code>d = 0.5</code> and stored values <code>3</code> and <code>−2</code> holds the weights 1.5 and −1.0. The multiply has to produce the same answer as if those floats were used, but without turning every weight back into a float first.</p>
+<p><strong>Takeaway: the scale is shared by 32 weights, so a kernel can do integer work for a block and apply the scale once.</strong></p>
+
+<h2 id="style-a">Option a: turn the weights back into floats</h2>
+<p>The simple route is style a. Widen each int8 weight to an f32, multiply by the f32 activation, and add up. This is <code>dot_q8_0_f32</code> in <code>src/kernels/neon_quant.rs</code>. A <em>register</em> here is one 128-bit NEON vector: it holds 16 bytes, 8 halves, or 4 floats.</p>
+<pre><code>/// (a) Q8_0 row · f32 x.
+pub fn dot_q8_0_f32(row: &amp;[BlockQ8_0], x: &amp;[f32]) -&gt; f32 {
+    assert_eq!(x.len(), row.len() * QK);
+    // SAFETY: register-only NEON op (AArch64 baseline).
+    let mut acc = unsafe { vdupq_n_f32(0.0) };
+    for (blk, xs) in row.iter().zip(x.as_chunks::&lt;QK&gt;().0) {
+        // SAFETY: each block holds 32 int8s; `xs` holds 32 floats.
+        unsafe {
+            let q0 = vld1q_s8(blk.qs.as_ptr());
+            let q1 = vld1q_s8(blk.qs.as_ptr().add(16));
+            let s = fma16(fma16(vdupq_n_f32(0.0), q0, xs.as_ptr()), q1, xs.as_ptr().add(16));
+            acc = vfmaq_n_f32(acc, s, f16_to_f32(blk.d));
+        }
+    }
+    // SAFETY: register-only NEON op.
+    unsafe { vaddvq_f32(acc) }
+}</code></pre>
+<ul>
+  <li><code>fma16</code> handles 16 weights. It calls <code>widen8</code> on each 8-byte half, which widens int8 to int16, then int32, then f32: three steps per 8 values, as the module doc says.</li>
+  <li><code>vfmaq_f32(acc, a, b)</code> is a fused multiply-add (FMA): it computes <code>acc + a × b</code> for four floats in one instruction.</li>
+  <li><code>vfmaq_n_f32(acc, s, f16_to_f32(blk.d))</code> multiplies the block's sum by its scale once, not once per weight.</li>
+  <li>The loop reads the activation as f32, so every weight pays for a widen, a convert and a 4-lane FMA. The integer units do not do the work.</li>
+</ul>
+<p>The phase-6 measurement shows the cost: the decode GEMV with this style ran at 12 GB/s <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: style a is correct, but every weight goes through three widening steps and a float multiply.</strong></p>
+
+<h2 id="style-b">Option b: quantize the activation too</h2>
+<p>The weights are integers and the activation is f32. Mixing them forces a conversion for every value. Style b removes that by quantizing the activation to Q8_0 as well, once per call. <code>quantize_activation</code> in <code>src/kernels/mod.rs</code> does it:</p>
+<pre><code>/// Quantizes one activation vector (a multiple of 32 long) to Q8_0 for the
+/// integer dot-product kernels.
+fn quantize_activation(x: &amp;[f32]) -&gt; Vec&lt;BlockQ8_0&gt; {
+    let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
+    crate::quant::quantize_q8_0(x, &amp;mut q);
+    q
+}</code></pre>
+<p>In <code>linear_batch_on</code> the quantized activation is built once, and its scales are converted to f32 once too:</p>
+<pre><code>let xq: Vec&lt;BlockQ8_0&gt; = x.chunks_exact(n).flat_map(quantize_activation).collect();
+// The activation's scales as f32, converted once rather than per row.
+let xd: Vec&lt;f32&gt; = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();</code></pre>
+<ul>
+  <li>Quantizing costs one pass over the activation. Every output row then reuses it, so the cost is paid once per call, not once per row.</li>
+  <li>Both operands are now int8, so one instruction can multiply them directly.</li>
+  <li>If the activation were left as f32, the integer weights would need converting first, and the advantage of integer math would be lost.</li>
+</ul>
+<h3>The sdot instruction</h3>
+<p><code>sdot</code> (Rust name <code>vdotq_s32</code>, from the <code>dotprod</code> extension) takes two registers of 16 int8 values. It multiplies them pair by pair, sums the products in groups of four, and writes four int32 numbers. Each of those four numbers is a <em>lane</em>: one 32-bit slot of the register.</p>
+<pre><code>weight bytes:  w0  w1  w2  w3 | w4  w5  w6  w7 | w8  w9  w10 w11 | w12 w13 w14 w15
+activ. bytes:  x0  x1  x2  x3 | x4  x5  x6  x7 | x8  x9  x10 x11 | x12 x13 x14 x15
+                  |                |                 |                 |
+result lanes:  lane0            lane1             lane2             lane3
+               = w0x0+w1x1      = w4x4+w5x5       = w8x8+w9x9       = w12x12+w13x13
+                 +w2x2+w3x3       +w6x6+w7x7        +w10x10+w11x11    +w14x14+w15x15</code></pre>
+<ul>
+  <li>One <code>sdot</code> does 16 multiplications and sums them into four lanes. That is 16 weights against 16 activations.</li>
+  <li>The four results are four separate int32 numbers. They are added together only at the end (<code>vaddvq_f32</code>).</li>
+  <li>The sums are exact. Each int8 product is at most 128 × 128 = 16,384 in size <span class="tag c">calculated</span>. Thirty-two of them add to at most 524,288, which fits an int32 with no rounding. Only the int-to-float conversion and the scale multiply round.</li>
+</ul>
+<h3>One block: two sdot and one FMA</h3>
+<pre><code>let block = |w: &amp;BlockQ8_0, v: &amp;BlockQ8_0| -&gt; (float32x4_t, f32) {
+    // SAFETY: each block holds 32 int8s.
+    unsafe {
+        let z = vdupq_n_s32(0);
+        let d = vdotq_s32(vdotq_s32(z, vld1q_s8(w.qs.as_ptr()), vld1q_s8(v.qs.as_ptr())), vld1q_s8(w.qs.as_ptr().add(16)), vld1q_s8(v.qs.as_ptr().add(16)));
+        (vcvtq_f32_s32(d), f16_to_f32(w.d) * f16_to_f32(v.d))
+    }
+};</code></pre>
+<ul>
+  <li>Two <code>vdotq_s32</code> calls cover the 32 values of the block. The first adds into a zero accumulator, the second adds into the first's result.</li>
+  <li><code>vcvtq_f32_s32</code> converts the four int32 lanes to floats: the only conversion in the block.</li>
+  <li>The closure returns the lanes and the scale <code>d_w × d_x</code>. The caller then does <code>vfmaq_n_f32(acc0, s0, d0)</code>: one FMA by that scale, on all four lanes.</li>
+  <li>Blocks alternate between <code>acc0</code> and <code>acc1</code>, so consecutive FMAs do not wait for each other. This is the same idea as the f32 GEMV.</li>
+  <li>If the scale is left out, every block is wrong by its own factor, and the sum is wrong even when the integers are right.</li>
+</ul>
+<h3>Q4_0 needs a nibble unpack first</h3>
+<p>A Q4_0 weight is 4 bits, and <code>sdot</code> needs bytes. Each byte of <code>qs</code> holds two values: element <em>j</em> in the low nibble and element <em>j + 16</em> in the high nibble. <code>unpack_q4</code> turns 16 bytes into two int8 vectors of 16 values each, in the range −8 to 7:</p>
+<pre><code>/// Q4_0 nibbles of one block → its 32 weights as int8 in −8..=7:
+/// (elements 0..16, elements 16..32).
+#[inline(always)]
+fn unpack_q4(qs: uint8x16_t) -&gt; (int8x16_t, int8x16_t) {
+    // SAFETY: register-only NEON ops; NEON is part of the AArch64 baseline.
+    unsafe {
+        let eight = vdupq_n_s8(8);
+        let lo = vreinterpretq_s8_u8(vandq_u8(qs, vdupq_n_u8(0x0F)));
+        let hi = vreinterpretq_s8_u8(vshrq_n_u8(qs, 4));
+        (vsubq_s8(lo, eight), vsubq_s8(hi, eight))
+    }
+}</code></pre>
+<ul>
+  <li><code>vandq_u8(qs, 0x0F)</code> keeps the low nibble of each byte. <code>vshrq_n_u8(qs, 4)</code> shifts the high nibble down.</li>
+  <li><code>vsubq_s8(…, eight)</code> turns 0..15 into −8..7. Without it the sum is off by 8 times the sum of the activation values in the block.</li>
+  <li>Per 32 weights the Q4_0 kernel adds one AND, one shift and two subtracts before its two <code>sdot</code>s. Q8_0 needs none of these.</li>
+</ul>
+<p>Q4_0 moves fewer bytes than Q8_0, but it spends more instructions per weight. On one core the instructions run out before memory does. That is why Q4_0 stays compute-bound on one core at 12–15 GB/s, while Q8_0 reached 32 GB/s <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: quantizing the activation once turns the work into int8 multiplies, and the scale is applied once per block.</strong></p>
+
+<h2 id="prefill">What changes with many tokens?</h2>
+<p>Prefill runs the whole prompt through the model, so a matrix-vector product becomes a matrix-matrix product: <code>t</code> activation vectors, one per token. A 512-token prompt has 512 of them, and each one is multiplied by every weight row.</p>
+<p>Before the <code>smmla</code> change, the code handled each token in turn. Here is the fallback loop in <code>quant_rows</code>, shortened:</p>
+<pre><code>let nb = xq.len() / t;
+let fast = has_dot4();
+let mut i = r.start;
+while i &lt; r.end {
+    let step = if fast &amp;&amp; i + 4 &lt;= r.end { 4 } else { 1 };
+    for tt in 0..t {
+        let (x, s) = (&amp;xq[tt * nb..(tt + 1) * nb], &amp;xd[tt * nb..(tt + 1) * nb]);
+        if step == 4 {
+            let v = dot4(w, i, x, s);
+            // ...
+        } else {
+            // ...
+        }
+    }
+    i += step;
+}</code></pre>
+<ul>
+  <li>For each group of four rows, the inner loop runs once per token. The same weight blocks are loaded and unpacked again for each token. They come from L1 cache, not from main memory, but the work is repeated.</li>
+  <li>For Q4_0 that repeats the nibble unpack for every token.</li>
+  <li>The loop computes correct results. Its cost is that each weight is handled <code>t</code> times.</li>
+</ul>
+<p><strong>Takeaway: with <code>t</code> tokens the old loop does the weight work <code>t</code> times. The next step is to use each loaded weight for more than one token.</strong></p>
+
+<h2 id="smmla">How does smmla work, and why is it written in asm?</h2>
+<p><code>smmla</code> is a matrix instruction from the <code>i8mm</code> extension. It treats each 16-byte register as a 2 × 8 matrix of int8 values. Its comment in <code>src/kernels/neon_quant.rs</code> gives the layout:</p>
+<pre><code>// `smmla d, a, b` treats each 16-byte register as a 2×8 int8 matrix (bytes
+// 0..8 are row 0, 8..16 row 1) and adds a · bᵀ, a 2×2 int32 matrix, to d:
+//
+//     a = [w0 k0..8 | w1 k0..8]      d.lane0 += w0·x0    d.lane1 += w0·x1
+//     b = [x0 k0..8 | x1 k0..8]      d.lane2 += w1·x0    d.lane3 += w1·x1
+//
+// So each weight value loaded serves two tokens, where `sdot` serves one.</code></pre>
+<p>As a text diagram, with two weight rows (w0, w1) and two tokens (x0, x1):</p>
+<pre><code>        register a (weights)                   register b (tokens)
+  [ w0: k0 .. k7 | w1: k0 .. k7 ]        [ x0: k0 .. k7 | x1: k0 .. k7 ]
+
+  accumulator d, a 2 × 2 grid of int32:
+                       token x0                  token x1
+      row w0     lane 0: w0·x0            lane 1: w0·x1
+      row w1     lane 2: w1·x0            lane 3: w1·x1
+
+  one smmla = 2 rows × 2 tokens × 8 values = 32 multiplications</code></pre>
+<ul>
+  <li>One <code>smmla</code> gives four outputs (2 rows × 2 tokens). One <code>sdot</code> works on one row and one token.</li>
+  <li>Each weight loaded for a <code>smmla</code> is used for two tokens. With <code>sdot</code> it is used for one.</li>
+  <li>The two rows and two tokens must be laid out in the register first: bytes 0..8 of <code>a</code> must be row 0 and bytes 8..16 row 1. The register does not do that itself.</li>
+</ul>
+<h3>Step 1: interleave two registers</h3>
+<p>The layout is made with <code>zip8</code>. It interleaves two vectors 8 bytes at a time, using two 64-bit zips:</p>
+<pre><code>/// Interleaves two 16-byte vectors 8 bytes at a time:
+/// `([a0..8 | b0..8], [a8..16 | b8..16])`.
+#[inline(always)]
+fn zip8(a: int8x16_t, b: int8x16_t) -&gt; (int8x16_t, int8x16_t) {
+    // SAFETY: register-only NEON ops.
+    unsafe {
+        let (a, b) = (vreinterpretq_s64_s8(a), vreinterpretq_s64_s8(b));
+        (vreinterpretq_s8_s64(vzip1q_s64(a, b)), vreinterpretq_s8_s64(vzip2q_s64(a, b)))
+    }
+}</code></pre>
+<ul>
+  <li>The registers are reinterpreted as two 64-bit halves. <code>vzip1q_s64</code> takes the low halves of <code>a</code> and <code>b</code>; <code>vzip2q_s64</code> takes the high halves.</li>
+  <li>The result is a pair of registers, each holding one row's 8 bytes followed by the other row's 8 bytes.</li>
+  <li>The interleave costs instructions. Keeping it cheap is the open problem in the last section.</li>
+</ul>
+<h3>Step 2: one 32-value block</h3>
+<p>A 32-value block is two 16-byte vectors per row and per token. <code>mmla_block</code> zips each pair of rows (and of tokens) into interleaved registers, then runs four <code>smmla</code> in two chains:</p>
+<pre><code>fn mmla_block(w0: [int8x16_t; 2], w1: [int8x16_t; 2], x0: [int8x16_t; 2], x1: [int8x16_t; 2]) -&gt; int32x4_t {
+    let ((wa, wb), (wc, wd)) = (zip8(w0[0], w1[0]), zip8(w0[1], w1[1]));
+    let ((xa, xb), (xc, xd)) = (zip8(x0[0], x1[0]), zip8(x0[1], x1[1]));
+    // SAFETY: register-only NEON op.
+    let z = unsafe { vdupq_n_s32(0) };
+    // Two independent chains, so each `smmla` need not wait for the last.
+    // SAFETY: register-only NEON op.
+    unsafe { vaddq_s32(smmla(smmla(z, wa, xa), wb, xb), smmla(smmla(z, wc, xc), wd, xd)) }
+}</code></pre>
+<ul>
+  <li>Eight zip instructions prepare the operands for one block. Four <code>smmla</code> do the multiplies.</li>
+  <li>The result is <code>[w0·x0, w0·x1, w1·x0, w1·x1]</code> summed over 32 values, as exact int32.</li>
+  <li>Skipping the interleave gives the wrong pairs: a row's bytes would be multiplied against the other row's bytes.</li>
+</ul>
+<h3>Step 3: the smmla wrapper, and why it is asm</h3>
+<pre><code>/// `d + a · bᵀ` for 2×8 int8 matrices `a`, `b` (see above). Written with
+/// `asm!` because the `vmmlaq_s32` intrinsic is not stable on Rust 1.99.
+/// Only call it from a `#[target_feature(enable = "i8mm")]` function, so the
+/// assembler accepts the instruction once inlined.
+#[inline(always)]
+fn smmla(d: int32x4_t, a: int8x16_t, b: int8x16_t) -&gt; int32x4_t {
+    let mut r = d;
+    // SAFETY: a register-only multiply-accumulate; touches no memory. The
+    // caller runs only where i8mm is present.
+    unsafe { std::arch::asm!("smmla {0:v}.4s, {1:v}.16b, {2:v}.16b", inout(vreg) r, in(vreg) a, in(vreg) b, options(pure, nomem, nostack)) };
+    r
+}</code></pre>
+<ul>
+  <li>The normal route is the <code>vmmlaq_s32</code> intrinsic. The code comment says it is not stable on the toolchain it targets, so the instruction is written by hand.</li>
+  <li><code>asm!</code> lets Rust name the registers. <code>inout(vreg)</code> is the accumulator, read and written; <code>in(vreg)</code> is an input register.</li>
+  <li><code>options(pure, nomem, nostack)</code> tells the compiler the block reads and writes no memory and uses no stack. It can then move or repeat it freely.</li>
+  <li>The function is not marked <code>unsafe</code>, but it may only be called where i8mm exists. Without i8mm, the CPU faults on the instruction.</li>
+  <li>Callers check the CPU at run time with <code>has_i8mm()</code>, which calls <code>is_aarch64_feature_detected!("i8mm")</code>, and mark their function <code>#[target_feature(enable = "i8mm")]</code>.</li>
+</ul>
+<h3>Step 4: the 2 × 2 kernel in full</h3>
+<p><code>mmla2</code> computes two rows against two tokens over a whole row. It is generic over the block type, so Q8_0 and Q4_0 share it. Its <code>load</code> argument gives the 32 values of a block as two int8 vectors, plus the f16 scale:</p>
+<pre><code>#[target_feature(enable = "i8mm")]
+unsafe fn mmla2&lt;B&gt;(rows: [&amp;[B]; 2], x: [&amp;[BlockQ8_0]; 2], xd: [&amp;[f32]; 2], load: impl Fn(&amp;B) -&gt; ([int8x16_t; 2], u16)) -&gt; [f32; 4] {
+    // SAFETY: register-only NEON op (AArch64 baseline).
+    let mut acc = unsafe { [vdupq_n_f32(0.0); 2] };
+    let act = |v: &amp;BlockQ8_0| {
+        // SAFETY: each block holds 32 int8s.
+        unsafe { [vld1q_s8(v.qs.as_ptr()), vld1q_s8(v.qs.as_ptr().add(16))] }
+    };
+    for b in 0..x[0].len() {
+        // SAFETY: the caller guarantees every slice has at least b + 1
+        // entries.
+        unsafe {
+            let ((w0, d0), (w1, d1)) = (load(rows[0].get_unchecked(b)), load(rows[1].get_unchecked(b)));
+            let s = mmla_block(w0, w1, act(x[0].get_unchecked(b)), act(x[1].get_unchecked(b)));
+            let (dx0, dx1) = (*xd[0].get_unchecked(b), *xd[1].get_unchecked(b));
+            let scales = vmulq_f32(f16x4_to_f32([d0, d0, d1, d1]), vld1q_f32([dx0, dx1, dx0, dx1].as_ptr()));
+            // Even and odd blocks into separate accumulators (as in the
+            // `sdot` kernels), so consecutive FMAs do not wait on each other.
+            acc[b &amp; 1] = vfmaq_f32(acc[b &amp; 1], vcvtq_f32_s32(s), scales);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: `out` holds 4 floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), vaddq_f32(acc[0], acc[1])) };
+    out
+}</code></pre>
+<ul>
+  <li>The loop goes block by block. Each block gives four int32 sums, one per (row, token) pair.</li>
+  <li><code>scales</code> holds <code>d_w0 · d_x0</code>, <code>d_w0 · d_x1</code>, <code>d_w1 · d_x0</code>, <code>d_w1 · d_x1</code> in the same lane order as the sums, so one FMA covers all four outputs.</li>
+  <li>Even and odd blocks go to <code>acc[0]</code> and <code>acc[1]</code>, as in the <code>sdot</code> kernels.</li>
+  <li>The caller must give slices of equal length. The <code>get_unchecked</code> calls skip bounds checks, so a short slice is undefined behaviour. The <code>unsafe fn</code> marks that promise.</li>
+</ul>
+<p>The two public wrappers choose the block format:</p>
+<pre><code>#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla2_q8_0(rows: [&amp;[BlockQ8_0]; 2], x: [&amp;[BlockQ8_0]; 2], xd: [&amp;[f32]; 2]) -&gt; [f32; 4] {
+    // SAFETY: forwarded from the caller; each block holds 32 int8s.
+    unsafe { mmla2(rows, x, xd, |w| ([vld1q_s8(w.qs.as_ptr()), vld1q_s8(w.qs.as_ptr().add(16))], w.d)) }
+}
+
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla2_q4_0(rows: [&amp;[BlockQ4_0]; 2], x: [&amp;[BlockQ8_0]; 2], xd: [&amp;[f32]; 2]) -&gt; [f32; 4] {
+    // SAFETY: forwarded from the caller; 16 bytes of nibbles per block.
+    unsafe {
+        mmla2(rows, x, xd, |w| {
+            let (lo, hi) = unpack_q4(vld1q_u8(w.qs.as_ptr()));
+            ([lo, hi], w.d)
+        })
+    }
+}</code></pre>
+<ul>
+  <li><code>mmla2_q4_0</code> unpacks each row's nibbles once, then both tokens reuse them. That is the saving the next section measures.</li>
+  <li>The Q8_0 version loads the bytes directly.</li>
+</ul>
+<h3>Odd rows and tokens</h3>
+<p>Rows and tokens come in pairs, so an odd last row or token needs a partner. The caller pairs it with itself:</p>
+<pre><code>for i in r.clone().step_by(2) {
+    let i1 = (i + 1).min(r.end - 1);
+    for tt in (0..t).step_by(2) {
+        let t1 = (tt + 1).min(t - 1);
+        let v = mmla2(w, [i, i1], [tt, t1], xq, xd, nb);
+        for (k, (ti, ii)) in [(tt, i), (t1, i), (tt, i1), (t1, i1)].into_iter().enumerate() {
+            // SAFETY: element (ti, ii) lies in this call's rows; a
+            // duplicate partner writes the same value twice.
+            unsafe { *out.ptr().add(ti * d + ii) = v[k] };
+        }
+    }
+}</code></pre>
+<ul>
+  <li><code>.min(r.end - 1)</code> and <code>.min(t - 1)</code> pick the row or token itself when there is no partner. The duplicate result is written twice to the same place.</li>
+  <li>Each output has its own lane, and its integer and float sums do not depend on the partner. So the value is the same whatever the partner is, and the same however the rows are split across threads. The threaded test checks this bit for bit.</li>
+  <li>If the partner leaked into the sum, the result would depend on how the work was split, and threaded and single-threaded runs would print different numbers.</li>
+</ul>
+<p><strong>Takeaway: smmla gives four outputs per instruction and needs its operands interleaved first. Asm is used because the intrinsic is not stable, and the CPU must be checked first.</strong></p>
+
+<h2 id="ab">Did smmla make prefill faster?</h2>
+<p>It helped Q4_0 and did nothing for Q8_0. The A/B below ran on the phone, Qwen2.5-0.5B, cores 2–7, on 2026-10-24. Each round ran the new build, the previous commit (<code>sdot</code>) and llama-bench back to back. Prefill tok/s, round 1 / round 2 <span class="tag m">measured</span>:</p>
+<table>
+<thead><tr><th></th><th>pp64</th><th>pp256</th><th>pp512</th></tr></thead>
+<tbody>
+<tr><td>Q4_0 <code>smmla</code></td><td>272 / 242</td><td>264 / 231</td><td>230 / 209</td></tr>
+<tr><td>Q4_0 <code>sdot</code> (before)</td><td>208 / 176</td><td>196 / 169</td><td>188 / 159</td></tr>
+<tr><td>Q4_0 llama.cpp</td><td>709 / 631</td><td>734 / 614</td><td>552 / 473</td></tr>
+<tr><td>Q8_0 <code>smmla</code></td><td>218 / 223</td><td>248 / 218</td><td>221 / 194</td></tr>
+<tr><td>Q8_0 <code>sdot</code> (before)</td><td>222 / 224</td><td>252 / 224</td><td>225 / 204</td></tr>
+<tr><td>Q8_0 llama.cpp</td><td>711 / 622</td><td>765 / 649</td><td>535 / 478</td></tr>
+</tbody>
+</table>
+<p>Conditions, from the results file: the phone was on battery at 51 %, the screen was on, and every run started below 48 °C. Round 2 ran about 10 % slower than round 1, so only numbers in the same round compare.</p>
+<ul>
+  <li><strong>Q4_0 gained 22–37 %.</strong> The nibbles are unpacked once per pair of tokens instead of once per token. The unpack was the cost that the previous loop repeated.</li>
+  <li><strong>Q8_0 gained nothing, and sometimes lost up to 5 %.</strong> Per 32-value block the 2 × 2 kernel spends 8 zip instructions and 4 <code>smmla</code> for 4 outputs. The 4-row <code>sdot</code> kernel spends 8 <code>sdot</code> and no interleaving for the same 4 outputs. The interleaving costs what <code>smmla</code> saves.</li>
+  <li>The gap to llama.cpp is still large: its Q4_0 prefill is 2.3–2.8× ours, against 2.9–3.7× for the <code>sdot</code> build; for Q8_0 it is 2.4–3.3× <span class="tag c">calculated</span> from the table above.</li>
+</ul>
+<h3>Was it still correct?</h3>
+<p>Two checks. First, the batched golden test (<code>testdata/quant_batch/</code>) has nine shapes with odd row and token counts, from 2 to 64 tokens. Its reference is <code>dequant(X_q8_0) @ dequant(W)ᵀ</code> with llama.cpp's quantizers. It passes on the phone, and threaded output is bit-identical to one thread.</p>
+<p>Second, perplexity on the phone, wikitext-2, 20 chunks of 512 tokens, against llama.cpp on the same text <span class="tag m">measured</span>:</p>
+<table>
+<thead><tr><th>Format</th><th>ours, smmla (phone)</th><th>ours before (host, scalar)</th><th>llama.cpp</th></tr></thead>
+<tbody>
+<tr><td>Q4_0</td><td>19.7499</td><td>19.7441</td><td>19.7283 ± 0.836</td></tr>
+<tr><td>Q8_0</td><td>16.3471</td><td>16.3404</td><td>16.3425 ± 0.671</td></tr>
+</tbody>
+</table>
+<p>The table does not name its model. The host numbers beside it (19.7441 and 16.3404) are the Qwen2.5-0.5B numbers from phase 7, so this is the same model. Every pair is within llama.cpp's error bar. Perplexity is explained on <a href="perplexity.html">the next page</a>.</p>
+<p><strong>Takeaway: smmla helps when the work it removes is repeated across tokens. Q8_0 interleaves as much as it saves.</strong></p>
+
+<h2 id="next">What comes next?</h2>
+<p>Phase 7 measured prefill at 2.1–5.8× slower than llama.cpp <span class="tag c">calculated</span> from its table (the ratio of llama.cpp's tok/s to ours, per prompt length and core set). The reason it gives is that the quantized prefill ran <code>sdot</code> row kernels per token group, not a blocked integer matrix multiply. llama.cpp uses <code>smmla</code> on weights repacked at load, so the interleave is done once, not per call.</p>
+<p>The results file lists the next steps, in order. The work is paused, so the learning track can catch up:</p>
+<ul>
+  <li>Interleave the activations once per call, not once per row pair. This removes the repeated part of the zip cost.</li>
+  <li>A 4 rows × 4 tokens tile, so each weight serves four tokens.</li>
+  <li>If the profile still shows interleaving, repack the weights at load, as llama.cpp does.</li>
+</ul>
+<p><strong>Takeaway: the next gain is to pay the interleave cost once per call, or once at load, instead of once per row pair.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why must the activation be quantized to Q8_0 before the integer dot product?</summary>
+<p>Both operands have to be int8 for <code>sdot</code> and <code>smmla</code> to multiply them directly. If the activation stayed f32, every weight would need converting first, and the integer units would not do the work.</p>
+</details>
+<details class="check"><summary>How many products does one <code>sdot</code> compute, and how many outputs does one <code>smmla</code> write?</summary>
+<p><code>sdot</code> multiplies 16 pairs of int8 values and sums them in groups of four into four int32 lanes. <code>smmla</code> writes four outputs (2 rows × 2 tokens) and does 32 multiplications.</p>
+</details>
+<details class="check"><summary>Why does an odd row or token get paired with itself?</summary>
+<p>So every <code>smmla</code> is full. Each output has its own lane, so its value does not depend on its partner. The same bits come out however the rows are split across threads.</p>
+</details>
+<details class="check"><summary>Why does Q8_0 gain nothing from <code>smmla</code> while Q4_0 gains 22–37 %?</summary>
+<p>Q4_0 gains because its nibble unpack is now done once per pair of tokens. Q8_0 has no unpack to save, and its 2 × 2 kernel spends 8 zip instructions to feed 4 <code>smmla</code>, and the interleave eats what <code>smmla</code> saves.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Quantizing the activation once turns the weight work into int8 multiplies, with one scale applied per 32-value block.</p>
+<p>For prefill, <code>smmla</code> reuses each loaded weight for two tokens. It pays off only where the interleave cost does not eat the saving.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 6 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+</body>
+</html>

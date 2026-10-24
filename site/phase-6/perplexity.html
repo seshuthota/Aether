@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Copy this file to phase-N/topic.html, change the title, kicker and content,
+     then add one line for it to js/pages.js. The menu, breadcrumb and
+     previous/next links come from that list. This template assumes the page
+     sits one folder deep; for a page at the top level, drop the "../". -->
+<title>Perplexity and KL: did quantization hurt? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 6 · concept 3</p>
+
+<h1>Perplexity and KL: did quantization hurt?</h1>
+<p class="lede">A Q4_0 model is smaller and reads less memory, but a faster model can still be a worse one. Perplexity puts one number on how well a model predicts real text. KL divergence and top-token agreement compare a quantized model with its f32 original, token by token.</p>
+<nav class="toc">
+  <a href="#problem">How do you know a smaller model still works?</a>
+  <a href="#surprise">How surprised is the model by the real next word?</a>
+  <a href="#ppl">What does perplexity add up to?</a>
+  <a href="#chunks">Which tokens are scored, and why only half?</a>
+  <a href="#error">How big is the error bar?</a>
+  <a href="#kl">How far did the quantized model move from f32?</a>
+  <a href="#llamacpp">Why match llama.cpp's numbers?</a>
+  <a href="#small">Do small models suffer more?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="problem">How do you know a smaller model still works?</h2>
+<p>Tokens per second say how fast a model runs. They say nothing about whether its words are right. A quantized model can run faster and still produce worse text, and the speed number would look fine.</p>
+<p>The fix is to measure how well the model predicts a text that nobody trained it on. Take real sentences, hide each next word, and ask the model how likely it thought the real word was. Good models give the real word high probability. Quantization noise moves those probabilities, so the score shows the damage.</p>
+<p><strong>Takeaway: quality needs its own measurement. Speed numbers cannot show it.</strong></p>
+
+<h2 id="surprise">How surprised is the model by the real next word?</h2>
+<p>The model's output for each position is a probability for every token in its vocabulary. Call <em>p</em> the probability it gave to the token that actually came next. A <em>nat</em> is the unit of a natural logarithm. The <em>surprise</em> of that token is <code>−ln p</code>, in nats.</p>
+<ul>
+  <li>If <em>p</em> is 1, the model was certain, and the surprise is 0.</li>
+  <li>If <em>p</em> is 0.5, the surprise is about 0.69 nats. Smaller <em>p</em> means more surprise.</li>
+  <li>Surprise grows without limit as <em>p</em> approaches 0. One very unlikely word can dominate a sum. That is why the score uses surprise, not the raw probability.</li>
+</ul>
+<p>Illustration (not a measurement): the model must guess one of four words, and all four are equally likely. Each has <em>p</em> = 0.25, so the surprise is −ln 0.25 = ln 4 ≈ 1.386 nats. If you multiplied the probabilities of several words instead, the number would fall toward zero, and it would be hard to read. Adding surprises is easier.</p>
+<p><strong>Takeaway: surprise is −ln p. It is 0 for a certain guess and grows as the model gives the real word less probability.</strong></p>
+
+<h2 id="ppl">What does perplexity add up to?</h2>
+<p><em>Perplexity</em> is the average surprise, turned back into a count: perplexity = exp(mean of −ln p). The mean is taken over every scored token. The code in <code>src/eval.rs</code> does exactly this:</p>
+<pre><code>impl Score {
+    pub fn ppl(&amp;self) -&gt; f64 {
+        (self.nll / self.count as f64).exp()
+    }
+}</code></pre>
+<ul>
+  <li><code>self.nll</code> is the sum of all surprises, and <code>self.count</code> is how many tokens were scored. Their ratio is the mean.</li>
+  <li><code>exp</code> reverses the logarithm, so the result is back on the scale of a count.</li>
+  <li>The file's doc comment reads this as a number of choices: a model that guessed uniformly among V tokens would score V.</li>
+</ul>
+<p>Illustration (not a measurement): the model's guesses were uniform among four words, so every <em>p</em> is 0.25. The mean surprise is ln 4 = 1.386 nats, and exp(1.386) = 4. That matches the rule: a model that is uniform over four choices has perplexity 4.</p>
+<p>The widget below uses five words from “The cat sat on the mat”, with probabilities set by hand. Drag each slider and watch the mean and the perplexity change.</p>
+
+<div class="widget" data-pplcalc>
+  <h3>Five guesses, one perplexity</h3>
+  <p>An illustration, not a measurement. Each slider is the probability the model gave the word that came next. The surprise of each word is −ln p.</p>
+  <div class="sliders" data-sliders></div>
+  <div class="controls"><button class="btn ghost" type="button" data-reset>Reset</button></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+
+<p><strong>Takeaway: perplexity is exp(mean surprise). Lower is better, and it reads as how many equally likely choices the model is behaving as if it faces.</strong></p>
+
+<h2 id="chunks">Which tokens are scored, and why only half?</h2>
+<p>A text is a long stream of tokens. The engine cuts it into <em>chunks</em> of 512 tokens (<code>--ctx</code>, default 512). Each chunk is run from an empty cache, so a chunk never sees the previous one. Then only the second half of each chunk is scored.</p>
+<p>The reason is context. The first predictions in a chunk have almost nothing before them, so they are poor for any model. Scoring them would measure how little context the model had, not how good it is. By the middle of the chunk, every prediction has at least 256 tokens to work from.</p>
+<pre><code>let first = n_ctx / 2;
+...
+// Rows predict the tokens after positions first..n_ctx-1; the last
+// row has no next token inside the chunk and is not scored.
+let ours = model.forward_batch_logits(chunk, 0, first).to_vec();
+...
+for r in 0..(n_ctx - 1 - first) {
+    let next = chunk[first + r + 1];</code></pre>
+<ul>
+  <li>With <code>n_ctx</code> 512, <code>first</code> is 256. Row <em>r</em> predicts the token after position 256 + <em>r</em>, and the loop runs 255 times.</li>
+  <li>So each chunk scores 255 tokens, the ones at positions 257 to 511. Twenty chunks give 5,100 scored tokens. That is the count in the phase 6 results.</li>
+  <li>The chunk's first token is replaced by the beginning-of-text token for models whose tokenizer adds one. The doc comment says llama.cpp does the same.</li>
+  <li>The procedure is <code>llama-perplexity</code>'s, so the numbers can be compared. If the first half were scored too, the number would not match llama.cpp's, and the comparison would tell you nothing.</li>
+</ul>
+<p>A run looks like this, with the flags from <code>src/main.rs</code>:</p>
+<pre><code>aether MODEL --ppl wiki.test.raw --chunks 20 -q q4_0 --kl</code></pre>
+<ul>
+  <li><code>--ppl FILE</code> scores the text in FILE instead of generating.</li>
+  <li><code>--chunks N</code> stops after N chunks.</li>
+  <li><code>--kl</code> also loads the f32 model and reports KL divergence and top-token agreement against it.</li>
+  <li><code>--base PATH</code> names the reference model for <code>--kl</code>. Without it, the f32 version of MODEL is used.</li>
+</ul>
+<p><strong>Takeaway: the first half of each chunk is warm-up. Scoring only the second half gives a number that means the same thing as llama.cpp's.</strong></p>
+
+<h2 id="error">How big is the error bar?</h2>
+<p>A perplexity from 5,100 tokens is an estimate, and it moves a little with the text. The error bar says how much. <code>ppl_err</code> computes one standard error, as llama.cpp prints it:</p>
+<pre><code>/// ± one standard error of the perplexity, as llama.cpp prints it.
+pub fn ppl_err(&amp;self) -&gt; f64 {
+    let n = self.count as f64;
+    let (mean, mean2) = (self.nll / n, self.nll2 / n);
+    ((mean2 - mean * mean).max(0.0) / (n - 1.0)).sqrt() * self.ppl()
+}</code></pre>
+<ul>
+  <li><code>mean2 − mean²</code> is the variance of the surprises. The square root of its share over <em>n − 1</em> is the standard error of the mean surprise.</li>
+  <li>Multiplying by <code>ppl()</code> turns that error from nats into perplexity units. This is the usual first-order step for a function of an average.</li>
+  <li>If two results differ by less than their error bars, the test cannot tell them apart. The f32 and Q8_0 rows below are an example.</li>
+</ul>
+<p><strong>Takeaway: a difference inside the error bar is noise. Only a difference bigger than the bar is a result.</strong></p>
+
+<h2 id="kl">How far did the quantized model move from f32?</h2>
+<p>Perplexity only looks at the token that actually came next. A quantized model can change its probabilities for other tokens and leave perplexity almost the same. <em>KL divergence</em> counts those changes too. For the f32 model's distribution P and the quantized model's Q over the vocabulary:</p>
+<pre><code>KL(P‖Q) = Σ over tokens v of  p(v) · (log p(v) − log q(v))</code></pre>
+<ul>
+  <li>It is zero only when the two distributions are identical. Each term is a weighted gap between the two models' log-probabilities.</li>
+  <li>The weights are the f32 model's probabilities, so the tokens that matter most to the f32 model count most.</li>
+  <li>The code computes this for each scored position, with the base model's log-probabilities as <code>lb</code> and the quantized model's as <code>lp</code>:</li>
+</ul>
+<pre><code>score.nll_base -= lb[next];
+score.kld += lb.iter().zip(&amp;lp).map(|(&amp;b, &amp;q)| b.exp() * (b - q)).sum::&lt;f64&gt;();
+score.same_top += usize::from(argmax(&amp;lb) == argmax(&amp;lp));</code></pre>
+<ul>
+  <li><code>b.exp()</code> turns the base log-probability back into the base probability, which is the weight.</li>
+  <li><code>same_top</code> counts positions where both models' most likely token is the same token. The “same top” figure in the tables is that count as a percentage.</li>
+  <li>A low KL with a low same-top rate cannot happen. KL near zero means the two models rank the tokens the same way.</li>
+</ul>
+<p><strong>Takeaway: perplexity asks whether the model still predicts the real word. KL asks whether it still predicts the same distribution as the original.</strong></p>
+
+<h2 id="llamacpp">Why match llama.cpp's numbers?</h2>
+<p>The project's rule is that correctness comes from external references, not from a second implementation of our own. Here the reference is llama.cpp's <code>llama-perplexity</code>, run on the same text and the same quantized files. If our procedure and our kernels are right, the numbers agree within llama.cpp's error bar.</p>
+<p>They do not agree bit for bit, and they should not. The results file notes that llama.cpp's f32 path on x86 sums in a different order from ours, and its own runs differ from each other by about as much as ours differs from it.</p>
+<p>SmolLM2-135M, wikitext-2 test, 20 chunks of 512 tokens (5,100 tokens scored). Measured on the host PC, not the phone. KL is against each engine's own f32 logits:</p>
+<table>
+<thead><tr><th>Format</th><th>Size (ours)</th><th>PPL ours</th><th>PPL llama.cpp</th><th>Mean KLD ours</th><th>Mean KLD llama.cpp</th><th>Same top ours / llama.cpp</th></tr></thead>
+<tbody>
+<tr><td>f32</td><td>538.1 MB</td><td>19.6715 ± 0.812</td><td>19.6712 ± 0.812</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>Q8_0</td><td>143.0 MB</td><td>19.6707 ± 0.812</td><td>19.7008 ± 0.814</td><td>0.003904</td><td>0.003918 ± 0.000059</td><td>96.24 % / 96.16 ± 0.27 %</td></tr>
+<tr><td>Q4_0</td><td>75.8 MB</td><td>27.7150 ± 1.175</td><td>27.7412 ± 1.177</td><td>0.335544</td><td>0.335355 ± 0.004256</td><td>64.71 % / 64.77 ± 0.67 %</td></tr>
+</tbody>
+</table>
+<p>Qwen2.5-0.5B-Instruct, the same text and procedure, base model f32 GGUF. Also measured on the host PC:</p>
+<table>
+<thead><tr><th>Format</th><th>PPL ours</th><th>PPL llama.cpp</th><th>Mean KLD ours</th><th>Mean KLD llama.cpp</th><th>Same top ours / llama.cpp</th></tr></thead>
+<tbody>
+<tr><td>f32</td><td>16.2745</td><td>16.2744 ± 0.667</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>Q8_0</td><td>16.3404 ± 0.670</td><td>16.3425 ± 0.671</td><td>0.002366</td><td>0.002368 ± 0.000032</td><td>96.51 % / 96.88 ± 0.24 %</td></tr>
+<tr><td>Q4_0</td><td>19.7441 ± 0.837</td><td>19.7283 ± 0.836</td><td>0.180924</td><td>0.181010 ± 0.002752</td><td>77.18 % / 76.98 ± 0.59 %</td></tr>
+</tbody>
+</table>
+<p>The phase 6 smmla change was also re-run on the phone, on the same text, and compared with llama.cpp <span class="tag m">measured</span>. The results file does not name the model for this table. Its host numbers match the Qwen2.5-0.5B ones above, so it is the same model:</p>
+<table>
+<thead><tr><th>Format</th><th>PPL, ours on the phone (smmla)</th><th>PPL llama.cpp</th></tr></thead>
+<tbody>
+<tr><td>Q4_0</td><td>19.7499</td><td>19.7283 ± 0.836</td></tr>
+<tr><td>Q8_0</td><td>16.3471</td><td>16.3425 ± 0.671</td></tr>
+</tbody>
+</table>
+<p>Read the tables with the error bars in mind. Every pair agrees within llama.cpp's bar except one: the Q8_0 same-top rate in the Qwen table, which is 1.5 standard errors apart. The results file puts that down to tokens where two candidates are nearly tied, where summation order decides the winner.</p>
+<p><strong>Takeaway: our numbers match llama.cpp's within its error bars, on the same files, with one same-top rate as the exception. That comparison is the correctness check.</strong></p>
+
+<h2 id="small">Do small models suffer more?</h2>
+<p>Yes, on these two models. Q4_0 raised perplexity by a factor of about 1.41 for SmolLM2-135M, and about 1.21 for Qwen2.5-0.5B. The factors are the Q4_0 perplexity divided by the f32 perplexity from our own runs <span class="tag c">calculated</span>: 27.7150 / 19.6715 and 19.7441 / 16.2745.</p>
+<p>The KL divergence tells the same story: 0.34 nats for SmolLM2 against 0.18 for Qwen. The results file's reading is that a small model has fewer weights to absorb the rounding. Two models is a small sample, so treat that as a reading, not a law.</p>
+<p>Q8_0 is close to lossless for both. Its same-top rate is 96 % or so, and its perplexity moves by less than its error bar.</p>
+<p><strong>Takeaway: the same 4-bit format costs a small model much more than a larger one. Measure each model, not each format.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>A model gives the real next word probability 0.5 at every scored position. What is its perplexity?</summary>
+<p>The surprise is −ln 0.5 = ln 2 at every position, so the mean is ln 2 and exp(ln 2) = 2. The model behaves as if it were choosing between two equally likely words.</p>
+</details>
+<details class="check"><summary>Why are the first 256 tokens of each 512-token chunk not scored?</summary>
+<p>Their predictions have little context, so they measure the lack of context more than the model. Scoring only the second half matches llama.cpp's procedure, so the numbers can be compared.</p>
+</details>
+<details class="check"><summary>Two Q4_0 results differ by 0.02 in perplexity, and each has an error bar of ±0.8. What can you say?</summary>
+<p>Nothing. The difference is far inside the error bar, so the test cannot tell them apart.</p>
+</details>
+<details class="check"><summary>Why compare with llama.cpp on the same files, instead of checking our f32 run against itself?</summary>
+<p>A self-check would repeat our own mistakes. llama.cpp is an independent implementation, so agreement within its error bar is evidence the procedure and the kernels are right.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Perplexity is exp of the mean surprise, measured on the second half of 512-token chunks. Lower is better, and a difference inside the error bar is noise.</p>
+<p>KL and same-top rate show whether a quantized model still predicts like the f32 original. Match llama.cpp on the same files to know the numbers are right.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 6 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+<script src="../js/widgets.js?v=21"></script>
+</body>
+</html>

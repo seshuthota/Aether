@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 6 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 6 · quantization</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The Q8_0 and Q4_0 quantizers produce exactly llama.cpp's bytes, checked by a test against the <code>gguf</code> package. The dot products match numpy goldens. Perplexity and KL divergence on SmolLM2-135M agree with <code>llama-perplexity</code> within its own error bar. The <code>smmla</code> prefill kernels pass batched goldens, and their threaded output is bit-identical to one thread. The <code>smmla</code> work is a first step; the detailed pages for it are still to write, and this overview covers what was built and measured.</p></div>
+
+<h1>Phase 6 — quantization</h1>
+<p class="lede">Decode reads every weight once per token, so its speed follows the number of bytes per weight. Quantization stores each weight in 8 or 4 bits instead of 32. This phase builds the two formats, the integer kernels that multiply them, and a way to measure how much the model got worse.</p>
+<nav class="toc">
+  <a href="#why">Why quantize at all?</a>
+  <a href="#built">What was built?</a>
+  <a href="#numbers">What are the headline numbers?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#files">Which files hold the code?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="why">Why quantize at all?</h2>
+<p>The <a href="../phase-0/decode-ceiling.html">decode ceiling</a> page shows that decode is a bandwidth limit: the memory bus can only deliver so many bytes per second, and every token needs all the weights. Fewer bytes per weight means more tokens per second before the bus is the limit. For SmolLM2-135M the whole model shrinks from 538 MB in f32 to 143 MB in Q8_0 and 76 MB in Q4_0 (<span class="tag m">measured</span>).</p>
+<p>Smaller weights cost accuracy, because each one is rounded to fewer levels. So the phase has two halves: make the bytes small, and measure what that costs.</p>
+<p><strong>Takeaway: quantization is a bandwidth trick, and its price is rounding error that has to be measured.</strong></p>
+
+<h2 id="built">What was built?</h2>
+<ul>
+  <li><strong>Block formats.</strong> Q8_0 stores 32 weights as int8 plus one f16 scale, 34 bytes. Q4_0 stores 32 weights as 4-bit values plus a scale, 18 bytes. Both quantizers and dequantizers are in <code>src/quant.rs</code> and produce llama.cpp's bytes. Models are quantized in memory at load with <code>-q q8_0</code> or <code>-q q4_0</code>.</li>
+  <li><strong>Integer dot products.</strong> For decode, the activation vector is quantized to Q8_0 once per matrix product. Each block pair is then one integer dot product, using <code>sdot</code>, which sums four int8 products into an int32 lane per instruction. This takes the Q8_0 decode GEMV from 12 to 32 GB/s.</li>
+  <li><strong>Prefill with <code>smmla</code>.</strong> When several tokens are processed together, <code>smmla</code> (from the i8mm extension) multiplies two rows by two tokens in one instruction, so each weight loaded serves two tokens.</li>
+  <li><strong>Perplexity and KL mode.</strong> <code>src/eval.rs</code> measures perplexity on text, and KL divergence against the f32 model. It follows the same procedure as <code>llama-perplexity</code>, so the numbers can be compared.</li>
+</ul>
+<p><strong>Takeaway: the formats match llama.cpp, the kernels use integer math, and the accuracy is measured with the same procedure llama.cpp uses.</strong></p>
+
+<h2 id="numbers">What are the headline numbers?</h2>
+<p>Four numbers from <code>results/phase-6.md</code>. The first three are measured on the iQOO 13. The fourth is the ratio of two measured perplexities.</p>
+<div class="statrow">
+  <div class="stat"><b>12 → 32 GB/s</b><span>Q8_0 decode GEMV, dequantize to f32 vs integer dot products <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>19.67 vs 19.67</b><span>perplexity, SmolLM2-135M, f32 vs Q8_0 <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>×1.41</b><span>perplexity cost of Q4_0 on SmolLM2-135M, 27.72 vs 19.67 <span class="tag c">calculated</span></span></div>
+  <div class="stat"><b>+22–37 %</b><span>Q4_0 prefill with <code>smmla</code> over <code>sdot</code>, Qwen2.5-0.5B, cores 2–7 <span class="tag m">measured</span></span></div>
+</div>
+<table>
+  <thead><tr><th>Format</th><th>Size, SmolLM2-135M</th><th>Perplexity (ours)</th><th>Mean KL vs f32 (ours)</th><th>Same top token as f32</th></tr></thead>
+  <tbody>
+    <tr><td>f32</td><td>538.1 MB</td><td>19.67</td><td>—</td><td>—</td></tr>
+    <tr><td>Q8_0</td><td>143.0 MB</td><td>19.67</td><td>0.0039 nats</td><td>96.2 %</td></tr>
+    <tr><td>Q4_0</td><td>75.8 MB</td><td>27.72</td><td>0.336 nats</td><td>64.7 %</td></tr>
+  </tbody>
+</table>
+<p>All of these are <span class="tag m">measured</span> in <code>results/phase-6.md</code>. llama.cpp agrees within its own error bar on every row. Q8_0 is practically lossless; Q4_0 costs SmolLM2-135M 41 % perplexity, and about a third of its top-token choices change. Qwen2.5-0.5B loses less at Q4_0, with perplexity ×1.21 (19.7441 / 16.2745, <span class="tag c">calculated</span> from <code>results/phase-7.md</code>) and KL 0.18 <span class="tag m">measured</span>. The explanation in the results is that a small model has fewer parameters to absorb the rounding.</p>
+<p><strong>Takeaway: Q8_0 is safe on both models, and Q4_0 is a real trade whose size depends on the model.</strong></p>
+
+<h2 id="order">Which page should I read first?</h2>
+<p>Three pages on the phase's ideas, in this order. The first explains the format every other page uses.</p>
+<ol>
+  <li><a href="blocks.html">Block quantization: Q8_0 and Q4_0</a>: one scale for each 32 weights, the byte layouts, and why the bytes must match llama.cpp's.</li>
+  <li><a href="dot-products.html">Multiplying quantized weights: sdot and smmla</a>: quantizing the activation, integer dot products, and the two-by-two tile for prefill.</li>
+  <li><a href="perplexity.html">Perplexity and KL: did quantization hurt?</a>: how the model's surprise and drift are measured, and our numbers next to llama.cpp's.</li>
+</ol>
+<p><strong>Takeaway: read the blocks page first, because the dot products and the measurements both depend on its layout.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<p>Paused on 2026-10-24 so the learning track can catch up. These are the next steps from <code>results/phase-6.md</code>, not results.</p>
+<ul>
+  <li><strong>Interleave the activations once per call</strong>, not once per row pair. The current <code>smmla</code> kernel spends 8 instructions per block interleaving the two tokens. That cost is why Q8_0 prefill did not improve (unchanged to −5 %, <span class="tag m">measured</span>), while Q4_0 gained 22–37 %.</li>
+  <li><strong>A 4 × 4 tile</strong>, four rows by four tokens per block, instead of 2 × 2.</li>
+  <li><strong>Repack the weights at load</strong>, as llama.cpp does, if the profile still shows interleaving as the cost.</li>
+  <li><strong>A fresh profile.</strong> The profile in the results predates the Phase 4 scheduling fixes, so its share of spinning threads no longer applies.</li>
+</ul>
+<p>llama.cpp still prefills Q4_0 2.3–2.8× faster than the new build, against 2.9–3.7× for the <code>sdot</code> build in the same rounds <span class="tag c">calculated</span> from the measured table.</p>
+<p><strong>Takeaway: the next gains are in how the activations are laid out, not in the instruction itself.</strong></p>
+
+<h2 id="files">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds the measurements and their conditions.</p>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/quant.rs</code></td><td><code>BlockQ8_0</code> and <code>BlockQ4_0</code>, the quantizers and dequantizers, <code>f32_to_f16</code>, and the portable scalar dot products</td></tr>
+    <tr><td><code>src/kernels/neon_quant.rs</code></td><td>The NEON kernels: <code>sdot</code> dot products (decode) and the <code>smmla</code> kernels <code>mmla2_q8_0</code> and <code>mmla2_q4_0</code> (prefill)</td></tr>
+    <tr><td><code>src/kernels/mod.rs</code></td><td>Routing: quantizes the activation, then picks <code>quant_rows</code> (<code>sdot</code>) or <code>quant_rows_mmla</code> (<code>smmla</code>) by token count; threads the rows</td></tr>
+    <tr><td><code>src/eval.rs</code></td><td>Perplexity and KL divergence, chunked the same way as <code>llama-perplexity</code></td></tr>
+    <tr><td><code>tools/gen_quant.py</code></td><td>Golden data made with llama.cpp's <code>gguf</code> package: the block bytes and the expected dot products</td></tr>
+    <tr><td><code>results/phase-6.md</code></td><td>Measurements, their conditions, and the open items</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the formats live in src/quant.rs, and the kernels that use them live in src/kernels/.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does fewer bytes per weight make decode faster?</summary>
+<p>Each decode step reads every weight once, so the time per token is set by how many bytes must come from memory. Halving the bytes roughly halves that time, until something else becomes the limit.</p>
+</details>
+<details class="check"><summary>What does one <code>smmla</code> instruction compute?</summary>
+<p>It multiplies a 2 × 8 block of int8 values by another 2 × 8 block and adds a 2 × 2 int32 result. With two weight rows and two tokens, one instruction gives four dot products, so each weight loaded serves two tokens.</p>
+</details>
+<details class="check"><summary>Why does Q4_0 hurt SmolLM2-135M more than Qwen2.5-0.5B?</summary>
+<p>The results file gives the reason: the smaller model has fewer parameters to absorb the rounding. The costs are ×1.41 for SmolLM2 and ×1.21 for Qwen <span class="tag c">calculated</span>.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Quantization trades bytes for rounding error, and the error can be measured against llama.cpp.</p>
+<p>Q8_0 is practically lossless on both models. Q4_0 costs more, and the cost depends on the model's size.</p>
+<p>The next speed gains come from laying out the activations and weights for the <code>smmla</code> tile.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 6 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+<script src="../js/widgets.js?v=21"></script>
+</body>
+</html>

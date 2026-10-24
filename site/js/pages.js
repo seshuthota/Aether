@@ -103,10 +103,36 @@ window.AETHER_PAGES = [
     ]
   },
   {
+    section: "Phase 5 · real model files",
+    crumb: "Phase 5",
+    pages: [
+      { href: "phase-5/index.html", title: "Overview" }
+    ]
+  },
+  {
+    section: "Phase 6 · quantization",
+    crumb: "Phase 6",
+    pages: [
+      { href: "phase-6/index.html", title: "Overview" },
+      { href: "phase-6/blocks.html", num: "01", title: "Block quantization", desc: "One scale per 32 weights: Q8_0 in 34 bytes, Q4_0 in 18, and what an outlier does to its block." },
+      { href: "phase-6/dot-products.html", num: "02", title: "Multiplying quantized weights", desc: "Integer dot products with sdot, then smmla: two rows times two tokens per instruction, measured." },
+      { href: "phase-6/perplexity.html", num: "03", title: "Perplexity and KL", desc: "How surprised the model is by real text, and how to tell whether quantization hurt it." }
+    ]
+  },
+  {
     section: "Phase 7 · GGUF and Qwen",
     crumb: "Phase 7",
     pages: [
-      { href: "phase-7/attention-ab.html", num: "01", title: "NEON attention, measured honestly", desc: "A speed-up a single run got wrong, and the alternating A/B that got it right." }
+      { href: "phase-7/index.html", title: "Overview" },
+      { href: "phase-7/gguf.html", num: "01", title: "GGUF: one file for everything", desc: "Header, typed metadata, the tensor table, alignment, and weights used straight from the file." },
+      { href: "phase-7/attention-ab.html", num: "02", title: "NEON attention, measured honestly", desc: "A speed-up a single run got wrong, and the alternating A/B that got it right." }
+    ]
+  },
+  {
+    section: "Phase 8 · the app",
+    crumb: "Phase 8",
+    pages: [
+      { href: "phase-8/index.html", title: "Overview" }
     ]
   }
 ];

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=20">
+<link rel="stylesheet" href="../css/site.css?v=21">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -21,7 +21,7 @@
 <div class="layout">
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
-<p class="kicker">Phase 7 · 01</p>
+<p class="kicker">Phase 7 · 02</p>
 <h1>NEON attention, measured honestly</h1>
 <p class="lede">Attention was 1.1 % of stories15M’s time, so Phase 3 left it scalar (plain code, one number at a time). On Qwen2.5-0.5B at long contexts it was no longer small, so a NEON version (ARM’s vector instructions) was written later. Measuring its benefit turned out to be the interesting part. A single before-and-after run overstated the problem it fixed. Only an alternating A/B test gave a number worth keeping.</p>
 <div class="callout banner"><span class="lbl">Jumping ahead</span><p>This page is Phase 7 work, and it needs only Phases 2 and 3. The threads it uses are explained in <a href="../phase-4/index.html">Phase 4</a>. Qwen2.5-0.5B is a bigger model of the same shape, Q4_0 is a format that stores weights in about a seventh of the bytes, and “cores 2–7” means six threads, one per core.</p></div>
@@ -159,9 +159,9 @@ for (t, &amp;a) in scores.iter().enumerate() {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=20"></script>
-<script src="../js/glossary.js?v=20"></script>
-<script src="../js/site.js?v=20"></script>
-<script src="../js/widgets.js?v=20"></script>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+<script src="../js/widgets.js?v=21"></script>
 </body>
 </html>

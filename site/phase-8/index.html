@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 8 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/site.css?v=21">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 8 · the app</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine is a shared library with a C interface (<code>include/aether.h</code>), and a one-screen Android app calls it through a small C shim. A debug build was installed on the iQOO 13 and ran Qwen2.5-0.5B-Instruct Q4_0. The reply streamed in token by token and ended at the model's end-of-turn token. Once warm, the app's speed matched the command-line tool within run-to-run spread. The detailed pages for this phase are still to write; this overview covers what was built and measured.</p></div>
+
+<h1>Phase 8 — on the phone, in an app</h1>
+<p class="lede">Everything so far ran from a shell. Phase 8 puts the engine inside an app: a text box, a reply that appears as it is written, and a background thread so the screen does not freeze. The engine is written in Rust, and Android apps are written in Kotlin. The two need a common language in between, and that language is C.</p>
+<nav class="toc">
+  <a href="#why-c">Why a C interface?</a>
+  <a href="#handle">How does C hold a Rust object?</a>
+  <a href="#errors">How does a Rust panic stay out of C?</a>
+  <a href="#jni">How does Kotlin reach the engine?</a>
+  <a href="#stream">How is text streamed without broken characters?</a>
+  <a href="#speed">How fast is the app?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#files">Which files hold the code?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="why-c">Why a C interface?</h2>
+<p>Kotlin code on Android runs on Android's Java runtime, and the way it calls native code is JNI, the Java Native Interface. JNI calls C functions, using C types. It cannot call Rust directly, because Rust does not promise the layout of its types or the names of its functions, unless you ask it to. C is the one language both sides agree on, so the engine exports a C interface and the app talks to that.</p>
+<p>The interface is small on purpose. <code>include/aether.h</code> declares five functions and two structs. Anything Kotlin needs goes through them, and nothing else is exposed.</p>
+<div class="callout"><span class="lbl">Illustration</span><p>Think of a plug and a socket. Kotlin has one socket shape (JNI, C types), Rust has another, and the C header is the adaptor between them. Neither side has to know the other's internals.</p></div>
+<p><strong>Takeaway: C is the shared language between the Kotlin app and the Rust engine, and the header is the whole contract.</strong></p>
+
+<h2 id="handle">How does C hold a Rust object?</h2>
+<p>A loaded model is a Rust value with fields, borrowed data and a lifetime. C cannot understand any of that, so it gets an <strong>opaque handle</strong>: a pointer to a type whose contents it never looks inside. The header declares the type without a body:</p>
+<pre><code>typedef struct AetherSession AetherSession;   /* the handle: C never sees inside */
+
+int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
+void aether_close(AetherSession *session);</code></pre>
+<p>On the Rust side, the same name is a struct that wraps the real session:</p>
+<pre><code>/// What C holds: a loaded model.
+pub struct AetherSession(Session);</code></pre>
+<ul>
+  <li>C only passes the pointer back. It cannot read a field, so the layout can change without breaking the app.</li>
+  <li><code>aether_open</code> makes the object with <code>Box::into_raw</code>, which gives up Rust's ownership and returns a raw pointer. Nothing frees it unless someone calls the matching close function.</li>
+  <li><code>aether_close</code> takes the pointer back with <code>Box::from_raw</code> and drops it. Calling it twice, or on a pointer from elsewhere, is a bug in the caller. The contract in <code>src/ffi.rs</code> says the handle must be handed back to <code>aether_close</code> exactly once.</li>
+</ul>
+<p>The function that frees the handle shows how the contract is written down. Its comment says what the caller must guarantee, and the one unsafe line says why the code is allowed to free:</p>
+<pre><code>/// Frees a session. Null is allowed (does nothing).
+///
+/// # Safety
+/// `session` must come from `aether_open` and not have been closed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_close(session: *mut AetherSession) {
+    let _ = guard(|| {
+        if !session.is_null() {
+            // SAFETY: created by Box::into_raw in aether_open, freed once.
+            drop(unsafe { Box::from_raw(session) });
+        }
+        AETHER_OK
+    });
+}</code></pre>
+<ul>
+  <li><code>extern "C"</code> makes the function use the C calling convention. <code>#[unsafe(no_mangle)]</code> keeps its name as written, so the C linker can find it.</li>
+  <li><code>unsafe extern</code> marks the function as one whose safety depends on the caller. Rust cannot check a pointer that came from C.</li>
+  <li>The <code>SAFETY</code> comment on the one unsafe line states the single fact that makes it sound: the pointer came from <code>Box::into_raw</code>, and it is freed once. If the app freed it twice, the program would crash or corrupt memory.</li>
+  <li>A null pointer is allowed, so an app that never opened a model can close it safely.</li>
+</ul>
+<p><strong>Takeaway: C gets an opaque pointer, and the rule "open once, close once" is written in the comment and enforced by no one else.</strong></p>
+
+<h2 id="errors">How does a Rust panic stay out of C?</h2>
+<p>A Rust <strong>panic</strong> is a crash in progress: a bug, such as an index out of range, that stops the current code. Normally it unwinds the stack and ends the thread. If it unwinds into C, the C code has no idea how to clean up, and the behaviour is undefined. The file header says so directly: "a Rust panic unwinding into C is undefined behaviour". So every entry point runs its body inside a guard:</p>
+<pre><code>/// Runs `body`, converting a panic into `AETHER_ERR_PANIC`.
+fn guard(body: impl FnOnce() -&gt; c_int) -&gt; c_int {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(code) =&gt; code,
+        Err(p) =&gt; {
+            let msg = p.downcast_ref::&lt;&amp;str&gt;().map(|s| s.to_string()).or_else(|| p.downcast_ref::&lt;String&gt;().cloned()).unwrap_or_else(|| "panic".into());
+            set_error(format!("internal error: {msg}"));
+            AETHER_ERR_PANIC
+        }
+    }
+}</code></pre>
+<ul>
+  <li><code>catch_unwind</code> runs the closure and returns <code>Err</code> if it panicked, instead of letting the panic travel further.</li>
+  <li><code>AssertUnwindSafe</code> is a promise that the closure's state is safe to use afterwards. It is the programmer's claim, not a check.</li>
+  <li>The panic's message is pulled out of the payload and stored, so the app can show what went wrong.</li>
+</ul>
+<p>Errors go back as codes, and the message goes in a separate call. The header defines four codes, and the app can branch on them:</p>
+<pre><code>#define AETHER_OK          0
+#define AETHER_ERR_ARGUMENT 1  /* null / non-UTF-8 argument, prompt too long */
+#define AETHER_ERR_LOAD    2   /* model file missing or unreadable */
+#define AETHER_ERR_PANIC   3   /* internal error (a bug); see aether_last_error */
+
+const char *aether_last_error(void);</code></pre>
+<ul>
+  <li>Zero means success, so <code>if (code != AETHER_OK)</code> is the whole check.</li>
+  <li>The message is kept per thread. Calling <code>aether_last_error</code> on another thread gives that thread's last error, not this one's.</li>
+  <li>The message stays valid only until the next call on the same thread. Copy it if you need it later.</li>
+</ul>
+<p>Every function in <code>src/ffi.rs</code> has this shape: guard, check the pointers, do the work. A prompt that is too long becomes <code>AETHER_ERR_ARGUMENT</code>, not a crash.</p>
+<p><strong>Takeaway: a panic becomes an error code at the boundary, so C never sees Rust's unwinding.</strong></p>
+
+<h2 id="jni">How does Kotlin reach the engine?</h2>
+<p>The path has three hops. Kotlin calls a native method. JNI calls a C function in a small shim. The shim calls the C ABI, which runs the Rust engine. The diagram is in <code>android/README.md</code>:</p>
+<pre><code>Kotlin (MainActivity, Aether.kt)
+  |  external fun nativeGenerate(...)          JNI
+  v
+libaether_jni.so   app/src/main/cpp/aether_jni.c   byte[] &lt;-&gt; char*, callbacks
+  |  aether_generate(...)                      C ABI, include/aether.h
+  v
+libaether.so       the Rust engine (src/ffi.rs)</code></pre>
+<ul>
+  <li>There are two libraries. <code>libaether.so</code> is the engine, and <code>libaether_jni.so</code> is the shim. <code>scripts/android-native.sh</code> builds both into the app's <code>jniLibs</code> folder.</li>
+  <li>The shim converts types. Kotlin strings become <code>byte[]</code> holding UTF-8, because JNI's own string functions use a different encoding for some characters.</li>
+  <li>Errors cross back as a Java <code>IOException</code> carrying <code>aether_last_error()</code>.</li>
+</ul>
+<p>Generated text arrives through a callback. The app passes a function pointer and a context pointer, and the engine calls the function once per piece of text. The shim's callback is short:</p>
+<pre><code>static int on_text(const uint8_t *bytes, size_t len, void *user) {
+    struct callback *cb = user;
+    JNIEnv *env = cb-&gt;env;
+    if (len == 0) return 1;
+    jbyteArray a = (*env)-&gt;NewByteArray(env, (jsize)len);
+    (*env)-&gt;SetByteArrayRegion(env, a, 0, (jsize)len, (const jbyte *)bytes);
+    jboolean go = (*env)-&gt;CallBooleanMethod(env, cb-&gt;target, cb-&gt;on_text, a);
+    (*env)-&gt;DeleteLocalRef(env, a);
+    /* A Kotlin exception stops generation; it is rethrown on return. */
+    return !(*env)-&gt;ExceptionCheck(env) &amp;&amp; go;
+}</code></pre>
+<ul>
+  <li>The <code>user</code> pointer carries the JNI environment and the Kotlin object. C has no closures, so this is how state gets to the callback.</li>
+  <li>The engine calls the callback on the thread that called <code>aether_generate</code>. JNI's environment is only valid on its own thread, so this matters.</li>
+  <li>The return value is the stop signal. Returning 0 stops generation. A Kotlin exception also stops it, because the callback returns 0 when one is pending.</li>
+</ul>
+<p><strong>Takeaway: the callback is how the engine streams text out, and the return value is how the app stops it.</strong></p>
+
+<h2 id="stream">How is text streamed without broken characters?</h2>
+<p>A model does not produce characters. It produces tokens, and a token is a few bytes of UTF-8 text. An emoji is four bytes, and a token can end in the middle of it. If the engine decoded each token as a string, a character split across two tokens would show up as two broken halves. So the engine does not decode at all. It hands out bytes, and says so in its comment:</p>
+<pre><code>/// Bytes to print for `next` following `prev`. (Bytes, not text: one
+/// character can be split across tokens.)
+pub fn piece(&amp;self, prev: usize, next: usize) -&gt; Vec&lt;u8&gt; {</code></pre>
+<p>The engine's own <code>Tokenizer::decode</code> turns a whole list of tokens into a string, and it replaces broken bytes with U+FFFD, the replacement character. That is right for a finished reply, but wrong for a stream. The app's Kotlin class keeps the unfinished bytes until the next piece arrives. Here it is, shortened to the parts that matter:</p>
+<pre><code>class Utf8Stream {
+    private val decoder = Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPLACE)
+        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+    private var pending = ByteArray(0)
+
+    fun feed(bytes: ByteArray): String {
+        val input = ByteBuffer.wrap(pending + bytes)
+        val out = CharBuffer.allocate(input.remaining())
+        decoder.decode(input, out, false)
+        pending = ByteArray(input.remaining()).also { input.get(it) }
+        return out.flip().toString()
+    }
+}</code></pre>
+<ul>
+  <li><code>pending + bytes</code> puts the bytes left over from last time in front of the new piece.</li>
+  <li><code>decode(..., false)</code> means "more input may follow". The decoder converts every complete character and stops at an incomplete one, without marking it as an error.</li>
+  <li><code>pending</code> keeps whatever the decoder did not consume, so the next call can finish the character.</li>
+  <li><code>REPLACE</code> handles bytes that are never valid UTF-8, so a bad byte gives a replacement character, not an exception.</li>
+</ul>
+<div class="callout"><span class="lbl">Illustration</span><p>An emoji is four bytes. Say the first token carries the first two and the next token carries the last two. The first call returns nothing and keeps two bytes. The second call sees all four, and returns the emoji once.</p></div>
+<p><strong>Takeaway: the engine streams bytes, and the app holds back the unfinished tail of each piece.</strong></p>
+<p>One thing this code does not do: there is no flush when generation ends. If a reply stopped inside a character, the held bytes would be dropped, and nothing in the code would report it. The model rarely ends mid-character, so this is a gap to close, not a known bug.</p>
+
+<h2 id="speed">How fast is the app?</h2>
+<p>The app and the command-line tool run the same engine, so the test is whether the app adds any cost. On 2026-10-22 the same prompt, cores and sampling were run in the app and in the CLI, in the same session. Prefill is the prompt's 35 tokens. Decode is the reply:</p>
+<table>
+  <thead><tr><th>Run</th><th>Prefill (35 tokens)</th><th>Decode</th></tr></thead>
+  <tbody>
+    <tr><td>App, 1st generate after load</td><td>262 ms (133.5 tok/s) <span class="tag m">measured</span></td><td>243 tokens at 94.6 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>App, 2nd</td><td>205 ms (170.9 tok/s) <span class="tag m">measured</span></td><td>231 tokens at 100.4 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>App, 3rd</td><td>200 ms (175.2 tok/s) <span class="tag m">measured</span></td><td>230 tokens at 93.6 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>CLI, seed 1</td><td>216 ms (162.4 tok/s) <span class="tag m">measured</span></td><td>372 tokens at 98.0 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>CLI, seed 2</td><td>215 ms (162.9 tok/s) <span class="tag m">measured</span></td><td>135 tokens at 103.9 tok/s <span class="tag m">measured</span></td></tr>
+  </tbody>
+</table>
+<div class="statrow">
+  <div class="stat"><b>93.6–100.4</b><span>app decode tok/s once warm <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>262 ms</b><span>first prefill after load, against 200 ms once warm <span class="tag m">measured</span></span></div>
+</div>
+<p class="note">Conditions: on battery (54 %). Another app was playing a picture-in-picture video during these runs, so the absolute speeds are below the Phase 7 numbers on the same phone. The app and the CLI ran under the same load.</p>
+<ul>
+  <li><strong>Once warm, the app matches the CLI.</strong> The app's decode lies between 93.6 and 100.4 tok/s, and the CLI's between 98.0 and 103.9. The ranges overlap, which is the run-to-run spread.</li>
+  <li><strong>The first generate is slower.</strong> The model is memory-mapped, so each page is read from storage the first time it is touched. That happens during the first prefill, so the 262 ms includes the reads. This is not a cold-start time for the app.</li>
+  <li><strong>No memory number yet.</strong> The results file has speeds only. The Phase 7 peak memory figures are for the CLI, not for the app.</li>
+</ul>
+<p><strong>Takeaway: the app does not slow the engine down, and the first reply is slower only because the model's pages are loaded on first use.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<p>These are the gaps the phase leaves. Each is a measurement or a check that has not been done, not a known fault.</p>
+<ul>
+  <li><strong>Release build.</strong> The numbers come from a debug APK. The release build is signed with the debug key and has not been measured.</li>
+  <li><strong>Memory.</strong> The app's memory use is not recorded in <code>results/phase-8.md</code>.</li>
+  <li><strong>Loading from shared storage.</strong> <code>android/README.md</code> notes that shared storage goes through Android's FUSE layer, and gives an alternative path. The two paths have not been timed against each other.</li>
+  <li><strong>End of a reply.</strong> The UTF-8 stream has no flush, as described above.</li>
+</ul>
+<p><strong>Takeaway: the app's speed is measured; its memory, its release build and its load paths are not.</strong></p>
+
+<h2 id="files">Which files hold the code?</h2>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/ffi.rs</code></td><td>The C ABI: opaque handle, <code>guard</code> and <code>catch_unwind</code>, the streaming callback, and a test that drives it the way C does</td></tr>
+    <tr><td><code>include/aether.h</code></td><td>The C header: the five functions, the error codes and the stats struct</td></tr>
+    <tr><td><code>examples/c/smoke.c</code></td><td>The same calls from plain C, as a check that the header works</td></tr>
+    <tr><td><code>android/app/src/main/cpp/aether_jni.c</code></td><td>The JNI shim: converts types, runs the callback, turns errors into exceptions</td></tr>
+    <tr><td><code>android/app/src/main/java/dev/aether/chat/Aether.kt</code></td><td>The Kotlin wrapper, and <code>Utf8Stream</code>, which holds back unfinished characters</td></tr>
+    <tr><td><code>android/app/src/main/java/dev/aether/chat/MainActivity.kt</code></td><td>The one-screen UI: model list, prompt box, a background thread for the engine</td></tr>
+    <tr><td><code>android/README.md</code></td><td>Build steps, how to put a model on the phone, and the settings on screen</td></tr>
+    <tr><td><code>scripts/android-native.sh</code></td><td>Builds <code>libaether.so</code> and <code>libaether_jni.so</code> into <code>jniLibs</code></td></tr>
+    <tr><td><code>results/phase-8.md</code></td><td>The app and CLI speed table, with conditions</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the contract is <code>include/aether.h</code> and <code>src/ffi.rs</code>; everything in <code>android/</code> is a client of it.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why does the engine need <code>catch_unwind</code> at every entry point, rather than just in the ones that load a model?</summary>
+<p>Because any call can panic: a bad prompt, an index out of range, or a bug in a kernel. A panic that reaches C is undefined behaviour, and it can happen in any function, so every entry point has the guard.</p>
+</details>
+<details class="check"><summary>The app gets a token that holds only the first two bytes of an emoji. What does <code>Utf8Stream</code> do, and what would go wrong if it decoded each piece on its own?</summary>
+<p>It keeps the two bytes in <code>pending</code> and returns an empty string. When the next piece brings the other two bytes, it decodes all four together and returns the emoji. Decoding each piece on its own would turn each half into a replacement character, so the emoji would appear as two broken symbols.</p>
+</details>
+<details class="check"><summary>Why does <code>aether_generate</code> need the callback's return value?</summary>
+<p>It is the only way for the app to stop the engine part way through. The Stop button sets a flag, the callback returns 0, and the engine stops at the next token. Without the return value, the app could not stop a reply once it had started.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>C is the common language. The header is a small, explicit contract, and the code behind it guards every call.</p>
+<p>Text streams as bytes, and the app holds back the unfinished characters until they are complete.</p>
+<p>Once warm, the app runs at the CLI's speed. Its memory, release build and load paths are the next things to measure.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=21"></script>
+<script src="../js/glossary.js?v=21"></script>
+<script src="../js/site.js?v=21"></script>
+</body>
+</html>
