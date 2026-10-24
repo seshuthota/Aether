@@ -32,7 +32,7 @@ setTimeout(function () {
 <h1>Raw memory in Rust</h1>
 <p class="lede">The aligned allocator is the first thing Phase 1 builds. <code>Vec&lt;f32&gt;</code> cannot promise 64-byte alignment, so you ask the allocator directly. That means a raw pointer, an <code>unsafe</code> block, and a few rules the compiler can no longer check for you.</p>
 
-<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p>The wrapper type itself is yours to write in the session. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>, with Rust 1.99.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (4 questions)</summary>
@@ -41,7 +41,7 @@ setTimeout(function () {
     <p>Is the address <code>0x1040</code> aligned to 64?</p>
     <ul>
       <li data-right>Yes <div class="why">An address is aligned to 64 when it is a multiple of 64, and <code>0x1040</code> is 65 × 64.</div></li>
-      <li>No, it doesn’t end in <code>00</code> <div class="why">Multiples of 64 (<code>0x40</code>) end in <code>00</code>, <code>40</code>, <code>80</code> or <code>C0</code> in hex, not only <code>00</code>.</div></li>
+      <li>No, it doesn’t end in <code>00</code> <div class="why">Multiples of 64 (<code>0x40</code>) end in <code>00</code>, <code>40</code>, <code>80</code> or <code>C0</code> in hex.</div></li>
       <li>Only if it holds an <code>f32</code> <div class="why">Alignment belongs to the address. The type only sets how much alignment you need.</div></li>
     </ul>
   </div>
@@ -114,7 +114,7 @@ setTimeout(function () {
   <ul>
     <li data-right>When the <code>Vec</code> is dropped, it frees with alignment 4 <div class="why">It frees with a different <code>Layout</code> from the allocation: undefined behaviour, which <code>from_raw_parts</code> forbids.</div></li>
     <li>Nothing; the <code>Vec</code> keeps the 64-byte alignment <div class="why">The <code>Vec</code> only knows its element type, <code>f32</code>, so it frees with alignment 4.</div></li>
-    <li>It fails to compile <div class="why"><code>from_raw_parts</code> is <code>unsafe</code>, so the compiler can’t check this rule. It compiles; the bug shows at run time, if ever.</div></li>
+    <li>It fails to compile <div class="why"><code>from_raw_parts</code> is <code>unsafe</code>, so the compiler can’t check this rule. The bug shows at run time, if ever.</div></li>
   </ul>
 </div>
 
@@ -371,7 +371,7 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
 <p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>

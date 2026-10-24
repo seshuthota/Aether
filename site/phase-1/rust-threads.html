@@ -32,7 +32,7 @@ setTimeout(function () {
 <h1>Threads in Rust</h1>
 <p class="lede">Phase 1 needs threads twice. The power monitor runs beside the benchmark, sampling while the benchmark works. The parallel sweep runs one reader per core at the same moment. Both use the standard library; no crate needed.</p>
 
-<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p>Two patterns, each shown once. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>. <code>read_power</code>, <code>run_benchmark</code>, <code>read_sum</code> and <code>pin_to</code> are placeholders for code you write.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
@@ -74,17 +74,17 @@ setTimeout(function () {
 <p>By the end you can read the sampler and the sweep skeleton line by line. You can say why the flag is shared, why <code>join</code> returns the samples, and why the barrier sits outside the clock.</p>
 
 <h2 id="what" data-short="A thread" data-step="A thread is a second stream of instructions, and Rust refuses data races.">What is a thread?</h2>
-<div class="quiz" data-quiz="predict" data-for="what" id="g-what">
-  <p>The benchmark already owns the program’s one thread. What lets the sampler run at the same moment, on another core?</p>
-  <ul>
-    <li data-right>A second thread <div class="why">Each thread is one stream of instructions. A second one can run on another core at once.</div></li>
-    <li>Calling the sampler between the benchmark’s steps <div class="why">Tempting, because the calls look interleaved. Both still take turns on the one stream.</div></li>
-    <li>A faster sampler function <div class="why">Speed does not help. One stream still runs one step at a time, so the sampler waits its turn.</div></li>
-  </ul>
-</div>
 <p>The sampler has to run while the benchmark runs, and one stream of instructions cannot do both. A program starts with one <strong>thread</strong>: one stream of instructions, running on one core at a time. A second thread is a second stream, which the operating system can run on another core at the same moment.</p>
 <p>Threads in one program share its memory. That is what makes them useful, and why Rust is strict about them. Two threads writing the same value at once is a <strong>data race</strong>, and Rust refuses to compile code that could have one.</p>
 <p><strong>Takeaway: a thread is a second stream of instructions that shares memory, and Rust refuses data races at compile time.</strong></p>
+<div class="quiz" data-quiz="check" data-for="what" id="c-what">
+  <p>Two threads both add to one counter variable, with no synchronisation. What does Rust do?</p>
+  <ul>
+    <li data-right>Refuses to compile it: that is a data race <div class="why">Two threads writing one value at once is a data race, and Rust rejects it at compile time.</div></li>
+    <li>Runs it, and the total may come out too low <div class="why">Tempting: that is what happens in C. Rust stops it before it runs.</div></li>
+    <li>Runs it, adding a lock for you <div class="why">Rust adds nothing silently. You choose the tool, such as an atomic.</div></li>
+  </ul>
+</div>
 
 <h2 id="spawn" data-short="Start and join" data-step="spawn starts a thread; join waits for it and returns its result.">How do you start a thread and wait for it?</h2>
 <p>You want the sampler to start on its own thread, and later you want its list of samples back. Two calls do that.</p>
@@ -220,7 +220,7 @@ let samples = sampler.join().unwrap();</code></pre>
   <ul>
     <li data-right>Close to nothing <div class="why">At most one sample. Lengthen the window, or repeat the run inside it, to hold many samples.</div></li>
     <li>It is fine: energy is power times time <div class="why">The formula is right. One or two readings are not an average.</div></li>
-    <li>A good estimate: 100 ms covers a 50 ms run <div class="why">The sampler looks fast next to the run, but its interval is twice the run. Check the count, not the speed.</div></li>
+    <li>A good estimate: 100 ms covers a 50 ms run <div class="why">It looks fast next to the run, but its interval is twice the run. Check the count, not the speed.</div></li>
   </ul>
 </div>
 
@@ -230,7 +230,7 @@ let samples = sampler.join().unwrap();</code></pre>
   <p>Each worker must borrow its chunk of the main thread’s buffer. Which call lets it?</p>
   <ul>
     <li data-right><code>thread::scope</code>, which joins every thread before it ends <div class="why">A scope joins its threads before it returns. Borrowing is then safe, and the compiler allows it.</div></li>
-    <li><code>spawn</code>, with the chunk moved in <div class="why">Tempting, since <code>spawn</code> is the usual call. A borrowed chunk is not owned by the worker, and <code>spawn</code> needs owned data.</div></li>
+    <li><code>spawn</code>, with the chunk moved in <div class="why">Tempting, since <code>spawn</code> is the usual call. But <code>spawn</code> needs owned data, and a borrowed chunk isn’t owned.</div></li>
     <li>A <code>Barrier</code>, a point where threads wait for each other <div class="why">A barrier does not let a thread borrow. It keeps start-up time out of the clock.</div></li>
   </ul>
 </div>
@@ -301,16 +301,16 @@ let elapsed = thread::scope(|s| {
 <p>The <code>black_box</code> rule from <a href="../phase-0/measuring-time.html#compiler">Measuring time</a> still applies to <code>read_sum</code>’s input and result. The sketch leaves it out to keep the shape visible.</p>
 <p><strong>Takeaway: <code>thread::scope</code> lets workers borrow, and the barrier keeps start-up time out of the clock.</strong></p>
 <div class="quiz" data-quiz="check" data-for="scope" id="c-scope">
-  <p>Why <code>thread::scope</code> for the sweep and not <code>thread::spawn</code>?</p>
+  <p>Why does the main thread call <code>start.wait()</code> before <code>Instant::now()</code>?</p>
   <ul>
-    <li data-right>The chunks are borrowed from the main thread’s buffer <div class="why"><code>spawn</code> needs owned data. A scope joins all its threads before it returns, so the borrow is safe.</div></li>
-    <li>They are the same, and <code>scope</code> is only a naming style <div class="why">Both start threads. The difference is that a scope lets the workers borrow.</div></li>
-    <li>Because <code>scope</code> runs the threads on the same core <div class="why">A scope says nothing about cores. Pinning is a separate call that each worker makes.</div></li>
+    <li data-right>So the clock starts only once every worker is pinned and ready <div class="why">Starting and pinning threads takes time that isn’t bandwidth. The barrier keeps it out of the clock.</div></li>
+    <li>So the workers start in core order <div class="why">A barrier releases everyone together; it sets no order.</div></li>
+    <li>So <code>join</code> can return the results <div class="why"><code>join</code> works without a barrier. The barrier is about when the clock starts.</div></li>
   </ul>
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
 <p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>

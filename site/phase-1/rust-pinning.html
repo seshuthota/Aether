@@ -32,17 +32,17 @@ setTimeout(function () {
 <h1>Calling Linux from Rust</h1>
 <p class="lede">Rust’s standard library has no “run this thread on cpu6.” Linux does, as a C function called <code>sched_setaffinity</code>. Calling a C function from Rust is called FFI, and the <code>libc</code> crate is what makes it a one-liner.</p>
 
-<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p><a href="topology.html#pin">Cores and pinning</a> explains what pinning is for. This page is the Rust side. The snippets compile for <code>aarch64-linux-android</code> against <code>libc</code> 0.2.190 <span class="tag m">measured</span>; they have not been run on the phone as written. The engine’s own version, <code>src/sys/affinity.rs</code>, pins every benchmark since Phase 1.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
   <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
   <div class="quiz" data-quiz="probe" data-for="thread" id="p-inherit">
-    <p>You pin the main thread, then spawn a worker. Does the worker keep the pin?</p>
+    <p>One thread is pinned to the set {cpu0–cpu5}. Does it run on six cores at once?</p>
     <ul>
-      <li data-right>Yes: it starts with a copy of its creator’s mask <div class="why">A new thread copies its creator’s mask. It does not start with all cores allowed.</div></li>
-      <li>No: each new thread starts with all cores allowed <div class="why">A new thread starts with a copy of its creator’s mask, not a fresh set of all cores.</div></li>
-      <li>Only the first worker <div class="why">Every new thread gets the copy, not just the first one.</div></li>
+      <li data-right>No: it is one thread, which the scheduler may move between those six <div class="why">A wider set gives the scheduler choices. It doesn’t split one thread.</div></li>
+      <li>Yes: one copy on each allowed core <div class="why">A set allows cores; it does not make copies. Parallel work needs one thread per core.</div></li>
+      <li>No: a set with more than one core is rejected <div class="why">Several cores in one set is allowed; only a set with no usable core fails.</div></li>
     </ul>
   </div>
   <div class="quiz" data-quiz="probe" data-for="errors" id="p-fail">
@@ -92,7 +92,7 @@ setTimeout(function () {
 <div class="quiz" data-quiz="check" data-for="ffi" id="c-ffi">
   <p>Why is calling <code>sched_setaffinity</code> unsafe in Rust, when the C function itself is fine?</p>
   <ul>
-    <li data-right>The compiler cannot check the declaration or the pointer you pass <div class="why">The compiler cannot check the declaration against the real function, or that the pointer you pass points at a valid <code>cpu_set_t</code> of the size you claim. You vouch for both.</div></li>
+    <li data-right>The compiler cannot check the declaration or the pointer you pass <div class="why">The compiler can’t check the declaration, or that the pointer is a valid <code>cpu_set_t</code> of that size. You vouch.</div></li>
     <li>C is less safe than Rust, so every call into it needs <code>unsafe</code> <div class="why">The C function is fine. The problem is what the compiler cannot see from the Rust side of the call.</div></li>
     <li>Foreign code runs somewhere else on the phone <div class="why">Foreign means defined outside Rust. That is why a declaration is needed, not why the call is unsafe.</div></li>
   </ul>
@@ -212,14 +212,14 @@ libc::CPU_ZERO(&amp;mut set);</code></pre>
   <ul>
     <li data-right>Only cpu6: all-zero bytes are an empty set, and <code>CPU_SET</code> turns on bit 6 <div class="why">All-zero bytes are a valid empty set, so no bit is on before <code>CPU_SET</code>.</div></li>
     <li>Every core, because <code>mem::zeroed</code> leaves the bits undefined <div class="why">All-zero bytes are a valid empty set here. The zeroed start is defined, not undefined.</div></li>
-    <li>It doesn’t compile: <code>mem::zeroed</code> is <code>unsafe</code> <div class="why">It sits inside <code>pin_to</code>’s <code>unsafe</code> block, so it compiles; you vouch that all-zero bytes are valid, and for <code>cpu_set_t</code> they are.</div></li>
+    <li>It doesn’t compile: <code>mem::zeroed</code> is <code>unsafe</code> <div class="why">Inside <code>pin_to</code>’s <code>unsafe</code> block it compiles. You vouch that all-zero bytes are valid; for <code>cpu_set_t</code> they are.</div></li>
   </ul>
 </div>
 
 <h2 id="errors" data-short="Failure" data-step="Turn errno into an error and stop; never ignore the return value.">What if it fails?</h2>
-<p>Pinning can fail, for example when you name a core the thread may not use. Failure comes back as a number, not as text, so you have to turn it into a Rust error before you can read it.</p>
+<p>Pinning can fail, for example when you name a core the thread may not use. When it does, the call returns −1.</p>
 <div class="quiz" data-quiz="predict" data-for="errors" id="g-errors">
-  <p>The call returns −1. How do you get the reason as readable text?</p>
+  <p>How do you find out why it failed, as readable text?</p>
   <ul>
     <li data-right><code>std::io::Error::last_os_error()</code>, which reads <code>errno</code> <div class="why">It reads <code>errno</code> and wraps it as a normal Rust error that prints as text.</div></li>
     <li>Read the return value: −1 names the reason <div class="why">−1 only says the call failed. The reason is in <code>errno</code>, not in the return value.</div></li>
@@ -270,7 +270,7 @@ libc::CPU_ZERO(&amp;mut set);</code></pre>
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
 <p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>

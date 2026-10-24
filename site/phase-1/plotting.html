@@ -30,9 +30,9 @@ setTimeout(function () {
 <p class="kicker">Phase 1 · Rust tools 5</p>
 
 <h1>Plotting the sweep</h1>
-<p class="lede">The working-set sweep produces dozens of numbers per core set: 66 sizes on one core, 50 for the all-core runs <span class="tag m">measured</span>. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
+<p class="lede">The working-set sweep produces dozens of numbers per core set: 65 sizes on one core, from 4 KiB, and 49 for the all-core runs, which start at 64 KiB <span class="tag m">measured</span>. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
 
-<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
   <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
@@ -75,11 +75,11 @@ setTimeout(function () {
 <h2 id="path" data-short="Phone to picture" data-step="The phone measures and prints; the PC saves the CSV and draws it.">How do the numbers get from phone to picture?</h2>
 <p>The numbers start on the phone and must end as a picture on the PC. Something has to carry them across, and something has to draw them.</p>
 <div class="quiz" data-quiz="predict" data-for="path" id="g-path">
-  <p>Which device should draw the sweep picture?</p>
+  <p>The sweep runs on the phone. How do its numbers end up in <code>results/sweep-cpu6.csv</code> on the PC?</p>
   <ul>
-    <li data-right>The PC: the phone only measures and prints <div class="why">The phone does no drawing: it has no Python and should only run the benchmark.</div></li>
-    <li>The phone, since the numbers come from there <div class="why">Tempting, because the data starts there. But the phone has no Python and should not be busy with plotting.</div></li>
-    <li>Both, so each device has its own picture <div class="why">A picture from the phone would need Python there, so drawing stays on the PC.</div></li>
+    <li data-right>It prints them; adb carries the output back, and <code>&gt;</code> on the PC writes the file <div class="why">Only printed output travels back through adb. The redirect on the PC saves it.</div></li>
+    <li>It writes the CSV into <code>results/</code> on the phone <div class="why">Tempting, since the phone makes the numbers. But <code>results/</code> lives on the PC; the phone only prints.</div></li>
+    <li>You read them off the phone’s screen and type them in <div class="why">Dozens of numbers by hand invites typos. Printing and redirecting copies them exactly.</div></li>
   </ul>
 </div>
 <p>The phone runs the sweep and prints its numbers. They travel to the PC through adb (the Android debug bridge), land in a CSV file in <code>results/</code>, and the plotting script draws them as a PNG.</p>
@@ -127,21 +127,22 @@ setTimeout(function () {
 <pre><code># sweep: pure read, f32, pinned cpu6
 # date=2026-10-20 screen=off charging=no start_temp_c=31.2
 # commit=5632c75
-bytes,gbps
+working_set_bytes,median_gbps
 4096,88.41
 8192,92.07
 …</code></pre>
 <ul>
   <li>Lines that start with <code>#</code> hold the conditions of the run, as plain text.</li>
-  <li><code>bytes,gbps</code> is the header. It names the two columns.</li>
+  <li><code>working_set_bytes,median_gbps</code> is the header. It names the two columns.</li>
+  <li>The real sweep files have more columns: kernel, threads, repetitions, best and worst. A script that finds columns by name ignores the extra ones.</li>
   <li>Each later line is one measurement: a working-set size in bytes, then its bandwidth in GB/s.</li>
 </ul>
 <p>The conditions sit at the top, so they can never be separated from the numbers. Rust writes the file with two <code>println!</code> calls, each one line.</p>
-<pre><code>println!("bytes,gbps");
+<pre><code>println!("working_set_bytes,median_gbps");
 println!("{},{:.2}", bytes, gbps);</code></pre>
 <ul>
   <li><code>{:.2}</code> prints the number with two digits after the decimal point. Without it, Rust prints every digit the float holds.</li>
-  <li>If you leave out the header, the script cannot find <code>bytes</code> or <code>gbps</code> by name.</li>
+  <li>If you leave out the header, the script cannot find <code>working_set_bytes</code> or <code>median_gbps</code> by name.</li>
 </ul>
 <p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete. The numbers above are an example, not results.</p>
 <p><strong>Takeaway: one CSV per core set, with the conditions as <code>#</code> lines at the top.</strong></p>
@@ -183,9 +184,9 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
 <div class="quiz" data-quiz="check" data-for="log" id="c-log">
   <p>On a linear axis, where is the 8 MB point if the axis ends at 256 MB?</p>
   <ul>
-    <li data-right>At about 3% of the width <div class="why">8 ÷ 256 ≈ 3%. Everything from 4 KB to 8 MB, which covers both L1 and L2, fits in that 3%.</div></li>
+    <li data-right>At about 3% of the width <div class="why">8 ÷ 256 ≈ 3%. Everything from 4 KB to 8 MB, both L1 and L2, fits in that 3%.</div></li>
     <li>Halfway, at 128 MB <div class="why">Tempting if you read a linear axis as halving. It measures size, not doublings.</div></li>
-    <li>Halfway along either axis <div class="why">Only a log axis spaces the doublings evenly. On a linear one, 8 MB sits at 3% of the width.</div></li>
+    <li>Halfway along either axis <div class="why">Neither. On a log axis 8 MB is 11 of 16 doublings in (69%); on a linear one, 3%.</div></li>
   </ul>
 </div>
 
@@ -224,12 +225,12 @@ for path in sys.argv[1:]:
     with open(path) as f:
         rows = list(csv.DictReader(
             line for line in f if not line.startswith("#")))
-    x = [int(r["bytes"]) for r in rows]
-    y = [float(r["gbps"]) for r in rows]
+    x = [int(r["working_set_bytes"]) for r in rows]
+    y = [float(r["median_gbps"]) for r in rows]
     ax.plot(x, y, marker="o", label=Path(path).stem)</code></pre>
 <ul>
   <li><code>sys.argv[1:]</code> is the list of files named on the command line.</li>
-  <li><code>DictReader</code> uses the header line, so <code>r["bytes"]</code> finds the column by name. <code>#</code> lines are dropped first.</li>
+  <li><code>DictReader</code> uses the header line, so <code>r["working_set_bytes"]</code> finds the column by name. <code>#</code> lines are dropped first.</li>
   <li><code>int(...)</code> and <code>float(...)</code> turn the text into numbers. Each measured point gets a dot. A line between two dots is not a measurement.</li>
 </ul>
 
@@ -252,7 +253,7 @@ print("wrote results/sweep.png")</code></pre>
 </ul>
 
 <h3>All four together</h3>
-<pre><code># Plot one or more sweep CSVs (bytes,gbps) on the same axes.
+<pre><code># Plot one or more bw_sweep CSVs on the same axes.
 # Usage: python3 tools/plot_sweep.py \
 #          results/sweep-cpu6.csv results/sweep-cpu0-5.csv
 import csv
@@ -276,8 +277,8 @@ for path in sys.argv[1:]:
     with open(path) as f:
         rows = list(csv.DictReader(
             line for line in f if not line.startswith("#")))
-    x = [int(r["bytes"]) for r in rows]
-    y = [float(r["gbps"]) for r in rows]
+    x = [int(r["working_set_bytes"]) for r in rows]
+    y = [float(r["median_gbps"]) for r in rows]
     ax.plot(x, y, marker="o", label=Path(path).stem)
 
 # each step right = twice the size
@@ -291,12 +292,12 @@ ax.legend()
 fig.tight_layout()
 fig.savefig("results/sweep.png", dpi=150)
 print("wrote results/sweep.png")</code></pre>
-<p>Tested on made-up CSVs, including Windows-style line endings <span class="tag m">measured</span>. Run it from the project root.</p>
+<p>Tested on the Phase 1 sweep files and on a copy with Windows-style line endings <span class="tag m">measured</span>. Run it from the project root. The repository’s <code>tools/plot_sweep.py</code> is a longer version: it also labels each line from the file’s <code>#</code> lines and shades the band between the best and worst run.</p>
 <p><strong>Takeaway: the script reads columns by name, sets the axes, and saves a PNG under <code>results/</code>.</strong></p>
 <div class="quiz" data-quiz="check" data-for="script" id="c-script">
-  <p>The header line says <code>size,gbps</code> instead of <code>bytes,gbps</code>. What does the script do?</p>
+  <p>The header line says <code>size,median_gbps</code> instead of <code>working_set_bytes,median_gbps</code>. What does the script do?</p>
   <ul>
-    <li data-right>It fails: <code>r["bytes"]</code> finds no column with that name <div class="why"><code>DictReader</code> finds columns by the header name, so the lookup for <code>bytes</code> has nothing to find.</div></li>
+    <li data-right>It fails: <code>r["working_set_bytes"]</code> finds no column with that name <div class="why"><code>DictReader</code> finds columns by the header name, so the lookup for <code>working_set_bytes</code> has nothing to find.</div></li>
     <li>It uses the first column, as many CSV readers do <div class="why">Tempting, since many readers go by position. This one goes by name.</div></li>
     <li>Nothing changes, because the <code>#</code> lines are dropped first <div class="why">The <code>#</code> lines are dropped, but the header line is still read for the column names.</div></li>
   </ul>
@@ -313,7 +314,7 @@ print("wrote results/sweep.png")</code></pre>
   </ul>
 </div>
 <p>The sizes are powers of two: 4096 bytes is 4 KiB, and 1,048,576 bytes is 1 MiB. Those are KiB and MiB, which is how the script labels them. Bandwidth uses the other convention: GB/s means 10<sup>9</sup> bytes per second, which is what the decode ceiling and published figures use. Both are fine. Mixing them silently is a 7% error at the gigabyte scale (2<sup>30</sup> / 10<sup>9</sup> ≈ 1.074) <span class="tag c">calculated</span>.</p>
-<p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>gbps</code>. Next month you won’t remember which one it was.</p>
+<p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>median_gbps</code>. Next month you won’t remember which one it was.</p>
 <p><strong>Takeaway: KiB and MiB count sizes, GB/s counts 10<sup>9</sup> bytes; say which one each number uses.</strong></p>
 <div class="quiz" data-quiz="check" data-for="units" id="c-units">
   <p>A plateau sits at 45 “GB/s” computed with 2<sup>30</sup>. What is it in the site’s units?</p>
@@ -325,7 +326,7 @@ print("wrote results/sweep.png")</code></pre>
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
 <p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>

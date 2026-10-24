@@ -32,7 +32,7 @@ setTimeout(function () {
 <h1>Reading /sys from Rust</h1>
 <p class="lede">Core clocks, temperatures, battery current and voltage are all plain text files under <code>/sys</code>. Reading one is a single standard-library call. The care goes into turning the text into a number with the right unit.</p>
 
-<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p><a href="power.html#files">Power and heat</a> lists which files the plan wants. This page is how the Rust code reads them. Before writing any code, read each one by hand with <code>adb shell cat</code>.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
@@ -153,16 +153,16 @@ setTimeout(function () {
 </table>
 <p><strong>Takeaway: read, trim, parse, and return the error; never assume the file exists or holds one number.</strong></p>
 <div class="quiz" data-quiz="check" data-for="read" id="c-read">
-  <p>Why does <code>"3532800\n".parse::&lt;i64&gt;()</code> fail?</p>
+  <p>The sampler gets <code>PermissionDenied</code> on one thermal zone. Should the benchmark stop?</p>
   <ul>
-    <li data-right>The newline. <code>parse</code> wants only digits (and a sign). <code>trim()</code> first. <div class="why">The newline is not a digit, so <code>trim()</code> has to remove it before <code>parse</code>.</div></li>
-    <li>The number is too large for <code>i64</code>. <div class="why"><code>3532800</code> is a small number. The newline is the problem.</div></li>
-    <li>The file is missing, so <code>parse</code> has nothing to read. <div class="why">A missing file fails in <code>read_to_string</code>, before <code>parse</code> runs.</div></li>
+    <li data-right>No. Record the zone as unreadable and keep the rest. <div class="why">The benchmark is the measurement; the sensor is extra. Say so in the results.</div></li>
+    <li>Yes: any unreadable file makes the run invalid. <div class="why">One sensor is extra. The benchmark itself is still valid.</div></li>
+    <li>No, and skip the zone silently so the results stay clean. <div class="why">Hiding a missing sensor hides a gap. Record it in the results.</div></li>
   </ul>
 </div>
 
 <h2 id="units" data-short="Which unit?" data-step="A file’s documented unit turns its number into a real value.">What unit is the number in?</h2>
-<p>A bare <code>3532800</code> means nothing until you know its unit. A unit says how big one step of the number is. Hertz (Hz) counts cycles per second, and kHz is a thousand of them.</p>
+<p>A bare <code>3532800</code> means nothing until you know its unit. A unit says how big one step of the number is. Hertz (Hz) counts cycles per second; kHz, MHz and GHz are a thousand, a million and a billion of them.</p>
 <div class="quiz" data-quiz="predict" data-for="units" id="g-units">
   <p><code>scaling_cur_freq</code> reads 3532800. How big is one step of that number?</p>
   <ul>
@@ -246,7 +246,7 @@ setTimeout(function () {
   <ul>
     <li data-right>No. Each read is a kernel request that takes microseconds, so keep it out. <div class="why">A kernel request costs roughly microseconds (an assumption). Reads belong in the sampler.</div></li>
     <li>Yes. A read is just a memory access. <div class="why">A read goes through the kernel and may ask a hardware chip. It is not a memory access.</div></li>
-    <li>Yes. The kernel keeps the text ready, so reads are free. <div class="why">Each read builds fresh text (see the first section). Nothing is kept ready.</div></li>
+    <li>Yes. The kernel keeps the text ready, so reads are free. <div class="why">The kernel builds the text fresh on every read. Nothing is kept ready.</div></li>
   </ul>
 </div>
 <p>The kernel runs driver code to produce the text, and some drivers have to ask a hardware chip. That is roughly microseconds <span class="tag a">assumption</span>: nothing at ten samples a second, but far too much inside a loop you are timing. Reads belong in the sampler thread, never in the benchmark.</p>
@@ -262,7 +262,7 @@ setTimeout(function () {
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
 <p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>
