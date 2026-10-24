@@ -105,7 +105,8 @@ Prefill tok/s, round 1 / round 2:
 - Every build ran faster than in `results/phase-7.md` (old Q4_0 pp256 196
   against 111 then) and round 2 ran ~10 % slower than round 1, so only
   same-round comparisons hold.
-- Gap to llama.cpp: ~2.4–3× (was ~3.4–4× in the same session).
+- Gap to llama.cpp (its tok/s ÷ ours, same round): Q4_0 2.3–2.8× (the `sdot`
+  build 2.9–3.7×), Q8_0 2.4–3.3×.
 
 Not done yet (paused 2026-10-24 so the learning track can catch up):
 interleave the activations once per call instead of once per row pair, a
