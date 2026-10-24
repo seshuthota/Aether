@@ -144,7 +144,7 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
   <li><code>{:.2}</code> prints the number with two digits after the decimal point. Without it, Rust prints every digit the float holds.</li>
   <li>If you leave out the header, the script cannot find <code>working_set_bytes</code> or <code>median_gbps</code> by name.</li>
 </ul>
-<p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete. The numbers above are an example, not results.</p>
+<p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete. The numbers above are an example, not results. The real runs are in <code>results/phase-1/raw/</code>, for example <code>sweep-read-core7.csv</code>.</p>
 <p><strong>Takeaway: one CSV per core set, with the conditions as <code>#</code> lines at the top.</strong></p>
 <div class="quiz" data-quiz="check" data-for="csv" id="c-csv">
   <p>Why do the conditions go inside the CSV, not in a separate notes file?</p>
