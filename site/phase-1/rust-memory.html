@@ -5,10 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Raw memory in Rust · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=26">
+<link rel="stylesheet" href="../css/site.css?v=27">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -26,9 +23,9 @@
 <h1>Raw memory in Rust</h1>
 <p class="lede">The aligned allocator is the first thing Phase 1 builds. <code>Vec&lt;f32&gt;</code> cannot promise 64-byte alignment, so you ask the allocator directly. That means a raw pointer, an <code>unsafe</code> block, and a few rules the compiler can no longer check for you.</p>
 
-<div class="callout guide"><span class="lbl">How to use this page</span><p>Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl js-only">How to use this page</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p>The wrapper type itself is yours to write in the session. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>, with Rust 1.99.</p>
-<details class="probe" data-probe>
+<details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (4 questions)</summary>
   <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
   <div class="quiz" data-quiz="probe" data-for="why" data-prereq="alignment.html" data-prereq-title="Alignment" id="p-aligned">
@@ -36,7 +33,7 @@
     <ul>
       <li data-right>Yes <div class="why">An address is aligned to 64 when it is a multiple of 64, and <code>0x1040</code> is 65 × 64.</div></li>
       <li>No, it doesn’t end in <code>00</code> <div class="why">Multiples of 64 (<code>0x40</code>) end in <code>00</code>, <code>40</code>, <code>80</code> or <code>C0</code> in hex, not only <code>00</code>.</div></li>
-      <li>Only if it holds an <code>f32</code> <div class="why">Alignment is a property of the address alone. The type decides how much alignment you need, not how much an address has.</div></li>
+      <li>Only if it holds an <code>f32</code> <div class="why">Alignment belongs to the address. The type only sets how much alignment you need.</div></li>
     </ul>
   </div>
   <div class="quiz" data-quiz="probe" data-for="unsafe" id="p-unsafe">
@@ -97,7 +94,7 @@
   <ul>
     <li>Always: heap buffers start on a cache line <div class="why"><code>Vec</code> asks only for the alignment its element needs, and an <code>f32</code> needs 4.</div></li>
     <li data-right>Sometimes, by luck; nothing promises it <div class="why">The allocator may hand back a multiple of 64, but <code>Vec</code> only asked for 4.</div></li>
-    <li>Never <div class="why">Nothing prevents it either. Any multiple of 4 can come back, and some multiples of 4 are multiples of 64.</div></li>
+    <li>Never <div class="why">Nothing prevents it: any multiple of 4 can come back, including multiples of 64.</div></li>
   </ul>
 </div>
 <p>A <code>Vec&lt;f32&gt;</code> asks the <strong>allocator</strong> (the code that hands out heap memory) for 4-byte alignment, because that is all an <code>f32</code> needs. So the answer to the guess is “sometimes”: the address might happen to be a multiple of 64, but nothing promises it, so the buffer may start in the middle of a cache line. The <a href="alignment.html#rust">Alignment</a> page covers why you want 64.</p>
@@ -106,9 +103,9 @@
 <div class="quiz" data-quiz="check" data-for="why" id="c-why">
   <p>You allocate 64-aligned memory yourself and turn it into a <code>Vec&lt;f32&gt;</code> with <code>Vec::from_raw_parts</code>. What goes wrong?</p>
   <ul>
-    <li data-right>When the <code>Vec</code> is dropped, it frees with alignment 4 <div class="why">That is a different <code>Layout</code> from the one the memory was allocated with, which is undefined behaviour. <code>Vec::from_raw_parts</code> forbids it for this reason.</div></li>
-    <li>Nothing; the <code>Vec</code> keeps the 64-byte alignment <div class="why">The <code>Vec</code> doesn’t know how the memory was allocated. It only knows its element type, <code>f32</code>, so it frees with alignment 4.</div></li>
-    <li>It fails to compile <div class="why"><code>from_raw_parts</code> is an <code>unsafe</code> function: the compiler cannot check this rule, so it compiles. The mistake shows up at run time, if at all.</div></li>
+    <li data-right>When the <code>Vec</code> is dropped, it frees with alignment 4 <div class="why">It frees with a different <code>Layout</code> from the allocation: undefined behaviour, which <code>from_raw_parts</code> forbids.</div></li>
+    <li>Nothing; the <code>Vec</code> keeps the 64-byte alignment <div class="why">The <code>Vec</code> only knows its element type, <code>f32</code>, so it frees with alignment 4.</div></li>
+    <li>It fails to compile <div class="why"><code>from_raw_parts</code> is <code>unsafe</code>, so the compiler can’t check this rule. It compiles; the bug shows at run time, if ever.</div></li>
   </ul>
 </div>
 
@@ -119,7 +116,7 @@
   <ul>
     <li data-right>It has no owner and no lifetime, so the compiler can’t prove it’s valid <div class="why">The borrow checker works by tracking owners and borrows. A raw pointer gives it nothing to track.</div></li>
     <li>Raw pointers are slow <div class="why">Speed is not the reason. The refusal is about what the compiler can prove.</div></li>
-    <li>It might be misaligned <div class="why">That is one thing that could be wrong, but Rust refuses every raw-pointer read, aligned or not, because it can’t tell who owns the memory or how long it lives.</div></li>
+    <li>It might be misaligned <div class="why">Alignment is one risk, but Rust refuses every raw-pointer read, because it can’t tell who owns the memory.</div></li>
   </ul>
 </div>
 <p>Safe Rust guarantees no dangling pointers, no double frees and no data races because the <strong>borrow checker</strong> tracks who owns each value and how long each borrow lives. For a raw pointer it has nothing to track.</p>
@@ -133,8 +130,8 @@
 <div class="quiz" data-quiz="check" data-for="unsafe" id="c-unsafe">
   <p>Inside an <code>unsafe { }</code> block you take two <code>&amp;mut</code> borrows of the same <code>Vec</code> and use both. What happens?</p>
   <ul>
-    <li data-right>A compile error, the same as outside the block <div class="why"><code>unsafe</code> does not skip the borrow checker. It allows a few extra operations, such as calling unsafe functions and dereferencing raw pointers; types, borrows and slice bounds are still checked.</div></li>
-    <li>It compiles, because the block is <code>unsafe</code> <div class="why">This is the “unsafe means anything goes” idea. Borrows of ordinary references are checked in the block exactly as outside it.</div></li>
+    <li data-right>A compile error, the same as outside the block <div class="why"><code>unsafe</code> adds operations such as dereferencing raw pointers. Types, borrows and slice bounds are still checked.</div></li>
+    <li>It compiles, because the block is <code>unsafe</code> <div class="why">That is the “<code>unsafe</code> means anything goes” idea. References are checked inside the block as outside it.</div></li>
     <li>It compiles but panics at run time <div class="why">The borrow checker runs at compile time and adds no run-time checks. This is refused before the program exists.</div></li>
   </ul>
 </div>
@@ -177,7 +174,7 @@
   <ul>
     <li data-right><code>Layout::array::&lt;f32&gt;(1000).unwrap().align_to(48)</code> <div class="why">48 is not a power of two, so <code>align_to</code> returns an error.</div></li>
     <li><code>Layout::array::&lt;f32&gt;(1000).unwrap().align_to(64)</code> <div class="why">64 is 2⁶, a power of two. This is the call the allocator uses.</div></li>
-    <li><code>Layout::array::&lt;f32&gt;(0)</code> <div class="why">Zero floats is a valid <code>Layout</code> of size 0. Describing it is fine; passing it to <code>alloc</code> is the mistake (see the rules below).</div></li>
+    <li><code>Layout::array::&lt;f32&gt;(0)</code> <div class="why">A size-0 <code>Layout</code> is valid. Passing it to <code>alloc</code> is the mistake (see the rules below).</div></li>
   </ul>
 </div>
 
@@ -186,8 +183,8 @@
 <div class="quiz" data-quiz="predict" data-for="calls" id="g-calls">
   <p>You allocate, make a slice from the pointer, free the memory, then read <code>floats[0]</code>. Which step does the compiler stop?</p>
   <ul>
-    <li data-right>None of them <div class="why">A slice made from a raw pointer carries no link to the allocation, so the compiler can’t see that the read comes after the free.</div></li>
-    <li>The read after the free <div class="why">It would with a <code>Vec</code>. Here the slice was made from a raw pointer, so nothing ties it to the memory’s lifetime.</div></li>
+    <li data-right>None of them <div class="why">A slice from a raw pointer has no link to the allocation, so the compiler can’t see the free.</div></li>
+    <li>The read after the free <div class="why">It would with a <code>Vec</code>. A slice from a raw pointer isn’t tied to the memory’s lifetime.</div></li>
     <li>The free, because the slice still exists <div class="why">The compiler doesn’t know the slice and the pointer share memory. That link exists only in your head.</div></li>
   </ul>
 </div>
@@ -199,6 +196,7 @@ let p = unsafe { alloc_zeroed(layout) };</code></pre>
 <ul>
   <li><code>alloc_zeroed</code> asks the global allocator for <code>layout.size()</code> bytes at <code>layout.align()</code>, filled with zero bits. On Android the global allocator is the system one: Bionic’s <code>malloc</code> family underneath.</li>
   <li>Zero bits are <code>0.0</code> as an <code>f32</code>, so every float has a value. Plain <code>alloc</code> leaves the bytes uninitialised, and reading them as floats before writing is undefined behaviour.</li>
+  <li>For a 64-byte alignment, Rust’s system allocator allocates and then writes the zeros itself: one pass over the memory at allocation time. That pass also touches every page, so the page faults happen there and not inside the timed loop.</li>
   <li><code>p</code> points at the first byte. It is null if the allocator could not give you memory.</li>
 </ul>
 
@@ -291,9 +289,9 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 <div class="quiz" data-quiz="check" data-for="calls" id="c-calls">
   <p>Why <code>alloc_zeroed</code> and not plain <code>alloc</code>?</p>
   <ul>
-    <li data-right>Reading uninitialised memory as <code>f32</code> is undefined behaviour; zeroed bytes are valid floats <div class="why">Zero bits are 0.0, so the buffer is safe to read immediately. For a 64-byte alignment, Rust’s system allocator allocates and then writes the zeros itself: one pass over the memory at allocation time. That pass also touches every page, so the page faults happen there and not inside the timed loop.</div></li>
-    <li><code>alloc_zeroed</code> is faster <div class="why">It does more work, not less: for a 64-byte alignment the zeros are written in a pass over the memory after allocating.</div></li>
-    <li>Plain <code>alloc</code> can’t give 64-byte alignment <div class="why">Both take the same <code>Layout</code>, so both honour its alignment. The difference is only whether the bytes start as zeros.</div></li>
+    <li data-right>Reading uninitialised memory as <code>f32</code> is undefined behaviour; zeroed bytes are valid floats <div class="why">Zero bits are 0.0, so the buffer is safe to read straight away. The bytes from plain <code>alloc</code> are not.</div></li>
+    <li><code>alloc_zeroed</code> is faster <div class="why">It does more work: the zeros are written in an extra pass.</div></li>
+    <li>Plain <code>alloc</code> can’t give 64-byte alignment <div class="why">Both take the same <code>Layout</code>, so both honour its alignment. Only the starting bytes differ.</div></li>
   </ul>
 </div>
 
@@ -385,9 +383,9 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=26"></script>
-<script src="../js/glossary.js?v=26"></script>
-<script src="../js/site.js?v=26"></script>
-<script src="../js/learn.js?v=26"></script>
+<script src="../js/pages.js?v=27"></script>
+<script src="../js/glossary.js?v=27"></script>
+<script src="../js/site.js?v=27"></script>
+<script src="../js/learn.js?v=27"></script>
 </body>
 </html>

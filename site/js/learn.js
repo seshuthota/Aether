@@ -2,12 +2,15 @@
 //
 //   [data-quiz="predict"]  a guess before a section: open, no confidence asked
 //   [data-quiz="check"]    a check after a section: folded until opened
-//   [data-quiz="probe"]    a question in the "Do you need this page?" box
-//   [data-probe]           the box; its result marks sections to read or skim
-//   .toc[data-stepmap]     the page's steps, with what each answer said
+//   [data-quiz="probe"]    a question in the folded "Already know some of
+//                          this?" skim test inside the how-to box
+//   [data-probe]           the skim test; its result marks sections to read or skim
+//   .toc[data-stepmap]     the page's steps: a folded list in the page, and the
+//                          "On this page" sidebar from 1400px
 //   [data-record]          this page's answers, copyable as Markdown
 //
-// A quiz is plain markup, so the page still reads without JavaScript:
+// A quiz is plain markup. Without JavaScript (no "js" class on <html>, which
+// site.js adds) the CSS shows each question with its right answer and note:
 //   <div class="quiz" data-quiz="check" data-for="layout" id="q-layout">
 //     <p>Question?</p>
 //     <ul>
@@ -220,10 +223,9 @@ function initStepMap(quizzes, ctx) {
     return list;
   }
   toc.hidden = true;
-  // Inline copy: folded on phones, where nine steps would fill more than a screen.
-  const fold = el("details", { class: "stepfold" }, [el("summary", { text: "Steps on this page (" + steps.length + ")" }), build(false)]);
-  fold.open = matchMedia("(min-width: 861px)").matches;
-  toc.after(fold);
+  // Inline copy, shown below 1400px where there is no sidebar. It starts
+  // folded so the first section stays near the top of the screen.
+  toc.after(el("details", { class: "stepfold" }, [el("summary", { text: "Steps on this page (" + steps.length + ")" }), build(false)]));
   const layout = document.querySelector(".layout");
   if (layout) {
     layout.classList.add("has-rail");

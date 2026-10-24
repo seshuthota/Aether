@@ -12,6 +12,8 @@ const store = {
 };
 
 (function () {
+  // CSS uses this to tell pages read with scripts off (see the quiz rules).
+  document.documentElement.classList.add("js");
   initTheme();
   const nav = initNav();
   initUnderstood(nav);

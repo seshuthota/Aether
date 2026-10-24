@@ -13,7 +13,8 @@ Then open http://localhost:8765/ (or open `site/index.html` directly).
 1. Copy `_template.html` to `phase-N/topic.html` and write the content,
    following the checklist in `GUIDED-PAGES.md`.
 2. Add one line for it to `js/pages.js`. A new phase gets a new section there.
-3. Run `scripts/check-guided-pages.py site/phase-N/topic.html`.
+3. From the repository root, run `scripts/check-guided-pages.py site/phase-N/topic.html`
+   ([source](https://github.com/seshuthota/Aether/blob/main/scripts/check-guided-pages.py); it is not part of the published site).
 
 The side menu, breadcrumb, previous/next links and the home-page cards are
 all built from `js/pages.js`. Nothing else needs editing.

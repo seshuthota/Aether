@@ -6,7 +6,8 @@ asks the reader to guess, explains, and ends with a check. Start from
 style rules (question titles, problem first, define terms, bullets after code,
 `SAFETY:` comments) still apply on top of this list.
 
-Run the checker before committing:
+Run the checker from the repository root before committing. It lives in the
+repository, not on the published site: [`scripts/check-guided-pages.py`](https://github.com/seshuthota/Aether/blob/main/scripts/check-guided-pages.py).
 
 ```
 scripts/check-guided-pages.py site/phase-N/topic.html
@@ -58,5 +59,10 @@ It enforces the items marked ✔︎. The rest need a human read.
 ## Wiring
 
 - [ ] Load `js/learn.js` only on pages with quizzes, after `site.js`. ✔︎
+- [ ] Anything that only makes sense with scripts running (instructions to
+      guess or answer, the skim test) gets `class="js-only"`. With scripts off,
+      each quiz shows as its question, the right answer and that answer's note.
+- [ ] Fonts are self-hosted from `fonts/` through `site.css`; don't add Google
+      Fonts links to pages.
 - [ ] Bump the `?v=` on every asset when `site.css` or a script changes.
 - [ ] Add the page to `js/pages.js`; check links and anchors.
