@@ -10,8 +10,10 @@ Then open http://localhost:8765/ (or open `site/index.html` directly).
 
 ## Adding a page
 
-1. Copy `_template.html` to `phase-N/topic.html` and write the content.
+1. Copy `_template.html` to `phase-N/topic.html` and write the content,
+   following the checklist in `GUIDED-PAGES.md`.
 2. Add one line for it to `js/pages.js`. A new phase gets a new section there.
+3. Run `scripts/check-guided-pages.py site/phase-N/topic.html`.
 
 The side menu, breadcrumb, previous/next links and the home-page cards are
 all built from `js/pages.js`. Nothing else needs editing.
@@ -30,6 +32,8 @@ out with `<main data-no-terms="term">`.
 - `js/glossary.js` — the terms.
 - `js/site.js` — navigation, glossary cards, progress ticks, and the
   interactive widgets (each one starts from a `data-*` attribute in a page).
+- `js/learn.js` — guided pages only: guesses, checks, the skim test, the step
+  map and "On this page" sidebar, and the answer record.
 
 Progress ticks ("I can explain this page") are saved in the browser's
 localStorage, so they are per browser and are not committed anywhere.

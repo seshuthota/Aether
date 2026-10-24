@@ -91,12 +91,14 @@ function initQuiz(root, ctx) {
       }
       body.append(el("div", { class: "quiz-row" }, [el("span", { class: "quiz-hint", text: "How sure are you?" }), confRow]));
     }
-    const think = el("textarea", { rows: "2", placeholder: kind === "predict" ? "Why do you think so? (optional)" : "Your reasoning, in your own words (optional)" });
-    body.append(think);
+    const think = el("textarea", { rows: "2", placeholder: kind === "predict" ? "Why do you think so?" : "Your reasoning, in your own words" });
+    think.hidden = true;
+    const reason = el("button", { type: "button", class: "linkbtn", text: "+ add a reason" });
+    reason.addEventListener("click", () => { think.hidden = false; reason.hidden = true; think.focus(); });
     const submit = el("button", { type: "button", class: "btn", text: kind === "predict" ? "Lock in my guess" : "Answer" });
     submit.disabled = true;
     const dunno = el("button", { type: "button", class: "btn ghost", text: "I don’t know" });
-    body.append(el("div", { class: "quiz-row" }, [submit, dunno]));
+    body.append(el("div", { class: "quiz-row" }, [submit, dunno, reason]), think);
     function ready() { submit.disabled = pick === null || (kind !== "predict" && conf === null); }
     function done(r) {
       ctx.saved[id] = Object.assign(r, { thinking: think.value.trim(), at: new Date().toISOString() });
@@ -209,7 +211,7 @@ function initStepMap(quizzes, ctx) {
     const list = el("ol", { class: "stepmap" + (compact ? " compact" : "") });
     steps.forEach((h, i) => {
       const marks = el("span", { class: "marks" });
-      const link = el("a", { href: "#" + h.id }, [el("b", { text: h.textContent })]);
+      const link = el("a", { href: "#" + h.id }, [el("b", { text: compact && h.dataset.short ? h.dataset.short : h.textContent })]);
       if (!compact) link.append(el("span", { class: "d", text: h.dataset.step }));
       const li = el("li", {}, [link, marks]);
       list.append(li);
@@ -218,7 +220,10 @@ function initStepMap(quizzes, ctx) {
     return list;
   }
   toc.hidden = true;
-  toc.after(build(false));
+  // Inline copy: folded on phones, where nine steps would fill more than a screen.
+  const fold = el("details", { class: "stepfold" }, [el("summary", { text: "Steps on this page (" + steps.length + ")" }), build(false)]);
+  fold.open = matchMedia("(min-width: 861px)").matches;
+  toc.after(fold);
   const layout = document.querySelector(".layout");
   if (layout) {
     layout.classList.add("has-rail");
@@ -236,20 +241,22 @@ function initStepMap(quizzes, ctx) {
         const rec = ctx.saved[q.id];
         if (!rec) continue;
         if (q.kind === "predict") r.marks.append(el("span", { class: "mk", text: "guessed" }));
-        else r.marks.append(el("span", { class: "mk " + (rec.right ? (rec.conf === "guess" ? "gap" : "ok") : rec.conf === "sure" ? "flag" : "gap"), text: rec.right ? (rec.conf === "guess" ? "✓ but guessed" : "✓ checked") : rec.dontKnow ? "? gap" : "✗ recheck" }));
+        else r.marks.append(el("span", { class: "mk " + (rec.right ? (rec.conf === "guess" ? "gap" : "ok") : rec.conf === "sure" ? "flag" : "gap"), text: rec.right ? (rec.conf === "guess" ? "✓ but guessed" : "✓ checked") : rec.dontKnow ? "? gap" : rec.conf === "sure" ? "✗ recheck" : "✗ missed" }));
       }
     }
   }
   ctx.onChange(paint);
   paint();
 
-  // "You are here": the last step heading above the top fifth of the screen.
+  // "You are here": the last step heading above the top fifth of the
+  // screen, or the last step once the page is scrolled to the bottom.
   function here() {
     const y = innerHeight * 0.2;
-    let cur = null;
-    for (const r of rows) if (r.h.getBoundingClientRect().top < y) cur = r;
-    rows.forEach(r => r.li.classList.toggle("here", r === cur));
-    now.textContent = cur ? "Step " + cur.n + " of " + steps.length : "";
+    let cur = 0;
+    steps.forEach((h, i) => { if (h.getBoundingClientRect().top < y) cur = i + 1; });
+    if (cur && innerHeight + scrollY >= document.documentElement.scrollHeight - 4) cur = steps.length;
+    rows.forEach(r => r.li.classList.toggle("here", r.n === cur));
+    now.textContent = cur ? "Step " + cur + " of " + steps.length : "";
   }
   addEventListener("scroll", here, { passive: true });
   here();
@@ -291,11 +298,24 @@ function initRecord(quizzes, ctx) {
     catch (e) { note.textContent = ""; note.append(el("pre", { text: md })); }
   });
   const clear = root.querySelector("[data-clear]");
-  if (clear) clear.addEventListener("click", () => {
-    for (const k of Object.keys(ctx.saved)) delete ctx.saved[k];
-    ctx.changed();
-    location.reload();
-  });
+  if (clear) {
+    const label = clear.textContent;
+    let armed = null;
+    const disarm = () => { clearTimeout(armed); armed = null; clear.textContent = label; };
+    clear.addEventListener("click", () => {
+      const n = Object.keys(ctx.saved).length;
+      if (!n) { note.textContent = "There are no answers to clear."; return; }
+      if (!armed) {
+        clear.textContent = "Click again to delete all " + n + " answers";
+        armed = setTimeout(disarm, 5000);
+        return;
+      }
+      disarm();
+      for (const k of Object.keys(ctx.saved)) delete ctx.saved[k];
+      ctx.changed();
+      location.reload();
+    });
+  }
   ctx.onChange(paint);
   paint();
 }

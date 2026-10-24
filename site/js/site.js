@@ -229,7 +229,9 @@ function initUnderstood(nav) {
       store.set(key, JSON.stringify(done));
       paint();
     });
-    pager.before(el("label", { class: "understood" }, [box, el("span", { text: "I can explain this page in my own words. (Ticks show in the menu. Saved in this browser only.)" })]));
+    const tick = el("label", { class: "understood" }, [box, el("span", { text: "I can explain this page in my own words. (Ticks show in the menu. Saved in this browser only.)" })]);
+    const slot = document.querySelector("[data-understood]");
+    if (slot) slot.append(tick); else pager.before(tick);
   }
   paint();
 }

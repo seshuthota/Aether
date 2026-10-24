@@ -397,17 +397,17 @@ h2 .tag { font-family: var(--mono); vertical-align: .3em; }
 main [id] { scroll-margin-top: 4.5rem; }
 
 /* learning components (js/learn.js): predict, check, probe, step map, answer record */
-.quiz { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: .45rem; padding: .7rem .95rem .8rem; margin: 1rem 0 1.2rem; }
-.quiz[data-quiz="check"] { border-left-color: var(--ok); padding: .1rem .95rem; }
+.quiz { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: .45rem; padding: .5rem .8rem .55rem; margin: .8rem 0 1rem; }
+.quiz[data-quiz="check"] { border-left-color: var(--ok); padding: 0 .8rem; }
 .quiz[data-quiz="probe"] { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: .6rem 0 .2rem; margin: 0; background: none; }
 .quiz > .lbl { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; display: block; color: var(--blue); }
-.quiz-fold > summary { cursor: pointer; padding: .55rem 0; font-family: var(--mono); font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ok); }
+.quiz-fold > summary { cursor: pointer; padding: .45rem 0; font-family: var(--mono); font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ok); }
 .quiz-fold[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: .2rem; }
 .quiz-state { margin-left: .4rem; text-transform: none; letter-spacing: 0; font-size: .8rem; }
 .quiz-state.flag, .mk.flag { color: var(--copper); }
-.quiz-q { font-weight: 600; margin: .35rem 0 .5rem; }
-.quiz-opts { display: grid; gap: .35rem; margin-bottom: .6rem; }
-.opt { display: grid; grid-template-columns: auto 1fr; gap: .1rem .55rem; align-items: start; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--bg); cursor: pointer; font-size: .95rem; }
+.quiz-q { font-weight: 600; margin: .2rem 0 .4rem; }
+.quiz-opts { display: grid; gap: .25rem; margin-bottom: .35rem; }
+.opt { display: grid; grid-template-columns: auto 1fr; gap: .1rem .55rem; align-items: start; padding: .22rem .55rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--bg); cursor: pointer; font-size: .95rem; line-height: 1.45; }
 .opt:has(input:checked) { border-color: var(--blue); background: var(--blue-soft); }
 .opt:has(input:disabled) { cursor: default; }
 .opt input { margin-top: .3rem; accent-color: var(--blue); }
@@ -417,8 +417,12 @@ main [id] { scroll-margin-top: 4.5rem; }
 .opt .why { grid-column: 2; color: var(--muted); font-size: .9rem; margin-top: .25rem; }
 .opt.right .why::before { content: "Why it’s right: "; font-weight: 600; color: var(--ok); }
 .opt.wrong .why::before { content: "Why it’s tempting, and what’s true: "; font-weight: 600; color: var(--copper); }
-.quiz:not([data-quiz]) .why, .quiz ul .why { color: var(--muted); font-size: .9rem; }
-.quiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .7rem; margin: .45rem 0; }
+/* the answer notes stay hidden unless learn.js runs, so the page never gives answers away */
+.quiz > ul .why { display: none; }
+.linkbtn { font: inherit; font-size: .86rem; background: none; border: 0; padding: .2rem .1rem; color: var(--accent-ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.quiz textarea { margin: .2rem 0 .3rem; }
+.quiz textarea[hidden] { display: none; }
+.quiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; margin: .3rem 0; }
 .quiz-hint { color: var(--muted); font-size: .88rem; }
 .quiz textarea { display: block; width: 100%; font: inherit; font-size: .92rem; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--bg); color: var(--ink); resize: vertical; }
 .quiz-fb { border-radius: .35rem; padding: .5rem .7rem; margin: .4rem 0 .5rem; font-size: .93rem; }
@@ -428,8 +432,8 @@ main [id] { scroll-margin-top: 4.5rem; }
 .quiz-fb.gap { background: var(--blue-soft); }
 .quiz-fb.flag { background: var(--copper-soft); border-left: 3px solid var(--copper); }
 .quiz-you { color: var(--muted); }
-.probe { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: .45rem; padding: .75rem .95rem; margin: 1rem 0 1.4rem; }
-.probe > .lbl, .probe > summary.lbl { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; display: block; color: var(--blue); }
+.probe { border-top: 1px solid var(--line); margin: .7rem 0 0; padding-top: .55rem; }
+.probe > .lbl { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; display: block; color: var(--blue); }
 .probe [data-probe-out] { margin-top: .6rem; }
 .stepmap { list-style: none; counter-reset: st; padding: 0; margin: .6rem 0 1.2rem; border-left: 1px solid var(--line); margin-left: .7rem; }
 .stepmap li { counter-increment: st; position: relative; padding: .25rem 0 .55rem 1.8rem; display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; }
@@ -446,18 +450,18 @@ main [id] { scroll-margin-top: 4.5rem; }
 .mk.flag { background: var(--copper-soft); }
 .stepnow { font-family: var(--mono); font-size: .75rem; color: var(--accent-ink); background: var(--accent-soft); border-radius: 999px; padding: .1rem .55rem; white-space: nowrap; }
 .stepnow:empty { display: none; }
-details.probe > summary { cursor: pointer; }
+details.probe > summary { cursor: pointer; color: var(--blue); font-weight: 600; font-size: .95rem; }
 details.probe[open] > summary { margin-bottom: .4rem; }
 
 /* in-page step map as a right rail on wide screens (js/learn.js) */
 .pagenav { display: none; }
-@media (min-width: 1200px) {
+@media (min-width: 1400px) {
   .layout.has-rail { grid-template-columns: var(--nav) minmax(0, 1fr) 14.5rem; max-width: 92rem; }
   .nav-collapsed .layout.has-rail { grid-template-columns: minmax(0, 1fr) 14.5rem; max-width: 76rem; }
   .has-rail main { justify-self: center; width: 100%; }
   .pagenav { display: block; position: sticky; top: 3.6rem; align-self: start; max-height: calc(100vh - 4.5rem); overflow: auto; font-size: .88rem; }
   .pagenav .nav-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 .5rem; }
-  .has-rail main > .stepmap { display: none; }
+  .has-rail main > .stepfold { display: none; }
   .stepmap.compact { margin: 0 0 0 .7rem; }
   .stepmap.compact li { padding: .15rem 0 .5rem 1.5rem; }
   .stepmap.compact li::before { width: 1.25rem; height: 1.25rem; left: -.63rem; top: .15rem; font-size: .66rem; }
@@ -465,3 +469,7 @@ details.probe[open] > summary { margin-bottom: .4rem; }
   .stepmap.compact li.here a b { color: var(--accent-ink); font-weight: 600; }
   .stepmap.compact .marks { width: 100%; }
 }
+.stepfold { margin: .4rem 0 1.2rem; }
+.stepfold > summary { cursor: pointer; font-family: var(--mono); font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: .3rem 0; }
+.stepfold > .stepmap { margin-top: .5rem; }
+.widget [data-understood] .understood { margin-top: .9rem; }

@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Copy this file to phase-N/topic.html, change the title, kicker and content,
-     then add one line for it to js/pages.js. The menu, breadcrumb and
-     previous/next links come from that list. This template assumes the page
-     sits one folder deep; for a page at the top level, drop the "../". -->
+<!-- The one template for every page: a guided page (guess, explanation, check
+     per section). Copy it to phase-N/topic.html, follow GUIDED-PAGES.md, add
+     one line to js/pages.js, then run scripts/check-guided-pages.py on it.
+     This template assumes the page sits one folder deep; at the top level,
+     drop the "../". phase-1/rust-memory.html is the worked example. -->
 <title>Topic name · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,560;7..72,640&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../css/site.css?v=24">
+<link rel="stylesheet" href="../css/site.css?v=26">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -25,40 +26,88 @@
 <div class="layout">
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
-<p class="kicker">Phase N · concept 1</p>
+<p class="kicker">Phase N · topic</p>
 
 <h1>Topic name</h1>
 <p class="lede">One or two sentences: what this idea is, and why the engine needs it.</p>
-<nav class="toc">
-  <a href="#first">First section</a>
+
+<div class="callout guide"><span class="lbl">How to use this page</span><p>Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<!-- Optional skim test: 3–4 questions, each naming the sections it covers in data-for. Delete the whole <details> if the page has none. -->
+<details class="probe" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (3 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="first" id="p-first">
+    <p>A question about the first section?</p>
+    <ul>
+      <li data-right>Right answer <div class="why">Why it is right, in one sentence.</div></li>
+      <li>Wrong answer <div class="why">The idea behind picking it, and what is true.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<!-- One link per h2, in order. learn.js turns this into the step map. -->
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#first">First question the reader would ask?</a>
   <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="first">First section</h2>
-<p>Text. Glossary terms are underlined automatically on their first use; add new ones to js/glossary.js.</p>
-<p>Tag numbers: <span class="tag m">measured</span> <span class="tag c">calculated</span> <span class="tag a">assumption</span></p>
+<h2 id="goal" data-short="The goal" data-step="One line: what the engine needs, and what this page builds.">What are we trying to do here?</h2>
+<p>Explanation first, no questions: what the topic is, why the engine needs it, and what the reader can do by the end. Define every term the guesses below will use.</p>
 
-<div class="callout"><span class="lbl">A note</span><p>Use <code>callout warn</code> for “easy to get wrong”, <code>callout ok</code> for “done”.</p></div>
+<h2 id="first" data-short="Short label" data-step="One line: what this section establishes.">First question the reader would ask?</h2>
+<p>Set up the problem in a sentence or two. Every term the guess uses is defined above this point.</p>
+<div class="quiz" data-quiz="predict" data-for="first" id="g-first">
+  <p>The guess: points at the problem; the answer is what this section explains.</p>
+  <ul>
+    <li data-right>Right answer <div class="why">Why, in one sentence.</div></li>
+    <li>A tempting wrong answer <div class="why">The idea behind picking it, and what is true.</div></li>
+    <li>Another wrong answer, from a different wrong idea <div class="why">Same.</div></li>
+  </ul>
+</div>
+<p>The explanation, starting from the guess. Tag numbers: <span class="tag m">measured</span> <span class="tag c">calculated</span> <span class="tag a">assumption</span></p>
+<pre><code>// At most 72 characters per line.
+// Long comments go on their own line.
+let x = 1;</code></pre>
+<ul>
+  <li>Bullets on the non-obvious parts of the snippet.</li>
+</ul>
+<p><strong>Takeaway: one line.</strong></p>
+<div class="quiz" data-quiz="check" data-for="first" id="c-first">
+  <p>A check that applies the idea to a new case, answerable from this section alone.</p>
+  <ul>
+    <li data-right>Right answer <div class="why">Why it is right.</div></li>
+    <li>Wrong answer <div class="why">Which wrong idea picks it, and what is true.</div></li>
+    <li>Wrong answer <div class="why">Same.</div></li>
+  </ul>
+</div>
 
-<figure>
-<svg class="fig" viewBox="0 0 680 120" role="img" aria-label="Describe the figure">
-  <rect x="24" y="30" width="160" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
-  <text x="104" y="63" text-anchor="middle">a box</text>
-</svg>
-<figcaption>What the reader should notice.</figcaption>
-</figure>
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p>The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
 
-<h2 id="check">Check yourself</h2>
-<details class="check"><summary>A question?</summary>
-<p>The answer.</p>
-</details>
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Two or three short lines.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=24"></script>
-<script src="../js/glossary.js?v=24"></script>
-<script src="../js/site.js?v=24"></script>
+<p class="colophon">Phase N numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=26"></script>
+<script src="../js/glossary.js?v=26"></script>
+<script src="../js/site.js?v=26"></script>
+<script src="../js/learn.js?v=26"></script>
 </body>
 </html>
