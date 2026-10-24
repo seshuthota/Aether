@@ -17,6 +17,7 @@ from pathlib import Path
 SITE = Path(__file__).resolve().parent.parent / "site"
 SPECIAL = {"goal", "check", "takeaway"}  # sections without a guess and a check
 MAX_CODE = 72
+SHORT_SECTION = 80  # words of explanation (quizzes excluded); below this, no guess
 
 
 class Page(HTMLParser):
@@ -83,6 +84,19 @@ def code_lines(text):
                 yield line
 
 
+def section_words(text):
+    """Words of explanation per <h2> section: text and code, quizzes left out."""
+    body = text[text.find("<main"):text.find("</main>")]
+    body = re.sub(r'<div class="quiz".*?</ul>\s*</div>', " ", body, flags=re.S)
+    out = {}
+    for part in re.split(r"(?=<h2\b)", body)[1:]:
+        m = re.match(r'<h2[^>]*\bid="([^"]+)"', part)
+        if m:
+            words = html.unescape(re.sub(r"<[^>]+>", " ", part[part.find("</h2>"):])).split()
+            out[m.group(1)] = len(words)
+    return out
+
+
 def check(path):
     text = path.read_text()
     p = Page()
@@ -125,7 +139,9 @@ def check(path):
         if not all(o["why"] for o in q["options"]):
             errors.append(f"quiz #{qid}: every option needs a <div class=\"why\">")
 
-    # Walk the sections: within each, the order must be guess, takeaway, check.
+    # Walk the sections. Within each the order is guess, takeaway, check;
+    # either quiz may be left out (a duplicate is dropped, not kept), but
+    # every section has at least one, and a short section has no guess.
     section, order = None, {}
     for kind, a in p.events:
         if kind == "h2":
@@ -138,13 +154,18 @@ def check(path):
                 order[section].append(a.get("data-quiz"))
             elif kind == "takeaway":
                 order[section].append("takeaway")
+    words = section_words(text)
     for sid, seq in order.items():
         if sid in SPECIAL:
             if any(x in ("predict", "check") for x in seq):
                 errors.append(f"#{sid}: no guess or check in this section")
             continue
-        if seq != ["predict", "takeaway", "check"]:
-            errors.append(f"#{sid}: expected guess, then 'Takeaway:', then check; found {seq}")
+        quizzes_here = [x for x in seq if x != "takeaway"]
+        if seq.count("takeaway") != 1 or len(quizzes_here) > 2 or not quizzes_here or seq not in (
+                ["predict", "takeaway", "check"], ["predict", "takeaway"], ["takeaway", "check"]):
+            errors.append(f"#{sid}: expected [guess], 'Takeaway:', [check] with at least one quiz; found {seq}")
+        if "predict" in seq and words.get(sid, 0) < SHORT_SECTION:
+            errors.append(f"#{sid}: {words.get(sid, 0)} words; a section under {SHORT_SECTION} words gets a check only, no guess")
 
     for line in code_lines(text):
         errors.append(f"code line over {MAX_CODE} chars: {line.strip()[:60]}…")

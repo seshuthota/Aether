@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plotting the sweep · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
 <link rel="stylesheet" href="../css/site.css?v=30">
 </head>
 <body>
@@ -21,8 +30,34 @@
 <p class="kicker">Phase 1 · Rust tools 5</p>
 
 <h1>Plotting the sweep</h1>
-<p class="lede">The working-set sweep produces about twenty numbers per core set. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
-<nav class="toc">
+<p class="lede">The working-set sweep produces dozens of numbers per core set: 66 sizes on one core, 50 for the all-core runs <span class="tag m">measured</span>. You read them as a picture: plateaus and cliffs. The phone prints the numbers, the PC saves and draws them, and both files go in <code>results/</code>.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<details class="probe js-only" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="log" id="p-log">
+    <p>Why is the size axis logarithmic?</p>
+    <ul>
+      <li data-right>So each doubling takes the same distance <div class="why">Each cache level then gets room in proportion to the doublings it spans.</div></li>
+      <li>So the numbers come out larger <div class="why">The axis changes where points sit, not the values plotted.</div></li>
+      <li>So bandwidth is shown in GiB/s <div class="why">The y axis stays linear, so you read GB/s directly.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="units" id="p-units">
+    <p>How many bytes is 1 KiB in the site’s size labels?</p>
+    <ul>
+      <li data-right>1,024 <div class="why"><code>2**10</code> is 1,024, and the script divides by it for KiB.</div></li>
+      <li>1,000 <div class="why">Tempting, because kilo means 1,000 in GB. Sizes here use powers of two.</div></li>
+      <li>1,048,576 <div class="why">That is 1 MiB, not 1 KiB.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
   <a href="#path">How do the numbers get from phone to picture?</a>
   <a href="#csv">How do we save numbers with their conditions?</a>
   <a href="#log">Why is the size axis logarithmic?</a>
@@ -32,7 +67,21 @@
   <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="path">How do the numbers get from phone to picture?</h2>
+<h2 id="goal" data-short="The goal" data-step="What the engine needs from the sweep, and what this page builds.">What are we trying to do here?</h2>
+<p>A working set is how much memory the loop touches on each pass. The sweep runs the pure read at many working-set sizes, and each run gives one number: the bandwidth at that size. Dozens of numbers in a column are hard to read. A plateau is a stretch where the speed holds steady, and a cliff is where it drops. The picture shows those at a glance, and every later kernel is compared against these numbers.</p>
+<p>The phone cannot make that picture itself. It has no Python, and it should spend its time on the benchmark. So the work is split: the phone measures and prints, and the PC saves the numbers as a CSV file in <code>results/</code> and draws them with a Python script.</p>
+<p>By the end you can write a CSV that keeps its conditions, explain why the size axis is logarithmic, and read the script that draws the sweep line by line.</p>
+
+<h2 id="path" data-short="Phone to picture" data-step="The phone measures and prints; the PC saves the CSV and draws it.">How do the numbers get from phone to picture?</h2>
+<p>The numbers start on the phone and must end as a picture on the PC. Something has to carry them across, and something has to draw them.</p>
+<div class="quiz" data-quiz="predict" data-for="path" id="g-path">
+  <p>Which device should draw the sweep picture?</p>
+  <ul>
+    <li data-right>The PC: the phone only measures and prints <div class="why">The phone does no drawing: it has no Python and should only run the benchmark.</div></li>
+    <li>The phone, since the numbers come from there <div class="why">Tempting, because the data starts there. But the phone has no Python and should not be busy with plotting.</div></li>
+    <li>Both, so each device has its own picture <div class="why">A picture from the phone would need Python there, so drawing stays on the PC.</div></li>
+  </ul>
+</div>
 <p>The phone runs the sweep and prints its numbers. They travel to the PC through adb (the Android debug bridge), land in a CSV file in <code>results/</code>, and the plotting script draws them as a PNG.</p>
 <figure>
 <svg class="fig" viewBox="0 0 700 120" role="img" aria-label="Pipeline from phone output to a plot">
@@ -55,8 +104,25 @@
 </figure>
 <p>The phone does no drawing. It doesn’t have Python, and it shouldn’t be busy with anything but the benchmark. The PC already has Python and matplotlib 3.10 <span class="tag m">measured</span>. matplotlib is the Python plotting library.</p>
 <p><strong>Takeaway: the phone only measures; the PC draws the picture and keeps the files.</strong></p>
+<div class="quiz" data-quiz="check" data-for="path" id="c-path">
+  <p>The command ends with <code>&gt; results/sweep-cpu6.csv</code>. Why are Cargo’s build messages not in the file?</p>
+  <ul>
+    <li data-right><code>&gt;</code> captures only what the program printed; Cargo’s messages go to stderr <div class="why">Cargo’s own messages go to stderr, so <code>&gt;</code> captures only what your program printed.</div></li>
+    <li>Cargo never prints anything during a run <div class="why">Tempting if you think of cargo as silent. The messages exist; they just don’t go into the file.</div></li>
+    <li>The phone strips the build messages before sending <div class="why">Tempting, because the phone is the one that sends the output. But the messages come from Cargo on the PC.</div></li>
+  </ul>
+</div>
 
-<h2 id="csv">How do we save numbers with their conditions?</h2>
+<h2 id="csv" data-short="CSV with conditions" data-step="One CSV per run, with its conditions at the top as # lines.">How do we save numbers with their conditions?</h2>
+<p>A number without its conditions cannot be compared with anything. The file has to carry the conditions along with the numbers.</p>
+<div class="quiz" data-quiz="predict" data-for="csv" id="g-csv">
+  <p>A friend sends you 20 numbers with no details. What do you still need before you compare them with yours?</p>
+  <ul>
+    <li data-right>The conditions: screen, charging, start temperature and commit <div class="why">Without the screen, charging, temperature and commit, a number cannot be compared fairly.</div></li>
+    <li>Nothing; the numbers are enough <div class="why">Tempting, since the numbers are the result. But the same number can come from different conditions.</div></li>
+    <li>Only the date they were measured <div class="why">The date helps, but the screen, charging, temperature and commit matter too.</div></li>
+  </ul>
+</div>
 <p>CSV (comma-separated values) is a table written as text, one row per line. Here is the whole format in a small example.</p>
 <pre><code># sweep: pure read, f32, pinned cpu6
 # date=2026-10-20 screen=off charging=no start_temp_c=31.2
@@ -79,8 +145,25 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
 </ul>
 <p>One file per core set (<code>sweep-cpu6.csv</code>, <code>sweep-cpu0.csv</code>, <code>sweep-cpu0-5.csv</code>) keeps each run complete. The numbers above are an example, not results.</p>
 <p><strong>Takeaway: one CSV per core set, with the conditions as <code>#</code> lines at the top.</strong></p>
+<div class="quiz" data-quiz="check" data-for="csv" id="c-csv">
+  <p>Why do the conditions go inside the CSV, not in a separate notes file?</p>
+  <ul>
+    <li data-right>Files get copied, renamed and compared months later, and inside the file the conditions travel with the numbers <div class="why">A number separated from “which core, screen on or off, how hot” can’t be compared with anything.</div></li>
+    <li>Because a CSV file can hold more numbers <div class="why">Size isn’t the point. The conditions are still plain <code>#</code> lines in the same file.</div></li>
+    <li>So the plotting script can draw the conditions as a title <div class="why">Tempting, since the script drops the <code>#</code> lines. It skips them; the point is to keep them with the numbers.</div></li>
+  </ul>
+</div>
 
-<h2 id="log">Why is the size axis logarithmic?</h2>
+<h2 id="log" data-short="Log size axis" data-step="Each doubling gets the same distance on a log axis, so the cliffs spread out.">Why is the size axis logarithmic?</h2>
+<p>A doubling is going from one size to twice that size: 4 KB to 8 KB, for example. A linear axis puts equal steps of size at equal distances. A log axis puts each doubling at equal distances instead.</p>
+<div class="quiz" data-quiz="predict" data-for="log" id="g-log">
+  <p>Plot sizes from 4 KB to 256 MB on a linear axis. Where do most of the points end up?</p>
+  <ul>
+    <li data-right>Crowded into the left edge <div class="why">Small sizes take little room on a linear axis, while 256 MB spans the whole width.</div></li>
+    <li>Spread evenly across the width <div class="why">Tempting, because the ticks look evenly spaced. A linear axis spaces the sizes, not the steps between them.</div></li>
+    <li>At the right edge, since the largest sizes make the most points <div class="why">Large sizes do sit at the right, but most of the points are the smaller sizes.</div></li>
+  </ul>
+</div>
 <p>The sweep takes four sizes per doubling; counting only the doublings themselves (4 KB, 8 KB, 16 KB … 256 MB) gives 17 sizes spanning a factor of 65,536. On an ordinary axis the first twelve power-of-two sizes (about 45 points), everything up to 8 MB, crowd into the left 3% <span class="tag c">calculated</span>, which is exactly where the L1 and L2 cliffs are.</p>
 <div class="widget" data-axis>
   <h3>Same points, two axes</h3>
@@ -97,9 +180,17 @@ println!("{},{:.2}", bytes, gbps);</code></pre>
 
 <p>On a log axis, every doubling is the same distance, so each cache level gets room in proportion to its doublings. The y axis stays linear, so you can read GB/s directly.</p>
 <p><strong>Takeaway: a log size axis spreads the cache cliffs out; a linear one squeezes them against the left edge.</strong></p>
+<div class="quiz" data-quiz="check" data-for="log" id="c-log">
+  <p>On a linear axis, where is the 8 MB point if the axis ends at 256 MB?</p>
+  <ul>
+    <li data-right>At about 3% of the width <div class="why">8 ÷ 256 ≈ 3%. Everything from 4 KB to 8 MB, which covers both L1 and L2, fits in that 3%.</div></li>
+    <li>Halfway, at 128 MB <div class="why">Tempting if you read a linear axis as halving. It measures size, not doublings.</div></li>
+    <li>Halfway along either axis <div class="why">Only a log axis spaces the doublings evenly. On a linear one, 8 MB sits at 3% of the width.</div></li>
+  </ul>
+</div>
 
-<h2 id="script">How do we write the plotting script?</h2>
-<p>The script goes in <code>tools/</code>, where host-side Python lives (it runs on the PC, not the phone). It takes one or more CSV files and draws them on the same axes. We build it in four steps, then show it whole.</p>
+<h2 id="script" data-short="The script" data-step="Four steps: imports and mode, labels, reading the files, axes and saving.">How do we write the plotting script?</h2>
+<p>The script goes in <code>tools/</code>, where host-side Python lives (it runs on the PC, not the phone). It takes one or more CSV files and draws them on the same axes. It has one job: draw a picture and save it as a file, with no window to click. We build it in four steps, then show it whole.</p>
 
 <h3>Step 1: imports and a drawing mode with no window</h3>
 <pre><code>import csv
@@ -107,7 +198,8 @@ import sys
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")                      # write a file; no window needed
+# write a file; no window needed
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter</code></pre>
 <ul>
@@ -118,7 +210,8 @@ from matplotlib.ticker import FuncFormatter</code></pre>
 
 <h3>Step 2: a label function for sizes</h3>
 <pre><code>def size_label(b, _pos):
-    return f"{b / 2**10:.0f} KiB" if b &lt; 2**20 else f"{b / 2**20:.0f} MiB"</code></pre>
+    return (f"{b / 2**10:.0f} KiB" if b &lt; 2**20
+            else f"{b / 2**20:.0f} MiB")</code></pre>
 <ul>
   <li>matplotlib calls this once per tick mark, with the size in bytes as <code>b</code>. <code>_pos</code> is unused.</li>
   <li><code>2**10</code> is 1,024, so <code>b / 2**10</code> turns bytes into KiB. 4096 ÷ 1024 = 4, so 4096 bytes shows as “4 KiB”.</li>
@@ -129,7 +222,8 @@ from matplotlib.ticker import FuncFormatter</code></pre>
 <pre><code>fig, ax = plt.subplots(figsize=(8, 4.5))
 for path in sys.argv[1:]:
     with open(path) as f:
-        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
+        rows = list(csv.DictReader(
+            line for line in f if not line.startswith("#")))
     x = [int(r["bytes"]) for r in rows]
     y = [float(r["gbps"]) for r in rows]
     ax.plot(x, y, marker="o", label=Path(path).stem)</code></pre>
@@ -140,7 +234,8 @@ for path in sys.argv[1:]:
 </ul>
 
 <h3>Step 4: axes, labels and the file</h3>
-<pre><code>ax.set_xscale("log", base=2)               # each step right = twice the size
+<pre><code># each step right = twice the size
+ax.set_xscale("log", base=2)
 ax.xaxis.set_major_formatter(FuncFormatter(size_label))
 ax.set_xlabel("working set")
 ax.set_ylabel("read bandwidth (GB/s)")
@@ -158,30 +253,35 @@ print("wrote results/sweep.png")</code></pre>
 
 <h3>All four together</h3>
 <pre><code># Plot one or more sweep CSVs (bytes,gbps) on the same axes.
-# Usage: python3 tools/plot_sweep.py results/sweep-cpu6.csv results/sweep-cpu0-5.csv
+# Usage: python3 tools/plot_sweep.py \
+#          results/sweep-cpu6.csv results/sweep-cpu0-5.csv
 import csv
 import sys
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")                      # write a file; no window needed
+# write a file; no window needed
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 
 def size_label(b, _pos):
-    return f"{b / 2**10:.0f} KiB" if b &lt; 2**20 else f"{b / 2**20:.0f} MiB"
+    return (f"{b / 2**10:.0f} KiB" if b &lt; 2**20
+            else f"{b / 2**20:.0f} MiB")
 
 
 fig, ax = plt.subplots(figsize=(8, 4.5))
 for path in sys.argv[1:]:
     with open(path) as f:
-        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
+        rows = list(csv.DictReader(
+            line for line in f if not line.startswith("#")))
     x = [int(r["bytes"]) for r in rows]
     y = [float(r["gbps"]) for r in rows]
     ax.plot(x, y, marker="o", label=Path(path).stem)
 
-ax.set_xscale("log", base=2)               # each step right = twice the size
+# each step right = twice the size
+ax.set_xscale("log", base=2)
 ax.xaxis.set_major_formatter(FuncFormatter(size_label))
 ax.set_xlabel("working set")
 ax.set_ylabel("read bandwidth (GB/s)")
@@ -193,24 +293,52 @@ fig.savefig("results/sweep.png", dpi=150)
 print("wrote results/sweep.png")</code></pre>
 <p>Tested on made-up CSVs, including Windows-style line endings <span class="tag m">measured</span>. Run it from the project root.</p>
 <p><strong>Takeaway: the script reads columns by name, sets the axes, and saves a PNG under <code>results/</code>.</strong></p>
+<div class="quiz" data-quiz="check" data-for="script" id="c-script">
+  <p>The header line says <code>size,gbps</code> instead of <code>bytes,gbps</code>. What does the script do?</p>
+  <ul>
+    <li data-right>It fails: <code>r["bytes"]</code> finds no column with that name <div class="why"><code>DictReader</code> finds columns by the header name, so the lookup for <code>bytes</code> has nothing to find.</div></li>
+    <li>It uses the first column, as many CSV readers do <div class="why">Tempting, since many readers go by position. This one goes by name.</div></li>
+    <li>Nothing changes, because the <code>#</code> lines are dropped first <div class="why">The <code>#</code> lines are dropped, but the header line is still read for the column names.</div></li>
+  </ul>
+</div>
 
-<h2 id="units">Bytes or gigabytes: which one?</h2>
+<h2 id="units" data-short="KiB or GB" data-step="KiB counts sizes in 1,024s; GB/s counts bandwidth in 1,000,000,000s.">Bytes or gigabytes: which one?</h2>
+<p>Bandwidth is counted in bytes per second, and GB/s is one of its units. Both kinds of unit use the letters K, M and G, so they are easy to mix up.</p>
+<div class="quiz" data-quiz="predict" data-for="units" id="g-units">
+  <p>Which is more bytes: 1 GB, or 2<sup>30</sup> bytes?</p>
+  <ul>
+    <li data-right>2<sup>30</sup> bytes, about 7% more than 10<sup>9</sup> <div class="why">2<sup>30</sup> is about 1.074 × 10<sup>9</sup>, a 7% gap.</div></li>
+    <li>They are the same, a billion bytes <div class="why">Tempting, since 2<sup>30</sup> looks like a round billion. It is about 7% more than 10<sup>9</sup>.</div></li>
+    <li>1 GB, since decimal units are the bigger ones <div class="why">Decimal units are not the bigger ones here. 2<sup>30</sup> is the bigger number.</div></li>
+  </ul>
+</div>
 <p>The sizes are powers of two: 4096 bytes is 4 KiB, and 1,048,576 bytes is 1 MiB. Those are KiB and MiB, which is how the script labels them. Bandwidth uses the other convention: GB/s means 10<sup>9</sup> bytes per second, which is what the decode ceiling and published figures use. Both are fine. Mixing them silently is a 7% error at the gigabyte scale (2<sup>30</sup> / 10<sup>9</sup> ≈ 1.074) <span class="tag c">calculated</span>.</p>
 <p>So the Rust side computes <code>gbps = bytes_read as f64 / seconds / 1e9</code>, and the header says <code>gbps</code>. Next month you won’t remember which one it was.</p>
 <p><strong>Takeaway: KiB and MiB count sizes, GB/s counts 10<sup>9</sup> bytes; say which one each number uses.</strong></p>
+<div class="quiz" data-quiz="check" data-for="units" id="c-units">
+  <p>A plateau sits at 45 “GB/s” computed with 2<sup>30</sup>. What is it in the site’s units?</p>
+  <ul>
+    <li data-right>About 48.3 GB/s (10<sup>9</sup>) <div class="why">45 × 1.074 ≈ 48.3. Pick one convention and say which.</div></li>
+    <li>45 GB/s, since the number is unchanged <div class="why">Tempting, but the same bytes give a different number once the unit changes.</div></li>
+    <li>About 41.9 GB/s <div class="why">That divides instead of multiplies. 2<sup>30</sup> is the bigger unit, so the number in 10<sup>9</sup> grows.</div></li>
+  </ul>
+</div>
 
-<h2 id="check">Check yourself</h2>
-<details class="check"><summary>Why do the conditions go inside the CSV, not in a separate notes file?</summary>
-<p>Files get copied, renamed and compared months later. A number separated from “which core, screen on or off, how hot” can’t be compared with anything. Inside the file, they travel together.</p>
-</details>
-<details class="check"><summary>On a linear axis, where is the 8 MB point if the axis ends at 256 MB?</summary>
-<p>At 8/256 ≈ 3% of the width. Everything from 4 KB to 8 MB, which covers both L1 and L2, fits in that 3%.</p>
-</details>
-<details class="check"><summary>A plateau sits at 45 “GB/s” computed with 2<sup>30</sup>. What is it in the site’s units?</summary>
-<p>45 × 1.074 ≈ 48.3 GB/s (10<sup>9</sup>). Pick one convention and say which.</p>
-</details>
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
 
-<h2 id="takeaway">What you should take away</h2>
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
 <p>The phone measures and the PC draws, and both keep their results in <code>results/</code>.</p>
 <p>Each CSV carries its own conditions, so a number can always be traced back to how it was made.</p>
 <p>Use a log axis for sizes, and say whether GB/s means 10<sup>9</sup> or 2<sup>30</sup> bytes.</p>
@@ -221,5 +349,6 @@ print("wrote results/sweep.png")</code></pre>
 <script src="../js/pages.js?v=30"></script>
 <script src="../js/glossary.js?v=30"></script>
 <script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
 </html>

@@ -17,7 +17,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 if (typeof WebSocket === "undefined") {
@@ -28,8 +28,9 @@ if (typeof WebSocket === "undefined") {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const site = join(root, "site");
 const page = resolve(process.argv[2] || join(site, "phase-1/rust-memory.html"));
-const copy = join(dirname(page), "zz-fallback-test.html");
-const PORT = 8790 + Math.floor(Math.random() * 100), DEBUG = PORT + 200;
+// One copy per page, so tests of different pages can run at the same time.
+const copy = join(dirname(page), "zz-fallback-test-" + basename(page));
+const PORT = 8800 + Math.floor(Math.random() * 1000), DEBUG = 9900 + Math.floor(Math.random() * 1000);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Break the first check quiz by dropping its id.

@@ -28,11 +28,18 @@ It enforces the items marked ✔︎. The rest need a human read.
 - [ ] **Every `<h2>`** is a question, with a one-line summary in `data-step` and a
       label of three words or fewer in `data-short` (shown in the "On this page"
       sidebar). ✔︎
-- [ ] **Every content section** has, in this order: setup, one guess
-      (`data-quiz="predict"`), the explanation, a `Takeaway:` line in bold, one
-      check (`data-quiz="check"`). ✔︎ for the order.
+- [ ] **Every content section** has, in this order: setup, a guess
+      (`data-quiz="predict"`), the explanation, a `Takeaway:` line in bold, a
+      check (`data-quiz="check"`). At least one of the two quizzes is there;
+      leave one out rather than duplicate another quiz. ✔︎ for the order.
+- [ ] **Short sections get a check only.** A section with under 80 words of
+      explanation (quizzes excluded) has no guess. ✔︎
 - [ ] **The guess comes after its setup:** every term it uses is defined above
       it. It never opens a page or a section cold.
+- [ ] **The text before a quiz must not answer it.** Read the setup sentence(s)
+      above each guess, and everything above each check that the reader saw
+      before the section: if they state the right option, move that sentence
+      after the quiz or drop it.
 - [ ] **Ends with** `#check` (the answer record widget, with the
       `data-understood` slot for the "I can explain this" tickbox) and
       `#takeaway`. Copy both from the template.
@@ -46,6 +53,10 @@ It enforces the items marked ✔︎. The rest need a human read.
       tempting and what is true. No joke options.
 - [ ] **A check applies the idea** to a new case and is answerable from that
       section alone. It does not ask the reader to repeat a sentence.
+- [ ] **No two quizzes test the same idea**, counting the skim test, the
+      guesses and the checks. Keep the better one and drop the other.
+- [ ] **No draft wording in notes**: no "the page says", "the figure caption",
+      "this section". A note states the fact itself.
 - [ ] **Notes add no new claims.** Anything technical in a note is either
       already on the page or flagged for review.
 
@@ -53,8 +64,10 @@ It enforces the items marked ✔︎. The rest need a human read.
 
 - [ ] Code lines are 72 characters or fewer; long comments go on their own
       line. ✔︎
-- [ ] Quizzes add length: keep each note to one or two sentences, and keep the
-      explanation text itself within the usual 1.5× of the old page.
+- [ ] Quizzes add length: keep each note to one or two sentences (at most 20
+      words), and keep the explanation text itself within the usual 1.5× of
+      the old page. There is no fixed cap on the number of quizzes; the
+      duplicate and short-section rules above keep it down.
 
 ## Wiring
 

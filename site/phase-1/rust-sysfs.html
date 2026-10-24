@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reading /sys from Rust · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
 <link rel="stylesheet" href="../css/site.css?v=30">
 </head>
 <body>
@@ -22,7 +31,34 @@
 
 <h1>Reading /sys from Rust</h1>
 <p class="lede">Core clocks, temperatures, battery current and voltage are all plain text files under <code>/sys</code>. Reading one is a single standard-library call. The care goes into turning the text into a number with the right unit.</p>
-<nav class="toc">
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p><a href="power.html#files">Power and heat</a> lists which files the plan wants. This page is how the Rust code reads them. Before writing any code, read each one by hand with <code>adb shell cat</code>.</p>
+<details class="probe js-only" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="read" id="p-read">
+    <p>Which step turns the text <code>"3532800\n"</code> into a number?</p>
+    <ul>
+      <li data-right><code>trim()</code> removes the newline, then <code>parse::&lt;i64&gt;()</code> reads the digits. <div class="why">The newline has to go first, because <code>parse</code> is strict.</div></li>
+      <li><code>parse::&lt;i64&gt;()</code> alone, because it skips the newline. <div class="why"><code>parse</code> does not skip it. The newline must be removed first.</div></li>
+      <li><code>map_err</code>, because it converts the text. <div class="why"><code>map_err</code> only changes the error type. It does not read the digits.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="units" id="p-units">
+    <p>The thermal file says <code>41200</code>. What is the temperature?</p>
+    <ul>
+      <li data-right>41.2 °C, since the file is in millidegrees Celsius <div class="why">Divide by 1000: 41,200 millidegrees is 41.2 °C.</div></li>
+      <li>41,200 °C <div class="why">That treats millidegrees as degrees. The file is 1000 times finer.</div></li>
+      <li>41.2 K <div class="why">The file’s unit is millidegree Celsius, so the scale is Celsius, not kelvin.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
   <a href="#files">Is a sysfs file stored anywhere?</a>
   <a href="#read">How do you read a number from one?</a>
   <a href="#units">What unit is the number in?</a>
@@ -32,16 +68,43 @@
   <a href="#takeaway">What you should take away</a>
 </nav>
 
-<div class="callout"><span class="lbl">How to use this page</span><p><a href="power.html#files">Power and heat</a> lists which files the plan wants. This page is how the Rust code reads them. Before writing any code, read each one by hand with <code>adb shell cat</code>.</p></div>
+<h2 id="goal" data-short="The goal" data-step="What the phone reports while it runs, and how this page reads it.">What are we trying to do here?</h2>
+<p>The benchmarks need to know what the phone is doing while they run: how fast the cores are clocked, how hot the chip is, and how much current the battery draws. Android publishes these as files under <code>/sys</code>, so reading those files is the way in. The <a href="power.html">Power and heat</a> page says which files the plan wants, and why energy and heat matter to the engine.</p>
+<p>Each of those files is only text. A bare <code>3532800</code> has no unit, and a file can name a different unit on another phone. A wrong unit gives a wrong number and no error, so the code has to get the unit right on purpose.</p>
+<p>By the end of this page you can read one sysfs file into an <code>i64</code>, convert it to real units, and find the right sensor by its name rather than its number.</p>
 
-<h2 id="files">Is a sysfs file stored anywhere?</h2>
-<p>The current clock speed is in a file called <code>scaling_cur_freq</code>. But <code>ls -l</code> shows 4096 bytes for most of these files, and the text inside is a few characters. <strong>sysfs</strong> is the part of the filesystem under <code>/sys</code> where the kernel shows its state as files. The size is a placeholder, not the length of the text.</p>
-<p>Nothing under <code>/sys</code> is stored on disk. When you open <code>scaling_cur_freq</code>, the kernel works out the current clock and hands you text, such as <code>3532800</code> and a newline. Read it again a millisecond later and you may get a different number.</p>
+<h2 id="files" data-short="Stored or computed?" data-step="A sysfs file is computed when you read it, so each read is a fresh measurement.">Is a sysfs file stored anywhere?</h2>
+<p>The current clock speed is in a file called <code>scaling_cur_freq</code>. But <code>ls -l</code> shows 4096 bytes for most of these files, and the text inside is a few characters. <strong>sysfs</strong> is the part of the filesystem under <code>/sys</code> where the kernel shows its state as files.</p>
+<div class="quiz" data-quiz="predict" data-for="files" id="g-files">
+  <p><code>scaling_cur_freq</code> holds a number that changes as the clock changes. Is that number stored in the file on disk?</p>
+  <ul>
+    <li data-right>No. The kernel works the number out when you read the file. <div class="why">The text is made fresh on every read. Nothing is kept on disk.</div></li>
+    <li>Yes. The kernel writes it each time the clock changes. <div class="why">The clock does change, but the kernel does not save the text. Each read builds it.</div></li>
+    <li>Yes, and 4096 bytes is the length of that stored number. <div class="why">4096 is a placeholder size, not the length of the text.</div></li>
+  </ul>
+</div>
+<p>The size is a placeholder, not the length of the text. Nothing under <code>/sys</code> is stored on disk. When you open <code>scaling_cur_freq</code>, the kernel works out the current clock and hands you text, such as <code>3532800</code> and a newline. Read it again a millisecond later and you may get a different number.</p>
 <p>So reading is the measurement. The value is true for the moment of the read and nothing longer. Keep an old reading and you are reporting the past.</p>
 <p><strong>Takeaway: a sysfs file is computed when you read it, so every read is a fresh measurement.</strong></p>
+<div class="quiz" data-quiz="check" data-for="files" id="c-files">
+  <p>A friend reads <code>scaling_cur_freq</code> at noon, gets 3532800, and says the clock was 3.5 GHz all afternoon. What is wrong?</p>
+  <ul>
+    <li data-right>The read is a measurement of one moment. The next read may differ. <div class="why">Each read is fresh, so one noon reading says nothing about the afternoon.</div></li>
+    <li>Nothing: the file keeps its last value until the next boot. <div class="why">That treats the file as stored. The text is computed on each read.</div></li>
+    <li>Nothing: the 4096-byte size shows the value is current. <div class="why">The size is a placeholder. It says nothing about how fresh the text is.</div></li>
+  </ul>
+</div>
 
-<h2 id="read">How do you read a number from one?</h2>
-<p>The file gives you text like <code>"3532800\n"</code>. The program needs an <code>i64</code>. Four small steps get there.</p>
+<h2 id="read" data-short="Read a number" data-step="Read, trim, parse, and return the error; never assume the file exists.">How do you read a number from one?</h2>
+<p>The file gives you text like <code>"3532800\n"</code>. The program needs an <code>i64</code>, a signed 64-bit whole number. Four small steps get there.</p>
+<div class="quiz" data-quiz="predict" data-for="read" id="g-read">
+  <p>The file you name does not exist. Should the function panic, or return an error to its caller?</p>
+  <ul>
+    <li data-right>Return an error, so the caller decides what a missing file means <div class="why">A <code>Result</code> lets the caller decide. The <code>?</code> in step 1 hands the error back.</div></li>
+    <li>Panic, so the bug is found at once <div class="why">A panic stops the whole benchmark. The caller may want to record the sensor as missing.</div></li>
+    <li>Return <code>Ok(0)</code> <div class="why">Zero looks like a real reading, so a missing sensor would pass as a value.</div></li>
+  </ul>
+</div>
 
 <h3>Step 1: read the text</h3>
 <pre><code>let text = std::fs::read_to_string(path)?;     // "3532800\n"</code></pre>
@@ -57,7 +120,8 @@
 </ul>
 
 <h3>Step 3: turn it into a number</h3>
-<pre><code>.parse::&lt;i64&gt;()                                // Ok(3532800), or Err if not a number</code></pre>
+<pre><code>// Ok(3532800), or Err if not a number
+.parse::&lt;i64&gt;()</code></pre>
 <ul>
   <li><code>::&lt;i64&gt;</code> picks the number type. It is <code>i64</code>, signed, because <code>current_now</code> can be negative.</li>
 </ul>
@@ -74,7 +138,9 @@
     let text = std::fs::read_to_string(path)?;     // "3532800\n"
     text.trim()
         .parse::&lt;i64&gt;()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        .map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })
 }</code></pre>
 <p>It can fail three ways. Each one tells you something, and handling it badly stops your benchmark:</p>
 <table>
@@ -86,9 +152,26 @@
   </tbody>
 </table>
 <p><strong>Takeaway: read, trim, parse, and return the error; never assume the file exists or holds one number.</strong></p>
+<div class="quiz" data-quiz="check" data-for="read" id="c-read">
+  <p>Why does <code>"3532800\n".parse::&lt;i64&gt;()</code> fail?</p>
+  <ul>
+    <li data-right>The newline. <code>parse</code> wants only digits (and a sign). <code>trim()</code> first. <div class="why">The newline is not a digit, so <code>trim()</code> has to remove it before <code>parse</code>.</div></li>
+    <li>The number is too large for <code>i64</code>. <div class="why"><code>3532800</code> is a small number. The newline is the problem.</div></li>
+    <li>The file is missing, so <code>parse</code> has nothing to read. <div class="why">A missing file fails in <code>read_to_string</code>, before <code>parse</code> runs.</div></li>
+  </ul>
+</div>
 
-<h2 id="units">What unit is the number in?</h2>
-<p>A bare <code>3532800</code> means nothing until you know the unit. For this one it is kHz, so the clock is 3,532,800 ÷ 1,000,000 = 3.5328 GHz. The kernel’s documentation fixes the unit for each file. Phone vendors usually follow it, not always.</p>
+<h2 id="units" data-short="Which unit?" data-step="A file’s documented unit turns its number into a real value.">What unit is the number in?</h2>
+<p>A bare <code>3532800</code> means nothing until you know its unit. A unit says how big one step of the number is. Hertz (Hz) counts cycles per second, and kHz is a thousand of them.</p>
+<div class="quiz" data-quiz="predict" data-for="units" id="g-units">
+  <p><code>scaling_cur_freq</code> reads 3532800. How big is one step of that number?</p>
+  <ul>
+    <li data-right>1 kHz, so the clock is 3.5328 GHz <div class="why">The kernel documents this file in kHz. 3,532,800 kHz is 3.5328 GHz.</div></li>
+    <li>1 Hz, so the clock is 3.5 MHz <div class="why">Hz is the SI base unit, but this file is documented in kHz, not Hz.</div></li>
+    <li>1 MHz, so the clock is 3.5 THz <div class="why">The file is documented in kHz, so one step is not 1 MHz.</div></li>
+  </ul>
+</div>
+<p>For this one it is kHz, so the clock is 3,532,800 ÷ 1,000,000 = 3.5328 GHz. The kernel’s documentation fixes the unit for each file. Phone vendors usually follow it, not always.</p>
 <table>
   <thead><tr><th>File</th><th>Documented unit</th><th>To get</th></tr></thead>
   <tbody>
@@ -113,9 +196,26 @@
 </div>
 <p>Convert to <code>f64</code> before multiplying. Microamps times microvolts is 10<sup>−12</sup> watts per unit, and the raw product of two seven-digit numbers is fine in <code>f64</code> but easy to get wrong in your head. Write the unit into the name: <code>current_ua</code>, <code>power_w</code>. Skip that and a milliampere gets read as an ampere without anything complaining.</p>
 <p><strong>Takeaway: look up the unit, convert in <code>f64</code>, and put the unit in the variable name.</strong></p>
+<div class="quiz" data-quiz="check" data-for="units" id="c-units">
+  <p><code>current_now</code> reads −512000 and <code>voltage_now</code> 4012000. What is the power?</p>
+  <ul>
+    <li data-right>0.512 A × 4.012 V ≈ 2.05 W. The sign varies by device: check it on an idle, unplugged reading. <div class="why">Both readings are converted with ÷ 1,000,000 first. Which sign means discharge depends on the device.</div></li>
+    <li>About 2.05 × 10<sup>12</sup> W, from multiplying the raw numbers. <div class="why">Those numbers are microamps and microvolts. Convert each one before multiplying.</div></li>
+    <li>About 4.5 W, from adding 0.512 and 4.012. <div class="why">Power is current times voltage. Adding the two numbers is the wrong operation.</div></li>
+  </ul>
+</div>
 
-<h2 id="find">How do you find the right files?</h2>
-<p>The plan lists paths such as <code>thermal_zone0</code>, but thermal zone numbers aren’t stable across phones, and the plan’s paths are examples. A wrong guess reads the wrong sensor. Each zone has a <code>type</code> file that names its sensor, so list the directory and read them:</p>
+<h2 id="find" data-short="Find the sensor" data-step="Choose sensors by the name in their type file, not by zone number.">How do you find the right files?</h2>
+<p>The plan lists paths such as <code>thermal_zone0</code>, but thermal zone numbers aren’t stable across phones, and the plan’s paths are examples. A <strong>thermal zone</strong> is one of the kernel’s temperature readings, each in its own numbered folder under <code>/sys/class/thermal</code>.</p>
+<div class="quiz" data-quiz="predict" data-for="find" id="g-find">
+  <p>The plan’s path is <code>thermal_zone0</code>. Does that number name the same sensor on every phone?</p>
+  <ul>
+    <li data-right>No. Zone numbers differ between phones, so read the <code>type</code> file. <div class="why">The number is just the folder’s name. The <code>type</code> file says what the sensor is.</div></li>
+    <li>Yes. Zone 0 is always the first sensor on any phone. <div class="why">The lowest number is not a promise. The plan’s path is an example.</div></li>
+    <li>Yes, if the phone runs the same Android version. <div class="why">The number is not a stable name, whatever the software version.</div></li>
+  </ul>
+</div>
+<p>A wrong guess reads the wrong sensor. Each zone has a <code>type</code> file that names its sensor, so list the directory and read them:</p>
 <pre><code>for entry in std::fs::read_dir("/sys/class/thermal")? {
     let path = entry?.path();
     if let Ok(kind) = std::fs::read_to_string(path.join("type")) {
@@ -126,27 +226,56 @@
   <li><code>read_dir</code> lists the entries of a directory. Each entry is itself a <code>Result</code>, hence the <code>?</code> twice.</li>
   <li><code>path.join("type")</code> builds the path to that zone’s <code>type</code> file.</li>
   <li><code>if let Ok(kind)</code> skips any entry whose <code>type</code> can’t be read.</li>
+  <li>The directory also holds <code>cooling_deviceN</code> folders, which control cooling rather than measure temperature. They have a <code>type</code> file too, so they show up in this list; ignore them.</li>
 </ul>
 <p>Pick the zones you want by name once, by hand, and write the names in the results file. A CPU sensor and a battery sensor answer different questions.</p>
 <p><strong>Takeaway: choose sensors by their <code>type</code> name, not by zone number.</strong></p>
+<div class="quiz" data-quiz="check" data-for="find" id="c-find">
+  <p>You found the CPU sensor on your phone by reading the <code>type</code> files. What goes in the results file?</p>
+  <ul>
+    <li data-right>The sensor’s type name <div class="why">The name says what was measured. A zone number means nothing on another phone.</div></li>
+    <li>Just the zone number; it’s shorter <div class="why">The number is only this phone’s folder name. Another phone may number it differently.</div></li>
+    <li>Nothing; the temperature value is enough <div class="why">Without the name, a reader can’t tell a CPU reading from a battery one.</div></li>
+  </ul>
+</div>
 
-<h2 id="cost">What does a read cost?</h2>
-<p>You may want to read these files often. Every read is a system call, a request to the kernel. The kernel runs driver code to produce the text, and some drivers have to ask a hardware chip. That is roughly microseconds <span class="tag a">assumption</span>: nothing at ten samples a second, but far too much inside a loop you are timing. Reads belong in the sampler thread, never in the benchmark.</p>
+<h2 id="cost" data-short="What a read costs" data-step="Reads are cheap for a sampler and too dear for the code under test.">What does a read cost?</h2>
+<p>You may want to read these files often. Every read is a system call, a request to the kernel.</p>
+<div class="quiz" data-quiz="predict" data-for="cost" id="g-cost">
+  <p>Can you read sysfs files inside a timed benchmark loop without changing the timing?</p>
+  <ul>
+    <li data-right>No. Each read is a kernel request that takes microseconds, so keep it out. <div class="why">A kernel request costs roughly microseconds (an assumption). Reads belong in the sampler.</div></li>
+    <li>Yes. A read is just a memory access. <div class="why">A read goes through the kernel and may ask a hardware chip. It is not a memory access.</div></li>
+    <li>Yes. The kernel keeps the text ready, so reads are free. <div class="why">Each read builds fresh text (see the first section). Nothing is kept ready.</div></li>
+  </ul>
+</div>
+<p>The kernel runs driver code to produce the text, and some drivers have to ask a hardware chip. That is roughly microseconds <span class="tag a">assumption</span>: nothing at ten samples a second, but far too much inside a loop you are timing. Reads belong in the sampler thread, never in the benchmark.</p>
 <p>If you want to know the real cost, time a thousand reads of one file with the Phase 0 harness. That is a good first sysfs experiment.</p>
 <p><strong>Takeaway: sysfs reads are cheap for a sampler and too dear for the code under test.</strong></p>
+<div class="quiz" data-quiz="check" data-for="cost" id="c-cost">
+  <p>While the benchmark runs, the sampler reads the battery ten times a second. Does that disturb the timed code?</p>
+  <ul>
+    <li data-right>No. The reads run on the sampler’s thread, away from the timed code. <div class="why">Ten reads a second is small, and the reads sit in the sampler for this reason.</div></li>
+    <li>Yes. Any read at all adds its cost to the timing. <div class="why">The cost matters for reads inside the timed code. The sampler’s reads are on another thread.</div></li>
+    <li>Yes. The sampler must wait until the benchmark ends. <div class="why">The sampler runs beside the benchmark, not after it. See the sampler figure on the power page.</div></li>
+  </ul>
+</div>
 
-<h2 id="check">Check yourself</h2>
-<details class="check"><summary>Why does <code>"3532800\n".parse::&lt;i64&gt;()</code> fail?</summary>
-<p>The newline. <code>parse</code> wants only digits (and a sign). <code>trim()</code> first.</p>
-</details>
-<details class="check"><summary><code>current_now</code> reads −512000 and <code>voltage_now</code> 4012000. What is the power?</summary>
-<p>0.512 A × 4.012 V ≈ 2.05 W. Whether the minus sign means discharging depends on the device. An idle, unplugged reading tells you which sign is discharge on this phone.</p>
-</details>
-<details class="check"><summary>The sampler gets <code>PermissionDenied</code> on one thermal zone. Should the benchmark stop?</summary>
-<p>No. The benchmark is the measurement and the sensor is extra. Record that the zone was unreadable, keep the zones that work, and say so in the results.</p>
-</details>
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
 
-<h2 id="takeaway">What you should take away</h2>
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
 <p>A sysfs file is text the kernel makes when you read it, so each read is one fresh measurement.</p>
 <p>Read, trim, parse, return the error, then convert using the documented unit.</p>
 <p>Find sensors by name, and read them from the sampler, not from the benchmark.</p>
@@ -158,5 +287,6 @@
 <script src="../js/pages.js?v=30"></script>
 <script src="../js/glossary.js?v=30"></script>
 <script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
 </html>
