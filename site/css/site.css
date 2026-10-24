@@ -1,5 +1,6 @@
-/* Fonts are served from site/fonts (latin and latin-ext subsets from Google Fonts;
-   SIL Open Font License, texts in site/fonts/OFL-*.txt). */
+/* Fonts are served from site/fonts (latin and latin-ext subsets from Google Fonts).
+   SIL Open Font License; the texts are fonts/OFL-literata.txt,
+   fonts/OFL-sourcesans3.txt and fonts/OFL-ibmplexmono.txt. */
 @font-face {
   font-family: 'IBM Plex Mono';
   font-style: normal;
@@ -541,6 +542,11 @@ html:not(.js) .quiz > ul > li[data-right]::before { content: "Answer: "; font-we
 html:not(.js) .quiz > p { font-weight: 600; margin: .2rem 0; }
 html:not(.js) .quiz .why { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
 html:not(.js) .js-only, html:not(.js) [data-record] { display: none; }
+html.js .nojs-only { display: none; }
+/* Scripts on: pages with the "js" class set in <head> keep each quiz and the
+   plain step-map links out of sight until learn.js has built them. */
+html.js .quiz:not(.is-ready) { visibility: hidden; }
+html.js .toc[data-stepmap] { display: none; }
 .linkbtn { font: inherit; font-size: .86rem; background: none; border: 0; padding: .2rem .1rem; color: var(--accent-ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .quiz textarea { margin: .2rem 0 .3rem; }
 .quiz textarea[hidden] { display: none; }

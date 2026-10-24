@@ -59,8 +59,12 @@ It enforces the items marked ✔︎. The rest need a human read.
 ## Wiring
 
 - [ ] Load `js/learn.js` only on pages with quizzes, after `site.js`. ✔︎
+- [ ] Keep the one-line `classList.add("js")` script in `<head>`, before
+      `site.css`. It lets the CSS hide each quiz until `learn.js` has built it,
+      so answers never flash while the page loads. ✔︎
 - [ ] Anything that only makes sense with scripts running (instructions to
-      guess or answer, the skim test) gets `class="js-only"`. With scripts off,
+      guess or answer, the skim test) gets `class="js-only"`; text meant only
+      for readers with scripts off gets `class="nojs-only"`. With scripts off,
       each quiz shows as its question, the right answer and that answer's note.
 - [ ] Fonts are self-hosted from `fonts/` through `site.css`; don't add Google
       Fonts links to pages.

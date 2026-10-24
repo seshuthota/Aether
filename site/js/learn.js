@@ -151,6 +151,7 @@ function initQuiz(root, ctx) {
 
   render();
   paintState();
+  root.classList.add("is-ready");
   return q;
 }
 

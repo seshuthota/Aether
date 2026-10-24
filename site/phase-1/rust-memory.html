@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Raw memory in Rust · Aether notes</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="../css/site.css?v=27">
+<script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="../css/site.css?v=28">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -23,7 +24,7 @@
 <h1>Raw memory in Rust</h1>
 <p class="lede">The aligned allocator is the first thing Phase 1 builds. <code>Vec&lt;f32&gt;</code> cannot promise 64-byte alignment, so you ask the allocator directly. That means a raw pointer, an <code>unsafe</code> block, and a few rules the compiler can no longer check for you.</p>
 
-<div class="callout guide"><span class="lbl js-only">How to use this page</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Each section first sets up a problem, then asks you to <strong>guess</strong> the answer before it explains. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Each section ends with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p>The wrapper type itself is yours to write in the session. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>, with Rust 1.99.</p>
 <details class="probe js-only" data-probe>
   <summary>Already know some of this? Test yourself to see what you can skim (4 questions)</summary>
@@ -362,7 +363,8 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 </div>
 
 <h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
-<p>The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<p class="nojs-only">Each section above ends with its check question and answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
 <div class="widget" data-record>
   <h3>Your answers on this page</h3>
   <div class="statrow" data-stats></div>
@@ -383,9 +385,9 @@ unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=27"></script>
-<script src="../js/glossary.js?v=27"></script>
-<script src="../js/site.js?v=27"></script>
-<script src="../js/learn.js?v=27"></script>
+<script src="../js/pages.js?v=28"></script>
+<script src="../js/glossary.js?v=28"></script>
+<script src="../js/site.js?v=28"></script>
+<script src="../js/learn.js?v=28"></script>
 </body>
 </html>

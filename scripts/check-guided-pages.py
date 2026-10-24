@@ -92,6 +92,11 @@ def check(path):
     if not p.stepmap:
         return errors, False
 
+    head = text[:text.find("</head>")]
+    js_at, css_at = head.find('classList.add("js")'), head.find("css/site.css")
+    if js_at < 0 or js_at > css_at:
+        errors.append('add <script>document.documentElement.classList.add("js")</script> in <head>, before site.css')
+
     h2s = [a for k, a in p.events if k == "h2"]
     ids = [a.get("id") for a in h2s]
     if [h.lstrip("#") for h in p.toc] != ids:
