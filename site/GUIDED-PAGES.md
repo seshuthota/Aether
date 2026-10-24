@@ -71,7 +71,8 @@ It enforces the items marked ✔︎. The rest need a human read.
       its own. A quiz with bad markup is restored, marked `is-fallback` and
       shown as question, answer and note; the error is in the browser console.
       `scripts/test-guided-fallback.mjs site/phase-N/topic.html` checks this in
-      headless Chrome (it breaks one quiz on a copy of the page).
+      headless Chrome (it breaks one quiz on a copy of the page). It needs
+      Node 22 or newer, `google-chrome` and `python3`.
 - [ ] Anything that only makes sense with scripts running (instructions to
       guess or answer, the skim test) gets `class="js-only"`; text meant only
       for readers with scripts off gets `class="nojs-only"`. With scripts off,

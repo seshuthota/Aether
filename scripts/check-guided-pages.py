@@ -94,12 +94,15 @@ def check(path):
     if not p.stepmap:
         return errors, False
 
+    # The inline <head> script, with its comments removed, so a comment that
+    # merely mentions the code can't stand in for it.
     head = text[:text.find("</head>")]
-    js_at, css_at = head.find('classList.add("js")'), head.find("css/site.css")
-    if js_at < 0 or js_at > css_at:
+    m = re.search(r"<script>(.*?)</script>", head, re.S)
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", "", m.group(1), flags=re.S) if m else ""
+    if 'classList.add("js")' not in code or m.start() > head.find("css/site.css"):
         errors.append('add the classList.add("js") script in <head>, before site.css (copy it from _template.html)')
-    if "is-ready" not in head or "is-fallback" not in head:
-        errors.append("the <head> script needs the timeout that drops \"js\" when a quiz is neither is-ready nor is-fallback (copy it from _template.html)")
+    if "setTimeout" not in code or ".quiz:not(.is-ready):not(.is-fallback)" not in code or 'classList.remove("js")' not in code:
+        errors.append("the <head> script needs the 5 s timeout from _template.html")
     if p.learn_js and not p.learn_js_fallback:
         errors.append("the learn.js <script> needs onerror=\"document.documentElement.classList.remove('js')\"")
 

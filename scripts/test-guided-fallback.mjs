@@ -12,12 +12,18 @@
 //
 //   scripts/test-guided-fallback.mjs [site/phase-1/rust-memory.html]
 //
-// Needs google-chrome (or CHROME=/path/to/chrome) and python3 on the PATH.
+// Needs Node 22 or newer (for its built-in WebSocket), google-chrome (or
+// CHROME=/path/to/chrome) and python3 on the PATH.
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+if (typeof WebSocket === "undefined") {
+  console.error("This test needs Node 22 or newer (built-in WebSocket); this is Node " + process.versions.node + ".");
+  process.exit(2);
+}
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const site = join(root, "site");
