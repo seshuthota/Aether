@@ -1,0 +1,25 @@
+{
+  "skill": "3b1b-explainer",
+  "test_cases": [
+    {
+      "input": "Create a 3Blue1Brown-style explainer video for this concept",
+      "should_trigger": true
+    },
+    {
+      "input": "Make my technical explanation more like 3b1b with progressive animation",
+      "should_trigger": true
+    },
+    {
+      "input": "I want a Manim-style visual-first video script and storyboard",
+      "should_trigger": true
+    },
+    {
+      "input": "How do I edit a PowerPoint slide deck?",
+      "should_trigger": false
+    },
+    {
+      "input": "Generate a static infographic about cache lines",
+      "should_trigger": false
+    }
+  ]
+}

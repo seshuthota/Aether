@@ -12,3 +12,8 @@
 /tools/.venv/
 /third_party/
 /hostdata/
+
+# Local junk
+__pycache__/
+nohup.out
+/3b1b-explainer-skill.zip
