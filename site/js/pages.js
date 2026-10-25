@@ -10,7 +10,8 @@ window.AETHER_PAGES = [
       { href: "start/llm.html", num: "01", title: "How an LLM makes text", desc: "Weights, tokens, the forward pass, and why every new token re-reads the whole model." },
       { href: "start/roadmap.html", num: "02", title: "The roadmap", desc: "All nine phases on one page, and which part of the engine each one builds." },
       { href: "start/outline.html", num: "03", title: "Course outline", desc: "Every page still to write, phase by phase, and which of them the engine already has code and numbers for." },
-      { href: "glossary.html", num: "04", title: "Glossary", desc: "Every term the notes use, in one or two plain sentences." }
+      { href: "glossary.html", num: "04", title: "Glossary", desc: "Every term the notes use, in one or two plain sentences." },
+      { href: "start/machine.html", num: "05", title: "Inside the machine", desc: "One multiply-add followed from the math through memory, NEON lanes, caches, GPU threads and NPU tiles. Animated, with controls." }
     ]
   },
   {
