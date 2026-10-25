@@ -1,0 +1,286 @@
+{
+  "duration": 268.979,
+  "recorded": 40,
+  "lines": [
+    {
+      "id": "title",
+      "start": 0.0,
+      "seconds": 4.084,
+      "recorded": true,
+      "text": "Bandwidth. How fast can one core read memory?"
+    },
+    {
+      "id": "puzzle-weights",
+      "start": 5.934,
+      "seconds": 6.534,
+      "recorded": true,
+      "text": "To write each new token, the model reads every one of its weights from memory. Every token, all of them."
+    },
+    {
+      "id": "puzzle-formula",
+      "start": 12.917,
+      "seconds": 5.558,
+      "recorded": true,
+      "text": "So the number that matters is simple: how many bytes per second can a core read?"
+    },
+    {
+      "id": "puzzle-bandwidth",
+      "start": 18.926,
+      "seconds": 6.232,
+      "recorded": true,
+      "text": "That's called bandwidth. We write it in gigabytes per second: billions of bytes, every second."
+    },
+    {
+      "id": "puzzle-phase0",
+      "start": 26.107,
+      "seconds": 6.15,
+      "recorded": true,
+      "text": "Back in Phase 0, we summed a big array on this phone, and it ran at three point three gigabytes per second."
+    },
+    {
+      "id": "puzzle-question",
+      "start": 32.708,
+      "seconds": 5.953,
+      "recorded": true,
+      "text": "So, is that how fast memory is? No. That's how fast the additions were. Let's see why."
+    },
+    {
+      "id": "chain-one",
+      "start": 41.061,
+      "seconds": 7.474,
+      "recorded": true,
+      "text": "Here's that sum: s plus-equals x, one element at a time. Each box is one addition, and time runs to the right."
+    },
+    {
+      "id": "chain-wait",
+      "start": 48.985,
+      "seconds": 6.754,
+      "recorded": true,
+      "text": "Watch. Each addition needs the answer from the one before it. So it waits. And waits again. One long chain."
+    },
+    {
+      "id": "chain-measured",
+      "start": 56.189,
+      "seconds": 6.429,
+      "recorded": true,
+      "text": "So what we timed was additions waiting on each other. Memory was barely trying."
+    },
+    {
+      "id": "chain-four",
+      "start": 63.068,
+      "seconds": 6.197,
+      "recorded": true,
+      "text": "Now split the work into four separate sums, s zero to s three, and add them together at the very end."
+    },
+    {
+      "id": "chain-finish",
+      "start": 69.715,
+      "seconds": 8.194,
+      "recorded": true,
+      "text": "Same eight additions. But the four chains run side by side, and they're finished here, while the single chain is still going."
+    },
+    {
+      "id": "chain-sooner",
+      "start": 79.108,
+      "seconds": 5.837,
+      "recorded": true,
+      "text": "Faster additions ask memory for data sooner. Now memory can finally become the limit."
+    },
+    {
+      "id": "chain-rule",
+      "start": 85.395,
+      "seconds": 5.721,
+      "recorded": true,
+      "text": "And that's what we want to measure. So the rule is: several independent sums, always."
+    },
+    {
+      "id": "kernel-copy",
+      "start": 93.566,
+      "seconds": 6.429,
+      "recorded": true,
+      "text": "There are four classic ways to stream through memory. Copy reads one float and writes one: eight bytes per element."
+    },
+    {
+      "id": "kernel-scale",
+      "start": 100.445,
+      "seconds": 6.754,
+      "recorded": true,
+      "text": "Scale moves the same bytes, plus a multiply. It asks: does a little math slow the stream down?"
+    },
+    {
+      "id": "kernel-add",
+      "start": 107.649,
+      "seconds": 3.724,
+      "recorded": true,
+      "text": "Add reads two floats and writes one. Twelve bytes."
+    },
+    {
+      "id": "kernel-read",
+      "start": 111.823,
+      "seconds": 5.117,
+      "recorded": true,
+      "text": "And read only reads, into several sums. Four bytes, and nothing is written back."
+    },
+    {
+      "id": "kernel-decode",
+      "start": 117.39,
+      "seconds": 4.618,
+      "recorded": true,
+      "text": "Decode is this last row. Weights are read, and never written back."
+    },
+    {
+      "id": "kernel-copy-writes",
+      "start": 123.208,
+      "seconds": 7.393,
+      "recorded": true,
+      "text": "Copy also pays for writes, which decode never does. So judge decode against the read, not the copy."
+    },
+    {
+      "id": "count-run",
+      "start": 132.251,
+      "seconds": 7.869,
+      "recorded": true,
+      "text": "One more trap. Take a single copy run: one gigabyte read, and one gigabyte written, in one second. Made-up numbers, just to count."
+    },
+    {
+      "id": "count-both",
+      "start": 140.57,
+      "seconds": 4.037,
+      "recorded": true,
+      "text": "Count both, and you get two gigabytes per second."
+    },
+    {
+      "id": "count-read",
+      "start": 145.057,
+      "seconds": 4.56,
+      "recorded": true,
+      "text": "Count only the read, and the very same run is one gigabyte per second."
+    },
+    {
+      "id": "count-rule",
+      "start": 150.067,
+      "seconds": 4.92,
+      "recorded": true,
+      "text": "Same run, two answers. So pick one way of counting, and write it down."
+    },
+    {
+      "id": "sweep-intro",
+      "start": 157.436,
+      "seconds": 10.272,
+      "recorded": true,
+      "text": "Now the main experiment. Time the read at many buffer sizes, from four kilobytes up to two hundred and fifty-six megabytes. On the right: where the buffer fits."
+    },
+    {
+      "id": "sweep-l1",
+      "start": 168.158,
+      "seconds": 5.953,
+      "recorded": true,
+      "text": "A small buffer fits in L1, the cache closest to the core. The read is fast."
+    },
+    {
+      "id": "sweep-cliff",
+      "start": 174.561,
+      "seconds": 5.361,
+      "recorded": true,
+      "text": "Grow it past L1's size, and the speed falls off a cliff. Now it lives in L2."
+    },
+    {
+      "id": "sweep-l2",
+      "start": 180.372,
+      "seconds": 5.117,
+      "recorded": true,
+      "text": "A new, lower plateau. It stays flat as long as the buffer still fits in L2."
+    },
+    {
+      "id": "sweep-slc",
+      "start": 185.939,
+      "seconds": 5.999,
+      "recorded": true,
+      "text": "Past L2, there may be a small step for the system-level cache. Or just a slope."
+    },
+    {
+      "id": "sweep-dram-flat",
+      "start": 192.389,
+      "seconds": 5.837,
+      "recorded": true,
+      "text": "And from tens of megabytes on, every read goes all the way out to D-RAM. Flat again."
+    },
+    {
+      "id": "sweep-name",
+      "start": 198.976,
+      "seconds": 5.431,
+      "recorded": true,
+      "text": "Only now do we name each flat stretch, once we've seen where the cliffs really are."
+    },
+    {
+      "id": "sweep-dram",
+      "start": 204.856,
+      "seconds": 5.558,
+      "recorded": true,
+      "text": "This flat right end, measured on one pinned core, is the number decode will be judged by."
+    },
+    {
+      "id": "sweep-not-l1",
+      "start": 211.615,
+      "seconds": 5.198,
+      "recorded": true,
+      "text": "Not the tall left end. That's a cache talking, not the phone's memory."
+    },
+    {
+      "id": "cond-alone",
+      "start": 218.463,
+      "seconds": 10.423,
+      "recorded": true,
+      "text": "A bandwidth number on its own can't be compared with next week's. So write down which cores you used, and that the pin worked. Whether the screen was on. Whether it was charging."
+    },
+    {
+      "id": "cond-more",
+      "start": 229.336,
+      "seconds": 5.198,
+      "recorded": true,
+      "text": "The starting temperature. The real clock during the run. And the exact build and commit."
+    },
+    {
+      "id": "cond-long",
+      "start": 235.384,
+      "seconds": 4.235,
+      "recorded": true,
+      "text": "Then run the read for five whole minutes. The first few seconds look great."
+    },
+    {
+      "id": "cond-hot",
+      "start": 240.069,
+      "seconds": 5.918,
+      "recorded": true,
+      "text": "But as the phone heats up, it slows down. This lower number is what a real chat actually gets."
+    },
+    {
+      "id": "cond-both",
+      "start": 246.437,
+      "seconds": 2.876,
+      "recorded": true,
+      "text": "Keep both. They're different results."
+    },
+    {
+      "id": "recap-1",
+      "start": 250.964,
+      "seconds": 4.838,
+      "recorded": true,
+      "text": "So: use several independent sums, or you're measuring waiting."
+    },
+    {
+      "id": "recap-2",
+      "start": 256.252,
+      "seconds": 5.198,
+      "recorded": true,
+      "text": "Bandwidth is bytes divided by seconds. Count the bytes the same way every time."
+    },
+    {
+      "id": "recap-3",
+      "start": 261.9,
+      "seconds": 5.129,
+      "recorded": true,
+      "text": "And sweep the size. The flat right end is D-RAM: decode's yardstick."
+    }
+  ]
+}

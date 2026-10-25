@@ -1,0 +1,251 @@
+{
+  "video": "site/phase-1/topology.mp4",
+  "duration": 216.41,
+  "lines": [
+    {
+      "id": 1,
+      "start": 5.4,
+      "end": 10.24,
+      "caption": "Same code. Same phone. Three runs of one benchmark.",
+      "voice": "Same code. Same phone. Three runs of one benchmark."
+    },
+    {
+      "id": 2,
+      "start": 10.24,
+      "end": 14.08,
+      "caption": "Three different answers. Why?",
+      "voice": "Three different answers. Why?"
+    },
+    {
+      "id": 3,
+      "start": 14.08,
+      "end": 20.84,
+      "caption": "To see it, we need a map of the phone's cores.",
+      "voice": "To see it, we need a map of the phone's cores."
+    },
+    {
+      "id": 4,
+      "start": 20.84,
+      "end": 24.96,
+      "caption": "Linux gives them numbers: cpu0 to cpu7.",
+      "voice": "Linux gives them numbers: cpu0 to cpu7."
+    },
+    {
+      "id": 5,
+      "start": 24.96,
+      "end": 30.16,
+      "caption": "Cores 0 to 5 can run up to 3.53 GHz.",
+      "voice": "Cores 0 to 5 can run up to 3.53 GHz."
+    },
+    {
+      "id": 6,
+      "start": 30.16,
+      "end": 35.36,
+      "caption": "Cores 6 and 7 go faster: up to 4.32 GHz.",
+      "voice": "Cores 6 and 7 go faster: up to 4.32 GHz."
+    },
+    {
+      "id": 7,
+      "start": 35.36,
+      "end": 41.78,
+      "caption": "So the fast ones are 6 and 7, not 0 and 1.",
+      "voice": "So the fast ones are 6 and 7, not 0 and 1."
+    },
+    {
+      "id": 8,
+      "start": 41.78,
+      "end": 48.78,
+      "caption": "The numbers are names, not a ranking. Phase 0 read this from the phone itself.",
+      "voice": "The numbers are names, not a ranking. Phase 0 read this from the phone itself."
+    },
+    {
+      "id": 9,
+      "start": 48.78,
+      "end": 54.7,
+      "caption": "All eight cores are the same design. Only the top speed differs.",
+      "voice": "All eight cores are the same design. Only the top speed differs."
+    },
+    {
+      "id": 10,
+      "start": 54.7,
+      "end": 60.44,
+      "caption": "There is no slow 'efficiency' core on this phone.",
+      "voice": "There is no slow 'efficiency' core on this phone."
+    },
+    {
+      "id": 11,
+      "start": 60.44,
+      "end": 66.0,
+      "caption": "When the benchmark starts, the scheduler picks a core. Say, cpu2.",
+      "voice": "When the benchmark starts, the scheduler picks a core. Say, cpu2."
+    },
+    {
+      "id": 12,
+      "start": 66.0,
+      "end": 71.2,
+      "caption": "This bar is one run, filling up as time passes.",
+      "voice": "This bar is one run, filling up as time passes."
+    },
+    {
+      "id": 13,
+      "start": 71.2,
+      "end": 76.9,
+      "caption": "Partway through, the scheduler moves it. Then moves it again.",
+      "voice": "Partway through, the scheduler moves it. Then moves it again."
+    },
+    {
+      "id": 14,
+      "start": 76.9,
+      "end": 82.6,
+      "caption": "The result is one number, made on three different cores.",
+      "voice": "The result is one number, made on three different cores."
+    },
+    {
+      "id": 15,
+      "start": 82.6,
+      "end": 89.49,
+      "caption": "Next run, the scheduler makes different choices.",
+      "voice": "Next run, the scheduler makes different choices."
+    },
+    {
+      "id": 16,
+      "start": 89.49,
+      "end": 97.17,
+      "caption": "A different mix of cores, so a different number. That was our puzzle.",
+      "voice": "A different mix of cores, so a different number. That was our puzzle."
+    },
+    {
+      "id": 17,
+      "start": 97.17,
+      "end": 103.09,
+      "caption": "The fix: tell the kernel this thread may run only on cpu6.",
+      "voice": "The fix: tell the kernel this thread may run only on cpu6."
+    },
+    {
+      "id": 18,
+      "start": 103.09,
+      "end": 109.01,
+      "caption": "Now it can't be moved. The whole run happens on one core.",
+      "voice": "Now it can't be moved. The whole run happens on one core."
+    },
+    {
+      "id": 19,
+      "start": 109.01,
+      "end": 114.65,
+      "caption": "That is pinning. The number now names its core.",
+      "voice": "That is pinning. The number now names its core."
+    },
+    {
+      "id": 20,
+      "start": 114.65,
+      "end": 120.57,
+      "caption": "The call is sched_setaffinity. You give it a set of allowed cores.",
+      "voice": "The call is sched_setaffinity. You give it a set of allowed cores."
+    },
+    {
+      "id": 21,
+      "start": 120.57,
+      "end": 126.13,
+      "caption": "A set with just one core in it is a pin.",
+      "voice": "A set with just one core in it is a pin."
+    },
+    {
+      "id": 22,
+      "start": 126.13,
+      "end": 134.03,
+      "caption": "Always check that the call succeeded. A failed pin you ignore is an unpinned run.",
+      "voice": "Always check that the call succeeded. A failed pin you ignore is an unpinned run."
+    },
+    {
+      "id": 23,
+      "start": 134.03,
+      "end": 141.89,
+      "caption": "It does not set the speed. The phone still slows cpu6 down when it heats up.",
+      "voice": "It does not set the speed. The phone still slows cpu6 down when it heats up."
+    },
+    {
+      "id": 24,
+      "start": 141.89,
+      "end": 148.71,
+      "caption": "So record the real clock during the run, not just the maximum.",
+      "voice": "So record the real clock during the run, not just the maximum."
+    },
+    {
+      "id": 25,
+      "start": 148.71,
+      "end": 155.39,
+      "caption": "It does not reserve the core. Other programs can still run on cpu6.",
+      "voice": "It does not reserve the core. Other programs can still run on cpu6."
+    },
+    {
+      "id": 26,
+      "start": 155.39,
+      "end": 162.03,
+      "caption": "And it does not give the thread its own memory. All cores share DRAM.",
+      "voice": "And it does not give the thread its own memory. All cores share DRAM."
+    },
+    {
+      "id": 27,
+      "start": 162.03,
+      "end": 169.03,
+      "caption": "Pinning fixes one thing only: which core runs the thread.",
+      "voice": "Pinning fixes one thing only: which core runs the thread."
+    },
+    {
+      "id": 28,
+      "start": 169.03,
+      "end": 173.45,
+      "caption": "First, one prime core on its own.",
+      "voice": "First, one prime core on its own."
+    },
+    {
+      "id": 29,
+      "start": 173.45,
+      "end": 180.03,
+      "caption": "Then one performance core. Same test. Does the faster clock change the answer?",
+      "voice": "Then one performance core. Same test. Does the faster clock change the answer?"
+    },
+    {
+      "id": 30,
+      "start": 180.03,
+      "end": 184.09,
+      "caption": "Then all six performance cores together.",
+      "voice": "Then all six performance cores together."
+    },
+    {
+      "id": 31,
+      "start": 184.09,
+      "end": 190.67,
+      "caption": "Then all eight. 'All cores' is not one thing when the cores differ.",
+      "voice": "Then all eight. 'All cores' is not one thing when the cores differ."
+    },
+    {
+      "id": 32,
+      "start": 190.67,
+      "end": 198.59,
+      "caption": "Whatever you run, write the core set down next to the number.",
+      "voice": "Whatever you run, write the core set down next to the number."
+    },
+    {
+      "id": 33,
+      "start": 198.59,
+      "end": 204.51,
+      "caption": null,
+      "voice": "Core numbers are names. Here, 6 and 7 are the fast ones."
+    },
+    {
+      "id": 34,
+      "start": 204.51,
+      "end": 210.07,
+      "caption": null,
+      "voice": "An unpinned run blends cores. Pin it to name the core."
+    },
+    {
+      "id": 35,
+      "start": 210.07,
+      "end": 216.41,
+      "caption": null,
+      "voice": "Pinning fixes the core, not the clock. Record both."
+    }
+  ]
+}

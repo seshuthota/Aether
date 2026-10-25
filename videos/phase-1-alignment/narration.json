@@ -1,0 +1,327 @@
+{
+  "video": "site/phase-1/alignment.mp4",
+  "duration": 193.8,
+  "words_per_second": 2.4,
+  "lines": [
+    {
+      "id": 1,
+      "start": 0.0,
+      "end": 4.6,
+      "scene": "Title",
+      "on_screen": "Title card: “Alignment”, subtitle fades in",
+      "text": "Alignment: where your data starts in memory, and why it matters.",
+      "words": 11,
+      "est_seconds": 4.6
+    },
+    {
+      "id": 2,
+      "start": 4.9,
+      "end": 12.1,
+      "scene": "Bytes",
+      "on_screen": "Heading, a row of 12 empty boxes, addresses 0–11 appear",
+      "text": "Memory is a long row of boxes. Each holds one byte. Its number is its address.",
+      "words": 16,
+      "est_seconds": 6.7
+    },
+    {
+      "id": 3,
+      "start": 12.1,
+      "end": 18.5,
+      "scene": "Bytes",
+      "on_screen": "Boxes 0–3 fill teal, brace “x[0]”; then x[1], x[2] at 16.7 s",
+      "text": "A floating-point number, an f32, takes four bytes. Then the next one, and the next.",
+      "words": 15,
+      "est_seconds": 6.2
+    },
+    {
+      "id": 4,
+      "start": 18.5,
+      "end": 25.1,
+      "scene": "Bytes",
+      "on_screen": "Three f32s side by side",
+      "text": "An array of f32 is just these four-byte groups, side by side, no gaps.",
+      "words": 14,
+      "est_seconds": 5.8
+    },
+    {
+      "id": 5,
+      "start": 25.1,
+      "end": 32.7,
+      "scene": "Lines",
+      "on_screen": "Fade; heading “The cache works in 64-byte lines”; strip of 48 small boxes",
+      "text": "Let’s zoom out. Each small box is now a whole float: four bytes.",
+      "words": 13,
+      "est_seconds": 5.4
+    },
+    {
+      "id": 6,
+      "start": 32.7,
+      "end": 39.8,
+      "scene": "Lines",
+      "on_screen": "Three cache-line bands appear with names",
+      "text": "The cache doesn’t fetch single floats. It moves memory in sixty-four-byte lines: sixteen floats per line.",
+      "words": 16,
+      "est_seconds": 6.7
+    },
+    {
+      "id": 7,
+      "start": 39.8,
+      "end": 48.3,
+      "scene": "Lines",
+      "on_screen": "Edge ticks drawn at 0, 64, 128, 192",
+      "text": "Here’s the key point. The line edges are fixed by the hardware: zero, sixty-four, one twenty-eight. You can’t move them.",
+      "words": 20,
+      "est_seconds": 8.3
+    },
+    {
+      "id": 8,
+      "start": 48.3,
+      "end": 55.0,
+      "scene": "Loads",
+      "on_screen": "Heading changes; one 4-float box highlighted: “one load = 16 bytes”",
+      "text": "NEON, the phone’s vector unit, reads sixteen bytes at once: four floats in one instruction.",
+      "words": 15,
+      "est_seconds": 6.2
+    },
+    {
+      "id": 9,
+      "start": 55.0,
+      "end": 60.4,
+      "scene": "Loads",
+      "on_screen": "Same picture",
+      "text": "So a loop walks through an array in sixteen-byte steps.",
+      "words": 10,
+      "est_seconds": 4.2
+    },
+    {
+      "id": 10,
+      "start": 60.4,
+      "end": 67.3,
+      "scene": "Case 1",
+      "on_screen": "“Case 1: the array starts at 0”; array fills blue; arrow at byte 0; eleven loads drop in, counter stays at 0",
+      "text": "Case one. The array starts at zero, right on a line edge. Watch the loads.",
+      "words": 15,
+      "est_seconds": 6.2
+    },
+    {
+      "id": 11,
+      "start": 67.3,
+      "end": 73.4,
+      "scene": "Case 1",
+      "on_screen": "All eleven loads in place, all teal",
+      "text": "Four loads fill each line exactly. Not a single load crosses an edge.",
+      "words": 13,
+      "est_seconds": 5.4
+    },
+    {
+      "id": 12,
+      "start": 73.4,
+      "end": 80.5,
+      "scene": "Case 2",
+      "on_screen": "“Case 2: the array starts at byte 4”; strip clears, array refills shifted; arrow at byte 4",
+      "text": "Case two. Same array, same loop, but it starts just four bytes later.",
+      "words": 13,
+      "est_seconds": 5.4
+    },
+    {
+      "id": 13,
+      "start": 80.5,
+      "end": 83.0,
+      "scene": "Case 2",
+      "on_screen": "Loads 1–4 drop in",
+      "text": "Watch the fourth load.",
+      "words": 4,
+      "est_seconds": 1.7
+    },
+    {
+      "id": 14,
+      "start": 83.0,
+      "end": 85.3,
+      "scene": "Case 2",
+      "on_screen": "Load 4 turns copper and flashes; both lines pulse",
+      "text": "There. It crosses the edge.",
+      "words": 5,
+      "est_seconds": 2.1
+    },
+    {
+      "id": 15,
+      "start": 85.3,
+      "end": 87.2,
+      "scene": "Case 2",
+      "on_screen": "Load 8 flashes copper",
+      "text": "And there’s another.",
+      "words": 3,
+      "est_seconds": 1.2
+    },
+    {
+      "id": 16,
+      "start": 87.2,
+      "end": 93.4,
+      "scene": "Case 2",
+      "on_screen": "Counter: “split loads: 2 of 11”",
+      "text": "Every fourth load sticks out over an edge, so it touches two lines.",
+      "words": 13,
+      "est_seconds": 5.4
+    },
+    {
+      "id": 17,
+      "start": 93.4,
+      "end": 101.7,
+      "scene": "Case 2",
+      "on_screen": "Braces over the first split load: “12 bytes in line 0”, “4 bytes in line 1”",
+      "text": "Look closer. Twelve of its bytes come from line zero, and the last four come from line one.",
+      "words": 18,
+      "est_seconds": 7.5
+    },
+    {
+      "id": 18,
+      "start": 101.7,
+      "end": 105.7,
+      "scene": "Case 2",
+      "on_screen": "Same picture",
+      "text": "That’s called a split load.",
+      "words": 5,
+      "est_seconds": 2.1
+    },
+    {
+      "id": 19,
+      "start": 105.7,
+      "end": 112.3,
+      "scene": "Case 2",
+      "on_screen": "Same picture",
+      "text": "A split load still gives the right answer here. It just costs extra work.",
+      "words": 14,
+      "est_seconds": 5.8
+    },
+    {
+      "id": 20,
+      "start": 112.3,
+      "end": 118.7,
+      "scene": "Case 2",
+      "on_screen": "Same picture",
+      "text": "How much extra, on this core? That’s something Phase 1 will measure.",
+      "words": 12,
+      "est_seconds": 5.0
+    },
+    {
+      "id": 21,
+      "start": 119.0,
+      "end": 129.2,
+      "scene": "Definition",
+      "on_screen": "Heading; rule “aligned to N = multiple of N”; at 123.6 s the code line address % N == 0",
+      "text": "Now the word itself. An address is aligned to N when it’s a multiple of N. In code: address modulo N equals zero.",
+      "words": 23,
+      "est_seconds": 9.6
+    },
+    {
+      "id": 22,
+      "start": 129.2,
+      "end": 134.6,
+      "scene": "Definition",
+      "on_screen": "Table headers; row 1024: yes yes yes",
+      "text": "Ten twenty-four is a multiple of sixty-four: right on a line edge.",
+      "words": 12,
+      "est_seconds": 5.0
+    },
+    {
+      "id": 23,
+      "start": 134.6,
+      "end": 140.7,
+      "scene": "Definition",
+      "on_screen": "Row 1040: yes yes no",
+      "text": "Ten forty divides by sixteen, not sixty-four. No splits, but not a line edge.",
+      "words": 14,
+      "est_seconds": 5.8
+    },
+    {
+      "id": 24,
+      "start": 140.7,
+      "end": 147.1,
+      "scene": "Definition",
+      "on_screen": "Row 1028: yes no no",
+      "text": "Ten twenty-eight is only a multiple of four. Loads will split.",
+      "words": 11,
+      "est_seconds": 4.6
+    },
+    {
+      "id": 25,
+      "start": 147.1,
+      "end": 153.7,
+      "scene": "Definition",
+      "on_screen": "Full table",
+      "text": "The rule: start every array at a multiple of sixty-four, and no load ever splits.",
+      "words": 15,
+      "est_seconds": 6.2
+    },
+    {
+      "id": 26,
+      "start": 154.2,
+      "end": 162.2,
+      "scene": "Rust",
+      "on_screen": "Heading “What Rust promises today”; card Vec<f32>",
+      "text": "What does Rust promise today? A Vec of f32 only promises what a float needs: a multiple of four.",
+      "words": 19,
+      "est_seconds": 7.9
+    },
+    {
+      "id": 27,
+      "start": 162.2,
+      "end": 168.8,
+      "scene": "Rust",
+      "on_screen": "Same card",
+      "text": "In practice it’s often better aligned. But often is luck, not a promise.",
+      "words": 13,
+      "est_seconds": 5.4
+    },
+    {
+      "id": 28,
+      "start": 168.8,
+      "end": 176.4,
+      "scene": "Rust",
+      "on_screen": "Second card: aligned buffer, multiple of 64",
+      "text": "So in Phase 1 we build a small buffer whose start is always a multiple of sixty-four.",
+      "words": 17,
+      "est_seconds": 7.1
+    },
+    {
+      "id": 29,
+      "start": 176.4,
+      "end": 181.6,
+      "scene": "Rust",
+      "on_screen": "Both cards",
+      "text": "Then every benchmark starts from the same layout, every single run.",
+      "words": 11,
+      "est_seconds": 4.6
+    },
+    {
+      "id": 30,
+      "start": 181.6,
+      "end": 185.8,
+      "scene": "Summary",
+      "on_screen": "Fade; “In three lines”; point 1 appears at 182.8 s",
+      "text": "In short: cache lines are sixty-four bytes, fixed edges.",
+      "words": 9,
+      "est_seconds": 3.8
+    },
+    {
+      "id": 31,
+      "start": 185.8,
+      "end": 188.8,
+      "scene": "Summary",
+      "on_screen": "Point 2 appears",
+      "text": "Our code reads sixteen bytes at once.",
+      "words": 7,
+      "est_seconds": 2.9
+    },
+    {
+      "id": 32,
+      "start": 188.8,
+      "end": 193.8,
+      "scene": "Summary",
+      "on_screen": "Point 3 appears; hold to end",
+      "text": "Start arrays at a multiple of sixty-four: no split loads.",
+      "words": 10,
+      "est_seconds": 4.2
+    }
+  ]
+}
