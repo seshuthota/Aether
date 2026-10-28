@@ -715,6 +715,17 @@ fn load_q4_0x4(w: &BlockQ4_0x4) -> Rows4 {
     }
 }
 
+/// `sri a, b, #1`: bit 7 of `a`, bits 0..7 of `b` shifted right by one into
+/// bits 0..6. `asm!` because LLVM rewrites `vsriq_n_u8` into the and/or it
+/// equals, two instructions instead of one.
+#[inline(always)]
+fn sri1(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+    let mut r = a;
+    // SAFETY: a register-to-register instruction; touches no memory.
+    unsafe { std::arch::asm!("sri {0:v}.16b, {1:v}.16b, #1", inout(vreg) r, in(vreg) b, options(pure, nomem, nostack)) };
+    r
+}
+
 /// Repacked Q5_0 (see [`BlockQ5_0x4`]): each vector is its nibbles moved to
 /// bits 3..7 and its inverted fifth bit inserted as bit 7, i.e. 8·(q − 16).
 #[inline(always)]
@@ -724,11 +735,12 @@ fn load_q5_0x4(w: &BlockQ5_0x4) -> Rows4 {
     // register-only ops after the loads.
     unsafe {
         let h = vld1q_u8(w.qh.as_ptr());
-        let (m78, m80) = (vdupq_n_u8(0x78), vdupq_n_u8(0x80));
-        let lo = |v: uint8x16_t| vandq_u8(vshlq_n_u8::<3>(v), m78);
-        let hi = |v: uint8x16_t| vandq_u8(vshrq_n_u8::<1>(v), m78);
-        // Vector i: bit i of h moved to bit 7 and inserted.
-        let fifth = |i: i8, x: uint8x16_t| vreinterpretq_s8_u8(vbslq_u8(m80, vshlq_u8(h, vdupq_n_s8(7 - i)), x));
+        // Each nibble to bits 4..7 (as for Q4_0), then `sri #1` shifts it
+        // to bits 3..6 under bit 7 of the other operand: bit i of h, moved
+        // there. Three instructions per vector.
+        let lo = |v: uint8x16_t| vshlq_n_u8::<4>(v);
+        let hi = |v: uint8x16_t| vandq_u8(v, vdupq_n_u8(0xF0));
+        let fifth = |i: i8, x: uint8x16_t| vreinterpretq_s8_u8(sri1(vshlq_u8(h, vdupq_n_s8(7 - i)), x));
         let rp = |o: usize, base: i8| {
             let (h0, h1) = (vld1q_u8(q.add(o)), vld1q_u8(q.add(32 + o)));
             [fifth(base, lo(h0)), fifth(base + 1, lo(h1)), fifth(base + 2, hi(h0)), fifth(base + 3, hi(h1))]
@@ -884,7 +896,8 @@ pub unsafe fn mmla4_k(g: &[KBlock4], x: [&[PairQ8]; NP]) -> Tiles {
 #[target_feature(enable = "dotprod")]
 unsafe fn gemv4<const F: i32>(x: &[BlockQ8_0], xd: &[f32], load: impl Fn(usize) -> Rows4) -> [f32; 4] {
     let (mut acc, z) = ([vdupq_n_f32(0.0); 2], vdupq_n_s32(0));
-    for b in 0..x.len() {
+    // One block into `acc`.
+    let block = |b: usize, acc: &mut float32x4_t| {
         let (w, d) = load(b);
         // SAFETY: b < x.len() = xd.len(); each block holds 32 int8s.
         unsafe {
@@ -899,10 +912,21 @@ unsafe fn gemv4<const F: i32>(x: &[BlockQ8_0], xd: &[f32], load: impl Fn(usize) 
             let r = w.map(|w| vdotq_s32(vdotq_s32(vdotq_s32(vdotq_s32(z, w[0], a[0]), w[1], a[1]), w[2], a[2]), w[3], a[3]));
             let s = vpaddq_s32(r[0], r[1]);
             let scales = vmulq_n_f32(f16x4_to_f32(d), *xd.get_unchecked(b));
-            // Even and odd blocks into separate accumulators, so
-            // consecutive FMAs do not wait on each other.
-            acc[b & 1] = vfmaq_f32(acc[b & 1], to_f32::<F>(s), scales);
+            *acc = vfmaq_f32(*acc, to_f32::<F>(s), scales);
         }
+    };
+    // Even and odd blocks into separate accumulators, so consecutive FMAs
+    // do not wait on each other; two blocks per iteration, so both stay in
+    // registers (indexed by `b & 1` they went through the stack).
+    let mut b = 0;
+    while b + 2 <= x.len() {
+        let [a0, a1] = &mut acc;
+        block(b, a0);
+        block(b + 1, a1);
+        b += 2;
+    }
+    if b < x.len() {
+        block(b, &mut acc[0]);
     }
     let mut out = [0.0; 4];
     // SAFETY: `out` holds 4 floats.

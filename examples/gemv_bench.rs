@@ -65,7 +65,7 @@ fn main() {
         // Quantized versions of the same matrix, through the engine's
         // linear() (activation quantized to Q8_0 + integer dots, style b),
         // plus the style-a kernels directly. GB/s at the quantized size.
-        for format in [Format::Q8_0, Format::Q4_0] {
+        for format in [Format::Q8_0, Format::Q4_0, Format::Q5_0] {
             let q = Weight::from(w.clone_buf()).convert(n, format);
             let qbytes = q.bytes() as f64;
             let s = bench(3, iters, || aether::kernels::linear_on(None, black_box(&mut out), black_box(&x), black_box(&q)));
@@ -78,7 +78,7 @@ fn main() {
                 println!("{format:?}_b_sdot_x4,{d},{n},{},{:.1},{:.2},{:.2},{what}", r.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
             }
             #[cfg(target_arch = "aarch64")]
-            {
+            if format != Format::Q5_0 {
                 use aether::kernels::neon_quant as nq;
                 let nb = n / 32;
                 let s = bench(3, iters, || match &q {

@@ -650,3 +650,44 @@ output is byte-identical for Q4_0, Q8_0, Q4_K_M; 92/92 tests on the phone.
 
 Cycles of the whole run fall 1–2 %. Small, as expected: the hand-off is
 ~1 µs and only 72 of them go per token (~0.1 ms of 8–15 ms).
+
+## Decode GEMV: accumulators in registers, Q5_0 fifth bit with `sri` (2026-10-29; `raw/q5-gemv/`, `raw/decode-unroll-sri/`)
+
+Q5_0 is most of a Q4_K_M file and took 31 % of its decode. `gemv_bench`
+(now with Q5_0) on one prime core: the Qwen up matrix as Q5_0×4 took 530 µs
+against 282 µs as Q4_0×4, for 22 % more bytes, so compute-bound. The
+disassembly showed two things:
+
+1. **`gemv4` kept its two accumulators on the stack**: `acc[b & 1]`
+   indexed by a variable made every block a load, an FMA and a store
+   (`ldr q4, [x10, x12]` … `str`). Now the loop takes two blocks per
+   iteration, the even one into `acc[0]` and the odd one into `acc[1]`, as
+   before (same sums in the same order: bit-identical). This applies to
+   Q4_0 / Q8_0 / Q5_0.
+2. **Q5_0's unpack was 5 instructions per vector** (nibble: shift, mask;
+   fifth bit: shift, mask, or). `sri #1` (shift right and insert) puts the
+   nibble, already at bits 4..7, under bit 7 of the shifted fifth-bit
+   register in one instruction: 3 per vector. LLVM rewrote the
+   `vsriq_n_u8` intrinsic back into and/or, so it is an `asm!` (`sri1`).
+
+One prime core, round 2 of 2 (`unroll-sri-ab.txt`, µs per GEMV):
+
+| matrix | format | before | unrolled | + `sri` |
+| --- | --- | --- | --- | --- |
+| up 4864×896 | Q8_0 / Q4_0 / Q5_0 | 145 / 165 / 288 | 124 / 167 / 276 | 124 / 141 / 210 |
+| down 896×4864 | Q8_0 / Q4_0 / Q5_0 | 144 / 140 / 273 | 123 / 138 / 259 | 122 / 145 / 228 |
+| 8192² (DRAM) | Q8_0 / Q4_0 / Q5_0 | 2160 / 2002 / 3949 | 1756 / 1849 / 3901 | 1747 / 1851 / 2886 |
+
+Whole model, decode (Qwen2.5-0.5B, cores 2–7, 4 alternated rounds, phone
+52–63 °C, `decode-unroll-sri/timed.txt`); greedy output byte-identical in
+all three formats, 92/92 tests:
+
+| tg128 tok/s, median | before (`8d3098e`) | after | run cycles |
+| --- | --- | --- | --- |
+| Q4_K_M @ d0 / d512 | 81.8 / 68.7 | 90.8 / 74.3 | −7 % |
+| Q4_0 @ d0 / d512 | 133.5 / 108.8 | 131.8 / 112.1 | −1 % |
+| Q8_0 @ d0 / d512 | 98.8 / 70.2 | 89.0 / 70.3 | 0 % |
+
+With six cores Q4_0 and Q8_0 decode is limited by memory, so a faster
+kernel on one core does not show there (the Q8_0 d0 median is pulled down
+by two slow rounds; its cycles are unchanged). Q4_K_M gains 8–11 %.
