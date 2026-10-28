@@ -220,10 +220,27 @@ mod tests {
     /// Prefill in batches through `forward_batch` (GEMM path), then decode
     /// one token at a time. Batch sizes 5, 12, 13 are deliberately not
     /// multiples of the 4×4 GEMM tile. Every activation at every position is
-    /// compared with llama2.c's, and every greedy token must match.
+    /// compared with llama2.c's, and every greedy token must match. Runs on
+    /// one thread, then on four (batched attention hands out (token, head)
+    /// pairs across threads), which must give the same activations bit for
+    /// bit.
     #[test]
     fn batched_prefill_matches_llama2c() {
-        let (Some(mut t), Some(path)) = (model(), golden("stories15M/greedy.dump")) else { return };
+        let Some(one) = batched_prefill_run(None) else { return };
+        let many = std::thread::spawn(|| {
+            let cores: Vec<usize> = crate::sys::affinity::online_cpus().unwrap().into_iter().take(4).collect();
+            batched_prefill_run(Some(&cores)).unwrap()
+        })
+        .join()
+        .unwrap();
+        assert!(one == many, "four threads changed a batched-prefill activation");
+    }
+
+    fn batched_prefill_run(cores: Option<&[usize]>) -> Option<Activations> {
+        let (Some(mut t), Some(path)) = (model(), golden("stories15M/greedy.dump")) else { return None };
+        if let Some(cores) = cores {
+            t.set_pool(crate::pool::ThreadPool::new(cores).unwrap());
+        }
         let (reference, _) = read_dump(&path);
         let get = |name: &str, pos: usize| reference.get(&(name.to_string(), -1, pos)).map(|v| v[0] as usize);
         let prompt: Vec<usize> = (0..).map_while(|i| get("prompt", i)).collect();
@@ -255,7 +272,8 @@ mod tests {
             assert!(rel < 1e-4, "{key:?}: relative error {rel:.3e} vs llama2.c");
             worst = worst.max(rel);
         }
-        println!("batched prefill (5+12+13) then decode: tokens identical, worst relative error {worst:.2e}");
+        println!("batched prefill (5+12+13) then decode, {} threads: tokens identical, worst relative error {worst:.2e}", cores.map_or(1, <[usize]>::len));
+        Some(obs.0)
     }
 
     /// Four threads: every activation still within tolerance of llama2.c and

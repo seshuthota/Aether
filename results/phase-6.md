@@ -188,5 +188,27 @@ bit for bit. Prefill tok/s, round 1 / round 2:
 +3–7 % at pp256 and pp512 in both rounds, +13–17 % for Q8_0 at pp64; Q4_0
 pp64 is noisy (+3 % / −12 %). Kept.
 
+**Batched attention for prefill** (`raw/prefill-ab-attn-batch/`, against
+`37b57ca`, two rounds): prefill called attention once per token, each call
+sharing out only the 14 heads among 6 threads (at pp512: 24 × 512 calls,
+each waiting for its slowest thread). Now one call per layer hands out all
+t × 14 (token, head) pairs in blocks, last token first (it sees the most
+positions), so the cheap items fill in at the end. Each head is computed as
+before; `batched_prefill_matches_llama2c` now also runs on four threads and
+must give the same activations bit for bit. Prefill tok/s, round 1 /
+round 2:
+
+| | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 batched | 323 / 342 | 307 / 314 | 271 / 273 |
+| Q4_0 per token | 315 / 332 | 302 / 302 | 265 / 258 |
+| Q4_0 llama.cpp | 620 / 625 | 564 / 562 | 472 / 473 |
+| Q8_0 batched | 389 / 403 | 332 / 334 | 305 / 301 |
+| Q8_0 per token | 377 / 392 | 323 / 324 | 277 / 274 |
+| Q8_0 llama.cpp | 611 / 621 | 620 / 649 | 478 / 479 |
+
++2–10 % in every cell, most at pp512 (Q8_0 +10 %), where attention is
+largest. Gap to llama.cpp now 1.6–1.9× (Q4_0) and 1.6–1.9× (Q8_0).
+
 Not done yet: repacking the weights at load (rows
 interleaved once, as llama.cpp does) if the weight `zip`s still show.

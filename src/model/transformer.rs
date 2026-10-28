@@ -132,6 +132,45 @@ fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], 
     }
 }
 
+/// [`attention`] for `t` tokens at positions `start..start + t` (prefill):
+/// every (token, head) pair is independent, so with a pool all `t ·
+/// n_heads` of them are handed out in one call, rather than one call per
+/// token with only `n_heads` items to share (which leaves threads waiting
+/// at the end of each of those calls). Items go out longest first (the
+/// last token sees the most positions), so the cheap ones fill in at the
+/// end. Each block of items has its own scores buffer; every head's result
+/// is computed exactly as in [`attention`].
+#[allow(clippy::too_many_arguments)]
+fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], start: usize, t: usize) {
+    let Some(p) = pool.filter(|p| p.threads() > 1 && t > 1) else {
+        for i in 0..t {
+            let dim = c.n_heads * c.head_size();
+            attention(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
+        }
+        return;
+    };
+    let (hs, kv_dim, group, nh) = (c.head_size(), c.kv_dim(), c.kv_group(), c.n_heads);
+    assert!(out.len() >= t * nh * hs && q.len() >= t * nh * hs);
+    let o = SharedOut(out.as_mut_ptr());
+    let items = t * nh;
+    p.for_blocks(items, crate::pool::block_size(items, p.threads(), 1), &|r| {
+        let mut sc = vec![0.0; start + t];
+        for j in r {
+            // Item j: token t-1-j/nh (longest first), head j%nh.
+            let (i, h) = (t - 1 - j / nh, j % nh);
+            let kv_off = (h / group) * hs;
+            let keys = |p: usize| &kc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
+            let values = |p: usize| &vc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
+            let qh = &q[(i * nh + h) * hs..(i * nh + h + 1) * hs];
+            // SAFETY: item (i, h) is handed to exactly one thread, and its
+            // slice of `out` is disjoint from every other item's (length
+            // checked above).
+            let oh = unsafe { std::slice::from_raw_parts_mut(o.ptr().add((i * nh + h) * hs), hs) };
+            k::attention_head(oh, qh, keys, values, start + i, &mut sc);
+        }
+    });
+}
+
 /// `x += bias` when the layer has one.
 fn add_bias(x: &mut [f32], bias: Option<&AlignedBuf>) {
     if let Some(b) = bias {
@@ -388,10 +427,9 @@ impl Transformer {
 
             // Causal attention: token i (position start+i) sees 0..=start+i.
             let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
+            attention_batch(pool, c, &mut b.xb[..t * dim], &b.q[..t * dim], kc, vc, &mut s.att, start, t);
             for i in 0..t {
-                let pos = start + i;
-                attention(pool, c, &mut b.xb[i * dim..(i + 1) * dim], &b.q[i * dim..(i + 1) * dim], kc, vc, &mut s.att, pos);
-                obs.tap("attn", Some(l), pos, &b.xb[i * dim..(i + 1) * dim]);
+                obs.tap("attn", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
 
             k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &lw.wo, t);
