@@ -12,16 +12,20 @@
 #   smollm2-360m   testdata/models/SmolLM2-360M/     ~720 MB (Phase 5)
 #   qwen2.5        testdata/models/Qwen2.5-0.5B-Instruct/ ~1 GB (Phase 7)
 #   gguf           f32 GGUFs in hostdata/gguf/ (host-only, ~2.5 GB) and
-#                  Q8_0 / Q4_0 GGUFs in testdata/gguf/ (`llama-quantize --pure`)
-#                  for SmolLM2-135M and Qwen2.5 (Phases 6-7)
+#                  Q8_0 / Q4_0 / Q5_0 GGUFs in testdata/gguf/ (`llama-quantize
+#                  --pure`) plus llama.cpp's usual Q4_K_M mix, for SmolLM2-135M
+#                  and Qwen2.5 (Phases 6-7)
 #   wikitext       testdata/wikitext/wikitext-2-raw/wiki.test.raw (perplexity)
 #
 # Needs: curl, unzip; for gguf also tools/.venv (tools/requirements.txt) and a
-# host build of llama.cpp (LLAMA_CPP, default ~/llama.cpp, tools in build/bin).
+# host build of llama.cpp (LLAMA_CPP, default ~/llama.cpp, tools in build/bin;
+# LLAMA_BIN overrides that directory). Build it with -DBUILD_SHARED_LIBS=OFF if
+# LD_LIBRARY_PATH may point at another llama.cpp's libraries.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LLAMA_CPP=${LLAMA_CPP:-$HOME/llama.cpp}
+LLAMA_BIN=${LLAMA_BIN:-$LLAMA_CPP/build/bin}
 HF=https://huggingface.co
 
 # fetch URL FILE: download URL to FILE unless FILE exists (via a .part file,
@@ -49,7 +53,8 @@ smollm2_135m() { hf_model HuggingFaceTB/SmolLM2-135M testdata/models/SmolLM2-135
 smollm2_360m() { hf_model HuggingFaceTB/SmolLM2-360M testdata/models/SmolLM2-360M "${HF_FILES[@]}" special_tokens_map.json; }
 qwen25() { hf_model Qwen/Qwen2.5-0.5B-Instruct testdata/models/Qwen2.5-0.5B-Instruct "${HF_FILES[@]}"; }
 
-# gguf_of HF_DIR NAME: NAME-f32.gguf (host-only) and NAME-{q8_0,q4_0}.gguf.
+# gguf_of HF_DIR NAME: NAME-f32.gguf (host-only), NAME-{q8_0,q4_0,q5_0}.gguf
+# and NAME-q4_k_m.gguf.
 gguf_of() {
   local src=$1 name=$2 f32=hostdata/gguf/$2-f32.gguf
   mkdir -p hostdata/gguf testdata/gguf
@@ -57,14 +62,18 @@ gguf_of() {
     echo "convert $f32"
     tools/.venv/bin/python "$LLAMA_CPP/convert_hf_to_gguf.py" "$src" --outtype f32 --outfile "$f32"
   fi
-  for q in q8_0 q4_0; do
+  for q in q8_0 q4_0 q5_0; do
     local out=testdata/gguf/$name-$q.gguf
     [ -f "$out" ] && continue
     echo "quantize $out"
     # --pure: every matrix in this format, the embedding included (no
     # mixed K-quant choices), which is what our in-memory -q does too.
-    "$LLAMA_CPP/build/bin/llama-quantize" --pure "$f32" "$out" "${q^^}"
+    "$LLAMA_BIN/llama-quantize" --pure "$f32" "$out" "${q^^}"
   done
+  # The mix llama.cpp picks per matrix (on these models mostly Q5_0, with
+  # Q4_K / Q6_K where rows are a multiple of 256).
+  local out=testdata/gguf/$name-q4_k_m.gguf
+  [ -f "$out" ] || { echo "quantize $out"; "$LLAMA_BIN/llama-quantize" "$f32" "$out" Q4_K_M; }
 }
 gguf() {
   smollm2_135m; qwen25

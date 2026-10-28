@@ -1,0 +1,19 @@
+# 2026-10-29T00:47:16+05:30, commit 3049f5c+uncommitted, start 48800 m°C
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 77
+# Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |            pp64 |        168.19 ± 3.39 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |           pp256 |        167.82 ± 0.36 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |           pp512 |        152.75 ± 8.18 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |            tg64 |         85.71 ± 0.64 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |     pp64 @ d512 |        122.20 ± 0.82 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |    pp256 @ d512 |        126.32 ± 0.88 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |    pp512 @ d512 |        120.84 ± 0.54 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | CPU        |       6 |     tg64 @ d512 |         75.66 ± 0.63 |
+
+build: d00685831 (8660)

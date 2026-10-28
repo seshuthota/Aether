@@ -1,4 +1,4 @@
-# Phase 6 — quantization (Q8_0, Q4_0)
+# Phase 6 — quantization (Q8_0, Q4_0, Q5_0, Q4_K, Q6_K)
 
 Raw data: `results/phase-6/raw/`. Model: SmolLM2-135M (Hugging Face
 safetensors, quantized in memory at load with `-q`, every matrix including the
@@ -341,4 +341,92 @@ the inner loops: each score ends in a horizontal add of four vectors, and
 the weighted sum of values loads and stores the output for every
 multiply-add (16 loads, 16 FMAs, 16 stores per position and head).
 
-Not done yet: K-quant formats; the remaining prefill gap (1.15–1.5×).
+## Q4_K_M files: Q5_0, Q4_K, Q6_K (2026-10-29; `raw/kquants/`)
+
+`Q4_K_M` is the GGUF mix most people download. Made with
+`llama-quantize … Q4_K_M` (`d00685831`, a static build: the host's
+`LD_LIBRARY_PATH` points at another llama.cpp release), these two models
+contain:
+
+| Matrices | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| Q5_0 | q, k, o, gate, up, half of v (166) | q, k, o, gate, up, half of v (132) |
+| Q4_K / Q6_K | `ffn_down`, 16 / 14 layers | `ffn_down`, 12 / 12 layers |
+| Q8_0 | the other half of v, token embedding | the other half of v, token embedding |
+
+K-quants pack 256 weights per super-block, so a row must be a multiple of
+256 long. Only `ffn_down`'s rows (1536 and 4864) are; for the others (576,
+896) llama.cpp falls back to Q5_0 (for Q4_K) and Q8_0 (for Q6_K). On small
+models "Q4_K_M" is mostly Q5_0.
+
+New formats (`src/quant.rs`):
+
+- **Q5_0** (22 bytes per 32, 5.5 bits): Q4_0 plus a fifth bit per weight in a
+  32-bit `qh`. Our quantizer gives llama.cpp's bytes exactly (12 cases,
+  `quantizers_are_byte_identical_to_llama_cpp`), so `-q q5_0` works on any
+  model as well.
+- **Q4_K** (144 bytes per 256, 4.5 bits): 8 sub-blocks of 32, each with a
+  6-bit scale and a 6-bit min, quantized against an f16 `d` / `dmin`.
+- **Q6_K** (210 bytes per 256, 6.56 bits): 16 sub-blocks of 16 with int8
+  scales.
+
+The `gguf` package decodes Q4_K / Q6_K but cannot encode them, so their
+goldens are random block bytes (`tools/gen_quant.py`, `testdata/quant_k/`):
+every bit of the layout is exercised, and our decoders give gguf's values
+exactly. The dot products quantize the activation to Q8_0 as for every
+other format: a 32-weight activation block meets one Q4_K sub-block (`d_x ·
+(d·sc·Σq·x − dmin·m·Σx)`, both sums exact integers) or two Q6_K ones.
+llama.cpp uses Q8_K for K-quants (one f32 scale per 256), so the two
+engines round the activation differently here.
+
+**Accuracy** (wikitext-2, 20 × 512, KL against each engine's f32 logits;
+ours on the phone, llama.cpp on the host):
+
+| Model, format | PPL ours | PPL llama.cpp | Mean KLD ours | Mean KLD llama.cpp | Same top ours / llama.cpp |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2-135M Q4_K_M | 20.7201 | 20.7784 ± 0.851 | 0.051455 | 0.053319 ± 0.000979 | 85.86 % / 86.14 ± 0.48 % |
+| SmolLM2-135M Q5_0 (`--pure`) | 21.6167 | 21.6071 ± 0.902 | 0.087297 | 0.087117 ± 0.001080 | 81.47 % / 81.67 ± 0.54 % |
+| Qwen2.5-0.5B Q4_K_M | 16.7088 | 16.7657 ± 0.688 | 0.031828 | 0.033112 ± 0.000638 | 90.43 % / 90.10 ± 0.42 % |
+
+PPL and top-token agreement match within llama.cpp's error bars. Our
+Q4_K_M KLD is a little lower in both models (about two of llama.cpp's
+standard errors). The likely reason is the activation rounding above: one
+scale per 32 values is finer than one per 256. Q5_0, where both engines use
+Q8_0 activations, agrees to 0.2 %. For scale: Q4_K_M costs Qwen2.5-0.5B
++2.7 % perplexity (KLD 0.03), Q4_0 +21 % (KLD 0.18, `results/phase-7.md`),
+for a file 1.4× larger (380 vs 265 MB).
+
+**Speed** (Qwen2.5-0.5B, cores 2–7, battery, `raw/kquants/speed*/`, one
+round each, llama.cpp in the same run):
+
+| | pp64 | pp256 | pp512 | tg64 @ d0 | tg64 @ d512 |
+| --- | --- | --- | --- | --- | --- |
+| Q4_K_M ours, Q5_0 row-major | 164.5 | 171.6 | 164.2 | 75.2 | 68.4 |
+| Q4_K_M llama.cpp (same run) | 149.6 | 150.4 | 139.6 | 85.0 | 73.7 |
+| Q4_K_M ours, Q5_0 repacked | **208.2** | **212.7** | **199.4** | **96.6** | **79.4** |
+| Q4_K_M llama.cpp (same run) | 168.2 | 167.8 | 152.8 | 85.7 | 75.7 |
+| Q4_0 ours (first run) | 441.1 | 377.1 | 335.6 | 153.4 | 124.0 |
+
+Q4_K_M is much slower than Q4_0 in both engines, more than its 1.4× size
+explains. A profile showed why (`profile-tg128-q4_k_m.txt`,
+`profile-pp512-q4_k_m.txt`): decode spent 39 % in the Q5_0 kernel, which
+spread each block's fifth bits into bytes with a table lookup and a bit
+test, row by row; prefill spent 35 % there (and unpacked the same rows again
+for every four tokens) and 47 % in the K-quant kernels, which have no
+`smmla` version yet and run one token at a time.
+
+**Q5_0 repacked four rows at a time** (`BlockQ5_0x4`): the nibbles laid out
+as for Q4_0x4, and the fifth bits stored *inverted* and arranged so that the
+k-th byte holds, in bit i, the bit for lane k of the i-th vector the kernel
+builds. An inverted fifth bit is the sign bit of the 5-bit two's-complement
+number q − 16, so `(nibble << 3) | (bit << 7)` read as int8 is exactly
+8·(q − 16): per 16 weights a shift, a mask and one bit-select. The ×8 is
+removed exactly when the integer sums are converted to float, so results are
+bit-identical (repacked = row-major bit for bit in the tests, and the PPL
+above reproduces to the last digit, `aether-phone-qwen-q4_k_m-repacked.txt`).
+Decode +28 % / +16 %, prefill +21–27 %: **Q4_K_M now runs faster than
+llama.cpp's on this phone** (decode +13 % at d0, +5 % at d512; prefill
++24–31 %), even though our K-quant matrices still go one token at a time.
+
+Not done yet: `smmla` for Q4_K / Q6_K; the remaining Q4_0 / Q8_0 prefill gap
+(1.15–1.5×).

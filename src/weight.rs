@@ -6,7 +6,7 @@
 
 use crate::aligned::AlignedBuf;
 use crate::format::mmap::Mmap;
-use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ8_0, BlockQ8_0x4, QK};
+use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ8_0, BlockQ8_0x4, QK, QK_K};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -106,12 +106,21 @@ pub enum Weight {
     /// Row-major blocks: row `i` is blocks `i·cols/32 .. (i+1)·cols/32`.
     Q8_0(Store<BlockQ8_0>),
     Q4_0(Store<BlockQ4_0>),
+    Q5_0(Store<BlockQ5_0>),
+    /// K-quants (read from GGUF only): row `i` is blocks `i·cols/256 ..
+    /// (i+1)·cols/256`.
+    #[allow(non_camel_case_types)] // ggml's names
+    Q4_K(Store<BlockQ4_K>),
+    #[allow(non_camel_case_types)]
+    Q6_K(Store<BlockQ6_K>),
     /// Q8_0 rows repacked four at a time ([`BlockQ8_0x4`]) for the `smmla`
     /// kernels: group `g` (rows 4g..4g+4) is blocks `g·cols/32 ..
     /// (g+1)·cols/32`.
     Q8_0x4(Vec<BlockQ8_0x4>),
     /// Q4_0 rows repacked four at a time ([`BlockQ4_0x4`]).
     Q4_0x4(Vec<BlockQ4_0x4>),
+    /// Q5_0 rows repacked four at a time ([`BlockQ5_0x4`]).
+    Q5_0x4(Vec<BlockQ5_0x4>),
 }
 
 impl From<AlignedBuf> for Weight {
@@ -126,6 +135,7 @@ pub enum Format {
     F32,
     Q8_0,
     Q4_0,
+    Q5_0,
 }
 
 impl Format {
@@ -134,34 +144,41 @@ impl Format {
             "f32" => Some(Format::F32),
             "q8_0" => Some(Format::Q8_0),
             "q4_0" => Some(Format::Q4_0),
+            "q5_0" => Some(Format::Q5_0),
             _ => None,
         }
     }
 }
 
 impl Weight {
-    pub fn format(&self) -> Format {
-        match self {
+    /// The format, `None` for those only read from files (K-quants).
+    pub fn format(&self) -> Option<Format> {
+        Some(match self {
             Weight::F32(_) => Format::F32,
             Weight::Q8_0(_) | Weight::Q8_0x4(_) => Format::Q8_0,
             Weight::Q4_0(_) | Weight::Q4_0x4(_) => Format::Q4_0,
-        }
+            Weight::Q5_0(_) | Weight::Q5_0x4(_) => Format::Q5_0,
+            Weight::Q4_K(_) | Weight::Q6_K(_) => return None,
+        })
     }
 
     /// "row-major", or "4 rows interleaved" for the repacked variants.
     pub fn layout(&self) -> &'static str {
         match self {
-            Weight::Q8_0x4(_) | Weight::Q4_0x4(_) => "4 rows interleaved",
+            Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => "4 rows interleaved",
             _ => "row-major",
         }
     }
 
-    /// "f32", "q8_0" or "q4_0".
+    /// "f32", "q8_0", "q4_0", "q5_0", "q4_k" or "q6_k".
     pub fn format_name(&self) -> &'static str {
         match self {
             Weight::F32(_) => "f32",
             Weight::Q8_0(_) | Weight::Q8_0x4(_) => "q8_0",
             Weight::Q4_0(_) | Weight::Q4_0x4(_) => "q4_0",
+            Weight::Q5_0(_) | Weight::Q5_0x4(_) => "q5_0",
+            Weight::Q4_K(_) => "q4_k",
+            Weight::Q6_K(_) => "q6_k",
         }
     }
 
@@ -171,8 +188,12 @@ impl Weight {
             Weight::F32(b) => b.len() * 4,
             Weight::Q8_0(b) => std::mem::size_of_val::<[BlockQ8_0]>(b),
             Weight::Q4_0(b) => std::mem::size_of_val::<[BlockQ4_0]>(b),
+            Weight::Q5_0(b) => std::mem::size_of_val::<[BlockQ5_0]>(b),
+            Weight::Q4_K(b) => std::mem::size_of_val::<[BlockQ4_K]>(b),
+            Weight::Q6_K(b) => std::mem::size_of_val::<[BlockQ6_K]>(b),
             Weight::Q8_0x4(b) => std::mem::size_of_val::<[BlockQ8_0x4]>(b),
             Weight::Q4_0x4(b) => std::mem::size_of_val::<[BlockQ4_0x4]>(b),
+            Weight::Q5_0x4(b) => std::mem::size_of_val::<[BlockQ5_0x4]>(b),
         }
     }
 
@@ -195,11 +216,16 @@ impl Weight {
                 quant::quantize_q4_0(&f, &mut b);
                 Weight::Q4_0(Store::Owned(b))
             }
+            Format::Q5_0 => {
+                let mut b = vec![BlockQ5_0 { d: 0, qh: [0; 4], qs: [0; QK / 2] }; f.len() / QK];
+                quant::quantize_q5_0(&f, &mut b);
+                Weight::Q5_0(Store::Owned(b))
+            }
             Format::F32 => unreachable!(),
         }
     }
 
-    /// Repacks Q8_0 / Q4_0 rows of `cols` columns four at a time, for the
+    /// Repacks Q8_0 / Q4_0 / Q5_0 rows of `cols` columns four at a time, for the
     /// `smmla` kernels, when the row count is a multiple of 4. Anything else
     /// comes back unchanged. The repacked copy lives on the heap; a mapped
     /// original's pages are released, so the process does not hold both.
@@ -216,6 +242,11 @@ impl Weight {
                 b.release();
                 w
             }
+            Weight::Q5_0(b) if rows(b.len()).is_multiple_of(4) => {
+                let w = Weight::Q5_0x4(quant::repack_q5_0(&b, rows(b.len())));
+                b.release();
+                w
+            }
             w => w,
         }
     }
@@ -227,8 +258,12 @@ impl Weight {
             Weight::F32(f) => out.copy_from_slice(&f[i * cols..(i + 1) * cols]),
             Weight::Q8_0(b) => quant::dequantize_q8_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
             Weight::Q4_0(b) => quant::dequantize_q4_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
+            Weight::Q5_0(b) => quant::dequantize_q5_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
+            Weight::Q4_K(b) => quant::dequantize_q4_k(&b[i * cols / QK_K..(i + 1) * cols / QK_K], out),
+            Weight::Q6_K(b) => quant::dequantize_q6_k(&b[i * cols / QK_K..(i + 1) * cols / QK_K], out),
             Weight::Q8_0x4(b) => quant::dequantize_q8_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
             Weight::Q4_0x4(b) => quant::dequantize_q4_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
+            Weight::Q5_0x4(b) => quant::dequantize_q5_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
         }
     }
 }

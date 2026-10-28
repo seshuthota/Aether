@@ -137,12 +137,24 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         Weight::Q8_0(b) => neon_quant::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(target_arch = "aarch64")]
         Weight::Q4_0(b) => neon_quant::dot_q4_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(target_arch = "aarch64")]
+        Weight::Q5_0(b) => neon_quant::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(target_arch = "aarch64")]
+        Weight::Q4_K(b) => neon_quant::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        #[cfg(target_arch = "aarch64")]
+        Weight::Q6_K(b) => neon_quant::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q8_0(b) => crate::quant::scalar::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q4_0(b) => crate::quant::scalar::dot_q4_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(not(target_arch = "aarch64"))]
+        Weight::Q5_0(b) => crate::quant::scalar::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
+        #[cfg(not(target_arch = "aarch64"))]
+        Weight::Q4_K(b) => crate::quant::scalar::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        #[cfg(not(target_arch = "aarch64"))]
+        Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
         Weight::F32(_) => unreachable!(),
-        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) => unreachable!("repacked rows go four at a time"),
+        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => unreachable!("repacked rows go four at a time"),
     }
 }
 
@@ -170,8 +182,12 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
             match w {
                 Weight::Q8_0(b) => neon_quant::dot4_q8_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q4_0(b) => neon_quant::dot4_q4_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
+                Weight::Q5_0(b) => neon_quant::dot4_q5_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
+                Weight::Q4_K(b) => neon_quant::dot4_q4_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd),
+                Weight::Q6_K(b) => neon_quant::dot4_q6_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd),
                 Weight::Q8_0x4(b) => neon_quant::gemv4_q8_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q4_0x4(b) => neon_quant::gemv4_q4_0x4(&b[group(i, nb)], x, xd),
+                Weight::Q5_0x4(b) => neon_quant::gemv4_q5_0x4(&b[group(i, nb)], x, xd),
                 Weight::F32(_) => unreachable!(),
             }
         }
@@ -217,11 +233,21 @@ fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8]
         match w {
             Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
+            Weight::Q5_0(b) => neon_quant::mmla4_q5_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
+            Weight::Q4_K(_) | Weight::Q6_K(_) => unreachable!("no smmla kernel for K-quants (see has_mmla_kernel)"),
             Weight::Q8_0x4(b) => neon_quant::mmla4_q8_0x4(&b[group4(rows, nb)], x),
             Weight::Q4_0x4(b) => neon_quant::mmla4_q4_0x4(&b[group4(rows, nb)], x),
+            Weight::Q5_0x4(b) => neon_quant::mmla4_q5_0x4(&b[group4(rows, nb)], x),
             Weight::F32(_) => unreachable!(),
         }
     }
+}
+
+/// Whether [`mmla4`] handles `w`'s format (K-quants go through
+/// [`quant_rows`] instead).
+#[cfg(target_arch = "aarch64")]
+fn has_mmla_kernel(w: &Weight) -> bool {
+    !matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))
 }
 
 /// [`group`] for four row indices, which must be one whole group.
@@ -305,7 +331,7 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
         let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
         let o = SharedOut(out.as_mut_ptr());
         #[cfg(target_arch = "aarch64")]
-        if t > 1 && has_mmla() {
+        if t > 1 && has_mmla() && has_mmla_kernel(w) {
             let xp = neon_quant::interleave_pairs(&xq, &xd, t);
             match pool.filter(|p| p.threads() > 1) {
                 // SAFETY: each thread writes only its own rows of `out`.
@@ -445,7 +471,7 @@ mod tests {
             let pool = ThreadPool::new(&online[..3.min(online.len())]).unwrap();
             for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
                 let ((ws, w), x) = (read_npy(&dir.join("w.npy")), arr(&dir, "x"));
-                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
+                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0"), (crate::weight::Format::Q5_0, "q5_0")] {
                     let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
                     buf.copy_from_slice(&w);
                     let copy = buf.clone_buf();
@@ -482,7 +508,7 @@ mod tests {
             for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
                 let ((ws, w), (xs, x)) = (read_npy(&dir.join("w.npy")), read_npy(&dir.join("x.npy")));
                 let t = xs[0];
-                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
+                for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0"), (crate::weight::Format::Q5_0, "q5_0")] {
                     let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
                     buf.copy_from_slice(&w);
                     let copy = buf.clone_buf();
@@ -503,6 +529,44 @@ mod tests {
                             let mut out = vec![f32::NAN; t * ws[0]];
                             linear_batch_on(p, &mut out, &x, &r, t);
                             assert_eq!(one, out, "{} {name} {:?}: repacking changed the result", dir.display(), r.layout());
+                        }
+                    }
+                }
+            }
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// K-quant matrices (random blocks, decoded by gguf) through the
+    /// model's path: one token at a time and all `t` at once, on one and
+    /// three threads, against the float64 "b" reference.
+    #[test]
+    fn k_quant_linear_matches_reference() {
+        use crate::quant::blocks_from_bytes;
+        use crate::weight::Store;
+        let Some(root) = golden("quant_k") else { return };
+        std::thread::spawn(move || {
+            let online = crate::sys::affinity::online_cpus().unwrap();
+            let pool = ThreadPool::new(&online[..3.min(online.len())]).unwrap();
+            for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+                let (xs, x) = read_npy(&dir.join("x.npy"));
+                let (t, n) = (xs[0], xs[1]);
+                let bytes = |name: &str| std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
+                for (name, w) in [("q4_k", Weight::Q4_K(Store::Owned(blocks_from_bytes(&bytes("q4_k"))))), ("q6_k", Weight::Q6_K(Store::Owned(blocks_from_bytes(&bytes("q6_k")))))] {
+                    let want = arr(&dir, &format!("out_{name}_b"));
+                    let d = want.len() / t;
+                    let bound = 1e-6 * (n as f32).sqrt();
+                    for p in [None, Some(&pool)] {
+                        let mut all = vec![f32::NAN; t * d];
+                        linear_batch_on(p, &mut all, &x, &w, t);
+                        let (_, rel) = max_errors(&all, &want);
+                        assert!(rel < bound, "{} {name} batch: rel {rel:.2e}", dir.display());
+                        for tt in 0..t {
+                            let mut one = vec![f32::NAN; d];
+                            linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);
+                            let (_, rel) = max_errors(&one, &want[tt * d..(tt + 1) * d]);
+                            assert!(rel < bound, "{} {name} token {tt}: rel {rel:.2e}", dir.display());
                         }
                     }
                 }

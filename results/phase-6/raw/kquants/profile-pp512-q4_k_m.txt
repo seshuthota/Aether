@@ -1,0 +1,14 @@
+pp512,161.3,3175.0
+Overhead  Symbol
+35.19%    aether::kernels::neon_quant::mmla4_q5_0
+25.54%    aether::kernels::neon_quant::dot4_q6_k_q8_0
+21.12%    aether::kernels::neon_quant::dot4_q4_k_q8_0
+8.24%     aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{closure#1}::{
+2.59%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{c
+1.96%     expf
+0.80%     aether::kernels::quant_rows_mmla
+0.60%     aether::kernels::neon_quant::quantize_q8_0
+0.40%     @plt
+0.38%     aether::kernels::scalar::rope_halves
+0.36%     aether::kernels::neon_quant::gemv4_q8_0x4
+0.32%     aether::kernels::scalar::swiglu

@@ -70,6 +70,9 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
             GgmlType::F32 => Weight::F32(Floats::Mapped(Mapped::new(g.map.clone(), t.offset, n)?)),
             GgmlType::Q8_0 => Weight::Q8_0(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 32)?)),
             GgmlType::Q4_0 => Weight::Q4_0(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 32)?)),
+            GgmlType::Q5_0 => Weight::Q5_0(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 32)?)),
+            GgmlType::Q4_K => Weight::Q4_K(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 256)?)),
+            GgmlType::Q6_K => Weight::Q6_K(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 256)?)),
             GgmlType::F16 | GgmlType::BF16 => Weight::from(widen(g.data(t)?, t.ty, n)),
             GgmlType::Other(id) => return Err(bad(format!("{name}: ggml type {id} is not supported"))),
         })

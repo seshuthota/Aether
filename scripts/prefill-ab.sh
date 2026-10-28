@@ -7,7 +7,9 @@
 #   scripts/prefill-ab.sh OUT_DIR BASELINE_BENCH_SUITE_BINARY
 #
 # NEW=BINARY tests another build instead of this tree's (e.g. an older
-# commit's, to measure one change at a time).
+# commit's, to measure one change at a time). BASELINE "-" skips the
+# baseline (this build against llama.cpp only). FORMATS lists the
+# testdata/gguf/qwen2.5-0.5b-<format>.gguf files (default "q4_0 q8_0").
 #
 # The tests run are bench_suite's ARGS and llama-bench's LLAMA_ARGS; the
 # defaults are prefill. For decode at depth, for example:
@@ -51,10 +53,10 @@ adb push "$LLAMA_BENCH" $REMOTE/llama-bench >/dev/null
 KEEPALIVE=$!; trap 'kill $KEEPALIVE 2>/dev/null' EXIT
 
 for r in $(seq 1 "$ROUNDS"); do
-  for q in q4_0 q8_0; do
+  for q in ${FORMATS:-q4_0 q8_0}; do
     M=gguf/qwen2.5-0.5b-$q.gguf
     run "new-$q-r$r" scripts/adb-run.sh "$NEW" testdata/$M "${ARGS[@]}"
-    run "base-$q-r$r" scripts/adb-run.sh "$BASE" testdata/$M "${ARGS[@]}"
+    [ "$BASE" = - ] || run "base-$q-r$r" scripts/adb-run.sh "$BASE" testdata/$M "${ARGS[@]}"
     run "llamacpp-$q-r$r" flock /tmp/aether-phone.lock adb shell "cd $REMOTE && taskset $MASK ./llama-bench -m testdata/$M $LLAMA_ARGS -t $THREADS -r 3"
   done
 done

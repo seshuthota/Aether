@@ -27,11 +27,11 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s; GEMM 28–29 FLOP/cycle (~90 % of an assumed peak) | kernel choice for short rows |
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
 | 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5; 360M ≤ 1.0e-4), `tokenizers` (433 strings) | SmolLM2-360M Q4_0 183 tok/s (charging) | — |
-| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp | K-quants |
+| 6 Quantization | Q8_0/Q4_0/Q5_0 byte-identical to llama.cpp, Q4_K/Q6_K read from GGUF, `sdot`/`smmla` kernels, PPL/KL mode | llama.cpp quantizers, `gguf` dequantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp; Qwen Q4_K_M faster than llama.cpp | `smmla` for K-quants |
 | 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp | prefill 1.15–1.5× behind llama.cpp (was 2–6×) |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Biggest open items (2026-10-28): the remaining prefill gap to llama.cpp (1.15–1.5×), the later phases (K-quants, Vulkan). Attention split across positions was
+Biggest open items (2026-10-29): the remaining prefill gap to llama.cpp for Q4_0/Q8_0 (1.15–1.5×), `smmla` for the K-quants, the other later phases (Vulkan). Attention split across positions was
 tried and gave nothing at depths up to 2048 (results/phase-6.md).
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -241,6 +241,18 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **8.2 JNI + Kotlin app** (`scripts/android-native.sh`, `android/README.md`) in `android/`: load Qwen2.5-0.5B Q4_0 from app storage, generate off
       the main thread, stream tokens to the UI.
 - [x] **8.3 Verify** (app within run-to-run spread of the CLI; results/phase-8.md): installable APK; tok/s matches the CLI.
+
+## Later phases (plan section 13)
+
+- [~] **L.1 Q4_K_M files** (2026-10-29; results/phase-6.md "Q4_K_M"): read llama.cpp's most common
+      GGUF mix. On these small models that is mostly **Q5_0** (K-quants need rows a multiple of 256;
+      576 and 896 are not), plus Q4_K / Q6_K in `ffn_down` and Q8_0. Done: Q5_0 (quantizer
+      byte-identical to llama.cpp, `sdot`, `smmla`, repacked four rows at a time), Q4_K and Q6_K
+      decoders (identical to gguf's on random blocks) and `sdot` kernels; PPL/KLD match
+      llama-perplexity for SmolLM2-135M Q4_K_M and Q5_0 and Qwen2.5-0.5B Q4_K_M. Open: `smmla` for
+      the K-quants (prefill runs them one token at a time: 47 % of pp512 before the Q5_0 repack).
+- [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
+- [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
 
 ---
 
