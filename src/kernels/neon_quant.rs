@@ -552,12 +552,12 @@ pub struct PairQ8 {
 /// scales as f32) → `[ceil(t/2), nb]` [`PairQ8`]s: tokens 2p and 2p + 1 in
 /// pair p, an odd last token paired with itself. Done once per matmul, so
 /// the kernel never interleaves activations itself.
-pub fn interleave_pairs(xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
+pub fn interleave_pairs(pool: Option<&crate::pool::ThreadPool>, xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
     let nb = xq.len() / t;
-    let mut out = Vec::with_capacity(t.div_ceil(2) * nb);
-    for p in 0..t.div_ceil(2) {
+    let mut out = vec![PairQ8 { qs: [0; 2 * QK], d: [0.0; 4], s: [0.0; 4] }; t.div_ceil(2) * nb];
+    crate::pool::par_chunks_mut(pool, &mut out, nb, &|p, out| {
         let (t0, t1) = (2 * p, (2 * p + 1).min(t - 1));
-        for b in 0..nb {
+        for (b, o) in out.iter_mut().enumerate() {
             let (x0, x1) = (&xq[t0 * nb + b].qs, &xq[t1 * nb + b].qs);
             let mut qs = [0; 2 * QK];
             for k in 0..QK / 8 {
@@ -567,9 +567,9 @@ pub fn interleave_pairs(xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
             let (d0, d1) = (xd[t0 * nb + b], xd[t1 * nb + b]);
             let sum = |x: &[i8; QK], d: f32| x.iter().map(|&q| q as i32).sum::<i32>() as f32 * d;
             let (s0, s1) = (sum(x0, d0), sum(x1, d1));
-            out.push(PairQ8 { qs, d: [d0, d1, d0, d1], s: [s0, s1, s0, s1] });
+            *o = PairQ8 { qs, d: [d0, d1, d0, d1], s: [s0, s1, s0, s1] };
         }
-    }
+    });
     out
 }
 

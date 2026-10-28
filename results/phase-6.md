@@ -510,5 +510,60 @@ Q8_0 has no unpack to share, so it gains least. Each output is computed
 the same way whatever tile it is in, so results are bit-identical (Q4_0 PPL
 19.7470 again, `ppl-qwen-q4_0.txt`; 92/92 tests).
 
-Not done yet: the remaining Q4_0 / Q8_0 prefill gap (llama.cpp's pp64 is
-540–730 tok/s depending on the phone's state; compare in one run).
+## Threads waiting a third of prefill (2026-10-29; `raw/gap-2026-10-29/`, `raw/par-rows/`)
+
+Measured as cycles, our prefill already cost less than llama.cpp's: the
+cycles of a pp512 run minus those of a pp1 run (load and setup cancel),
+all threads, two rounds each (`gap-2026-10-29/cycles/`):
+
+| Qwen2.5-0.5B, 511 tokens | ours | llama.cpp |
+| --- | --- | --- |
+| Q4_0 | 9.8 G | 12.6 G |
+| Q8_0 | 9.3 G | 15.0 G |
+| Q4_K_M | 12.8 G | 41.3 G |
+
+Yet its wall time was longer. `cpu-cycles:u` counts only cycles a thread
+runs, and our pool's workers spin for a while and then sleep in the kernel.
+With a build whose workers never sleep (`SPIN = u32::MAX`, measurement
+only), every thread runs for the whole prefill, so the total is ~6 × wall
+time in cycles: Q4_0 16.0 G, Q8_0 15.4 G, Q4_K_M 19.1 G. **Our threads waited
+for 33–39 % of prefill.**
+
+Where: every layer, the calling thread did the per-token steps between the
+matmuls alone while the five workers waited — the RMSNorms, bias + RoPE,
+SwiGLU (an `exp` for each of t × 4864 values), the residual adds, and inside
+every quantized matmul the activations' Q8_0 quantization and pair
+interleave. Each is short; together they were a sixth of the work, and
+everything else waited for them.
+
+**Change**: `pool::par_chunks_mut` splits a buffer into rows (tokens)
+across the pool, and those steps use it. Each row is computed as before, so
+results are bit-identical (Q4_0 PPL 19.7470 again, `par-rows/ppl-qwen-q4_0.txt`;
+92/92 tests on the phone).
+
+| 511 tokens, cycles | never-sleeping workers before → after | busy only, after |
+| --- | --- | --- |
+| Q4_0 | 16.0 G → 11.1 G (−31 %) | 10.2 G |
+| Q8_0 | 15.4 G → 10.4 G (−32 %) | 9.8 G |
+| Q4_K_M | 19.1 G → 13.9 G (−27 %) | 13.1 G |
+
+Waiting is now 6–8 % of thread time. Busy cycles rose 3–5 % (more,
+shorter jobs to hand out). The 20-chunk Q4_0 perplexity run took 43.0 s
+instead of 86.0 s an hour earlier.
+
+**Against llama.cpp, timed, same runs** (cores 2–7, two rounds, phone
+screen off so clocks capped at 1.79 / 1.02 GHz for both engines,
+`par-rows/timed/`):
+
+| Qwen2.5-0.5B | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 ours | 619 / 686 | 712 / 668 | 445 / 510 |
+| Q4_0 llama.cpp | 621 / 613 | 625 / 604 | 453 / 447 |
+| Q8_0 ours | 778 / 794 | 713 / 709 | 651 / 651 |
+| Q8_0 llama.cpp | 577 / 620 | 612 / 634 | 318 / 449 |
+| Q4_K_M ours | 401 / 320 | 477 / 501 | 494 / 335 |
+| Q4_K_M llama.cpp | 166 / 166 | 164 / 157 | 73 / 67 |
+
+**The prefill gap is closed**: level with llama.cpp for Q4_0 (0 to +14 %),
+ahead for Q8_0 and far ahead for Q4_K_M. These ran with the screen off; a
+check with the screen on (higher, uncapped clocks) is still to do.

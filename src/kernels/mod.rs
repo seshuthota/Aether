@@ -117,14 +117,19 @@ pub fn matmul_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     });
 }
 
-/// Quantizes one activation vector (a multiple of 32 long) to Q8_0 for the
-/// integer dot-product kernels.
-fn quantize_activation(x: &[f32]) -> Vec<BlockQ8_0> {
+/// Quantizes `t` activation vectors (`x` is `[t, n]`, n a multiple of 32)
+/// to Q8_0 for the integer dot-product kernels, one token per piece across
+/// `pool`.
+fn quantize_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<BlockQ8_0> {
+    let n = x.len() / t;
     let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
-    #[cfg(target_arch = "aarch64")]
-    neon_quant::quantize_q8_0(x, &mut q);
-    #[cfg(not(target_arch = "aarch64"))]
-    crate::quant::quantize_q8_0(x, &mut q);
+    crate::pool::par_chunks_mut(pool, &mut q, n / QK, &|i, q| {
+        let x = &x[i * n..(i + 1) * n];
+        #[cfg(target_arch = "aarch64")]
+        neon_quant::quantize_q8_0(x, q);
+        #[cfg(not(target_arch = "aarch64"))]
+        crate::quant::quantize_q8_0(x, q);
+    });
     q
 }
 
@@ -373,13 +378,13 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
     let Weight::F32(f) = w else {
         assert_eq!((x.len(), out.len()), (t * n, t * d), "shapes");
-        let xq: Vec<BlockQ8_0> = x.chunks_exact(n).flat_map(quantize_activation).collect();
+        let xq = quantize_activations(pool, x, t);
         // The activation's scales as f32, converted once rather than per row.
         let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
         let o = SharedOut(out.as_mut_ptr());
         #[cfg(target_arch = "aarch64")]
         if t > 1 && has_mmla() {
-            let xp = neon_quant::interleave_pairs(&xq, &xd, t);
+            let xp = neon_quant::interleave_pairs(pool, &xq, &xd, t);
             match pool.filter(|p| p.threads() > 1) {
                 // SAFETY: each thread writes only its own rows of `out`.
                 Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows_mmla(o, d, r, w, &xp, t) }),

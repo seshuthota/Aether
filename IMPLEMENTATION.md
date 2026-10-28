@@ -28,10 +28,10 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
 | 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5; 360M ≤ 1.0e-4), `tokenizers` (433 strings) | SmolLM2-360M Q4_0 183 tok/s (charging) | — |
 | 6 Quantization | Q8_0/Q4_0/Q5_0 byte-identical to llama.cpp, Q4_K/Q6_K read from GGUF, `sdot`/`smmla` kernels, PPL/KL mode | llama.cpp quantizers, `gguf` dequantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp; Qwen Q4_K_M faster than llama.cpp | faster K-quant decode |
-| 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp | prefill 1.15–1.5× behind llama.cpp (was 2–6×) |
+| 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp; prefill level or ahead (2026-10-29) | — |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Biggest open items (2026-10-29): the remaining prefill gap to llama.cpp for Q4_0/Q8_0 (1.15–1.5×), the other later phases (Vulkan). Attention split across positions was
+Biggest open items (2026-10-29): the prefill comparison with the screen on (the last ones ran screen-off), faster K-quant decode, the other later phases (Vulkan). Attention split across positions was
 tried and gave nothing at depths up to 2048 (results/phase-6.md).
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -212,7 +212,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
-- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 4×4 tiles, activations interleaved once, weights repacked four rows at a time, NEON activation quantizer: gap to llama.cpp's prefill 1.15–1.5×, results/phase-6.md) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [x] **6.5 Quantized GEMM** (smmla tiles of 4 rows × 8 tokens on weights repacked four rows at a time, NEON activation quantizer, per-token steps across the pool: prefill level with llama.cpp for Q4_0, ahead for Q8_0 and Q4_K_M, 2026-10-29, results/phase-6.md) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
 - [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md written): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →

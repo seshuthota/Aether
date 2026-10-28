@@ -304,8 +304,8 @@ unsafe fn group_fixed<'a, const V: usize>(
                 let mut o = if tb == 0 { [vdupq_n_f32(0.0); V] } else { load(op) };
                 for t in tb..te {
                     let (a, v) = (*scores.get_unchecked(h * n + t), values(t).as_ptr());
-                    for j in 0..V {
-                        o[j] = vfmaq_n_f32(o[j], vld1q_f32(v.add(4 * j)), a);
+                    for (j, oj) in o.iter_mut().enumerate() {
+                        *oj = vfmaq_n_f32(*oj, vld1q_f32(v.add(4 * j)), a);
                     }
                 }
                 for (j, oj) in o.iter().enumerate() {

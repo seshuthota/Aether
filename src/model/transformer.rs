@@ -20,7 +20,7 @@
 use super::config::{Config, RopeLayout};
 use crate::aligned::AlignedBuf;
 use crate::kernels as k;
-use crate::pool::{SharedOut, ThreadPool};
+use crate::pool::{SharedOut, ThreadPool, par_chunks_mut};
 use crate::weight::{Format, Weight};
 
 /// One layer's weights. Matrices are row-major `[out, in]`, in any storage
@@ -185,6 +185,15 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[
             k::attention_group(og, qg, hs, keys, values, start + i, &mut sc);
         }
     });
+}
+
+/// One token's Q or K row: `+= bias` (if any), then RoPE at `pos`.
+fn bias_rope(c: &Config, v: &mut [f32], bias: Option<&AlignedBuf>, pos: usize) {
+    add_bias(v, bias);
+    match c.rope_layout {
+        RopeLayout::AdjacentPairs => k::rope_adjacent(v, pos, c.head_size(), c.rope_theta),
+        RopeLayout::Halves => k::rope_halves(v, pos, c.head_size(), c.rope_theta),
+    }
 }
 
 /// `x += bias` when the layer has one.
@@ -400,7 +409,7 @@ impl Transformer {
         let c = &self.config;
         let w = &self.weights;
         let (s, b, pool) = (&mut self.state, &mut self.batch, self.pool.as_ref());
-        let (dim, hidden, hs, kv_dim) = (c.dim, c.hidden_dim, c.head_size(), c.kv_dim());
+        let (dim, hidden, kv_dim) = (c.dim, c.hidden_dim, c.kv_dim());
 
         for (i, &tok) in tokens.iter().enumerate() {
             assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
@@ -410,8 +419,12 @@ impl Transformer {
 
         for (l, lw) in w.layers.iter().enumerate() {
             // --- attention ---
+            // Per-token steps between the matmuls go across the pool too
+            // (`par_chunks_mut`); alone on the calling thread they left the
+            // workers waiting for a third of prefill.
+            let x = &b.x;
+            par_chunks_mut(pool, &mut b.xb[..t * dim], dim, &|i, o| k::rmsnorm(o, &x[i * dim..(i + 1) * dim], &lw.attn_norm, c.norm_eps));
             for i in 0..t {
-                k::rmsnorm(&mut b.xb[i * dim..(i + 1) * dim], &b.x[i * dim..(i + 1) * dim], &lw.attn_norm, c.norm_eps);
                 obs.tap("attn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
             // K and V for positions start..start+t are consecutive rows of
@@ -421,24 +434,13 @@ impl Transformer {
             k::linear_batch_on(pool, &mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
             k::linear_batch_on(pool, &mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
             k::linear_batch_on(pool, &mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
-            for i in 0..t {
-                add_bias(&mut b.q[i * dim..(i + 1) * dim], lw.bq.as_ref());
-                add_bias(&mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim], lw.bk.as_ref());
-                add_bias(&mut s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim], lw.bv.as_ref());
-            }
+            // Bias, then RoPE at the token's position (K and V rows are in
+            // the cache already).
+            par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, q, lw.bq.as_ref(), start + i));
+            par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|i, kr| bias_rope(c, kr, lw.bk.as_ref(), start + i));
+            par_chunks_mut(pool, &mut s.value_cache[c0..c1], kv_dim, &|_, v| add_bias(v, lw.bv.as_ref()));
             for i in 0..t {
                 let pos = start + i;
-                let (q, kr) = (&mut b.q[i * dim..(i + 1) * dim], &mut s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
-                match c.rope_layout {
-                    RopeLayout::AdjacentPairs => {
-                        k::rope_adjacent(q, pos, hs, c.rope_theta);
-                        k::rope_adjacent(kr, pos, hs, c.rope_theta);
-                    }
-                    RopeLayout::Halves => {
-                        k::rope_halves(q, pos, hs, c.rope_theta);
-                        k::rope_halves(kr, pos, hs, c.rope_theta);
-                    }
-                }
                 obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
                 obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                 obs.tap("v", Some(l), pos, &s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
@@ -455,19 +457,22 @@ impl Transformer {
             for i in 0..t {
                 obs.tap("attn_out", Some(l), start + i, &b.xb2[i * dim..(i + 1) * dim]);
             }
-            k::add_inplace(&mut b.x[..t * dim], &b.xb2[..t * dim]);
+            let xb2 = &b.xb2;
+            par_chunks_mut(pool, &mut b.x[..t * dim], dim, &|i, x| k::add_inplace(x, &xb2[i * dim..(i + 1) * dim]));
             for i in 0..t {
                 obs.tap("resid_attn", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
             }
 
             // --- MLP ---
+            let x = &b.x;
+            par_chunks_mut(pool, &mut b.xb[..t * dim], dim, &|i, o| k::rmsnorm(o, &x[i * dim..(i + 1) * dim], &lw.ffn_norm, c.norm_eps));
             for i in 0..t {
-                k::rmsnorm(&mut b.xb[i * dim..(i + 1) * dim], &b.x[i * dim..(i + 1) * dim], &lw.ffn_norm, c.norm_eps);
                 obs.tap("ffn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
             k::linear_batch_on(pool, &mut b.hb[..t * hidden], &b.xb[..t * dim], &lw.w_gate, t);
             k::linear_batch_on(pool, &mut b.hb2[..t * hidden], &b.xb[..t * dim], &lw.w_up, t);
-            k::swiglu(&mut b.hb[..t * hidden], &b.hb2[..t * hidden]);
+            let hb2 = &b.hb2;
+            par_chunks_mut(pool, &mut b.hb[..t * hidden], hidden, &|i, g| k::swiglu(g, &hb2[i * hidden..(i + 1) * hidden]));
             for i in 0..t {
                 obs.tap("swiglu", Some(l), start + i, &b.hb[i * hidden..(i + 1) * hidden]);
             }
@@ -475,7 +480,8 @@ impl Transformer {
             for i in 0..t {
                 obs.tap("ffn_out", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
-            k::add_inplace(&mut b.x[..t * dim], &b.xb[..t * dim]);
+            let xb = &b.xb;
+            par_chunks_mut(pool, &mut b.x[..t * dim], dim, &|i, x| k::add_inplace(x, &xb[i * dim..(i + 1) * dim]));
             for i in 0..t {
                 obs.tap("resid_ffn", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
             }

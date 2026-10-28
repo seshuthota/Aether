@@ -197,6 +197,40 @@ pub fn block_size(len: usize, threads: usize, align: usize) -> usize {
     (len / (threads * 8)).div_ceil(align).max(1) * align
 }
 
+/// Runs `f(i, piece)` on every `chunk`-long piece `i` of `data`, split
+/// across `pool` in [`ThreadPool::for_blocks`] blocks (on this thread when
+/// `pool` is `None` or has one thread). For per-row work between matmuls
+/// (norms, RoPE, SwiGLU, quantizing activations) that would otherwise run
+/// on the calling thread while the workers wait. Each piece is computed as
+/// it would be alone, so the result does not depend on the split.
+pub fn par_chunks_mut<T: Send>(pool: Option<&ThreadPool>, data: &mut [T], chunk: usize, f: &(dyn Fn(usize, &mut [T]) + Sync)) {
+    assert!(chunk > 0 && data.len().is_multiple_of(chunk), "data must be whole pieces");
+    let n = data.len() / chunk;
+    let Some(p) = pool.filter(|p| p.threads() > 1 && n > 1) else {
+        data.chunks_exact_mut(chunk).enumerate().for_each(|(i, c)| f(i, c));
+        return;
+    };
+    struct Base<T>(*mut T);
+    // SAFETY: only used to hand threads disjoint pieces of `data` (below),
+    // whose elements may be sent between threads (T: Send).
+    unsafe impl<T: Send> Sync for Base<T> {}
+    impl<T> Base<T> {
+        // A method, so closures capture the Sync wrapper, not the field.
+        fn get(&self) -> *mut T {
+            self.0
+        }
+    }
+    let base = Base(data.as_mut_ptr());
+    p.for_blocks(n, block_size(n, p.threads(), 1), &|r| {
+        for i in r {
+            // SAFETY: piece i lies inside `data` (n whole pieces) and
+            // for_blocks hands each index to exactly one thread.
+            let piece = unsafe { std::slice::from_raw_parts_mut(base.get().add(i * chunk), chunk) };
+            f(i, piece);
+        }
+    });
+}
+
 /// Share `share` of `n` of `0..len`, in blocks of `align`: blocks are dealt
 /// out evenly, the first `blocks % n` shares getting one extra block.
 pub fn split(len: usize, align: usize, share: usize, n: usize) -> std::ops::Range<usize> {
