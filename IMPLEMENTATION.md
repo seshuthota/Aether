@@ -164,7 +164,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
       (decides nightly vs `asm!` for Phase 6).
-- [~] **3.7 Swap in, re-verify** (verified: tokens identical; results/phase-3.md pending): stories15M tokens still identical; speedup + profile →
+- [~] **3.7 Swap in, re-verify** (verified: tokens identical; results/phase-3.md written, ×4.8 over scalar; GEMM GFLOPS and a NEON-build profile still to take on the phone): stories15M tokens still identical; speedup + profile →
       `results/phase-3.md` (phone).
 
 ## Phase 4 — Threading & core placement
@@ -203,7 +203,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
 - [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 4×4 tiles with activations interleaved once: prefill +28–53 % over 2×2, gap to llama.cpp 1.7–2.3×, results/phase-6.md; next: pp512 profile, repacked weights) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
-- [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md pending): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
+- [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md written): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →
       `results/phase-6.md` (phone).
 
