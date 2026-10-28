@@ -362,6 +362,12 @@ impl Transformer {
         self.pool = Some(pool);
     }
 
+    /// Exchanges thread pools with `other` (a draft model borrows the
+    /// target's threads for a few steps instead of spinning its own).
+    pub fn swap_pool(&mut self, other: &mut Transformer) {
+        std::mem::swap(&mut self.pool, &mut other.pool);
+    }
+
     /// Runs `token` at position `pos` and returns the logits for the next
     /// token. Positions must be fed in order 0, 1, 2, … (each call reads the
     /// cache entries of all earlier positions).

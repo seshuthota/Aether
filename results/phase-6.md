@@ -993,3 +993,45 @@ byte-identical to `3f5ed3e` (Q4_0, Q4_K_M).
 (12 × 640 × 11, 9 × 384 × 13) and K-quant cases (6 × 512 × 11,
 5 × 256 × 13), appended so the existing goldens are unchanged; the
 llama.cpp-format references pass on the phone (95/95 tests).
+
+## Speculative decoding with a draft model (2026-10-29; `raw/draft/`)
+
+`--draft PATH [--draft-k K]`: a smaller model with the same vocabulary
+runs K greedy steps on its own KV cache, and the target checks them in
+one batched pass, using the verification loop prompt lookup already has
+(`Session::generate_draft`; lookup and draft now share
+`generate_speculative`). The draft (`Drafter`) keeps the tokens its cache
+holds, and before each proposal it drops entries past the longest prefix
+they share with the certain text (rejected drafts). It borrows the
+target's thread pool for each proposal (`Transformer::swap_pool`): two
+pools spinning on the same cores would fight. The draft reads the prompt
+during prefill. Test `draft_model_decoding_gives_llama2c_greedy_text`
+uses stories15M f32 as the target and the same model in Q4_0 as the draft,
+which disagrees now and then, and gives llama2.c's greedy text.
+
+Target SmolLM2-360M, draft SmolLM2-135M, both stored as `-q` (cores 2–7,
+greedy, 256 positions; the phone warmed from 41 to 60 °C over the runs,
+so ±10 % is noise; tok/s of decode):
+
+| target | prompt | plain | draft K=2 | K=3 | K=4 | `--lookup 3` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Q4_0 | code (116 tokens) | 164–205 | 183–187 | 156–200 | 165–182 | 280–307 |
+| Q4_0 | "The history of the printing press begins" | 178–208 | 193–230 | 217–249 | 179–236 | 385–448 |
+| Q8_0 | code | 128 | 155 | 149 | 165 | 146 |
+| Q8_0 | printing press | 126 | 153 | 140 | 144 | 165 |
+
+Acceptance is high (code 81–92 %, prose 70–95 %), yet the gain is small
+or zero. The reason is the draft's cost: **SmolLM2-135M decodes at 245
+tok/s against the 360M model's ~200 (Q4_0)**, so a draft step costs about
+0.8 of a target step, not the 0.37 its byte count suggests. Both models
+have about 30 layers, and at this size a token's time is mostly the ~120
+pool jobs and their barriers, not reading weights. So a draft model only
+pays when the target is memory-bound and much bigger than the draft. Q8_0
+(twice the bytes, so the target is slower and the draft relatively
+cheaper) gains +12–29 %. Prompt lookup costs nothing to draft and wins
+wherever the text repeats. (The base 360M model loops on the prose prompt,
+which is why lookup does so well there.)
+
+The greedy texts of draft runs differ from plain greedy where the
+batched-path logits fork (see "Prompt lookup decoding"); within a target
+format, all draft K give one text (same md5).

@@ -1,0 +1,10 @@
+r1 code [plain] 52300: prefill: 116 tokens in 131.6 ms (881.7 tok/s) | decode: 140 tokens in 1092.4 ms (128.2 tok/s) | peak RSS 2125044 kB 0c7d3f04 
+r1 code [--draft-k 2] 55700: speculative: 49 passes, 91 of 98 drafts accepted prefill: 116 tokens in 188.4 ms (615.6 tok/s) | decode: 140 tokens in 905.7 ms (154.6 tok/s) | peak RSS 2125584 kB 0c7d3f04 
+r1 code [--draft-k 3] 56100: speculative: 39 passes, 101 of 117 drafts accepted prefill: 116 tokens in 188.2 ms (616.3 tok/s) | decode: 140 tokens in 938.9 ms (149.1 tok/s) | peak RSS 2125616 kB 0c7d3f04 
+r1 code [--draft-k 4] 55700: speculative: 32 passes, 108 of 125 drafts accepted prefill: 116 tokens in 191.2 ms (606.6 tok/s) | decode: 140 tokens in 851.2 ms (164.5 tok/s) | peak RSS 2125712 kB 0c7d3f04 
+r1 code [--lookup 3] 56900: speculative: 33 passes, 29 of 98 drafts accepted prefill: 116 tokens in 132.7 ms (874.3 tok/s) | decode: 140 tokens in 956.8 ms (146.3 tok/s) | peak RSS 2125408 kB 0c7d3f04 
+r1 prose [plain] 56900: prefill: 7 tokens in 14.2 ms (494.0 tok/s) | decode: 249 tokens in 1984.6 ms (125.5 tok/s) | peak RSS 2125208 kB d0005536 
+r1 prose [--draft-k 2] 59200: speculative: 93 passes, 155 of 186 drafts accepted prefill: 7 tokens in 21.5 ms (325.5 tok/s) | decode: 249 tokens in 1624.8 ms (153.2 tok/s) | peak RSS 2125368 kB 43eae96a 
+r1 prose [--draft-k 3] 59900: speculative: 75 passes, 174 of 224 drafts accepted prefill: 7 tokens in 21.6 ms (324.2 tok/s) | decode: 249 tokens in 1779.9 ms (139.9 tok/s) | peak RSS 2125416 kB 43eae96a 
+r1 prose [--draft-k 4] 58800: speculative: 65 passes, 184 of 257 drafts accepted prefill: 7 tokens in 22.3 ms (314.4 tok/s) | decode: 249 tokens in 1730.3 ms (143.9 tok/s) | peak RSS 2125144 kB 43eae96a 
+r1 prose [--lookup 3] 59600: speculative: 42 passes, 93 of 125 drafts accepted prefill: 7 tokens in 15.2 ms (459.8 tok/s) | decode: 249 tokens in 1508.0 ms (165.1 tok/s) | peak RSS 2125580 kB 9bade9bf 

@@ -268,10 +268,13 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
-- [~] **L.4 Speculative decoding** (2026-10-29; results/phase-6.md "Prompt lookup decoding"):
+- [x] **L.4 Speculative decoding** (2026-10-29; results/phase-6.md "Prompt lookup decoding"):
       model-free prompt lookup (`--lookup K`), verified in one batched pass, greedy or by
       speculative sampling (`Sampler::sample_draft`); `smmla` tiles of 1–3 pairs for small
-      batches. +60–75 % on a copying task, about neutral on fresh prose. Open: a draft model.
+      batches. +60–75 % on a copying task, about neutral on fresh prose. Draft model too
+      (`--draft PATH`, `Drafter`; results/phase-6.md "Speculative decoding with a draft
+      model"): SmolLM2-135M for 360M, about neutral on Q4_0 and +12–29 % on Q8_0, because the
+      135M model decodes only 1.2× faster (both ~30 layers, sync-bound at this size).
 - [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
 
 ---

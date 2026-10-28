@@ -22,6 +22,10 @@
 //!             copied from the last earlier match of the last --ngram N
 //!             tokens (default 2), checked in one batched pass; with -t > 0
 //!             by speculative sampling, which keeps the sampler's distribution
+//!   --draft PATH  speculative decoding with a draft model of the same
+//!             vocabulary (e.g. SmolLM2-135M for SmolLM2-360M; -q applies to
+//!             it too): up to --draft-k K (default 4) greedy draft tokens,
+//!             checked like --lookup's
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -55,6 +59,7 @@ fn main() {
     let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram) = (0usize, 2usize);
+    let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
         if flag == "--kl" || flag == "--chat" {
@@ -72,6 +77,8 @@ fn main() {
             "-i" => prompt = val,
             "--ppl" => ppl_file = Some(val.into()),
             "--lookup" => lookup = val.parse().unwrap_or_else(|_| usage()),
+            "--draft" => draft_path = Some(val.into()),
+            "--draft-k" => draft_k = val.parse().unwrap_or_else(|_| usage()),
             "--ngram" => ngram = val.parse().unwrap_or_else(|_| usage()),
             "--system" => system = val,
             "--base" => base_path = Some(val.into()),
@@ -98,14 +105,22 @@ fn main() {
     }
     let mut out = std::io::stdout().lock();
     let mut write = |piece: &[u8]| out.write_all(piece).and_then(|_| out.flush()).is_ok();
-    let stats = if lookup > 0 {
+    let stats = if lookup > 0 || draft_path.is_some() {
         let t = session.text.encode(&prompt);
         write(&session.text.first_piece(t[0]));
         for p in 0..t.len() - 1 {
             write(&session.text.piece(t[p], t[p + 1]));
         }
-        let (stats, look) = session.generate_lookup(&prompt, &mut sampler, steps, lookup, ngram, write);
-        eprintln!("\nlookup: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        let (stats, look) = if let Some(path) = &draft_path {
+            // No cores of its own: it borrows the target's threads.
+            let d = Session::open(path, None, steps, format, None).unwrap_or_else(|e| fail(path, e));
+            eprintln!("draft: {}, {:.1} MB", d.model.weights.layers[0].wq.format_name(), d.model.weights.bytes() as f64 / 1e6);
+            let mut draft = aether::session::Drafter::new(d);
+            session.generate_draft(&mut draft, &prompt, &mut sampler, steps, draft_k, write)
+        } else {
+            session.generate_lookup(&prompt, &mut sampler, steps, lookup, ngram, write)
+        };
+        eprintln!("\nspeculative: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
         stats
     } else {
         session.generate(&prompt, &mut sampler, steps, true, write)

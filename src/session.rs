@@ -4,6 +4,7 @@
 
 use crate::format::gguf::Value;
 use crate::format::json::Json;
+use crate::kernels::argmax;
 use crate::model::sampler::Sampler;
 use crate::model::{Transformer, gguf, hf, llama2c};
 use crate::pool::ThreadPool;
@@ -224,7 +225,43 @@ impl Session {
     /// order, and on quantized models that moves them by up to ~0.6
     /// (results/phase-6.md, "Prompt lookup decoding"), so a greedy run can
     /// fork from plain greedy decoding where two tokens are that close.
-    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        self.generate_speculative(prompt, sampler, steps, |_, hist, max| lookup_draft(hist, ngram, k.min(max)).to_vec(), emit)
+    }
+
+    /// Speculative decoding with a small draft model of the same family
+    /// (same vocabulary): after each certain token the draft model runs up
+    /// to `k` greedy steps on its own cache, and the target checks them in
+    /// one batched pass as in [`Session::generate_lookup`]. The draft's
+    /// guesses only decide how much work is skipped; which tokens come out
+    /// is decided by the target, so greedy text is the target's greedy text
+    /// (under its batched numbers) and sampled text keeps its distribution.
+    pub fn generate_draft(&mut self, draft: &mut Drafter, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        assert_eq!(draft.model.config.vocab_size, self.model.config.vocab_size, "draft and target models need the same vocabulary");
+        assert!(draft.model.config.seq_len >= steps.min(self.model.config.seq_len), "draft model's context is too short");
+        // The draft reads the prompt up front, all but its last token (the
+        // first proposal feeds that), and this counts as prefill time.
+        let t0 = Instant::now();
+        let tokens = self.text.encode(prompt);
+        let np = tokens.len().min(steps);
+        draft.fed.clear();
+        if np > 1 {
+            self.model.swap_pool(&mut draft.model);
+            draft.model.forward_batch(&tokens[..np - 1], 0);
+            self.model.swap_pool(&mut draft.model);
+            draft.fed.extend_from_slice(&tokens[..np - 1]);
+        }
+        let ahead = t0.elapsed();
+        let (mut stats, look) = self.generate_speculative(prompt, sampler, steps, |target, hist, max| draft.propose(target, hist, k.min(max)), emit);
+        stats.prefill += ahead;
+        (stats, look)
+    }
+
+    /// The loop shared by lookup and draft-model decoding. `propose(target,
+    /// hist, max)` returns at most `max` draft tokens to follow `hist` (all
+    /// certain tokens so far); the target model is passed so a draft model
+    /// can borrow its thread pool.
+    fn generate_speculative(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut propose: impl FnMut(&mut Transformer, &[usize], usize) -> Vec<usize>, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
         let steps = steps.min(self.model.config.seq_len);
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
@@ -243,7 +280,7 @@ impl Session {
                     break;
                 }
                 hist.push(next);
-                let draft: Vec<usize> = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                let draft = propose(&mut self.model, &hist, steps - pos - 1);
                 if draft.is_empty() {
                     next = sampler.sample(&mut self.model.forward(next, pos).to_vec());
                     pos += 1;
@@ -276,6 +313,47 @@ impl Session {
         stats.decode = t1.elapsed();
         stats.decode_tokens = pos - np;
         (stats, look)
+    }
+}
+
+/// A draft model for [`Session::generate_draft`], with the tokens its KV
+/// cache holds (`fed[i]` at position i).
+pub struct Drafter {
+    pub model: Transformer,
+    fed: Vec<usize>,
+}
+
+impl Drafter {
+    /// The draft model of a loaded session (its tokenizer is not needed:
+    /// draft and target share the vocabulary). It runs on the target's
+    /// threads, borrowed for each proposal, so it should be opened without
+    /// cores of its own: two pools spinning on the same cores would fight.
+    pub fn new(session: Session) -> Drafter {
+        Drafter { model: session.model, fed: Vec::new() }
+    }
+
+    /// Up to `k` greedy tokens to follow `hist`. Cache entries past the
+    /// longest prefix `fed` shares with `hist` are stale (rejected drafts)
+    /// and get overwritten: the missing part of `hist` is fed first (the
+    /// whole prompt, the first time, in one batched pass).
+    fn propose(&mut self, target: &mut Transformer, hist: &[usize], k: usize) -> Vec<usize> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let keep = self.fed.iter().zip(hist).take_while(|(a, b)| a == b).count().min(hist.len() - 1);
+        self.fed.truncate(keep);
+        target.swap_pool(&mut self.model);
+        let mut logits = self.model.forward_batch(&hist[keep..], keep).to_vec();
+        self.fed.extend_from_slice(&hist[keep..]);
+        let mut draft = vec![argmax(&logits)];
+        while draft.len() < k {
+            let d = *draft.last().unwrap();
+            logits.copy_from_slice(self.model.forward(d, self.fed.len()));
+            self.fed.push(d);
+            draft.push(argmax(&logits));
+        }
+        target.swap_pool(&mut self.model);
+        draft
     }
 }
 
@@ -323,5 +401,27 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
         assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
         assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
+    }
+
+    /// Draft-model decoding gives llama2.c's greedy text: the target is
+    /// stories15M in f32 and the draft the same model in Q4_0, which
+    /// disagrees now and then, so stale draft cache entries are exercised.
+    #[test]
+    fn draft_model_decoding_gives_llama2c_greedy_text() {
+        let (Some(model), Some(want)) = (golden("models/stories15M/stories15M.bin"), golden("stories15M/greedy.txt")) else { return };
+        let mut s = Session::open(&model, None, 256, Format::F32, None).unwrap();
+        let mut draft = Drafter::new(Session::open(&model, None, 256, Format::Q4_0, None).unwrap());
+        let prompt = s.text.encode("Once upon a time");
+        let mut out = s.text.first_piece(prompt[0]);
+        for p in 0..prompt.len() - 1 {
+            out.extend(s.text.piece(prompt[p], prompt[p + 1]));
+        }
+        let (stats, look) = s.generate_draft(&mut draft, "Once upon a time", &mut Sampler::new(0.0, 0.9, 0, 1), 64, 4, |b| {
+            out.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
+        assert!(look.accepted > 0 && look.accepted < look.drafted, "{look:?}");
     }
 }
