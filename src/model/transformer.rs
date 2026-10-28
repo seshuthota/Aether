@@ -106,116 +106,39 @@ impl Weights {
     }
 }
 
-/// Positions per chunk when one head's attention is split across positions
-/// (flash-decoding): at depth 512 a decode step has 14 heads × 4 chunks to
-/// share among the threads instead of 14 long heads. Heads that see at most
-/// this many positions are computed in one piece, as before.
-const ATTN_CHUNK: usize = 128;
-
-/// Scratch space for attention, one region per query head: its scores
-/// (`seq_len` floats), and for a head split into chunks, each chunk's
-/// unnormalised output (`head_size` floats) and `[max, sum]`.
-struct AttScratch {
-    scores: AlignedBuf,
-    parts: AlignedBuf,
-    stats: AlignedBuf,
-}
-
-impl AttScratch {
-    fn new(c: &Config) -> AttScratch {
-        let chunks = c.seq_len.div_ceil(ATTN_CHUNK);
-        AttScratch {
-            scores: AlignedBuf::zeros(c.n_heads * c.seq_len),
-            parts: AlignedBuf::zeros(c.n_heads * chunks * c.head_size()),
-            stats: AlignedBuf::zeros(c.n_heads * chunks * 2),
-        }
-    }
-}
-
-/// The K/V slices of query head `h` (GQA: heads share K/V heads in groups).
-fn kv_head<'a>(c: &Config, kc: &'a [f32], vc: &'a [f32], h: usize) -> (impl Fn(usize) -> &'a [f32] + Copy, impl Fn(usize) -> &'a [f32] + Copy) {
-    let (hs, kv_dim) = (c.head_size(), c.kv_dim());
-    let kv_off = (h / c.kv_group()) * hs; // which K/V head this query head reads
-    (move |t: usize| &kc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs], move |t: usize| &vc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs])
-}
-
-/// Chunk `ch` of a head at position `pos`.
-fn chunk_range(ch: usize, pos: usize) -> std::ops::Range<usize> {
-    ch * ATTN_CHUNK..((ch + 1) * ATTN_CHUNK).min(pos + 1)
-}
-
-/// One query head at position `pos`, on this thread: in one piece up to
-/// [`ATTN_CHUNK`] positions, otherwise chunk by chunk ([`k::attention_part`])
-/// and merged ([`k::attention_merge`]). `scores` needs `pos + 1` floats;
-/// `parts` and `stats` room for the chunks. Every path that splits heads
-/// across threads computes the same chunks and the same merge, so the
-/// result does not depend on the threads.
-#[allow(clippy::too_many_arguments)]
-fn one_head<'a>(out: &mut [f32], q: &[f32], keys: impl Fn(usize) -> &'a [f32] + Copy, values: impl Fn(usize) -> &'a [f32] + Copy, pos: usize, scores: &mut [f32], parts: &mut [f32], stats: &mut [f32]) {
-    let chunks = (pos + 1).div_ceil(ATTN_CHUNK);
-    if chunks == 1 {
-        return k::attention_head(out, q, keys, values, pos, scores);
-    }
-    let hs = q.len();
-    for ch in 0..chunks {
-        let (m, s) = k::attention_part(&mut parts[ch * hs..(ch + 1) * hs], q, keys, values, chunk_range(ch, pos), scores);
-        stats[2 * ch..2 * ch + 2].copy_from_slice(&[m, s]);
-    }
-    k::attention_merge(out, &parts[..chunks * hs], stats[..2 * chunks].as_chunks::<2>().0);
-}
-
 /// All query heads of one token: `out[h] = attention(q[h], cache, pos)`.
 /// Heads are independent (each writes its own slice of `out` and its own
-/// scratch), so with a pool they run in parallel; past [`ATTN_CHUNK`]
-/// positions every (head, chunk) pair is its own item, and the chunks of
-/// each head are merged once they are all done.
+/// row of `scores`), so with a pool they run in parallel, one thread per
+/// head at a time.
 #[allow(clippy::too_many_arguments)]
-fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], att: &mut AttScratch, pos: usize) {
-    let (hs, seq, nh) = (c.head_size(), c.seq_len, c.n_heads);
-    let max_chunks = seq.div_ceil(ATTN_CHUNK);
-    let (ps, ss) = (max_chunks * hs, max_chunks * 2); // per-head parts / stats
-    let Some(p) = pool.filter(|p| p.threads() > 1) else {
-        for h in 0..nh {
-            let (keys, values) = kv_head(c, kc, vc, h);
-            let (sc, pa, st) = (&mut att.scores[h * seq..(h + 1) * seq], &mut att.parts[h * ps..(h + 1) * ps], &mut att.stats[h * ss..(h + 1) * ss]);
-            one_head(&mut out[h * hs..(h + 1) * hs], &q[h * hs..(h + 1) * hs], keys, values, pos, sc, pa, st);
-        }
-        return;
+fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
+    let (hs, kv_dim, group, seq) = (c.head_size(), c.kv_dim(), c.kv_group(), c.seq_len);
+    let head = |h: usize, out_h: &mut [f32], scores_h: &mut [f32]| {
+        let kv_off = (h / group) * hs; // which K/V head this query head reads
+        let keys = |t: usize| &kc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
+        let values = |t: usize| &vc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
+        k::attention_head(out_h, &q[h * hs..(h + 1) * hs], keys, values, pos, scores_h);
     };
-    assert!(out.len() >= nh * hs && att.scores.len() >= nh * seq && att.parts.len() >= nh * ps && att.stats.len() >= nh * ss);
-    let chunks = (pos + 1).div_ceil(ATTN_CHUNK);
-    let (o, sc, pa, st) = (SharedOut(out.as_mut_ptr()), SharedOut(att.scores.as_mut_ptr()), SharedOut(att.parts.as_mut_ptr()), SharedOut(att.stats.as_mut_ptr()));
-    p.for_blocks(nh * chunks, 1, &|r| {
-        for j in r {
-            let (h, ch) = (j / chunks, j % chunks);
-            let (keys, values) = kv_head(c, kc, vc, h);
-            let qh = &q[h * hs..(h + 1) * hs];
-            if chunks == 1 {
-                // SAFETY: head h is handed to exactly one thread, and its
-                // output slice and score row are disjoint from every other
-                // head's (lengths checked above).
-                let (oh, sh) = unsafe { (std::slice::from_raw_parts_mut(o.ptr().add(h * hs), hs), std::slice::from_raw_parts_mut(sc.ptr().add(h * seq), seq)) };
-                k::attention_head(oh, qh, keys, values, pos, sh);
-            } else {
-                // SAFETY: (h, ch) is handed to exactly one thread; its scores
-                // (chunk ch of head h's row), part and stats are disjoint
-                // from every other item's (lengths checked above).
-                let (sh, part, stat) = unsafe {
-                    (
-                        std::slice::from_raw_parts_mut(sc.ptr().add(h * seq + ch * ATTN_CHUNK), ATTN_CHUNK.min(seq - ch * ATTN_CHUNK)),
-                        std::slice::from_raw_parts_mut(pa.ptr().add(h * ps + ch * hs), hs),
-                        std::slice::from_raw_parts_mut(st.ptr().add(h * ss + 2 * ch), 2),
-                    )
-                };
-                let (m, s) = k::attention_part(part, qh, keys, values, chunk_range(ch, pos), sh);
-                stat.copy_from_slice(&[m, s]);
+    match pool.filter(|p| p.threads() > 1) {
+        None => {
+            for (h, (o, sc)) in out.chunks_exact_mut(hs).zip(scores.chunks_exact_mut(seq)).enumerate() {
+                head(h, o, sc);
             }
         }
-    });
-    if chunks > 1 {
-        for h in 0..nh {
-            let stats = &att.stats[h * ss..h * ss + 2 * chunks];
-            k::attention_merge(&mut out[h * hs..(h + 1) * hs], &att.parts[h * ps..h * ps + chunks * hs], stats.as_chunks::<2>().0);
+        Some(p) => {
+            assert!(out.len() >= c.n_heads * hs && scores.len() >= c.n_heads * seq);
+            let (o, sc) = (SharedOut(out.as_mut_ptr()), SharedOut(scores.as_mut_ptr()));
+            p.for_blocks(c.n_heads, 1, &|r| {
+                for h in r {
+                    // SAFETY: head h is handed to exactly one thread, and its
+                    // output slice and score row are disjoint from every other
+                    // head's (both lengths checked above).
+                    let (oh, sh) = unsafe {
+                        (std::slice::from_raw_parts_mut(o.ptr().add(h * hs), hs), std::slice::from_raw_parts_mut(sc.ptr().add(h * seq), seq))
+                    };
+                    head(h, oh, sh);
+                }
+            });
         }
     }
 }
@@ -226,34 +149,35 @@ fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], 
 /// token with only `n_heads` items to share (which leaves threads waiting
 /// at the end of each of those calls). Items go out longest first (the
 /// last token sees the most positions), so the cheap ones fill in at the
-/// end. Each block of items has its own scratch; every head goes through
-/// [`one_head`], as in [`attention`].
+/// end. Each block of items has its own scores buffer; every head's result
+/// is computed exactly as in [`attention`].
 #[allow(clippy::too_many_arguments)]
-fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], att: &mut AttScratch, start: usize, t: usize) {
+fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], start: usize, t: usize) {
     let Some(p) = pool.filter(|p| p.threads() > 1 && t > 1) else {
         for i in 0..t {
             let dim = c.n_heads * c.head_size();
-            attention(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, att, start + i);
+            attention(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
         }
         return;
     };
-    let (hs, nh) = (c.head_size(), c.n_heads);
+    let (hs, kv_dim, group, nh) = (c.head_size(), c.kv_dim(), c.kv_group(), c.n_heads);
     assert!(out.len() >= t * nh * hs && q.len() >= t * nh * hs);
     let o = SharedOut(out.as_mut_ptr());
     let items = t * nh;
-    let chunks = (start + t).div_ceil(ATTN_CHUNK);
     p.for_blocks(items, crate::pool::block_size(items, p.threads(), 1), &|r| {
-        let (mut sc, mut parts, mut stats) = (vec![0.0; start + t], vec![0.0; chunks * hs], vec![0.0; chunks * 2]);
+        let mut sc = vec![0.0; start + t];
         for j in r {
             // Item j: token t-1-j/nh (longest first), head j%nh.
             let (i, h) = (t - 1 - j / nh, j % nh);
-            let (keys, values) = kv_head(c, kc, vc, h);
+            let kv_off = (h / group) * hs;
+            let keys = |p: usize| &kc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
+            let values = |p: usize| &vc[p * kv_dim + kv_off..p * kv_dim + kv_off + hs];
             let qh = &q[(i * nh + h) * hs..(i * nh + h + 1) * hs];
             // SAFETY: item (i, h) is handed to exactly one thread, and its
             // slice of `out` is disjoint from every other item's (length
             // checked above).
             let oh = unsafe { std::slice::from_raw_parts_mut(o.ptr().add((i * nh + h) * hs), hs) };
-            one_head(oh, qh, keys, values, start + i, &mut sc, &mut parts, &mut stats);
+            k::attention_head(oh, qh, keys, values, start + i, &mut sc);
         }
     });
 }
@@ -290,7 +214,7 @@ struct State {
     hb: AlignedBuf,     // MLP gate [hidden]
     hb2: AlignedBuf,    // MLP up [hidden]
     q: AlignedBuf,      // [dim]
-    att: AttScratch,    // attention scores (one row per head) and chunk results
+    att: AlignedBuf,    // attention scores, one row per head [n_heads, seq_len]
     logits: AlignedBuf, // [vocab]
     /// Keys of every position so far: `[layer, pos, kv_dim]`.
     key_cache: AlignedBuf,
@@ -341,7 +265,7 @@ impl Transformer {
             hb: AlignedBuf::zeros(c.hidden_dim),
             hb2: AlignedBuf::zeros(c.hidden_dim),
             q: AlignedBuf::zeros(c.dim),
-            att: AttScratch::new(c),
+            att: AlignedBuf::zeros(c.n_heads * c.seq_len),
             logits: AlignedBuf::zeros(c.vocab_size),
             key_cache: AlignedBuf::zeros(cache),
             value_cache: AlignedBuf::zeros(cache),

@@ -295,11 +295,10 @@ mod tests {
     }
 
     /// A greedy run over the model's whole context (`long.dump`, ~220
-    /// positions), so attention past 128 positions is split into chunks and
-    /// merged. Decode one token at a time on one thread and on four (chunks
-    /// handed out across threads), then a single 200-token prefill on one and
-    /// on four: every token identical to llama2.c, every activation within
-    /// tolerance, and threads never change a bit.
+    /// positions): decode one token at a time on one thread and on four,
+    /// then a single 200-token prefill on one and on four. Every token
+    /// identical to llama2.c, every activation within tolerance, and threads
+    /// never change a bit.
     #[test]
     fn long_context_matches_llama2c() {
         let Some(path) = golden("stories15M/long.dump") else { return };

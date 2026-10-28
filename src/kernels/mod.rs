@@ -52,26 +52,6 @@ pub fn attention_head<'a>(
     scalar::attention_head(out, q, keys, values, pos, scores);
 }
 
-/// One chunk of a head's positions, not normalised (see
-/// [`scalar::attention_part`] for the contract); [`attention_merge`]
-/// combines a head's chunks.
-#[inline]
-pub fn attention_part<'a>(
-    out: &mut [f32],
-    q: &[f32],
-    keys: impl Fn(usize) -> &'a [f32],
-    values: impl Fn(usize) -> &'a [f32],
-    range: std::ops::Range<usize>,
-    scores: &mut [f32],
-) -> (f32, f32) {
-    #[cfg(target_arch = "aarch64")]
-    return neon::attention_part(out, q, keys, values, range, scores);
-    #[cfg(not(target_arch = "aarch64"))]
-    return scalar::attention_part(out, q, keys, values, range, scores);
-}
-
-pub use scalar::attention_merge;
-
 /// Output rows per block when splitting across threads: whole 4-row tiles,
 /// and 16 floats = one 64-byte line, so threads never write the same line.
 const ROW_BLOCK: usize = 16;
@@ -570,22 +550,6 @@ mod tests {
                 f(&mut out, &q, &|t| &k[t * hs..(t + 1) * hs], &|t| &v[t * hs..(t + 1) * hs], n - 1, &mut scores);
                 let (_, rel) = max_errors(&out, &want);
                 assert!(rel <= bound, "{label} {}: rel {rel:.2e} > {bound:.2e}", dir.display());
-                worst = worst.max(rel);
-            }
-            // Split across positions in chunks (with a short last one),
-            // then merged: the same result within the same bound.
-            for chunk in [1, 7, 128] {
-                let chunks = n.div_ceil(chunk);
-                let (mut parts, mut stats, mut scores) = (vec![f32::NAN; chunks * hs], Vec::new(), vec![f32::NAN; chunk]);
-                for (c, part) in parts.chunks_exact_mut(hs).enumerate() {
-                    let range = c * chunk..((c + 1) * chunk).min(n);
-                    let (m, sum) = attention_part(part, &q, |t| &k[t * hs..(t + 1) * hs], |t| &v[t * hs..(t + 1) * hs], range, &mut scores);
-                    stats.push([m, sum]);
-                }
-                let mut out = vec![f32::NAN; hs];
-                attention_merge(&mut out, &parts, &stats);
-                let (_, rel) = max_errors(&out, &want);
-                assert!(rel <= bound, "chunks of {chunk} {}: rel {rel:.2e} > {bound:.2e}", dir.display());
                 worst = worst.max(rel);
             }
         }

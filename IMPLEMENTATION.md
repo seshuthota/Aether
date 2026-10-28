@@ -41,12 +41,12 @@ only on the phone. Nothing below is a result until it has run there. Saved
 baseline `bench_suite` builds (rebuild from the commit if gone):
 `bca0a1b` (last phone-verified), `31513f0` (repack), `85d1a12` (+softmax).
 
-- [ ] **Full suite**: `cargo test --release --target aarch64-linux-android --lib`
+- [x] **Full suite** (89/89 on the phone, 2026-10-28, charging): `cargo test --release --target aarch64-linux-android --lib`
       (89 tests; new or extended: `long_context_matches_llama2c`, repacked layout in `quantized_linear_*`,
       NEON softmax in `rmsnorm_softmax_swiglu_match_numpy`, NEON quantizer in
       `quantizers_are_byte_identical_to_llama_cpp`, `smollm2_360m_matches_transformers`,
       threaded `batched_prefill_matches_llama2c`).
-- [ ] **Perplexity** Q4_0 / Q8_0, wikitext-2 20 × 512 (repack changes decode
+- [x] **Perplexity** (HEAD 19.7126 / 16.3745; repack alone identical to before; shift from chunked attention 0.02–0.04, the size of llama.cpp's own flash-attention on/off shift on this phone, 0.021 / 0.019: `results/phase-6/raw/pending-checks/`) Q4_0 / Q8_0, wikitext-2 20 × 512 (repack changes decode
       sums; softmax changes attention): must stay within noise of 19.7486 /
       16.3532.
 - [ ] **Repack `31513f0` vs `bca0a1b`**: prefill A/B, 2 rounds
@@ -57,11 +57,6 @@ baseline `bench_suite` builds (rebuild from the commit if gone):
 - [ ] **Softmax `85d1a12` vs `31513f0`**: decode A/B at depth 512 (where
       attention matters), prefill pp512.
 - [ ] **Quantizer `0d1510f` vs `85d1a12`**: prefill A/B.
-- [ ] **Attention split across positions** (decode past 128 positions,
-      `ATTN_CHUNK`): host passes `long_context_matches_llama2c` (222 positions
-      identical, 1 vs 4 threads bit-identical) with the scalar kernels; on the
-      phone it runs the NEON `attention_part`. Decode A/B at depth 0, 256, 512
-      against the commit before it; Qwen PPL (512-token chunks go past 128).
 - [ ] **SmolLM2-360M tok/s** (5.6), f32 and Q4_0, cores 2–7.
 - [ ] Older, still open: GEMM GFLOPS and a NEON-build profile (3.7).
 
