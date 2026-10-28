@@ -132,6 +132,16 @@ mod tests {
         }
     }
 
+    /// SmolLM2-360M: 15 query heads sharing 5 K/V heads (135M: 9 and 3),
+    /// 32 layers, dim 960, theta 1e5. Same tokenizer.json as 135M, byte
+    /// for byte, so the 135M tokenizer test covers it.
+    #[test]
+    fn smollm2_360m_matches_transformers() {
+        if let Some(mut t) = model("models/SmolLM2-360M") {
+            check_against_transformers(&mut t, "smollm2-360m/acts.safetensors", "SmolLM2-360M (safetensors)");
+        }
+    }
+
     /// Qwen2.5-0.5B: q/k/v biases, 14 query heads sharing 2 K/V heads,
     /// theta 1e6, eps 1e-6, 151k vocabulary.
     #[test]

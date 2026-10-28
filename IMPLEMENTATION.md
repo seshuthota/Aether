@@ -190,7 +190,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **5.5 HF goldens** `tools/hf_dump.py`: forward hooks → `.safetensors` per-layer dumps (read
       by our own parser), greedy `generate(do_sample=False)` tokens, tokenizer corpus (Unicode,
       emoji, code, odd whitespace) → `testdata/smollm2/`.
-- [~] **5.6 Verify** (135M done on host and phone; 360M not yet) 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
+- [~] **5.6 Verify** (135M done on host and phone; 360M matches transformers on the host, phone run pending) 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
       tok/s → `results/phase-5.md` (phone).
 
 ## Phase 6 — Quantization

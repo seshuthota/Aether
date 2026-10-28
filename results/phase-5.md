@@ -35,7 +35,18 @@ These pass on the host and on the phone (85/85 on 2026-10-22).
 Measured with the threading work: `results/phase-4.md` (SmolLM2-135M
 f32 39 tok/s on one prime core; Q4_0 275 tok/s on cores 2–7).
 
-## Pending
+## SmolLM2-360M (item 5.6)
 
-- SmolLM2-360M (item 5.6): same code path, not yet verified against
-  `transformers`.
+Same code path, larger shape: 15 query heads sharing 5 K/V heads, 32
+layers, dim 960, hidden 2560, θ = 100,000. Its `tokenizer.json` is byte for
+byte the 135M one, so the tokenizer check above covers it. Goldens:
+`tools/hf_dump.py testdata/models/SmolLM2-360M testdata/smollm2-360m`
+(2026-10-28); test `smollm2_360m_matches_transformers`.
+
+On the host (2026-10-28): 48 greedy tokens identical to `transformers`;
+worst relative error per activation 1.0e-4 (`resid_ffn`), 3.2e-5
+(`attn_out`), 1.1e-5 (`ffn_out`), ≤ 6.7e-6 elsewhere. The largest is about
+twice 135M's 5.5e-5, still a tenth of the 1e-3 bound; both models sum in
+f32, and this one is deeper and wider.
+
+Pending: the same test on the phone, and tok/s.
