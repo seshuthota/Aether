@@ -505,19 +505,10 @@ mod tests {
         for dir in cases("softmax_") {
             let (mut x, want) = (arr(&dir, "x"), arr(&dir, "out"));
             let n = x.len() as f32;
-            #[cfg(target_arch = "aarch64")]
-            let mut v = x.clone();
             softmax(&mut x);
             // The normalising sum adds n rounded terms: bound grows with sqrt(n).
             let (_, rel) = max_errors(&x, &want);
             assert!(rel < 2e-6 * n.sqrt().max(4.0), "{}: rel {rel:.2e}", dir.display());
-            // The NEON one (attention's), with its polynomial exp.
-            #[cfg(target_arch = "aarch64")]
-            {
-                neon::softmax(&mut v);
-                let (_, rel) = max_errors(&v, &want);
-                assert!(rel < 2e-6 * n.sqrt().max(4.0), "{} (neon): rel {rel:.2e}", dir.display());
-            }
         }
         for dir in cases("swiglu_") {
             let (mut g, u, want) = (arr(&dir, "gate"), arr(&dir, "up"), arr(&dir, "out"));

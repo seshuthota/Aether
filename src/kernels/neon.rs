@@ -220,72 +220,6 @@ pub unsafe fn gemm_rows(out: *mut f32, d: usize, rows: std::ops::Range<usize>, x
     }
 }
 
-/// `e^x` on four lanes, for `x <= 0` (softmax scores after subtracting
-/// their max). Writes `x = n·ln2 + r` with `|r| <= ln2/2`, takes `e^r` from a
-/// degree-5 polynomial (the coefficients of ARM's optimized-routines
-/// `v_expf`) and multiplies by `2^n`, built directly in the exponent bits.
-/// Max relative error 1.9e-7 on [-87, 0] (numpy, against float64 `exp`;
-/// numpy's own float32 `exp`: 2.0e-7). Below -87, where `e^x` leaves f32's
-/// normal range, the result is 0.
-#[inline(always)]
-fn exp_neg(x: float32x4_t) -> float32x4_t {
-    let c = f32::from_bits;
-    let (inv_ln2, ln2_hi, ln2_lo) = (c(0x3fb8_aa3b), c(0x3f31_7200), c(0x35bf_be8e));
-    let (c0, c1, c2, c3, c4) = (c(0x3c07_2010), c(0x3d2b_9f17), c(0x3e2a_af33), c(0x3eff_fedb), c(0x3f7f_fff6));
-    // SAFETY: register-only NEON ops.
-    unsafe {
-        let n = vrndnq_f32(vmulq_n_f32(x, inv_ln2));
-        let r = vfmaq_n_f32(vfmaq_n_f32(x, n, -ln2_hi), n, -ln2_lo);
-        // 2^n: n + 127 in the exponent field (n >= -126 for x >= -87).
-        let scale = vreinterpretq_f32_s32(vaddq_s32(vshlq_n_s32::<23>(vcvtq_s32_f32(n)), vdupq_n_s32(0x3f80_0000)));
-        // e^r - 1 = c4·r + c3·r² + c2·r³ + c1·r⁴ + c0·r⁵, as two halves.
-        let r2 = vmulq_f32(r, r);
-        let hi = vfmaq_f32(vfmaq_n_f32(vdupq_n_f32(c3), r, c2), vfmaq_n_f32(vdupq_n_f32(c1), r, c0), r2);
-        let poly = vfmaq_f32(vmulq_n_f32(r, c4), hi, r2);
-        let y = vfmaq_f32(scale, poly, scale);
-        vbslq_f32(vcltq_f32(x, vdupq_n_f32(-87.0)), vdupq_n_f32(0.0), y)
-    }
-}
-
-/// Softmax in place, four lanes at a time: max, then `e^(x - max)` with
-/// [`exp_neg`] and their sum, then a division by the sum. The last 0-3
-/// values go through the same vector code, padded with -inf (whose `e^x` is
-/// 0, so the sum is unchanged).
-pub fn softmax(x: &mut [f32]) {
-    let n4 = x.len() / 4 * 4;
-    let tail = |x: &[f32]| {
-        let mut t = [f32::NEG_INFINITY; 4];
-        t[..x.len() - n4].copy_from_slice(&x[n4..]);
-        t
-    };
-    // SAFETY: vector accesses stay below n4 <= x.len(); the tail goes
-    // through a local 4-float array.
-    unsafe {
-        let p = x.as_mut_ptr();
-        let mut m = vld1q_f32(tail(x).as_ptr());
-        for i in (0..n4).step_by(4) {
-            m = vmaxq_f32(m, vld1q_f32(p.add(i)));
-        }
-        let max = vdupq_n_f32(vmaxvq_f32(m));
-        let mut sum = vdupq_n_f32(0.0);
-        for i in (0..n4).step_by(4) {
-            let e = exp_neg(vsubq_f32(vld1q_f32(p.add(i)), max));
-            vst1q_f32(p.add(i), e);
-            sum = vaddq_f32(sum, e);
-        }
-        let mut t = tail(x);
-        let e = exp_neg(vsubq_f32(vld1q_f32(t.as_ptr()), max));
-        sum = vaddq_f32(sum, e);
-        let sum = vdupq_n_f32(vaddvq_f32(sum));
-        for i in (0..n4).step_by(4) {
-            vst1q_f32(p.add(i), vdivq_f32(vld1q_f32(p.add(i)), sum));
-        }
-        vst1q_f32(t.as_mut_ptr(), vdivq_f32(e, sum));
-        let k = x.len() - n4;
-        x[n4..].copy_from_slice(&t[..k]);
-    }
-}
-
 /// Attention of one query head over positions `0..=pos`; same contract as
 /// [`super::scalar::attention_head`].
 ///
@@ -293,7 +227,7 @@ pub fn softmax(x: &mut [f32]) {
 /// key (the compiler may not reorder float sums, so it cannot vectorize it):
 /// at depth 512 that chain dominated Qwen2.5's decode step. Here each score
 /// is [`dot_row`] (four independent 4-lane chains), and the weighted sum of
-/// values adds 4 lanes of `out` per FMA; the softmax is [`softmax`].
+/// values adds 4 lanes of `out` per FMA. Softmax stays scalar (`exp`).
 #[inline(never)] // keep a separate symbol so profiles attribute time per kernel
 pub fn attention_head<'a>(
     out: &mut [f32],
@@ -313,7 +247,7 @@ pub fn attention_head<'a>(
         // SAFETY: k and q both hold hs floats (checked).
         *s = unsafe { dot_row(k.as_ptr(), q.as_ptr(), hs) } * scale;
     }
-    softmax(scores);
+    super::scalar::softmax(scores);
     out.fill(0.0);
     let hs4 = hs / 4 * 4;
     let op = out.as_mut_ptr();
