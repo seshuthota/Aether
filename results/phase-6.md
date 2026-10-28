@@ -296,4 +296,49 @@ Decode tg64 at d0–d512 −4 % to +1 % (one Q8_0 run −10 %), prefill −4 % t
 the phone, PPL 19.7486 / 16.3532, the same digits as before the repack
 (`ppl-*-final.txt`): both changes are bit-identical by design.
 
+## Prefill attention by K/V head (2026-10-29; `raw/prefill-gap/`, `raw/prefill-ab-attn-group/`)
+
+A fresh pp512 profile after the repack and the NEON quantizer (Qwen2.5-0.5B,
+cores 2–7, phone on battery, caps 2.75 / 2.65 GHz,
+`raw/prefill-gap/profile-pp512-*.txt`):
+
+| Symbol | Q4_0 | Q8_0 |
+| --- | --- | --- |
+| `mmla4_*x4` (the matmuls) | 53.9 % | 49.1 % |
+| `attention_head` | 22.6 % | 24.2 % |
+| pool threads waiting | 6.1 % | 6.6 % |
+| `expf` (softmax) | 4.5 % | 4.8 % |
+| quantize + interleave activations | 3.4 % | 3.6 % |
+
+Attention is about 2 % of the arithmetic (pp512: 24 layers × 14 heads ×
+512 × ~256 positions × 64 × 2 multiply-adds ≈ 11 GFLOP, against ~500 G
+integer operations in the matmuls) but over a fifth of the time.
+
+**Change** (`attention_group`): in Qwen2.5 seven query heads read each K/V
+head (grouped-query attention). Prefill now hands out (token, K/V head)
+items, and one item computes all seven heads: each cached key and value
+row is loaded once and used seven times while in L1, instead of being read
+from L2 once per head. Each head's arithmetic is unchanged and in the same
+order, so the output is bit-identical (`attention_group_matches_numpy`
+checks this bit for bit against the per-head kernel; 90/90 tests on the
+phone). Decode keeps one item per head: with only two K/V heads, grouping
+would leave four of six threads idle.
+
+**Result**, measured as cycles so the clock does not matter (pp512,
+`simpleperf record`, same phone state, `profile-pp512-*-{base,new}.txt`):
+
+| | Q4_0 | Q8_0 |
+| --- | --- | --- |
+| attention cycles, before → after | 7.94 G → 6.77 G (−15 %) | 7.76 G → 6.66 G (−14 %) |
+| all cycles | −3 % | −5 % |
+
+The timed A/B (`prefill-ab-attn-group/`) was too noisy to add much: round 2
+ran warm and the clock dropped mid-run (one pp512 at 137 tok/s). Round 1,
+the cool one: Q4_0 +7–10 % at pp64–pp1024, Q8_0 −3 % to +8 %.
+
+So L2 traffic was only a small part of attention's cost. What remains is in
+the inner loops: each score ends in a horizontal add of four vectors, and
+the weighted sum of values loads and stores the output for every
+multiply-add (16 loads, 16 FMAs, 16 stores per position and head).
+
 Not done yet: K-quant formats; the remaining prefill gap (1.15–1.5×).

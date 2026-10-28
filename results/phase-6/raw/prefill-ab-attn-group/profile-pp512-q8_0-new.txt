@@ -1,0 +1,17 @@
+pp512,436.7,1172.3
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o p.data ./bs-new testdata/gguf/qwen2.5-0.5b-q8_0.gguf -c 2-7 --
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 61845
+Event count: 30913189355
+
+Overhead  Symbol
+52.00%    aether::kernels::neon_quant::mmla4_q8_0x4
+21.53%    aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{closure#1}::{closure#0}
+6.76%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0},
+5.20%     expf
+2.13%     aether::kernels::quant_rows_mmla
+1.57%     aether::kernels::neon_quant::gemv4_q8_0x4
+1.52%     aether::kernels::neon_quant::quantize_q8_0
+1.22%     @plt
+1.07%     aether::kernels::scalar::rope_halves

@@ -267,3 +267,60 @@ pub fn attention_head<'a>(
         }
     }
 }
+
+/// [`attention_head`] for the `g` query heads that read the same keys and
+/// values (grouped-query attention: Qwen2.5-0.5B has 7 per K/V head). `q`
+/// and `out` hold the g heads one after another (g·hs floats), `scores`
+/// at least g·(pos + 1). Each key and value row is loaded once and used by
+/// all g heads while it sits in L1, instead of being read again from L2
+/// for every head. Each head's arithmetic is that of [`attention_head`],
+/// in the same order, so the results are bit-identical.
+#[inline(never)] // keep a separate symbol so profiles attribute time per kernel
+pub fn attention_group<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    hs: usize,
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    scores: &mut [f32],
+) {
+    let g = q.len() / hs;
+    assert!(g * hs == q.len() && out.len() == q.len());
+    let n = pos + 1;
+    let scores = &mut scores[..g * n];
+    let scale = 1.0 / (hs as f32).sqrt();
+    for t in 0..n {
+        let k = keys(t);
+        assert_eq!(k.len(), hs);
+        for h in 0..g {
+            // SAFETY: k holds hs floats (checked) and q holds g·hs, so head
+            // h's query q[h·hs..(h+1)·hs] is in bounds.
+            scores[h * n + t] = unsafe { dot_row(k.as_ptr(), q.as_ptr().add(h * hs), hs) } * scale;
+        }
+    }
+    for s in scores.chunks_exact_mut(n) {
+        super::scalar::softmax(s);
+    }
+    out.fill(0.0);
+    let hs4 = hs / 4 * 4;
+    for t in 0..n {
+        let v = values(t);
+        assert_eq!(v.len(), hs);
+        for (h, oh) in out.chunks_exact_mut(hs).enumerate() {
+            let a = scores[h * n + t];
+            let op = oh.as_mut_ptr();
+            // SAFETY: oh and v hold hs floats (checked); vector accesses
+            // stay below hs4 <= hs.
+            unsafe {
+                let av = vdupq_n_f32(a);
+                for j in (0..hs4).step_by(4) {
+                    vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+                }
+            }
+            for j in hs4..hs {
+                oh[j] += a * v[j];
+            }
+        }
+    }
+}

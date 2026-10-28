@@ -52,6 +52,28 @@ pub fn attention_head<'a>(
     scalar::attention_head(out, q, keys, values, pos, scores);
 }
 
+/// [`attention_head`] for consecutive query heads that share one K/V head:
+/// `q` and `out` hold them one after another (hs floats each), `scores`
+/// needs one row of `pos + 1` per head. Same results as calling
+/// [`attention_head`] once per head.
+#[inline]
+pub fn attention_group<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    hs: usize,
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    scores: &mut [f32],
+) {
+    #[cfg(target_arch = "aarch64")]
+    neon::attention_group(out, q, hs, keys, values, pos, scores);
+    #[cfg(not(target_arch = "aarch64"))]
+    for (oh, qh) in out.chunks_exact_mut(hs).zip(q.chunks_exact(hs)) {
+        scalar::attention_head(oh, qh, &keys, &values, pos, scores);
+    }
+}
+
 /// Output rows per block when splitting across threads: whole 4-row tiles,
 /// and 16 floats = one 64-byte line, so threads never write the same line.
 const ROW_BLOCK: usize = 16;
@@ -545,6 +567,32 @@ mod tests {
             }
         }
         println!("attention: {} cases vs numpy, worst relative error {worst:.2e}", cs.len());
+    }
+
+    /// The grouped kernel on the same cases: three heads with the query
+    /// scaled by 1, -0.5 and 2 (numpy's answer is for the first; the others
+    /// are checked to equal the per-head kernel bit for bit, which is the
+    /// grouped kernel's contract). Two heads in a row must not share
+    /// scores.
+    #[test]
+    fn attention_group_matches_numpy() {
+        for dir in &cases("attention_") {
+            let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
+            let hs = q.len();
+            let n = k.len() / hs;
+            let bound = 2e-6 * ((hs as f32).sqrt() + (n as f32).sqrt()).max(4.0);
+            let qg: Vec<f32> = [1.0f32, -0.5, 2.0].iter().flat_map(|&a| q.iter().map(move |x| x * a)).collect();
+            let (keys, values) = (|t: usize| &k[t * hs..(t + 1) * hs], |t: usize| &v[t * hs..(t + 1) * hs]);
+            let (mut out, mut scores) = (vec![f32::NAN; 3 * hs], vec![f32::NAN; 3 * n + 5]);
+            attention_group(&mut out, &qg, hs, keys, values, n - 1, &mut scores);
+            let (_, rel) = max_errors(&out[..hs], &want);
+            assert!(rel <= bound, "{}: rel {rel:.2e} > {bound:.2e}", dir.display());
+            for h in 0..3 {
+                let (mut one, mut s1) = (vec![f32::NAN; hs], vec![f32::NAN; n]);
+                attention_head(&mut one, &qg[h * hs..(h + 1) * hs], keys, values, n - 1, &mut s1);
+                assert!(one.iter().zip(&out[h * hs..]).all(|(a, b)| a.to_bits() == b.to_bits()), "{} head {h}", dir.display());
+            }
+        }
     }
 
     /// The angle `pos * freq` is rounded to f32 before sin/cos (as llama2.c

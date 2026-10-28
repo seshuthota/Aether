@@ -1,0 +1,24 @@
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 1317 ms
+pp512,407.7,1256.0
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o p.data ./bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf -c 2-7 --pp 512 --tg 1 --depth 0
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 73857
+Event count: 33003886565
+
+Overhead  Symbol
+53.91%    aether::kernels::neon_quant::mmla4_q4_0x4
+22.59%    aether::kernels::neon::attention_head::<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::a
+6.14%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+4.50%     expf
+1.98%     aether::kernels::quant_rows_mmla
+1.44%     aether::kernels::neon_quant::quantize_q8_0
+1.00%     aether::kernels::scalar::rope_halves
+0.90%     @plt
+0.87%     <aether::pool::ThreadPool>::run
+0.82%     aether::kernels::neon_quant::gemv4_q4_0x4
+0.72%     aether::kernels::scalar::swiglu
+0.71%     aether::kernels::scalar::rmsnorm
+0.64%     aether::kernels::linear_batch_on
+0.58%     powf
+0.55%     <aether::weight::Weight>::repack
