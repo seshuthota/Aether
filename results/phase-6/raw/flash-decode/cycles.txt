@@ -1,0 +1,72 @@
+>>> base d256 tg1 r1
+tg1@d256,133.6,7.5
+  5,493,249,162  cpu-cycles:u   # 1.849227 GHz
+>>> base d256 tg65 r1
+tg65@d256,163.6,397.2
+  10,257,793,392  cpu-cycles:u   # 2.001289 GHz
+>>> new d256 tg1 r1
+tg1@d256,119.5,8.4
+  5,404,486,377  cpu-cycles:u   # 1.960314 GHz
+>>> new d256 tg65 r1
+tg65@d256,175.0,371.4
+  9,896,566,134  cpu-cycles:u   # 1.995893 GHz
+>>> base d512 tg1 r1
+tg1@d512,143.8,7.0
+  10,125,949,450  cpu-cycles:u   # 1.965337 GHz
+>>> base d512 tg65 r1
+tg65@d512,151.5,429.0
+  15,469,225,483  cpu-cycles:u   # 1.998734 GHz
+>>> new d512 tg1 r1
+tg1@d512,138.0,7.2
+  10,098,996,805  cpu-cycles:u   # 1.983610 GHz
+>>> new d512 tg65 r1
+tg65@d512,163.2,398.4
+  14,908,952,366  cpu-cycles:u   # 2.009507 GHz
+>>> base d1024 tg1 r1
+tg1@d1024,107.0,9.3
+  20,886,474,496  cpu-cycles:u   # 2.014385 GHz
+>>> base d1024 tg65 r1
+tg65@d1024,128.7,505.2
+  27,128,472,384  cpu-cycles:u   # 2.030613 GHz
+>>> new d1024 tg1 r1
+tg1@d1024,144.9,6.9
+  21,151,069,417  cpu-cycles:u   # 2.017166 GHz
+>>> new d1024 tg65 r1
+tg65@d1024,150.0,433.2
+  26,259,032,796  cpu-cycles:u   # 2.028167 GHz
+>>> base d256 tg1 r2
+tg1@d256,124.7,8.0
+  5,380,978,221  cpu-cycles:u   # 1.940147 GHz
+>>> base d256 tg65 r2
+tg65@d256,166.7,389.9
+  10,149,043,963  cpu-cycles:u   # 1.999175 GHz
+>>> new d256 tg1 r2
+tg1@d256,147.4,6.8
+  5,403,908,734  cpu-cycles:u   # 1.941999 GHz
+>>> new d256 tg65 r2
+tg65@d256,175.3,370.7
+  9,961,466,237  cpu-cycles:u   # 1.986186 GHz
+>>> base d512 tg1 r2
+tg1@d512,113.9,8.8
+  10,171,320,189  cpu-cycles:u   # 1.984310 GHz
+>>> base d512 tg65 r2
+tg65@d512,146.8,442.8
+  15,609,398,482  cpu-cycles:u   # 1.996627 GHz
+>>> new d512 tg1 r2
+tg1@d512,132.2,7.6
+  10,111,514,658  cpu-cycles:u   # 1.986602 GHz
+>>> new d512 tg65 r2
+tg65@d512,167.0,389.2
+  14,861,857,748  cpu-cycles:u   # 2.003691 GHz
+>>> base d1024 tg1 r2
+tg1@d1024,126.4,7.9
+  20,975,597,767  cpu-cycles:u   # 2.020106 GHz
+>>> base d1024 tg65 r2
+tg65@d1024,129.9,500.5
+  27,113,356,273  cpu-cycles:u   # 2.027030 GHz
+>>> new d1024 tg1 r2
+tg1@d1024,148.2,6.7
+  21,098,875,021  cpu-cycles:u   # 2.011920 GHz
+>>> new d1024 tg65 r2
+tg65@d1024,145.1,447.9
+  26,087,767,576  cpu-cycles:u   # 1.792828 GHz

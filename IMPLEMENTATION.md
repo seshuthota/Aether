@@ -40,8 +40,7 @@ Q8_0, 3–7× for Q4_K_M. 92 tests on the phone. Timed runs need the clock caps 
 (`prefill-ab.sh` does): a thermal cap on the prime cores (1.69 → 1.02 GHz) moves them by 20 %.
 
 Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), decode attention balance (14 heads on 6 threads), the
-other later phases (Vulkan).
+screen off or kept awake by keyevents), the other later phases (Vulkan, speculative decoding).
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
@@ -253,7 +252,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 ## Later phases (plan section 13)
 
-- [~] **L.1 Q4_K_M files** (2026-10-29; results/phase-6.md "Q4_K_M"): read llama.cpp's most common
+- [x] **L.1 Q4_K_M files** (2026-10-29; results/phase-6.md "Q4_K_M"): read llama.cpp's most common
       GGUF mix. On these small models that is mostly **Q5_0** (K-quants need rows a multiple of 256;
       576 and 896 are not), plus Q4_K / Q6_K in `ffn_down` and Q8_0. Done: Q5_0 (quantizer
       byte-identical to llama.cpp, `sdot`, `smmla`, repacked four rows at a time), Q4_K and Q6_K
@@ -266,6 +265,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       drops 1.69 → 1.02 GHz partway through some runs (results/phase-6.md, "Night of").
       `prefill-ab.sh` now records the lowest caps seen during each run ("# lowest clock caps").
 - [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
+- [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
+      head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
+      cycles −11 % at d512, −18 % at d1024.
 - [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
 
 ---

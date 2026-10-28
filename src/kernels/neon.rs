@@ -257,6 +257,7 @@ unsafe fn group_fixed<'a, const V: usize>(
     values: &impl Fn(usize) -> &'a [f32],
     n: usize,
     scores: &mut [f32],
+    ms: Option<&mut [f32]>,
 ) {
     let (hs, g) = (4 * V, q.len() / (4 * V));
     let scale = 1.0 / (hs as f32).sqrt();
@@ -294,8 +295,15 @@ unsafe fn group_fixed<'a, const V: usize>(
                 }
             }
         }
-        for s in scores[..g * n].chunks_exact_mut(n) {
-            softmax(s);
+        match ms {
+            None => scores[..g * n].chunks_exact_mut(n).for_each(softmax),
+            // A part: weights e^(s − max) left unnormalised; each head's max
+            // and their sum go to ms for the merge.
+            Some(ms) => {
+                for (s, m) in scores[..g * n].chunks_exact_mut(n).zip(ms.as_chunks_mut::<2>().0) {
+                    (m[0], m[1]) = exp_shift(s);
+                }
+            }
         }
         for tb in (0..n).step_by(POS_BLOCK) {
             let te = (tb + POS_BLOCK).min(n);
@@ -350,7 +358,7 @@ pub fn attention_group<'a>(
         let (k, v) = (|t: usize| checked(keys(t), hs), |t: usize| checked(values(t), hs));
         // SAFETY: lengths checked above and in `checked`.
         unsafe {
-            if hs == 64 { group_fixed::<16>(out, q, &k, &v, n, scores) } else { group_fixed::<12>(out, q, &k, &v, n, scores) }
+            if hs == 64 { group_fixed::<16>(out, q, &k, &v, n, scores, None) } else { group_fixed::<12>(out, q, &k, &v, n, scores, None) }
         }
         return;
     }
@@ -388,6 +396,77 @@ pub fn attention_group<'a>(
                 oh[j] += a * v[j];
             }
         }
+    }
+}
+
+/// One part of [`attention_group`] (flash-decoding): the `n` positions
+/// `keys(0..n)` / `values(0..n)` (a chunk of the context), with the weights
+/// left unnormalised: `part` gets Σ e^(s − m)·v per head (g·hs floats),
+/// then each head's (m, Σ e^(s − m)) (2g floats), m the head's largest score
+/// in the chunk. Parts are merged by [`merge_parts`]. Head sizes 64 and 48
+/// only.
+pub fn attention_group_part<'a>(
+    part: &mut [f32],
+    q: &[f32],
+    hs: usize,
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    n: usize,
+    scores: &mut [f32],
+) {
+    let g = q.len() / hs;
+    assert!(g * hs == q.len() && part.len() == q.len() + 2 * g && scores.len() >= g * n);
+    let (acc, ms) = part.split_at_mut(q.len());
+    assert!(hs == 64 || hs == 48, "attention_group_part: head size {hs}");
+    let (k, v) = (|t: usize| checked(keys(t), hs), |t: usize| checked(values(t), hs));
+    // SAFETY: lengths checked above and in `checked`.
+    unsafe {
+        if hs == 64 { group_fixed::<16>(acc, q, &k, &v, n, scores, Some(ms)) } else { group_fixed::<12>(acc, q, &k, &v, n, scores, Some(ms)) }
+    }
+}
+
+/// Merges parts of one head ([`attention_group_part`], in context order):
+/// with M the largest of their maxima, `out = Σ e^(m_i − M)·acc_i /
+/// Σ e^(m_i − M)·s_i`, which is the softmax-weighted sum over all of them.
+pub fn merge_parts(out: &mut [f32], parts: &[(&[f32], f32, f32)]) {
+    let big = parts.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+    let w: Vec<f32> = parts.iter().map(|p| (p.1 - big).exp()).collect();
+    let sum: f32 = parts.iter().zip(&w).map(|(p, w)| p.2 * w).sum();
+    out.fill(0.0);
+    for (p, &w) in parts.iter().zip(&w) {
+        for (o, &a) in out.iter_mut().zip(p.0) {
+            *o += w * a;
+        }
+    }
+    let inv = 1.0 / sum;
+    out.iter_mut().for_each(|o| *o *= inv);
+}
+
+/// [`softmax`] without the division: `x` becomes e^(x − max); returns
+/// (max, Σ e^(x − max)).
+fn exp_shift(x: &mut [f32]) -> (f32, f32) {
+    let n4 = x.len() / 4 * 4;
+    // SAFETY: vector accesses stay below n4 <= x.len().
+    unsafe {
+        let p = x.as_mut_ptr();
+        let mut m = vdupq_n_f32(f32::NEG_INFINITY);
+        for i in (0..n4).step_by(4) {
+            m = vmaxq_f32(m, vld1q_f32(p.add(i)));
+        }
+        let max = x[n4..].iter().copied().fold(vmaxvq_f32(m), f32::max);
+        let (mv, mut sum) = (vdupq_n_f32(max), vdupq_n_f32(0.0));
+        for i in (0..n4).step_by(4) {
+            let e = exp_neg(vsubq_f32(vld1q_f32(p.add(i)), mv));
+            vst1q_f32(p.add(i), e);
+            sum = vaddq_f32(sum, e);
+        }
+        let mut t = [f32::NEG_INFINITY; 4];
+        t[..x.len() - n4].copy_from_slice(&x[n4..]);
+        let e = exp_neg(vsubq_f32(vld1q_f32(t.as_ptr()), mv));
+        vst1q_f32(t.as_mut_ptr(), e);
+        let k = x.len() - n4;
+        x[n4..].copy_from_slice(&t[..k]);
+        (max, vaddvq_f32(vaddq_f32(sum, e)))
     }
 }
 

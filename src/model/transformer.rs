@@ -106,12 +106,27 @@ impl Weights {
     }
 }
 
-/// All query heads of one token: `out[h] = attention(q[h], cache, pos)`.
-/// Heads are independent (each writes its own slice of `out` and its own
-/// row of `scores`), so with a pool they run in parallel, one thread per
-/// head at a time.
+/// All query heads of one token (decode): `out[h] = attention(q[h], cache,
+/// pos)`. Past [`ATTN_CHUNK`] positions with head size 64 or 48 it is
+/// computed in chunks ([`attention_chunked`]), otherwise whole
+/// ([`attention_whole`]).
 #[allow(clippy::too_many_arguments)]
 fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
+    #[cfg(target_arch = "aarch64")]
+    if (c.head_size() == 64 || c.head_size() == 48) && pos + 1 > ATTN_CHUNK {
+        return attention_chunked(pool, c, out, q, kc, vc, pos);
+    }
+    attention_whole(pool, c, out, q, kc, vc, scores, pos)
+}
+
+/// [`attention`] with every head over the whole context in one piece (no
+/// chunks): the same result, bit for bit, as prefill's grouped attention,
+/// so prefill on one thread (which goes token by token) uses this. Heads
+/// are independent (each writes its own slice of `out` and its own row of
+/// `scores`), so with a pool they run in parallel, one thread per head at a
+/// time.
+#[allow(clippy::too_many_arguments)]
+fn attention_whole(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
     let (hs, kv_dim, group, seq) = (c.head_size(), c.kv_dim(), c.kv_group(), c.seq_len);
     let head = |h: usize, out_h: &mut [f32], scores_h: &mut [f32]| {
         let kv_off = (h / group) * hs; // which K/V head this query head reads
@@ -143,6 +158,58 @@ fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], 
     }
 }
 
+/// Positions per part of [`attention_chunked`].
+#[cfg(target_arch = "aarch64")]
+const ATTN_CHUNK: usize = 64;
+
+/// [`attention`] past [`ATTN_CHUNK`] positions (flash-decoding): the work
+/// items are (K/V head, chunk of 64 positions), so the threads share
+/// `n_kv_heads · chunks` equal items instead of `n_heads` whole heads (14 on
+/// 6 threads left some idle), and each item runs all the query heads of its
+/// K/V head over its chunk ([`k::neon::attention_group_part`]: each key and
+/// value row is loaded once for all of them). The parts of each head are
+/// then merged in context order ([`k::neon::merge_parts`]); the chunks
+/// depend only on `pos`, so the result does not depend on the threads.
+#[cfg(target_arch = "aarch64")]
+fn attention_chunked(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], pos: usize) {
+    let (hs, kv_dim, g) = (c.head_size(), c.kv_dim(), c.kv_group());
+    let (n, gh) = (pos + 1, c.kv_group() * c.head_size());
+    let nc = n.div_ceil(ATTN_CHUNK);
+    let items = c.n_kv_heads * nc;
+    // Per item: g·hs of unnormalised output, then 2g of (max, sum).
+    let per = gh + 2 * g;
+    let mut parts = vec![0.0f32; items * per];
+    let item = |i: usize, part: &mut [f32]| {
+        let (kvh, ch) = (i / nc, i % nc);
+        let (t0, len) = (ch * ATTN_CHUNK, ATTN_CHUNK.min(n - ch * ATTN_CHUNK));
+        let off = kvh * hs;
+        let keys = |t: usize| &kc[(t0 + t) * kv_dim + off..(t0 + t) * kv_dim + off + hs];
+        let values = |t: usize| &vc[(t0 + t) * kv_dim + off..(t0 + t) * kv_dim + off + hs];
+        let mut scores = [0.0f32; 8 * ATTN_CHUNK];
+        let mut big;
+        let scores: &mut [f32] = if g * ATTN_CHUNK <= scores.len() {
+            &mut scores[..]
+        } else {
+            big = vec![0.0f32; g * ATTN_CHUNK];
+            &mut big[..]
+        };
+        k::neon::attention_group_part(part, &q[kvh * gh..(kvh + 1) * gh], hs, keys, values, len, scores);
+    };
+    par_chunks_mut(pool, &mut parts, per, &item);
+    for kvh in 0..c.n_kv_heads {
+        for h in 0..g {
+            let ps: Vec<(&[f32], f32, f32)> = (0..nc)
+                .map(|ch| {
+                    let p = &parts[(kvh * nc + ch) * per..(kvh * nc + ch + 1) * per];
+                    (&p[h * hs..(h + 1) * hs], p[gh + 2 * h], p[gh + 2 * h + 1])
+                })
+                .collect();
+            let o = (kvh * g + h) * hs;
+            k::neon::merge_parts(&mut out[o..o + hs], &ps);
+        }
+    }
+}
+
 /// [`attention`] for `t` tokens at positions `start..start + t` (prefill):
 /// every (token, K/V head) pair is independent, so with a pool all `t ·
 /// n_kv_heads` of them are handed out in one call, rather than one call
@@ -158,7 +225,7 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[
     let Some(p) = pool.filter(|p| p.threads() > 1 && t > 1) else {
         for i in 0..t {
             let dim = c.n_heads * c.head_size();
-            attention(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
+            attention_whole(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
         }
         return;
     };

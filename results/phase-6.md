@@ -826,3 +826,36 @@ noisier). Now, by cycles (Q4_0, two rounds): pp512 19.59 / 19.55 G →
 untimed 1024-token prefill) 59.0 / 58.9 G → 53.7 / 52.2 G (−9 to −11 %),
 timed tg64 @ d1024 66–75 → 99–128 tok/s. PPL Q4_0 19.7438, Q4_K_M 16.7599,
 Q8_0 16.3546 (`ppl-*.txt`); the numpy attention tests pass.
+
+## Flash-decoding by K/V head (2026-10-29; `raw/flash-decode/`)
+
+Decode attention handed out whole query heads: 14 for 6 threads (three
+threads did 3 heads, three did 2), and each of the 7 heads that share a
+K/V head read its keys and values again. The earlier split across
+positions (`bdbf963`, reverted) was per query head, so it kept the
+rereads.
+
+**Change**: past 64 positions (head size 64 or 48), decode's items are
+(K/V head, chunk of 64 positions): 2 × 8 = 16 equal items at d512. Each
+runs `attention_group_part`, the grouped kernel (`group_fixed`, one key
+and value row loaded for all 7 heads) with the weights left unnormalised
+and each head's (max, Σ e^(s − max)) returned; the caller merges a head's
+parts in context order, `out = Σ e^(m_i − M)·acc_i / Σ e^(m_i − M)·s_i`.
+The chunks depend only on the position, so one thread and six give the
+same bits. Prefill on one thread goes token by token and keeps the
+unchunked path (`attention_whole`), to stay bit-identical to the grouped
+prefill on many threads (the long-context llama2.c test checks both).
+
+**Correctness**: new test `attention_parts_merge_to_numpy` (chunks of 1, 7
+and 64 positions merged, against numpy, up to 1024 positions); the
+long-context llama2.c test (decode over 256 positions within 4.4e-6 of
+llama2.c); 93/93 tests on the phone. PPL is unchanged (it runs prefill).
+
+**Result** (Qwen2.5-0.5B Q4_0, cores 2–7, cycles of 64 decode steps =
+tg65 − tg1 at each depth, two rounds, `cycles.txt`):
+
+| depth | before (`f1b3b66`) | after | timed tok/s before → after |
+| --- | --- | --- | --- |
+| 256 | 4.76 / 4.77 G | 4.49 / 4.56 G (−5 %) | 164–167 → 175 |
+| 512 | 5.34 / 5.44 G | 4.81 / 4.75 G (−11 %) | 147–152 → 163–167 |
+| 1024 | 6.24 / 6.14 G | 5.11 / 4.99 G (−18 %) | 129–130 → 145–150 |

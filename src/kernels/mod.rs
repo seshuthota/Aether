@@ -760,6 +760,45 @@ mod tests {
         println!("attention: {} cases vs numpy, worst relative error {worst:.2e}", cs.len());
     }
 
+    /// Flash-decoding on the same cases (head sizes 64 and 48): the context
+    /// cut into parts of 1, 7 and 64 positions, each part computed with
+    /// unnormalised weights for two query heads (q and −0.5·q) and the parts
+    /// merged, against numpy's answer for q.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn attention_parts_merge_to_numpy() {
+        let mut checked = 0;
+        for dir in &cases("attention_") {
+            let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
+            let hs = q.len();
+            if hs != 64 && hs != 48 {
+                continue;
+            }
+            let n = k.len() / hs;
+            let bound = 2e-6 * ((hs as f32).sqrt() + (n as f32).sqrt()).max(4.0);
+            let qg: Vec<f32> = [1.0f32, -0.5].iter().flat_map(|&a| q.iter().map(move |x| x * a)).collect();
+            for chunk in [1, 7, 64] {
+                let parts: Vec<Vec<f32>> = (0..n)
+                    .step_by(chunk)
+                    .map(|t0| {
+                        let len = chunk.min(n - t0);
+                        let (mut part, mut scores) = (vec![f32::NAN; 2 * hs + 4], vec![f32::NAN; 2 * len]);
+                        let (keys, values) = (|t: usize| &k[(t0 + t) * hs..(t0 + t + 1) * hs], |t: usize| &v[(t0 + t) * hs..(t0 + t + 1) * hs]);
+                        neon::attention_group_part(&mut part, &qg, hs, keys, values, len, &mut scores);
+                        part
+                    })
+                    .collect();
+                let ps: Vec<(&[f32], f32, f32)> = parts.iter().map(|p| (&p[..hs], p[2 * hs], p[2 * hs + 1])).collect();
+                let mut out = vec![f32::NAN; hs];
+                neon::merge_parts(&mut out, &ps);
+                let (_, rel) = max_errors(&out, &want);
+                assert!(rel <= bound, "{} chunk {chunk}: rel {rel:.2e} > {bound:.2e}", dir.display());
+                checked += 1;
+            }
+        }
+        println!("attention parts: {checked} (case, chunk) pairs vs numpy");
+    }
+
     /// The grouped kernel on the same cases: three heads with the query
     /// scaled by 1, -0.5 and 2 (numpy's answer is for the first; the others
     /// are checked to equal the per-head kernel bit for bit, which is the
