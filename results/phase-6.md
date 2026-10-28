@@ -817,3 +817,12 @@ that any change of rounding gives after Q8_0 activation quantization.
 Cycles of pp64 + tg64 (`cycles.txt`, two rounds): Q4_0 33.3 / 33.3 G →
 30.7 / 31.6 G (−5 to −8 %), Q4_K_M 49.5 / 49.3 G → 47.9 / 47.1 G (−3 to
 −4 %).
+
+**NEON softmax in attention, second try** (`raw/softmax-neon-2/`): the same
+vector softmax as `85d1a12` (which showed nothing on 2026-10-28, before
+attention kept one head's vectors in registers and when timings were
+noisier). Now, by cycles (Q4_0, two rounds): pp512 19.59 / 19.55 G →
+18.66 / 18.83 G (−4 to −5 %); 64 decode steps at depth 1024 (plus the
+untimed 1024-token prefill) 59.0 / 58.9 G → 53.7 / 52.2 G (−9 to −11 %),
+timed tg64 @ d1024 66–75 → 99–128 tok/s. PPL Q4_0 19.7438, Q4_K_M 16.7599,
+Q8_0 16.3546 (`ppl-*.txt`); the numpy attention tests pass.

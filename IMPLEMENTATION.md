@@ -170,7 +170,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       token at a time), so prefill becomes GEMM.
 - [x] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
       theoretical peak FMA.
-- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; NEON softmax tried 2026-10-28, no gain, reverted; rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
+- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; NEON softmax: no gain on 2026-10-28, kept on 2026-10-29 after the attention rewrite (decode at d1024 −10 % cycles); rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
       silu/swiglu, rope.
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now

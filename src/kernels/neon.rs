@@ -295,7 +295,7 @@ unsafe fn group_fixed<'a, const V: usize>(
             }
         }
         for s in scores[..g * n].chunks_exact_mut(n) {
-            super::scalar::softmax(s);
+            softmax(s);
         }
         for tb in (0..n).step_by(POS_BLOCK) {
             let te = (tb + POS_BLOCK).min(n);
@@ -366,7 +366,7 @@ pub fn attention_group<'a>(
         }
     }
     for s in scores.chunks_exact_mut(n) {
-        super::scalar::softmax(s);
+        softmax(s);
     }
     out.fill(0.0);
     let hs4 = hs / 4 * 4;
@@ -438,4 +438,43 @@ pub fn swiglu(gate: &mut [f32], up: &[f32]) {
         }
     }
     super::scalar::swiglu(&mut gate[n4..], &up[n4..]);
+}
+
+/// Softmax in place, four lanes at a time: max, then `e^(x - max)` with
+/// [`exp_neg`] and their sum, then a division by the sum. The last 0-3
+/// values go through the same vector code, padded with -inf (whose `e^x` is
+/// 0, so the sum is unchanged).
+pub fn softmax(x: &mut [f32]) {
+    let n4 = x.len() / 4 * 4;
+    let tail = |x: &[f32]| {
+        let mut t = [f32::NEG_INFINITY; 4];
+        t[..x.len() - n4].copy_from_slice(&x[n4..]);
+        t
+    };
+    // SAFETY: vector accesses stay below n4 <= x.len(); the tail goes
+    // through a local 4-float array.
+    unsafe {
+        let p = x.as_mut_ptr();
+        let mut m = vld1q_f32(tail(x).as_ptr());
+        for i in (0..n4).step_by(4) {
+            m = vmaxq_f32(m, vld1q_f32(p.add(i)));
+        }
+        let max = vdupq_n_f32(vmaxvq_f32(m));
+        let mut sum = vdupq_n_f32(0.0);
+        for i in (0..n4).step_by(4) {
+            let e = exp_neg(vsubq_f32(vld1q_f32(p.add(i)), max));
+            vst1q_f32(p.add(i), e);
+            sum = vaddq_f32(sum, e);
+        }
+        let mut t = tail(x);
+        let e = exp_neg(vsubq_f32(vld1q_f32(t.as_ptr()), max));
+        sum = vaddq_f32(sum, e);
+        let sum = vdupq_n_f32(vaddvq_f32(sum));
+        for i in (0..n4).step_by(4) {
+            vst1q_f32(p.add(i), vdivq_f32(vld1q_f32(p.add(i)), sum));
+        }
+        vst1q_f32(t.as_mut_ptr(), vdivq_f32(e, sum));
+        let k = x.len() - n4;
+        x[n4..].copy_from_slice(&t[..k]);
+    }
 }
