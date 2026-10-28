@@ -589,3 +589,10 @@ tg128 − tg1, two rounds; `cycles.txt`):
 The kernel's own cycles fell by about a quarter; the whole step by 4 %
 because Q4_K is only part of `ffn_down`. PPL 16.7330 (`ppl.txt`; 16.7354
 before, only the float summation order changed).
+
+**The same for Q6_K — tried and reverted** (`raw/kdecode-q6k/`): reducing
+each Q6_K sub-block's scaled `sdot` to one lane and applying d·d_x as two
+vector FMAs made 128 decode steps cost 18.60 / 18.43 G cycles against
+18.10 / 18.06 G (+2.5 %). Q6_K's scales already apply as integer vector
+multiplies, so there was only one scalar FMA per sub-block to save, and the
+eight extra live accumulators per row cost more than that.
