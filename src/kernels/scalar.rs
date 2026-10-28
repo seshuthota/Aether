@@ -100,16 +100,26 @@ pub fn softmax(x: &mut [f32]) {
 /// product of a rotated q and k then depends only on their distance.
 pub fn rope_adjacent(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
     assert_eq!(v.len() % head_size, 0);
+    let rot = rotations(pos, head_size, theta);
     for head in v.chunks_exact_mut(head_size) {
-        for i in (0..head_size).step_by(2) {
-            let freq = 1.0 / theta.powf(i as f32 / head_size as f32);
-            let angle = pos as f32 * freq;
-            let (sin, cos) = (angle.sin(), angle.cos());
-            let (v0, v1) = (head[i], head[i + 1]);
-            head[i] = v0 * cos - v1 * sin;
-            head[i + 1] = v0 * sin + v1 * cos;
+        for (i, &(sin, cos)) in rot.iter().enumerate() {
+            let (v0, v1) = (head[2 * i], head[2 * i + 1]);
+            head[2 * i] = v0 * cos - v1 * sin;
+            head[2 * i + 1] = v0 * sin + v1 * cos;
         }
     }
+}
+
+/// (sin, cos) of pair i's angle `pos · θ^(−2i/head_size)`, for every pair:
+/// the same for every head, so computed once per call.
+fn rotations(pos: usize, head_size: usize, theta: f32) -> Vec<(f32, f32)> {
+    (0..head_size / 2)
+        .map(|i| {
+            let freq = 1.0 / theta.powf((2 * i) as f32 / head_size as f32);
+            let angle = pos as f32 * freq;
+            (angle.sin(), angle.cos())
+        })
+        .collect()
 }
 
 /// Rotary position embedding, **halves** layout ("rotate_half", Hugging Face
@@ -121,11 +131,9 @@ pub fn rope_adjacent(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
 pub fn rope_halves(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
     assert_eq!(v.len() % head_size, 0);
     let half = head_size / 2;
+    let rot = rotations(pos, head_size, theta);
     for head in v.chunks_exact_mut(head_size) {
-        for i in 0..half {
-            let freq = 1.0 / theta.powf((2 * i) as f32 / head_size as f32);
-            let angle = pos as f32 * freq;
-            let (sin, cos) = (angle.sin(), angle.cos());
+        for (i, &(sin, cos)) in rot.iter().enumerate() {
             let (v0, v1) = (head[i], head[i + half]);
             head[i] = v0 * cos - v1 * sin;
             head[i + half] = v0 * sin + v1 * cos;

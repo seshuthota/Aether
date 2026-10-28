@@ -775,3 +775,12 @@ tests.
 | --- | --- | --- | --- |
 | before (`66aed73`) | 15.3 / 15.4 G | 77.5 / 75.6 G | 457 / 418 |
 | after | 11.1 / 10.9 G (−28 %) | 73.3 / 72.3 G (−5 %) | 651 / 541 |
+
+**RoPE angles once per call, not per head** (`raw/rope-once/`): `rope_*`
+recomputed `powf`, `sin` and `cos` for every head, though they depend only
+on the position and the pair index. Now `rotations()` computes the
+(sin, cos) table once per call and every head uses it: the same floats
+(greedy output byte-identical in Q4_0 and Q4_K_M). Profile of Q4_0 pp64:
+`powf` + `sincosf` + `rope_halves` 3.3 % → `powf` + `sincosf` + `rope_halves`
++ `bias_rope` 1.1 %. The cycle A/B (`cycles.txt`) is within its noise, as a
+2 % change would be.

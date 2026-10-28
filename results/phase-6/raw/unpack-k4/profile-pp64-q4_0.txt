@@ -1,0 +1,23 @@
+pp64,656.2,97.5
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o /data/local/tmp/p.data ./bs-new testdata/gguf/qwen2.5-0.5b-q4_0.gguf -c 2-7 --pp 64 --tg 1 --depth 0 --reps 20 --warmup 1
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 59528
+Event count: 25119841645
+
+Overhead  Symbol
+57.77%    aether::kernels::neon_quant::mmla4_q4_0x4
+9.44%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+5.50%     aether::kernels::neon_quant::gemv4_q4_0x4
+4.35%     aether::kernels::quant_rows_mmla
+4.29%     expf
+2.33%     aether::kernels::neon_quant::quantize_q8_0
+1.93%     <aether::pool::ThreadPool>::run
+1.70%     aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>
+1.29%     aether::kernels::neon_quant::interleave_pairs::{closure#0}
+1.26%     aether::kernels::scalar::swiglu
+1.20%     powf
+1.19%     aether::kernels::scalar::rope_halves
+1.10%     aether::kernels::scalar::rmsnorm
+1.04%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.87%     sincosf

@@ -1,0 +1,40 @@
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o /data/local/tmp/p.data ./bs-new testdata/gguf/qwen2.5-0.5b-q4_0.gguf -c 2-7 --pp 64 --tg 1 --depth 0 --reps 20 --warmup 1
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 48267
+Event count: 24383166533
+
+Overhead  Symbol
+59.16%    aether::kernels::neon_quant::mmla4_q4_0x4
+8.83%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+6.10%     aether::kernels::neon_quant::gemv4_q4_0x4
+4.63%     aether::kernels::quant_rows_mmla
+4.34%     expf
+2.37%     aether::kernels::neon_quant::quantize_q8_0
+1.88%     <aether::pool::ThreadPool>::run
+1.63%     aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>
+1.42%     aether::kernels::neon_quant::interleave_pairs::{closure#0}
+1.29%     aether::kernels::scalar::swiglu
+1.19%     aether::kernels::scalar::rmsnorm
+0.99%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.80%     @plt
+0.56%     aether::kernels::quant_rows
+0.53%     __aarch64_cas4_acq
+0.40%     aether::model::transformer::bias_rope
+0.38%     <aether::weight::Weight>::repack
+0.37%     <aether::model::transformer::Transformer>::batch_impl::<aether::model::transformer::NoTrace>::{closure#7}
+0.36%     <aether::model::transformer::Transformer>::batch_impl::<aether::model::transformer::NoTrace>::{closure#4}
+0.35%     aether::kernels::scalar::rope_halves
+0.32%     __memcmp_aarch64
+0.28%     __aarch64_ldadd4_rel
+0.25%     aether::kernels::linear_batch_on
+0.18%     __memset_aarch64_nt
+0.17%     powf
+0.17%     sincosf
+0.14%     scudo::HybridMutex::tryLock()
+0.12%     aether::kernels::quantize_activations
+0.09%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::allocate(unsigned long, scudo::Chunk::Origin, unsigned long, bool)
+0.08%     __aarch64_ldadd2_relax
+0.07%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::quarantineOrDeallocateChunk(scudo::Options const&, void*, scudo::Chunk::UnpackedHeader*, unsigned long)
+0.06%     scudo::HybridMutex::unlock()
+0.04%     core::str::converts::from_utf8
