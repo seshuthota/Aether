@@ -27,8 +27,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
-/// Polls before a waiting worker parks. ~tens of microseconds of spinning.
-const SPIN: u32 = 20_000;
+/// Polls before a waiting worker parks: ~2.8 ms on this phone's cores
+/// (`spin_loop` is an `isb`, ~14 ns). A parked worker takes long to wake
+/// (the core may have gone to a deep idle state), and decode leaves gaps of
+/// a few hundred microseconds when another thread preempts one of ours:
+/// with 20 000 polls (0.28 ms) workers parked tens to hundreds of times per
+/// 128 tokens, with 200 000 almost never (results/phase-6.md, "Decode:
+/// workers falling asleep").
+const SPIN: u32 = 200_000;
 
 /// A raw pointer that may be shared between the pool's threads, for jobs in
 /// which each thread writes its own disjoint part of one buffer (rows of a

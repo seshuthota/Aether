@@ -596,3 +596,35 @@ vector FMAs made 128 decode steps cost 18.60 / 18.43 G cycles against
 18.10 / 18.06 G (+2.5 %). Q6_K's scales already apply as integer vector
 multiplies, so there was only one scalar FMA per sub-block to save, and the
 eight extra live accumulators per row cost more than that.
+
+## Decode: workers falling asleep (2026-10-29; `raw/decode-wait/`, `raw/decode-spin/`)
+
+A build whose workers never park (`SPIN = u32::MAX`) decoded Q4_0 much
+faster than the normal one in some runs (156 vs 94 tok/s), so: how long is
+`SPIN`, and how often do workers park during decode?
+
+- `std::hint::spin_loop()` is an `isb` on aarch64, ~14 ns on a prime core:
+  20 000 polls last **0.28 ms**, not the "tens of microseconds" the comment
+  said. Decode never leaves the pool idle that long by itself (193 jobs per
+  token, microseconds apart).
+- A measurement-only build counting parks (not committed) still saw tens to
+  hundreds of parks per 128 decode steps, and the caller waiting long
+  enough to fall back to `yield` thousands of times: another thread had
+  preempted one of ours, the others ran out of spins, parked, and then took
+  long to wake.
+
+**A/B** (`decode-spin/timed2.txt`): Qwen2.5-0.5B, cores 2–7, 4 rounds with
+the order alternated, tg128 median of 2 reps each. The phone was hot (44–67
+°C), so the numbers are low, but both builds share the conditions:
+
+| tok/s (median of rounds) | SPIN 20 000 | SPIN 200 000 | parks / 128 steps |
+| --- | --- | --- | --- |
+| Q4_0 @ d0 | 108 | 127 | 0–543 → 0–45 |
+| Q4_0 @ d512 | 83 | 106 | 0–84 → 0–8 |
+| Q8_0 @ d0 / d512 | 95 / 69 | 96 / 69 | 24–838 → 0–54 |
+| Q4_K_M @ d0 / d512 | 77 / 64 | 78 / 65 | 22–634 → 0–40 |
+
+An earlier 3-round run (`decode-spin/timed.txt`) had Q4_0 @ d512 at 72–98
+vs 121–136 tok/s. `SPIN` is now 200 000 (2.8 ms). The cost: after the last
+job of a request, the workers spin 2.8 ms instead of 0.28 ms before they
+sleep, a few milliseconds of five busy cores per request.

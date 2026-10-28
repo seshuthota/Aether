@@ -1,0 +1,168 @@
+>>> q4_0 spin=20000 r1 44200
+# d0 runs 24704 parks 163 yields 10666
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,147.4,868.2
+# d512 runs 24704 parks 84 yields 3597
+# d512 runs 24704 parks 32 yields 3437
+tg128@d512,124.9,1024.4
+>>> q4_0 spin=200000 r1 56900
+# d0 runs 24704 parks 0 yields 0
+# d0 runs 24704 parks 45 yields 16658
+tg128@d0,126.5,1012.1
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 8 yields 5249
+tg128@d512,72.8,1758.2
+>>> q8_0 spin=20000 r1 55300
+# d0 runs 24704 parks 24 yields 253
+# d0 runs 24704 parks 143 yields 10607
+tg128@d0,98.2,1302.9
+# d512 runs 24704 parks 83 yields 3970
+# d512 runs 24704 parks 838 yields 65794
+tg128@d512,71.8,1781.5
+>>> q8_0 spin=200000 r1 62600
+# d0 runs 24704 parks 8 yields 1112
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,99.9,1281.2
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 53 yields 12737
+tg128@d512,75.4,1698.2
+>>> q4_k_m spin=20000 r1 66500
+# d0 runs 24704 parks 107 yields 5921
+# d0 runs 24704 parks 102 yields 3458
+tg128@d0,89.0,1438.5
+# d512 runs 24704 parks 22 yields 454
+# d512 runs 24704 parks 634 yields 61347
+tg128@d512,68.6,1865.9
+>>> q4_k_m spin=200000 r1 65300
+# d0 runs 24704 parks 40 yields 2436
+# d0 runs 24704 parks 15 yields 5177
+tg128@d0,78.4,1632.5
+# d512 runs 24704 parks 14 yields 11376
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,61.0,2099.9
+>>> q4_0 spin=200000 r2 60700
+# d0 runs 24704 parks 32 yields 4607
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,137.9,928.5
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 8 yields 192
+tg128@d512,111.4,1148.8
+>>> q4_0 spin=20000 r2 64900
+# d0 runs 24704 parks 543 yields 62214
+# d0 runs 24704 parks 164 yields 2666
+tg128@d0,109.4,1170.0
+# d512 runs 24704 parks 12 yields 18886
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,87.3,1467.0
+>>> q8_0 spin=200000 r2 62300
+# d0 runs 24704 parks 8 yields 741
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,97.1,1318.8
+# d512 runs 24704 parks 13 yields 5919
+# d512 runs 24704 parks 54 yields 36166
+tg128@d512,69.7,1836.1
+>>> q8_0 spin=20000 r2 66500
+# d0 runs 24704 parks 70 yields 4271
+# d0 runs 24704 parks 87 yields 3824
+tg128@d0,97.3,1316.1
+# d512 runs 24704 parks 39 yields 509
+# d512 runs 24704 parks 819 yields 68064
+tg128@d512,70.6,1811.8
+>>> q4_k_m spin=200000 r2 66900
+# d0 runs 24704 parks 8 yields 990
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,77.5,1651.5
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,65.1,1967.1
+>>> q4_k_m spin=20000 r2 63400
+# d0 runs 24704 parks 68 yields 8126
+# d0 runs 24704 parks 96 yields 3417
+tg128@d0,76.7,1669.4
+# d512 runs 24704 parks 200 yields 7569
+# d512 runs 24704 parks 66 yields 2833
+tg128@d512,63.8,2006.2
+>>> q4_0 spin=20000 r3 63400
+# d0 runs 24704 parks 103 yields 10488
+# d0 runs 24704 parks 439 yields 42945
+tg128@d0,106.0,1207.6
+# d512 runs 24704 parks 23 yields 1443
+# d512 runs 24704 parks 74 yields 4945
+tg128@d512,79.6,1608.9
+>>> q4_0 spin=200000 r3 61100
+# d0 runs 24704 parks 16 yields 579
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,126.8,1009.1
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,106.8,1198.3
+>>> q8_0 spin=20000 r3 64900
+# d0 runs 24704 parks 127 yields 14008
+# d0 runs 24704 parks 72 yields 3475
+tg128@d0,93.0,1375.9
+# d512 runs 24704 parks 24 yields 118
+# d512 runs 24704 parks 722 yields 58489
+tg128@d512,68.1,1878.9
+>>> q8_0 spin=200000 r3 66900
+# d0 runs 24704 parks 0 yields 0
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,94.6,1353.1
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 41 yields 17041
+tg128@d512,68.7,1863.2
+>>> q4_k_m spin=20000 r3 66500
+# d0 runs 24704 parks 53 yields 6731
+# d0 runs 24704 parks 41 yields 2057
+tg128@d0,77.6,1649.2
+# d512 runs 24704 parks 162 yields 5850
+# d512 runs 24704 parks 35 yields 1863
+tg128@d512,64.4,1987.8
+>>> q4_k_m spin=200000 r3 64200
+# d0 runs 24704 parks 16 yields 1631
+# d0 runs 24704 parks 0 yields 207
+tg128@d0,77.5,1652.6
+# d512 runs 24704 parks 6 yields 0
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,64.8,1975.0
+>>> q4_0 spin=200000 r4 63400
+# d0 runs 24704 parks 8 yields 764
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,127.6,1003.1
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 0 yields 0
+tg128@d512,106.0,1207.8
+>>> q4_0 spin=20000 r4 65300
+# d0 runs 24704 parks 272 yields 23717
+# d0 runs 24704 parks 578 yields 60876
+tg128@d0,102.1,1253.1
+# d512 runs 24704 parks 68 yields 2432
+# d512 runs 24704 parks 159 yields 6621
+tg128@d512,62.9,2036.1
+>>> q8_0 spin=200000 r4 60300
+# d0 runs 24704 parks 0 yields 0
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,94.6,1352.5
+# d512 runs 24704 parks 0 yields 0
+# d512 runs 24704 parks 77 yields 66540
+tg128@d512,65.1,1967.4
+>>> q8_0 spin=20000 r4 66100
+# d0 runs 24704 parks 86 yields 8317
+# d0 runs 24704 parks 84 yields 2629
+tg128@d0,93.4,1370.7
+# d512 runs 24704 parks 30 yields 1072
+# d512 runs 24704 parks 637 yields 62098
+tg128@d512,67.1,1907.0
+>>> q4_k_m spin=200000 r4 67200
+# d0 runs 24704 parks 16 yields 1750
+# d0 runs 24704 parks 0 yields 0
+tg128@d0,77.6,1649.6
+# d512 runs 24704 parks 8 yields 12683
+# d512 runs 24704 parks 2 yields 480
+tg128@d512,64.9,1971.9
+>>> q4_k_m spin=20000 r4 64900
+# d0 runs 24704 parks 64 yields 7608
+# d0 runs 24704 parks 67 yields 3466
+tg128@d0,71.2,1797.5
+# d512 runs 24704 parks 571 yields 78429
+# d512 runs 24704 parks 8 yields 310
+tg128@d512,56.2,2279.0
