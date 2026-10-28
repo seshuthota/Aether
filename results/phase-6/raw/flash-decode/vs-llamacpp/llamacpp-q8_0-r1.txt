@@ -1,0 +1,15 @@
+# 2026-10-29T04:41:55+05:30, commit 6ff9a2a, start 50700 m°C
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 41
+# Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       6 |            tg64 |         92.78 ± 5.68 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       6 |     tg64 @ d512 |         71.75 ± 3.30 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       6 |    tg64 @ d1024 |         63.63 ± 0.11 |
+
+build: d00685831 (8660)
+# lowest clock caps: perf 1785 MHz, prime 1017 MHz

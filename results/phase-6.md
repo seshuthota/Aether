@@ -859,3 +859,17 @@ tg65 − tg1 at each depth, two rounds, `cycles.txt`):
 | 256 | 4.76 / 4.77 G | 4.49 / 4.56 G (−5 %) | 164–167 → 175 |
 | 512 | 5.34 / 5.44 G | 4.81 / 4.75 G (−11 %) | 147–152 → 163–167 |
 | 1024 | 6.24 / 6.14 G | 5.11 / 4.99 G (−18 %) | 129–130 → 145–150 |
+
+Against llama.cpp at depth (`flash-decode/vs-llamacpp/`, two rounds; every
+run, ours and llama.cpp's, hit the prime-core cap of 1.02 GHz at some
+point, so these are hot-phone numbers), tg64 tok/s:
+
+| format | d0 ours / llama.cpp | d512 | d1024 |
+| --- | --- | --- | --- |
+| Q4_0 | 180–187 / 132–159 | 122–167 / 83–129 | 112 / 43–85 |
+| Q8_0 | 110–111 / 93 | 92–100 / 68–72 | 75–83 / 50–64 |
+| Q4_K_M | 89–117 / 83–85 | 55–108 / 58–65 | 50–73 / 34–50 |
+
+Ours is ahead in 16 of the 18 pairs; with the caps moving mid-run the
+spreads are wide, and the one Q4_K_M round that lost (55 at d512) was the
+last, hottest run. Host tests 90/90.
