@@ -1,0 +1,16 @@
+decode: 194 tokens in 1122.5 ms (172.8 tok/s) | peak RSS 347372 kB
+story plain r1 md5 ea0eef979213ec6d8fdb2f339f0571c0  -
+lookup: 21 passes, 45 of 81 drafts accepted
+decode: 194 tokens in 1031.1 ms (188.1 tok/s) | peak RSS 348712 kB
+story lookup r1 md5 1709fbac865cc05472c839ec5e0c818d  -
+lookup: 11 passes, 5 of 44 drafts accepted
+decode: 194 tokens in 1166.6 ms (166.3 tok/s) | peak RSS 348644 kB
+story lookup1 r1 md5 b7eccf7974257026add2ef0f20800219  -
+decode: 194 tokens in 1265.7 ms (153.3 tok/s) | peak RSS 347728 kB
+story plain r2 md5 ea0eef979213ec6d8fdb2f339f0571c0  -
+lookup: 21 passes, 45 of 81 drafts accepted
+decode: 194 tokens in 1098.8 ms (176.6 tok/s) | peak RSS 348932 kB
+story lookup r2 md5 1709fbac865cc05472c839ec5e0c818d  -
+lookup: 11 passes, 5 of 44 drafts accepted
+decode: 194 tokens in 1175.4 ms (165.1 tok/s) | peak RSS 348652 kB
+story lookup1 r2 md5 b7eccf7974257026add2ef0f20800219  -

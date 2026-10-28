@@ -1,0 +1,10 @@
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Write a short story about a lighthouse keeper who finds a message in a bottle.<|im_end|>
+<|im_start|>assistant
+Once upon a time, in the quiet town of Willowbrook, there was a lighthouse keeper named Mr. Lee. He had been working at the lighthouse for many years, always ready to help those in need. One day, a mysterious message appeared in the bottle of the lighthouse keeper's house. It was a message from a stranger who had been lost in the fog and had been searching for a long time.
+
+Mr. Lee was intrigued and decided to investigate. He carefully opened the bottle and looked inside. To his surprise, he found a small, old book with a note written in the handwriting of a young girl. The note read: "I am searching for you, Mr. Lee. I have been lost and have been searching for you for many years. I hope to meet you and tell you how I have been searching for you."
+
+Mr. Lee was overjoyed and decided to write back to the stranger. He wrote a letter to the stranger

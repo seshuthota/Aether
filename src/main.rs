@@ -18,6 +18,9 @@
 //!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0 (GGUF
 //!             files keep the formats they were saved in)
 //!   --chat    wrap the prompt in the ChatML chat template (instruct models)
+//!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
+//!             copied from the last earlier match of the last --ngram N
+//!             tokens (default 2), checked in one batched pass (ignores -t)
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -50,6 +53,7 @@ fn main() {
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
     let mut base_path: Option<PathBuf> = None;
+    let (mut lookup, mut ngram) = (0usize, 2usize);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
         if flag == "--kl" || flag == "--chat" {
@@ -66,6 +70,8 @@ fn main() {
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
             "--ppl" => ppl_file = Some(val.into()),
+            "--lookup" => lookup = val.parse().unwrap_or_else(|_| usage()),
+            "--ngram" => ngram = val.parse().unwrap_or_else(|_| usage()),
             "--system" => system = val,
             "--base" => base_path = Some(val.into()),
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
@@ -90,9 +96,19 @@ fn main() {
         prompt = aether::chat::chatml(&system, &prompt);
     }
     let mut out = std::io::stdout().lock();
-    let stats = session.generate(&prompt, &mut sampler, steps, true, |piece| {
-        out.write_all(piece).and_then(|_| out.flush()).is_ok()
-    });
+    let mut write = |piece: &[u8]| out.write_all(piece).and_then(|_| out.flush()).is_ok();
+    let stats = if lookup > 0 {
+        let t = session.text.encode(&prompt);
+        write(&session.text.first_piece(t[0]));
+        for p in 0..t.len() - 1 {
+            write(&session.text.piece(t[p], t[p + 1]));
+        }
+        let (stats, look) = session.generate_lookup(&prompt, steps, lookup, ngram, write);
+        eprintln!("\nlookup: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        stats
+    } else {
+        session.generate(&prompt, &mut sampler, steps, true, write)
+    };
     writeln!(out).unwrap();
 
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();

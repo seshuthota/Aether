@@ -268,7 +268,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
-- [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
+- [~] **L.4 Speculative decoding** (2026-10-29; results/phase-6.md "Prompt lookup decoding"):
+      model-free prompt lookup (`--lookup K`), verified in one batched pass; +50 % on a copying
+      task, +9–15 % on fresh prose. Open: sampling (non-greedy) verification; a draft model.
+- [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
 
 ---
 

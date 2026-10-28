@@ -85,6 +85,34 @@ pub struct Stats {
     pub decode: Duration,
 }
 
+/// Counts from [`Session::generate_lookup`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Lookup {
+    /// Batched verification passes (each also yields one certain token).
+    pub passes: usize,
+    /// Draft tokens proposed, and how many of them the model agreed with.
+    pub drafted: usize,
+    pub accepted: usize,
+}
+
+/// The tokens that followed the most recent earlier occurrence of the last
+/// `ngram` tokens of `hist`, at most `k` of them (prompt lookup decoding:
+/// text often repeats what came before, and then the past is a free draft).
+fn lookup_draft(hist: &[usize], ngram: usize, k: usize) -> &[usize] {
+    if hist.len() <= ngram {
+        return &[];
+    }
+    let tail = &hist[hist.len() - ngram..];
+    // Latest match first; a match must leave at least one token after it.
+    for i in (0..hist.len() - ngram).rev() {
+        if &hist[i..i + ngram] == tail {
+            let from = i + ngram;
+            return &hist[from..(from + k).min(hist.len())];
+        }
+    }
+    &[]
+}
+
 pub struct Session {
     pub model: Transformer,
     pub text: Text,
@@ -179,6 +207,72 @@ impl Session {
     }
 }
 
+impl Session {
+    /// Greedy generation with prompt lookup decoding: after each certain
+    /// token, up to `k` draft tokens are copied from the most recent earlier
+    /// place where the last `ngram` tokens occurred ([`lookup_draft`]), and
+    /// the certain token plus the drafts go through the model in one batched
+    /// pass. Row r of its logits predicts the token after input r, so drafts
+    /// are accepted while each equals the argmax of the row before it; the
+    /// first disagreement's argmax is the next certain token. All weights
+    /// are read once per pass, so every accepted draft is a token for (almost)
+    /// free. Cache entries of rejected drafts are overwritten later.
+    ///
+    /// The tokens are those of greedy decoding, up to rounding: a batched
+    /// pass computes the same logits by another summation order, so where two
+    /// tokens are within rounding of each other the choice can differ.
+    pub fn generate_lookup(&mut self, prompt: &str, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let steps = steps.min(self.model.config.seq_len);
+        let mut hist = self.text.encode(prompt);
+        let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let np = hist.len().min(steps);
+        let t0 = Instant::now();
+        let mut next = crate::kernels::argmax(self.model.forward_batch(&hist[..np], 0));
+        stats.prefill = t0.elapsed();
+        stats.prefill_tokens = np;
+        let t1 = Instant::now();
+        // `pos`: positions in the cache; `next` is certain but not yet in it.
+        let mut pos = np;
+        if np == hist.len() {
+            'tokens: loop {
+                if self.text.is_stop(next) || !emit(&self.text.piece(hist[pos - 1], next)) || pos >= steps {
+                    break;
+                }
+                hist.push(next);
+                let draft: Vec<usize> = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                if draft.is_empty() {
+                    next = crate::kernels::argmax(self.model.forward(next, pos));
+                    pos += 1;
+                    continue;
+                }
+                let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
+                let vocab = self.model.config.vocab_size;
+                let logits = self.model.forward_batch_logits(&input, pos, 0);
+                let best: Vec<usize> = logits.chunks_exact(vocab).map(crate::kernels::argmax).collect();
+                look.passes += 1;
+                look.drafted += draft.len();
+                pos += 1;
+                // best[r] follows input[r]; draft[r] = input[r + 1].
+                let mut r = 0;
+                while r < draft.len() && draft[r] == best[r] {
+                    let d = draft[r];
+                    if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
+                        break 'tokens;
+                    }
+                    look.accepted += 1;
+                    hist.push(d);
+                    pos += 1;
+                    r += 1;
+                }
+                next = best[r];
+            }
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        (stats, look)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +297,25 @@ mod tests {
             pieces < 3
         });
         assert_eq!(pieces, 3);
+    }
+
+    /// Prompt lookup decoding gives llama2.c's greedy text too (the story
+    /// repeats names and phrases, so drafts are proposed and some accepted).
+    #[test]
+    fn lookup_decoding_gives_llama2c_greedy_text() {
+        let (Some(model), Some(want)) = (golden("models/stories15M/stories15M.bin"), golden("stories15M/greedy.txt")) else { return };
+        let mut s = Session::open(&model, None, 256, Format::F32, None).unwrap();
+        let mut out = s.text.first_piece(s.text.encode("Once upon a time")[0]);
+        let prompt_tokens = s.text.encode("Once upon a time");
+        for p in 0..prompt_tokens.len() - 1 {
+            out.extend(s.text.piece(prompt_tokens[p], prompt_tokens[p + 1]));
+        }
+        let (stats, look) = s.generate_lookup("Once upon a time", 64, 4, 1, |b| {
+            out.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
+        assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
     }
 }

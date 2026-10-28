@@ -873,3 +873,50 @@ point, so these are hot-phone numbers), tg64 tok/s:
 Ours is ahead in 16 of the 18 pairs; with the caps moving mid-run the
 spreads are wide, and the one Q4_K_M round that lost (55 at d512) was the
 last, hottest run. Host tests 90/90.
+
+## Prompt lookup decoding (plan section 13, "speculative decoding"; 2026-10-29; `raw/lookup/`)
+
+Decode is now close to memory bandwidth (Q4_0 ~180 tok/s × 278 MB ≈ 50 GB/s),
+so a faster kernel cannot give much more; reading the weights once for
+several tokens can. Speculative decoding does that with a draft model, but
+Qwen2.5-0.5B is the smallest of its family, so this is the model-free
+variant: **prompt lookup**. After each certain token, up to K draft tokens
+are copied from the most recent earlier place where the last N tokens
+occurred (prompt or output), and the certain token plus the drafts run as
+one batched pass (`forward_batch_logits`). Row r predicts the token after
+input r, so drafts are accepted while each equals the argmax of the row
+before it, and the first disagreement's argmax is the next certain token.
+Cache entries of rejected drafts are simply overwritten later.
+`Session::generate_lookup`, CLI `--lookup K [--ngram N]`, greedy only.
+
+**Correctness**: on stories15M (f32) it reproduces llama2.c's greedy text
+byte for byte (new test `lookup_decoding_gives_llama2c_greedy_text`).
+
+**Speed** (Qwen2.5-0.5B Q4_0, cores 2–7, `--lookup 4`, n-gram 2; outputs in
+`out-*.txt`):
+
+| prompt | plain greedy | lookup | drafts accepted | same text |
+| --- | --- | --- | --- | --- |
+| "add comments to this function" (the model copies it back) | 170.4 tok/s | 256.1 (+50 %) | 61 / 84 | yes |
+| "why is the sky blue" (the 0.5B model falls into a loop) | 171.4 | 243.9 (+42 %) | 216 / 296 | yes |
+| short story, 194 tokens, two runs | 172.8 / 153.3 | 188.1 / 176.6 (+9 / +15 %) | 45 / 81 | diverges after ~80 tokens |
+| same, n-gram 3 | | 166.3 / 165.1 | 5 / 44 | diverges |
+
+The sky answer's gain is the model repeating one sentence, which lookup
+accepts for free; the code case is the honest win (copying). On fresh prose
+the gain is small, and a longer n-gram finds too few drafts to pay for its
+passes.
+
+**Why the story text diverges**: the verification pass computes logits by
+the batched path, and on quantized models the two paths differ more than
+one would think. `examples/logit_gap.rs` re-runs 100 greedy tokens in
+batches (`logit-gap.txt`): on SmolLM2-135M f32 the paths agree within
+5e-5, but on Q4_0 and Q8_0 by up to 0.4–0.65 in a logit, already for a
+single batched token at the first position. The activations are quantized
+to int8 before every matmul, so a float difference of 1e-7 (another
+summation order) now and then flips one int8 value, and 24 layers carry
+that on. The greedy margins (`margins-plain-greedy.txt`) go down to 0.02,
+so a fork at about token 80 is expected. Lookup decoding therefore gives
+"greedy under the batched path's numbers"; the same holds for flash-
+decoding against the old whole-context decode (batch 1 column: 0 before,
+up to 0.55 after), and for llama.cpp's own batched vs single-token paths.

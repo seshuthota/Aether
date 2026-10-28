@@ -1,0 +1,18 @@
+# examples/logit_gap.rs, Qwen2.5-0.5B chat prompt prompt-story.txt, 100 greedy tokens,
+# max |logit difference| decode vs batched re-run (first position / worst)
+# Q4_0, after flash-decoding (6ff9a2a+):
+batch 1: first 0.00000 worst 0.54932
+batch 2: first 0.40463 worst 0.64481
+batch 5: first 0.40463 worst 0.64481
+# Q8_0, after flash-decoding:
+batch 1: first 0.00000 worst 0.60653
+batch 2: first 0.60687 worst 0.62888
+batch 5: first 0.60687 worst 0.62888
+# Q4_0, before flash-decoding (f1b3b66):
+batch 1: first 0.00000 worst 0.00000
+batch 2: first 0.40463 worst 0.65329
+batch 5: first 0.40463 worst 0.65329
+# SmolLM2-135M f32 (HF safetensors), after flash-decoding:
+batch 1: first 0.00000 worst 0.00003
+batch 2: first 0.00000 worst 0.00003
+batch 5: first 0.00002 worst 0.00005
