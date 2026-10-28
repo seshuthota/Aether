@@ -34,6 +34,32 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 Biggest open items: quantized prefill GEMM with `smmla` (6.5), attention split across positions as
 well as heads, SmolLM2-360M (5.6), a clean Phase 4 sweep.
 
+### Pending phone checks (written 2026-10-28, while the phone was away)
+
+Commits built and tested on the host only; the AArch64 paths they add run
+only on the phone. Nothing below is a result until it has run there. Saved
+baseline `bench_suite` builds (rebuild from the commit if gone):
+`bca0a1b` (last phone-verified), `31513f0` (repack), `85d1a12` (+softmax).
+
+- [ ] **Full suite**: `cargo test --release --target aarch64-linux-android --lib`
+      (88 tests; new or extended: repacked layout in `quantized_linear_*`,
+      NEON softmax in `rmsnorm_softmax_swiglu_match_numpy`, NEON quantizer in
+      `quantizers_are_byte_identical_to_llama_cpp`, `smollm2_360m_matches_transformers`,
+      threaded `batched_prefill_matches_llama2c`).
+- [ ] **Perplexity** Q4_0 / Q8_0, wikitext-2 20 × 512 (repack changes decode
+      sums; softmax changes attention): must stay within noise of 19.7486 /
+      16.3532.
+- [ ] **Repack `31513f0` vs `bca0a1b`**: prefill A/B, 2 rounds
+      (`scripts/prefill-ab.sh`); decode A/B at depth 0 and 512
+      (`ARGS="-c 2-7 --pp 1 --tg 64 --depth 0,512" LLAMA_ARGS="-p 0 -n 64 -d 0,512"`);
+      load time and peak RSS from the same runs (repacked weights are heap,
+      mapped pages released); `gemv_bench` rows `_b_sdot` vs `_b_sdot_x4`.
+- [ ] **Softmax `85d1a12` vs `31513f0`**: decode A/B at depth 512 (where
+      attention matters), prefill pp512.
+- [ ] **Quantizer `0d1510f` vs `85d1a12`**: prefill A/B.
+- [ ] **SmolLM2-360M tok/s** (5.6), f32 and Q4_0, cores 2–7.
+- [ ] Older, still open: GEMM GFLOPS and a NEON-build profile (3.7).
+
 Reference tooling in place: llama.cpp host + Android builds (`~/llama.cpp`, `d00685831`), patched
 llama2.c (`third_party/`), `tools/.venv` with numpy, torch, transformers, tokenizers, gguf.
 
