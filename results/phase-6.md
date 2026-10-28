@@ -940,3 +940,36 @@ sustained load as the clock caps come down; per token the phone now spends
 about a third less energy, since each token takes less time at a similar
 power. The two power estimates differ (the charge counter covers a 277 s
 window, the sampler the whole 300 s), so the energy figure is ±15 %.
+
+**Sampling, and cheaper verification passes** (`raw/lookup/sampled.txt`,
+`small-batches*.txt`, `after-narrow-tiles.txt`):
+
+- `Sampler::sample_draft` checks a draft token by speculative sampling: with
+  p the distribution `sample` would draw from (temperature, top-k/top-p,
+  renormalised), the draft d is kept with probability p(d), and otherwise a
+  token is drawn from p without d. The result is distributed exactly as p
+  (test `draft_sampling_keeps_the_distribution`: 200,000 draws against the
+  closed-form probabilities, within 0.005). Greedy is the temperature-0
+  case of the same call.
+- With sampling, the first measurement lost on prose (−8 to −13 %): a
+  5-token batched pass cost ~2.3 decode steps. Timing small batches
+  showed why (`small-batches.txt`): pp2 … pp8 all took 11–13 ms against a
+  5.5 ms decode step, because the `smmla` tiles always covered 4 token
+  pairs, so two tokens paid for eight. Tiles are now generic in their
+  width (`Tiles<P>`, `mmla4::<F, P>`), and batches of 1–3 pairs use
+  P = 1–3: pp2 11.3 → 5.8 ms, pp4 12.1 → 7.8 ms, pp5 12.4 → 9.6 ms. Each
+  output's value does not depend on its tile partners, so PPL is unchanged
+  (19.7438) and 94/94 tests pass.
+
+After both (Qwen2.5-0.5B Q4_0, cores 2–7, two rounds, tok/s):
+
+| prompt, sampler | plain | `--lookup 3` | `--lookup 4` |
+| --- | --- | --- | --- |
+| code (copying), greedy | 162–169 | 264–293 | 258–288 |
+| code, t 0.7 top-p 0.9 | 156–163 | 149–245 | 195–240 |
+| story, greedy | 146–174 | 166–172 | 164–177 |
+| story, t 0.7 top-p 0.9 | 147–156 | 142–152 | 137–146 |
+
+Lookup decoding pays when the output repeats the input (+60–75 % greedy,
++25–50 % sampled for the code task) and is about neutral on fresh prose
+(within −10 % to +15 %, inside the run-to-run spread).

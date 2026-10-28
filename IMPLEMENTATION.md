@@ -269,8 +269,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
 - [~] **L.4 Speculative decoding** (2026-10-29; results/phase-6.md "Prompt lookup decoding"):
-      model-free prompt lookup (`--lookup K`), verified in one batched pass; +50 % on a copying
-      task, +9–15 % on fresh prose. Open: sampling (non-greedy) verification; a draft model.
+      model-free prompt lookup (`--lookup K`), verified in one batched pass, greedy or by
+      speculative sampling (`Sampler::sample_draft`); `smmla` tiles of 1–3 pairs for small
+      batches. +60–75 % on a copying task, about neutral on fresh prose. Open: a draft model.
 - [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
 
 ---

@@ -240,7 +240,7 @@ fn group(i: usize, nb: usize) -> std::ops::Range<usize> {
 /// called when [`has_mmla`] is true.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; neon_quant::NP], xp: &[neon_quant::PairQ8], nb: usize) -> neon_quant::Tiles {
+fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neon_quant::PairQ8], nb: usize) -> neon_quant::Tiles<P> {
     let x = ps.map(|p| &xp[p * nb..(p + 1) * nb]);
     // SAFETY: callers check has_mmla (i8mm present); every row and pair
     // slice has nb blocks.
@@ -331,13 +331,31 @@ fn group4(rows: [usize; 4], nb: usize) -> std::ops::Range<usize> {
 /// As for [`quant_rows`], with `xp` the pairs of all `t` tokens.
 #[cfg(target_arch = "aarch64")]
 unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xp: &[neon_quant::PairQ8], t: usize) {
+    // Tiles as wide as the batch needs, up to NP pairs.
+    // SAFETY: forwarded.
+    unsafe {
+        match t.div_ceil(2) {
+            1 => rows_mmla::<1>(out, d, r, w, xp, t),
+            2 => rows_mmla::<2>(out, d, r, w, xp, t),
+            3 => rows_mmla::<3>(out, d, r, w, xp, t),
+            _ => rows_mmla::<{ neon_quant::NP }>(out, d, r, w, xp, t),
+        }
+    }
+}
+
+/// [`quant_rows_mmla`] with tiles of P token pairs.
+///
+/// # Safety
+/// As for [`quant_rows_mmla`].
+#[cfg(target_arch = "aarch64")]
+unsafe fn rows_mmla<const P: usize>(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xp: &[neon_quant::PairQ8], t: usize) {
     let pairs = t.div_ceil(2);
     let nb = xp.len() / pairs;
     for i in r.clone().step_by(4) {
         let rows = [0, 1, 2, 3].map(|k| (i + k).min(r.end - 1));
         let kb = is_k_quant(w).then(|| unpack_k4(w, rows, nb));
-        for p in (0..pairs).step_by(neon_quant::NP) {
-            let ps: [usize; neon_quant::NP] = std::array::from_fn(|k| (p + k).min(pairs - 1));
+        for p in (0..pairs).step_by(P) {
+            let ps: [usize; P] = std::array::from_fn(|k| (p + k).min(pairs - 1));
             let v = match &kb {
                 // SAFETY: callers check has_mmla; every pair slice has nb
                 // entries, as kb does.

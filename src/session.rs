@@ -208,29 +208,33 @@ impl Session {
 }
 
 impl Session {
-    /// Greedy generation with prompt lookup decoding: after each certain
-    /// token, up to `k` draft tokens are copied from the most recent earlier
-    /// place where the last `ngram` tokens occurred ([`lookup_draft`]), and
-    /// the certain token plus the drafts go through the model in one batched
-    /// pass. Row r of its logits predicts the token after input r, so drafts
-    /// are accepted while each equals the argmax of the row before it; the
-    /// first disagreement's argmax is the next certain token. All weights
-    /// are read once per pass, so every accepted draft is a token for (almost)
+    /// Generation with prompt lookup decoding: after each certain token, up
+    /// to `k` draft tokens are copied from the most recent earlier place
+    /// where the last `ngram` tokens occurred ([`lookup_draft`]), and the
+    /// certain token plus the drafts go through the model in one batched
+    /// pass. Row r of its logits predicts the token after input r; each
+    /// draft is checked against its row with [`Sampler::sample_draft`]
+    /// (greedy: equal to the argmax; sampling: accepted with its
+    /// probability, which keeps the sampler's distribution), and the first
+    /// rejection's replacement is the next certain token. All weights are
+    /// read once per pass, so every accepted draft is a token for (almost)
     /// free. Cache entries of rejected drafts are overwritten later.
     ///
-    /// The tokens are those of greedy decoding, up to rounding: a batched
-    /// pass computes the same logits by another summation order, so where two
-    /// tokens are within rounding of each other the choice can differ.
-    pub fn generate_lookup(&mut self, prompt: &str, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+    /// The batched pass computes the same logits by another summation
+    /// order, and on quantized models that moves them by up to ~0.6
+    /// (results/phase-6.md, "Prompt lookup decoding"), so a greedy run can
+    /// fork from plain greedy decoding where two tokens are that close.
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
         let steps = steps.min(self.model.config.seq_len);
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
         let np = hist.len().min(steps);
         let t0 = Instant::now();
-        let mut next = crate::kernels::argmax(self.model.forward_batch(&hist[..np], 0));
+        let mut next = sampler.sample(&mut self.model.forward_batch(&hist[..np], 0).to_vec());
         stats.prefill = t0.elapsed();
         stats.prefill_tokens = np;
         let t1 = Instant::now();
+        let vocab = self.model.config.vocab_size;
         // `pos`: positions in the cache; `next` is certain but not yet in it.
         let mut pos = np;
         if np == hist.len() {
@@ -241,30 +245,32 @@ impl Session {
                 hist.push(next);
                 let draft: Vec<usize> = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
                 if draft.is_empty() {
-                    next = crate::kernels::argmax(self.model.forward(next, pos));
+                    next = sampler.sample(&mut self.model.forward(next, pos).to_vec());
                     pos += 1;
                     continue;
                 }
                 let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
-                let vocab = self.model.config.vocab_size;
-                let logits = self.model.forward_batch_logits(&input, pos, 0);
-                let best: Vec<usize> = logits.chunks_exact(vocab).map(crate::kernels::argmax).collect();
+                let mut rows = self.model.forward_batch_logits(&input, pos, 0).to_vec();
                 look.passes += 1;
                 look.drafted += draft.len();
                 pos += 1;
-                // best[r] follows input[r]; draft[r] = input[r + 1].
-                let mut r = 0;
-                while r < draft.len() && draft[r] == best[r] {
-                    let d = draft[r];
+                // Row r follows input[r]; draft[r] = input[r + 1].
+                let mut rows = rows.chunks_exact_mut(vocab);
+                for &d in &draft {
+                    let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
+                    if !accepted {
+                        next = t;
+                        continue 'tokens;
+                    }
                     if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
                         break 'tokens;
                     }
                     look.accepted += 1;
                     hist.push(d);
                     pos += 1;
-                    r += 1;
                 }
-                next = best[r];
+                // Every draft accepted: the last row gives the next token.
+                next = sampler.sample(rows.next().unwrap());
             }
         }
         stats.decode = t1.elapsed();
@@ -310,7 +316,7 @@ mod tests {
         for p in 0..prompt_tokens.len() - 1 {
             out.extend(s.text.piece(prompt_tokens[p], prompt_tokens[p + 1]));
         }
-        let (stats, look) = s.generate_lookup("Once upon a time", 64, 4, 1, |b| {
+        let (stats, look) = s.generate_lookup("Once upon a time", &mut Sampler::new(0.0, 0.9, 0, 1), 64, 4, 1, |b| {
             out.extend_from_slice(b);
             true
         });

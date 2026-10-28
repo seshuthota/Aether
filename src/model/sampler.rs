@@ -65,6 +65,57 @@ impl Sampler {
         self.sample_top_p(logits, coin)
     }
 
+    /// Speculative sampling of a fixed draft token `draft` (prompt lookup:
+    /// the draft "distribution" puts all its mass on one token). With p the
+    /// distribution [`Sampler::sample`] would draw from (after temperature,
+    /// top-k / top-p and renormalising), `draft` is accepted with
+    /// probability p(draft); otherwise a token is drawn from p without
+    /// `draft`, renormalised. The token returned is then distributed exactly
+    /// as p: p(draft)·1 for `draft`, and (1 − p(draft))·p(x)/(1 − p(draft))
+    /// = p(x) for every other x. Returns (token, accepted). Temperature 0:
+    /// the argmax, accepted if it is `draft`.
+    pub fn sample_draft(&mut self, logits: &mut [f32], draft: usize) -> (usize, bool) {
+        if self.temperature == 0.0 {
+            let t = argmax(logits);
+            return (t, t == draft);
+        }
+        for l in logits.iter_mut() {
+            *l /= self.temperature;
+        }
+        softmax(logits);
+        // The kept set, as `sample` keeps it, in self.candidates.
+        self.candidates.clear();
+        if self.top_k > 0 && self.top_k < logits.len() {
+            self.candidates.extend(logits.iter().copied().enumerate().map(|(i, p)| (p, i)));
+            let k = self.top_k;
+            self.candidates.select_nth_unstable_by(k - 1, |a, b| b.0.total_cmp(&a.0));
+            self.candidates.truncate(k);
+        } else if self.top_p <= 0.0 || self.top_p >= 1.0 {
+            self.candidates.extend(logits.iter().copied().enumerate().map(|(i, p)| (p, i)));
+        } else {
+            let cutoff = (1.0 - self.top_p) / (logits.len() - 1) as f32;
+            self.candidates.extend(logits.iter().copied().enumerate().filter(|&(_, p)| p >= cutoff).map(|(i, p)| (p, i)));
+            self.candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut mass = 0.0f32;
+            let mut last = self.candidates.len() - 1;
+            for (i, c) in self.candidates.iter().enumerate() {
+                mass += c.0;
+                if mass > self.top_p {
+                    last = i;
+                    break;
+                }
+            }
+            self.candidates.truncate(last + 1);
+        }
+        let mass: f32 = self.candidates.iter().map(|c| c.0).sum();
+        let pd = self.candidates.iter().find(|c| c.1 == draft).map_or(0.0, |c| c.0);
+        if self.next_f32() * mass < pd {
+            return (draft, true);
+        }
+        let coin = self.next_f32();
+        (sample_cdf(self.candidates.iter().copied().filter(|c| c.1 != draft), mass - pd, coin), false)
+    }
+
     fn sample_top_k(&mut self, probs: &[f32], coin: f32) -> usize {
         self.candidates.clear();
         self.candidates.extend(probs.iter().copied().enumerate().map(|(i, p)| (p, i)));
@@ -143,6 +194,32 @@ mod tests {
         let mut s = Sampler::new(1.0, 0.5, 0, 3);
         for _ in 0..20 {
             assert_eq!(s.sample(&mut [0.0, 10.0, 0.0, 0.0]), 1);
+        }
+    }
+
+    /// Speculative sampling of a draft token yields the sampler's own
+    /// distribution: for logits ln(1), ln(2), ln(3), ln(4) at temperature 1
+    /// the probabilities are exactly 0.1, 0.2, 0.3, 0.4, and with top-k = 3
+    /// 2/9, 3/9, 4/9 over the top three; 200,000 draws with draft token 1
+    /// (and, separately, 3) must match within 0.005.
+    #[test]
+    fn draft_sampling_keeps_the_distribution() {
+        let logits = [1.0f32, 2.0, 3.0, 4.0].map(f32::ln);
+        for (top_k, want) in [(0, [0.1, 0.2, 0.3, 0.4]), (3, [0.0, 2.0 / 9.0, 3.0 / 9.0, 4.0 / 9.0])] {
+            for draft in [1, 3] {
+                let mut s = Sampler::new(1.0, 0.0, top_k, 11);
+                let mut count = [0usize; 4];
+                let n = 200_000;
+                for _ in 0..n {
+                    let (t, accepted) = s.sample_draft(&mut logits.clone(), draft);
+                    assert_eq!(accepted, t == draft);
+                    count[t] += 1;
+                }
+                for (c, w) in count.iter().zip(want) {
+                    let f = *c as f64 / n as f64;
+                    assert!((f - w).abs() < 0.005, "top_k {top_k} draft {draft}: {count:?} vs {want:?}");
+                }
+            }
         }
     }
 

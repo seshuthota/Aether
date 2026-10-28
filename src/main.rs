@@ -20,7 +20,8 @@
 //!   --chat    wrap the prompt in the ChatML chat template (instruct models)
 //!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
 //!             copied from the last earlier match of the last --ngram N
-//!             tokens (default 2), checked in one batched pass (ignores -t)
+//!             tokens (default 2), checked in one batched pass; with -t > 0
+//!             by speculative sampling, which keeps the sampler's distribution
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -103,7 +104,7 @@ fn main() {
         for p in 0..t.len() - 1 {
             write(&session.text.piece(t[p], t[p + 1]));
         }
-        let (stats, look) = session.generate_lookup(&prompt, steps, lookup, ngram, write);
+        let (stats, look) = session.generate_lookup(&prompt, &mut sampler, steps, lookup, ngram, write);
         eprintln!("\nlookup: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
         stats
     } else {

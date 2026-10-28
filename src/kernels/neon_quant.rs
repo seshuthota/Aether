@@ -596,18 +596,20 @@ pub fn interleave_pairs(pool: Option<&crate::pool::ThreadPool>, xq: &[BlockQ8_0]
     out
 }
 
-/// Token pairs per `smmla` tile: a tile is 4 rows × 2·NP tokens.
+/// Token pairs per `smmla` tile in prefill: a tile is 4 rows × 2·NP tokens.
+/// Batches of one to three pairs (lookup decoding's verification passes) use
+/// tiles of P = 1, 2 or 3 pairs instead, so they do not pay for eight tokens.
 pub const NP: usize = 4;
 
-/// The result of a tile: `[row pair][token pair]` → `[r0·t0, r0·t1, r1·t0,
-/// r1·t1]`.
-pub type Tiles = [[[f32; 4]; NP]; 2];
+/// The result of a tile of P token pairs: `[row pair][token pair]` →
+/// `[r0·t0, r0·t1, r1·t0, r1·t1]`.
+pub type Tiles<const P: usize> = [[[f32; 4]; P]; 2];
 
-/// Accumulators `[NP·rp + tp]` → [`Tiles`].
+/// Accumulators `[rp][tp]` → [`Tiles`].
 #[inline(always)]
-fn store_tiles(acc: [float32x4_t; 2 * NP]) -> Tiles {
-    let mut out = [[[0.0; 4]; NP]; 2];
-    for (o, a) in out.iter_mut().flatten().zip(&acc) {
+fn store_tiles<const P: usize>(acc: [[float32x4_t; P]; 2]) -> Tiles<P> {
+    let mut out = [[[0.0; 4]; P]; 2];
+    for (o, a) in out.iter_mut().flatten().zip(acc.iter().flatten()) {
         // SAFETY: each `o` holds 4 floats.
         unsafe { vst1q_f32(o.as_mut_ptr(), *a) };
     }
@@ -658,9 +660,9 @@ fn to_f32<const F: i32>(s: int32x4_t) -> float32x4_t {
 /// The CPU must have i8mm; `load` must be valid for `0..nb` and both pair
 /// slices must have `nb` entries.
 #[target_feature(enable = "i8mm")]
-unsafe fn mmla4<const F: i32>(nb: usize, x: [&[PairQ8]; NP], load: impl Fn(usize) -> Rows4) -> Tiles {
+unsafe fn mmla4<const F: i32, const P: usize>(nb: usize, x: [&[PairQ8]; P], load: impl Fn(usize) -> Rows4) -> Tiles<P> {
     // SAFETY: register-only NEON ops (AArch64 baseline).
-    let (mut acc, z) = unsafe { ([vdupq_n_f32(0.0); 2 * NP], vdupq_n_s32(0)) };
+    let (mut acc, z) = unsafe { ([[vdupq_n_f32(0.0); P]; 2], vdupq_n_s32(0)) };
     for b in 0..nb {
         let (w, d) = load(b);
         // SAFETY: the caller guarantees every pair slice has nb entries;
@@ -669,7 +671,7 @@ unsafe fn mmla4<const F: i32>(nb: usize, x: [&[PairQ8]; NP], load: impl Fn(usize
             // [d0, d1, d2, d3] → [d0, d0, d1, d1] and [d2, d2, d3, d3].
             let dw = f16x4_to_f32(d);
             let dw = [vzip1q_f32(dw, dw), vzip2q_f32(dw, dw)];
-            for tp in 0..NP {
+            for tp in 0..P {
                 let p = x[tp].get_unchecked(b);
                 let q = p.qs.as_ptr();
                 let xv = [vld1q_s8(q), vld1q_s8(q.add(16)), vld1q_s8(q.add(32)), vld1q_s8(q.add(48))];
@@ -679,7 +681,7 @@ unsafe fn mmla4<const F: i32>(nb: usize, x: [&[PairQ8]; NP], load: impl Fn(usize
                     // block's) are independent, which is enough to keep
                     // the `smmla` units busy without extra adds.
                     let s = smmla(smmla(smmla(smmla(z, w[rp][0], xv[0]), w[rp][1], xv[1]), w[rp][2], xv[2]), w[rp][3], xv[3]);
-                    acc[NP * rp + tp] = vfmaq_f32(acc[NP * rp + tp], to_f32::<F>(s), vmulq_f32(dw[rp], dx));
+                    acc[rp][tp] = vfmaq_f32(acc[rp][tp], to_f32::<F>(s), vmulq_f32(dw[rp], dx));
                 }
             }
         }
@@ -770,10 +772,10 @@ fn load_q5_0x4(w: &BlockQ5_0x4) -> Rows4 {
 /// # Safety
 /// As for [`mmla4`], every row with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q8_0(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q8_0<const P: usize>(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = every row's length).
     unsafe {
-        mmla4::<0>(x[0].len(), x, |b| {
+        mmla4::<0, P>(x[0].len(), x, |b| {
             let r = rows.map(|r| r.get_unchecked(b));
             interleave4(r.map(load_q8_0), r.map(|r| r.d))
         })
@@ -786,11 +788,11 @@ pub unsafe fn mmla4_q8_0(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
 /// # Safety
 /// As for [`mmla4`], every row with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q4_0(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q4_0<const P: usize>(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = every row's length);
     // 16 bytes of nibbles per block.
     unsafe {
-        mmla4::<0>(x[0].len(), x, |b| {
+        mmla4::<0, P>(x[0].len(), x, |b| {
             let r = rows.map(|r| r.get_unchecked(b));
             interleave4(r.map(|r| <[int8x16_t; 2]>::from(unpack_q4(vld1q_u8(r.qs.as_ptr())))), r.map(|r| r.d))
         })
@@ -802,10 +804,10 @@ pub unsafe fn mmla4_q4_0(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
 /// # Safety
 /// As for [`mmla4`], every row with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q5_0(rows: [&[BlockQ5_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q5_0<const P: usize>(rows: [&[BlockQ5_0]; 4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = every row's length).
     unsafe {
-        mmla4::<0>(x[0].len(), x, |b| {
+        mmla4::<0, P>(x[0].len(), x, |b| {
             let r = rows.map(|r| r.get_unchecked(b));
             interleave4(r.map(|r| <[int8x16_t; 2]>::from(unpack_q5(r))), r.map(|r| r.d))
         })
@@ -818,9 +820,9 @@ pub unsafe fn mmla4_q5_0(rows: [&[BlockQ5_0]; 4], x: [&[PairQ8]; NP]) -> Tiles {
 /// # Safety
 /// As for [`mmla4`], `group` with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q8_0x4(group: &[BlockQ8_0x4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q8_0x4<const P: usize>(group: &[BlockQ8_0x4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = group.len()).
-    unsafe { mmla4::<0>(x[0].len(), x, |b| load_q8_0x4(group.get_unchecked(b))) }
+    unsafe { mmla4::<0, P>(x[0].len(), x, |b| load_q8_0x4(group.get_unchecked(b))) }
 }
 
 /// One repacked group of four Q4_0 rows × four tokens. See [`mmla4`].
@@ -828,9 +830,9 @@ pub unsafe fn mmla4_q8_0x4(group: &[BlockQ8_0x4], x: [&[PairQ8]; NP]) -> Tiles {
 /// # Safety
 /// As for [`mmla4`], `group` with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q4_0x4(group: &[BlockQ4_0x4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q4_0x4<const P: usize>(group: &[BlockQ4_0x4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = group.len()).
-    unsafe { mmla4::<4>(x[0].len(), x, |b| load_q4_0x4(group.get_unchecked(b))) }
+    unsafe { mmla4::<4, P>(x[0].len(), x, |b| load_q4_0x4(group.get_unchecked(b))) }
 }
 
 /// One repacked group of four Q5_0 rows × four tokens. See [`mmla4`].
@@ -838,9 +840,9 @@ pub unsafe fn mmla4_q4_0x4(group: &[BlockQ4_0x4], x: [&[PairQ8]; NP]) -> Tiles {
 /// # Safety
 /// As for [`mmla4`], `group` with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q5_0x4(group: &[BlockQ5_0x4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_q5_0x4<const P: usize>(group: &[BlockQ5_0x4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: forwarded from the caller (b < nb = group.len()).
-    unsafe { mmla4::<3>(x[0].len(), x, |b| load_q5_0x4(group.get_unchecked(b))) }
+    unsafe { mmla4::<3, P>(x[0].len(), x, |b| load_q5_0x4(group.get_unchecked(b))) }
 }
 
 /// Sub-block `j` (values 32j..32j + 32) of a Q4_K super-block as int8
@@ -895,9 +897,9 @@ pub struct KBlock4 {
 /// # Safety
 /// The CPU must have i8mm; both pair slices must have `g.len()` entries.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_k(g: &[KBlock4], x: [&[PairQ8]; NP]) -> Tiles {
+pub unsafe fn mmla4_k<const P: usize>(g: &[KBlock4], x: [&[PairQ8]; P]) -> Tiles<P> {
     // SAFETY: register-only NEON ops (AArch64 baseline).
-    let (mut acc, z) = unsafe { ([vdupq_n_f32(0.0); 2 * NP], vdupq_n_s32(0)) };
+    let (mut acc, z) = unsafe { ([[vdupq_n_f32(0.0); P]; 2], vdupq_n_s32(0)) };
     for (b, w) in g.iter().enumerate() {
         // SAFETY: each block holds 128 int8s and 3 × 4 floats; the caller
         // guarantees both pair slices have g.len() entries.
@@ -911,7 +913,7 @@ pub unsafe fn mmla4_k(g: &[KBlock4], x: [&[PairQ8]; NP]) -> Tiles {
                 [vzip1q_f32(f, f), vzip2q_f32(f, f)]
             };
             let (sa, sb, bias) = (dup(&w.sa), dup(&w.sb), dup(&w.bias));
-            for tp in 0..NP {
+            for tp in 0..P {
                 let p = x[tp].get_unchecked(b);
                 let xq = p.qs.as_ptr();
                 let xv = [vld1q_s8(xq), vld1q_s8(xq.add(16)), vld1q_s8(xq.add(32)), vld1q_s8(xq.add(48))];
@@ -919,7 +921,7 @@ pub unsafe fn mmla4_k(g: &[KBlock4], x: [&[PairQ8]; NP]) -> Tiles {
                 for rp in 0..2 {
                     let lo = smmla(smmla(z, wv[rp][0], xv[0]), wv[rp][1], xv[1]);
                     let hi = smmla(smmla(z, wv[rp][2], xv[2]), wv[rp][3], xv[3]);
-                    let a = &mut acc[NP * rp + tp];
+                    let a = &mut acc[rp][tp];
                     *a = vfmaq_f32(*a, vcvtq_f32_s32(lo), vmulq_f32(sa[rp], dx));
                     *a = vfmaq_f32(*a, vcvtq_f32_s32(hi), vmulq_f32(sb[rp], dx));
                     *a = vfmaq_f32(*a, bias[rp], sx);

@@ -1,0 +1,8 @@
+code plain r1: decode: 87 tokens in 578.0 ms (150.5 tok/s)  
+code lookup r1: lookup: 21 passes, 61 of 84 drafts accepted decode: 87 tokens in 459.0 ms (189.6 tok/s)  
+story plain r1: decode: 254 tokens in 1639.4 ms (154.9 tok/s)  
+story lookup r1: lookup: 28 passes, 16 of 112 drafts accepted decode: 254 tokens in 1877.8 ms (135.3 tok/s)  
+code plain r2: decode: 91 tokens in 594.3 ms (153.1 tok/s)  
+code lookup r2: lookup: 24 passes, 61 of 96 drafts accepted decode: 91 tokens in 599.7 ms (151.8 tok/s)  
+story plain r2: decode: 254 tokens in 1634.1 ms (155.4 tok/s)  
+story lookup r2: lookup: 45 passes, 65 of 180 drafts accepted decode: 254 tokens in 1779.5 ms (142.7 tok/s)  
