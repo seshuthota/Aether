@@ -151,55 +151,55 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
     unreachable!("dot4 needs the AArch64 sdot kernels")
 }
 
-/// True when the 2×2 `smmla` kernels can run (AArch64 with i8mm).
+/// True when the `smmla` kernels can run (i8mm present).
+#[cfg(target_arch = "aarch64")]
 fn has_mmla() -> bool {
-    #[cfg(target_arch = "aarch64")]
-    return neon_quant::has_i8mm();
-    #[cfg(not(target_arch = "aarch64"))]
-    return false;
+    neon_quant::has_i8mm()
 }
 
-/// Rows `i0`, `i1` · tokens `t0`, `t1`: `[i0·t0, i0·t1, i1·t0, i1·t1]`. Only
+/// Rows `rows` · the tokens of pairs `ps` (see [`neon_quant::mmla4`]). Only
 /// called when [`has_mmla`] is true.
+#[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(unused_variables)]
-fn mmla2(w: &Weight, [i0, i1]: [usize; 2], [t0, t1]: [usize; 2], xq: &[BlockQ8_0], xd: &[f32], nb: usize) -> [f32; 4] {
-    #[cfg(target_arch = "aarch64")]
-    {
-        let (x, s) = ([t0, t1].map(|t| &xq[t * nb..(t + 1) * nb]), [t0, t1].map(|t| &xd[t * nb..(t + 1) * nb]));
-        // SAFETY: callers check has_mmla (i8mm present); every row and
-        // token slice has nb blocks.
-        unsafe {
-            match w {
-                Weight::Q8_0(b) => neon_quant::mmla2_q8_0([i0, i1].map(|i| &b[i * nb..(i + 1) * nb]), x, s),
-                Weight::Q4_0(b) => neon_quant::mmla2_q4_0([i0, i1].map(|i| &b[i * nb..(i + 1) * nb]), x, s),
-                Weight::F32(_) => unreachable!(),
-            }
+fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8], nb: usize) -> [[f32; 4]; 4] {
+    let x = ps.map(|p| &xp[p * nb..(p + 1) * nb]);
+    // SAFETY: callers check has_mmla (i8mm present); every row and pair
+    // slice has nb blocks.
+    unsafe {
+        match w {
+            Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
+            Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
+            Weight::F32(_) => unreachable!(),
         }
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    unreachable!("mmla2 needs the AArch64 i8mm kernels")
 }
 
-/// [`quant_rows`] with `smmla`: rows two at a time, and for each pair of
-/// rows (which then stays in L1) all tokens two at a time. An odd last row
-/// or token is paired with itself; each output's value does not depend on
-/// its partner, so every element comes out the same however the rows are
-/// split across threads.
+/// [`quant_rows`] with `smmla`: rows four at a time, and for each group of
+/// four rows (which then stays in L1) all tokens four at a time, from
+/// activations interleaved into token pairs once per matmul (`xp`). Rows
+/// and pairs past the end are replaced by the last one; each output's value
+/// does not depend on its tile partners, so every element comes out the
+/// same however the rows are split across threads.
 ///
 /// # Safety
-/// As for [`quant_rows`].
-unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], t: usize) {
-    let nb = xq.len() / t;
-    for i in r.clone().step_by(2) {
-        let i1 = (i + 1).min(r.end - 1);
-        for tt in (0..t).step_by(2) {
-            let t1 = (tt + 1).min(t - 1);
-            let v = mmla2(w, [i, i1], [tt, t1], xq, xd, nb);
-            for (k, (ti, ii)) in [(tt, i), (t1, i), (tt, i1), (t1, i1)].into_iter().enumerate() {
-                // SAFETY: element (ti, ii) lies in this call's rows; a
-                // duplicate partner writes the same value twice.
-                unsafe { *out.ptr().add(ti * d + ii) = v[k] };
+/// As for [`quant_rows`], with `xp` the pairs of all `t` tokens.
+#[cfg(target_arch = "aarch64")]
+unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xp: &[neon_quant::PairQ8], t: usize) {
+    let pairs = t.div_ceil(2);
+    let nb = xp.len() / pairs;
+    for i in r.clone().step_by(4) {
+        let rows = [0, 1, 2, 3].map(|k| (i + k).min(r.end - 1));
+        for p in (0..pairs).step_by(2) {
+            let ps = [p, (p + 1).min(pairs - 1)];
+            let v = mmla4(w, rows, ps, xp, nb);
+            for (tile, v) in v.iter().enumerate() {
+                let (rp, tp) = (tile / 2, tile % 2);
+                for (k, v) in v.iter().enumerate() {
+                    let (row, tok) = (rows[2 * rp + k / 2], (2 * ps[tp] + k % 2).min(t - 1));
+                    // SAFETY: element (tok, row) lies in this call's rows;
+                    // a duplicate row or token writes the same value again.
+                    unsafe { *out.ptr().add(tok * d + row) = *v };
+                }
             }
         }
     }
@@ -209,17 +209,13 @@ unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w
 /// with the activations already quantized (`xq` is `[t, nb]` blocks, `xd`
 /// their scales as f32). Rows go four at a time where possible (each
 /// activation block loaded once for four rows); each group of weight rows
-/// stays in L1 across tokens. With i8mm and more than one token, the
-/// `smmla` version runs instead.
+/// stays in L1 across tokens. With i8mm and more than one token,
+/// [`linear_batch_on`] runs the `smmla` version instead.
 ///
 /// # Safety
 /// `out` must be valid for `t·d` floats and no other thread may write
 /// rows `r` of it during the call.
 unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], t: usize) {
-    if t > 1 && has_mmla() {
-        // SAFETY: forwarded from the caller.
-        return unsafe { quant_rows_mmla(out, d, r, w, xq, xd, t) };
-    }
     let nb = xq.len() / t;
     let fast = has_dot4();
     let mut i = r.start;
@@ -251,6 +247,17 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
         // The activation's scales as f32, converted once rather than per row.
         let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
         let o = SharedOut(out.as_mut_ptr());
+        #[cfg(target_arch = "aarch64")]
+        if t > 1 && has_mmla() {
+            let xp = neon_quant::interleave_pairs(&xq, &xd, t);
+            match pool.filter(|p| p.threads() > 1) {
+                // SAFETY: each thread writes only its own rows of `out`.
+                Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows_mmla(o, d, r, w, &xp, t) }),
+                // SAFETY: single thread, all rows.
+                None => unsafe { quant_rows_mmla(o, d, 0..d, w, &xp, t) },
+            }
+            return;
+        }
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
             Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, t) }),

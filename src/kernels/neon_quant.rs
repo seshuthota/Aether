@@ -12,7 +12,8 @@
 //! iterations do not wait on each other (the same idea as the f32 GEMV).
 //!
 //! For prefill (several tokens), the i8mm kernels at the end use `smmla`:
-//! two rows × two tokens per instruction.
+//! two rows × two tokens per instruction, in tiles of four rows × four
+//! tokens.
 
 use crate::quant::{BlockQ4_0, BlockQ8_0, QK, f16_to_f32};
 use std::arch::aarch64::*;
@@ -253,8 +254,8 @@ pub unsafe fn dot4_q4_0_q8_0(rows: [&[BlockQ4_0]; 4], x: &[BlockQ8_0], xd: &[f32
 //     b = [x0 k0..8 | x1 k0..8]      d.lane2 += w1·x0    d.lane3 += w1·x1
 //
 // So each weight value loaded serves two tokens, where `sdot` serves one.
-// A 32-value block is four `smmla`s, once the two rows (and the two
-// tokens) are interleaved 8 bytes at a time.
+// A 32-value block of two rows × two tokens is four `smmla`s, once the rows
+// (and the tokens) are interleaved 8 bytes at a time.
 
 /// True when this CPU has the i8mm extension (`smmla`).
 pub fn has_i8mm() -> bool {
@@ -285,78 +286,115 @@ fn zip8(a: int8x16_t, b: int8x16_t) -> (int8x16_t, int8x16_t) {
     }
 }
 
-/// One 32-value block of rows `w0`, `w1` against tokens `x0`, `x1` (each
-/// as its values 0..16 and 16..32): the int32 sums
-/// `[w0·x0, w0·x1, w1·x0, w1·x1]`, exact.
-#[inline(always)]
-fn mmla_block(w0: [int8x16_t; 2], w1: [int8x16_t; 2], x0: [int8x16_t; 2], x1: [int8x16_t; 2]) -> int32x4_t {
-    let ((wa, wb), (wc, wd)) = (zip8(w0[0], w1[0]), zip8(w0[1], w1[1]));
-    let ((xa, xb), (xc, xd)) = (zip8(x0[0], x1[0]), zip8(x0[1], x1[1]));
-    // SAFETY: register-only NEON op.
-    let z = unsafe { vdupq_n_s32(0) };
-    // Two independent chains, so each `smmla` need not wait for the last.
-    // SAFETY: register-only NEON op.
-    unsafe { vaddq_s32(smmla(smmla(z, wa, xa), wb, xb), smmla(smmla(z, wc, xc), wd, xd)) }
+
+/// The activations of two tokens, one 32-value block, arranged for `smmla`:
+/// 8 values of the first token, then the same 8 of the second, four times
+/// (`[x0 0..8 | x1 0..8 | x0 8..16 | x1 8..16 | …]`), and the scales
+/// `[d0, d1, d0, d1]` as f32 to match the lanes of an `smmla` result.
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct PairQ8 {
+    pub qs: [i8; 2 * QK],
+    pub d: [f32; 4],
 }
 
-/// Rows `rows[0]`, `rows[1]` · tokens `x[0]`, `x[1]` (activations
-/// quantized to Q8_0, `xd` their scales as f32), for any block type whose
-/// `load` gives its 32 values as int8 and its f16 scale. Returns
-/// `[r0·x0, r0·x1, r1·x0, r1·x1]`. Each of the four outputs has its own
-/// lane, integer sums and float additions, so its value does not depend on
-/// what it was paired with (passing the same row or token twice is how
-/// callers handle an odd one out).
-///
-/// # Safety
-/// The CPU must have i8mm; both rows must have `x[0].len()` blocks, and
-/// `x[1]`, `xd[0]`, `xd[1]` as many entries.
-#[target_feature(enable = "i8mm")]
-unsafe fn mmla2<B>(rows: [&[B]; 2], x: [&[BlockQ8_0]; 2], xd: [&[f32]; 2], load: impl Fn(&B) -> ([int8x16_t; 2], u16)) -> [f32; 4] {
-    // SAFETY: register-only NEON op (AArch64 baseline).
-    let mut acc = unsafe { [vdupq_n_f32(0.0); 2] };
-    let act = |v: &BlockQ8_0| {
-        // SAFETY: each block holds 32 int8s.
-        unsafe { [vld1q_s8(v.qs.as_ptr()), vld1q_s8(v.qs.as_ptr().add(16))] }
-    };
-    for b in 0..x[0].len() {
-        // SAFETY: the caller guarantees every slice has at least b + 1
-        // entries.
-        unsafe {
-            let ((w0, d0), (w1, d1)) = (load(rows[0].get_unchecked(b)), load(rows[1].get_unchecked(b)));
-            let s = mmla_block(w0, w1, act(x[0].get_unchecked(b)), act(x[1].get_unchecked(b)));
-            let (dx0, dx1) = (*xd[0].get_unchecked(b), *xd[1].get_unchecked(b));
-            let scales = vmulq_f32(f16x4_to_f32([d0, d0, d1, d1]), vld1q_f32([dx0, dx1, dx0, dx1].as_ptr()));
-            // Even and odd blocks into separate accumulators (as in the
-            // `sdot` kernels), so consecutive FMAs do not wait on each other.
-            acc[b & 1] = vfmaq_f32(acc[b & 1], vcvtq_f32_s32(s), scales);
+/// Q8_0 activations of `t` tokens (`xq` is `[t, nb]` blocks, `xd` their
+/// scales as f32) → `[ceil(t/2), nb]` [`PairQ8`]s: tokens 2p and 2p + 1 in
+/// pair p, an odd last token paired with itself. Done once per matmul, so
+/// the kernel never interleaves activations itself.
+pub fn interleave_pairs(xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
+    let nb = xq.len() / t;
+    let mut out = Vec::with_capacity(t.div_ceil(2) * nb);
+    for p in 0..t.div_ceil(2) {
+        let (t0, t1) = (2 * p, (2 * p + 1).min(t - 1));
+        for b in 0..nb {
+            let (x0, x1) = (&xq[t0 * nb + b].qs, &xq[t1 * nb + b].qs);
+            let mut qs = [0; 2 * QK];
+            for k in 0..QK / 8 {
+                qs[16 * k..16 * k + 8].copy_from_slice(&x0[8 * k..8 * k + 8]);
+                qs[16 * k + 8..16 * k + 16].copy_from_slice(&x1[8 * k..8 * k + 8]);
+            }
+            let (d0, d1) = (xd[t0 * nb + b], xd[t1 * nb + b]);
+            out.push(PairQ8 { qs, d: [d0, d1, d0, d1] });
         }
     }
-    let mut out = [0.0; 4];
-    // SAFETY: `out` holds 4 floats.
-    unsafe { vst1q_f32(out.as_mut_ptr(), vaddq_f32(acc[0], acc[1])) };
     out
 }
 
-/// Two Q8_0 rows × two Q8_0 tokens with `smmla`; see [`mmla2`].
+/// Rows `rows[0..4]` · the four tokens of pairs `x[0]`, `x[1]`, for any block
+/// type whose `load` gives its 32 values as int8 and its f16 scale. Per
+/// block, the four rows are loaded and interleaved once (rows 0,1 and rows
+/// 2,3), then used against both token pairs: 16 `smmla`s for 16 outputs.
+///
+/// Returns four 2×2 tiles, tile `2·rp + tp` for row pair `rp` and token pair
+/// `tp`, each `[r0·t0, r0·t1, r1·t0, r1·t1]`. Every output has its own lane,
+/// integer sums and float additions, so its value does not depend on the
+/// rows or tokens it shares a tile with (passing the same row or pair twice
+/// is how callers handle the edges).
 ///
 /// # Safety
-/// As for [`mmla2`].
+/// The CPU must have i8mm; the four rows and both pair slices must have the
+/// same number of blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla2_q8_0(rows: [&[BlockQ8_0]; 2], x: [&[BlockQ8_0]; 2], xd: [&[f32]; 2]) -> [f32; 4] {
-    // SAFETY: forwarded from the caller; each block holds 32 int8s.
-    unsafe { mmla2(rows, x, xd, |w| ([vld1q_s8(w.qs.as_ptr()), vld1q_s8(w.qs.as_ptr().add(16))], w.d)) }
+unsafe fn mmla4<B>(rows: [&[B]; 4], x: [&[PairQ8]; 2], load: impl Fn(&B) -> ([int8x16_t; 2], u16)) -> [[f32; 4]; 4] {
+    // SAFETY: register-only NEON ops (AArch64 baseline).
+    let (mut acc, z) = unsafe { ([vdupq_n_f32(0.0); 4], vdupq_n_s32(0)) };
+    for b in 0..x[0].len() {
+        // SAFETY: the caller guarantees every slice has at least b + 1
+        // entries; each PairQ8 holds 64 int8s and 4 floats.
+        unsafe {
+            let (w0, d0) = load(rows[0].get_unchecked(b));
+            let (w1, d1) = load(rows[1].get_unchecked(b));
+            let (w2, d2) = load(rows[2].get_unchecked(b));
+            let (w3, d3) = load(rows[3].get_unchecked(b));
+            let ((a0, a1), (a2, a3)) = (zip8(w0[0], w1[0]), zip8(w0[1], w1[1]));
+            let ((c0, c1), (c2, c3)) = (zip8(w2[0], w3[0]), zip8(w2[1], w3[1]));
+            let w = [[a0, a1, a2, a3], [c0, c1, c2, c3]];
+            // [d0, d1, d2, d3] → [d0, d0, d1, d1] and [d2, d2, d3, d3].
+            let dw = f16x4_to_f32([d0, d1, d2, d3]);
+            let dw = [vzip1q_f32(dw, dw), vzip2q_f32(dw, dw)];
+            for tp in 0..2 {
+                let p = x[tp].get_unchecked(b);
+                let q = p.qs.as_ptr();
+                let xv = [vld1q_s8(q), vld1q_s8(q.add(16)), vld1q_s8(q.add(32)), vld1q_s8(q.add(48))];
+                let dx = vld1q_f32(p.d.as_ptr());
+                for rp in 0..2 {
+                    // Two chains of two, so each `smmla` need not wait for
+                    // the one before; the integer sum is exact either way.
+                    let s = vaddq_s32(smmla(smmla(z, w[rp][0], xv[0]), w[rp][1], xv[1]), smmla(smmla(z, w[rp][2], xv[2]), w[rp][3], xv[3]));
+                    acc[2 * rp + tp] = vfmaq_f32(acc[2 * rp + tp], vcvtq_f32_s32(s), vmulq_f32(dw[rp], dx));
+                }
+            }
+        }
+    }
+    let mut out = [[0.0; 4]; 4];
+    for (o, a) in out.iter_mut().zip(acc) {
+        // SAFETY: each `o` holds 4 floats.
+        unsafe { vst1q_f32(o.as_mut_ptr(), a) };
+    }
+    out
 }
 
-/// Two Q4_0 rows × two Q8_0 tokens with `smmla`: each row's nibbles are
-/// unpacked once for both tokens. See [`mmla2`].
+/// Four Q8_0 rows × four tokens with `smmla`; see [`mmla4`].
 ///
 /// # Safety
-/// As for [`mmla2`].
+/// As for [`mmla4`].
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla2_q4_0(rows: [&[BlockQ4_0]; 2], x: [&[BlockQ8_0]; 2], xd: [&[f32]; 2]) -> [f32; 4] {
+pub unsafe fn mmla4_q8_0(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: forwarded from the caller; each block holds 32 int8s.
+    unsafe { mmla4(rows, x, |w| ([vld1q_s8(w.qs.as_ptr()), vld1q_s8(w.qs.as_ptr().add(16))], w.d)) }
+}
+
+/// Four Q4_0 rows × four tokens with `smmla`: each row's nibbles are
+/// unpacked once for all four tokens. See [`mmla4`].
+///
+/// # Safety
+/// As for [`mmla4`].
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla4_q4_0(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
     // SAFETY: forwarded from the caller; 16 bytes of nibbles per block.
     unsafe {
-        mmla2(rows, x, xd, |w| {
+        mmla4(rows, x, |w| {
             let (lo, hi) = unpack_q4(vld1q_u8(w.qs.as_ptr()));
             ([lo, hi], w.d)
         })

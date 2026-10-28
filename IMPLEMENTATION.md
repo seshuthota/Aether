@@ -201,7 +201,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
-- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 2×2 done: Q4_0 prefill +22–37 %, Q8_0 unchanged, results/phase-6.md; next: activations interleaved once, 4×4 tile, repacked weights — paused 2026-10-24) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 4×4 tiles with activations interleaved once: prefill +28–53 % over 2×2, gap to llama.cpp 1.7–2.3×, results/phase-6.md; next: pp512 profile, repacked weights) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
 - [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md pending): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →

@@ -108,7 +108,59 @@ Prefill tok/s, round 1 / round 2:
 - Gap to llama.cpp (its tok/s ÷ ours, same round): Q4_0 2.3–2.8× (the `sdot`
   build 2.9–3.7×), Q8_0 2.4–3.3×.
 
-Not done yet (paused 2026-10-24 so the learning track can catch up):
-interleave the activations once per call instead of once per row pair, a
-4 rows × 4 tokens tile, then — if the profile still shows interleaving —
-repack the weights at load as llama.cpp does.
+## Prefill with `smmla`, 4 rows × 4 tokens (item 6.5, second step; `raw/prefill-ab-4x4/`)
+
+Two changes to the first version, which reloaded and interleaved both rows
+and both tokens for every 2×2 output tile:
+
+- **Activations interleaved once per matmul** (`interleave_pairs`): the
+  Q8_0 activations of tokens 2p and 2p + 1 are stored as one `PairQ8` per
+  block, already in the `[x0 0..8 | x1 0..8 | …]` order `smmla` takes, with
+  their scales as `[d0, d1, d0, d1]`. The kernel only loads them.
+- **4 rows × 4 tokens per tile** (`mmla4_q8_0`, `mmla4_q4_0`): per block the
+  four rows are loaded (and for Q4_0 unpacked) and interleaved once, then
+  used against two token pairs: 16 `smmla`s for 16 outputs, against 4
+  `smmla`s and 8 interleaving instructions for 4 outputs before.
+
+Edges (a row group or token-pair group past the end) repeat the last row or
+pair; each output still has its own lane, integer sums and float additions,
+so threads cannot change the result. The 2×2 kernel is gone; decode (one
+token) still uses the `sdot` kernels.
+
+**Correctness.** All 86 library tests pass on the phone, including the
+batched goldens and the threaded = one-thread check. Perplexity on the
+phone, wikitext-2, 20 × 512 (`ppl-q4_0.txt`, `ppl-q8_0.txt`):
+
+| Format | ours, 4×4 | ours, 2×2 | llama.cpp |
+| --- | --- | --- | --- |
+| Q4_0 | 19.7486 | 19.7499 | 19.7283 ± 0.837 |
+| Q8_0 | 16.3532 | 16.3471 | 16.3425 ± 0.671 |
+
+The new order of float additions moves PPL by less than 0.01, far inside
+the ± range.
+
+**Speed.** Qwen2.5-0.5B, cores 2–7, 2026-10-28, on battery (31 % → 29 %,
+discharging), screen kept on, every run started below 48 °C; per round the
+new build, the previous commit (`37546a0`, 2×2) and llama-bench ran back to
+back (`scripts/prefill-ab.sh`). Prefill tok/s, round 1 / round 2:
+
+| | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 4×4 | 370 / 257 | 334 / 250 | 273 / 224 |
+| Q4_0 2×2 (before) | 241 / 187 | 230 / 178 | 213 / 166 |
+| Q4_0 llama.cpp | 733 / 541 | 733 / 525 | 556 / 414 |
+| Q8_0 4×4 | 401 / 288 | 326 / 280 | 287 / 249 |
+| Q8_0 2×2 (before) | 268 / 200 | 251 / 189 | 222 / 173 |
+| Q8_0 llama.cpp | 712 / 555 | 762 / 571 | 544 / 425 |
+
+- Same-round gain over 2×2: Q4_0 +28–53 %, Q8_0 +29–50 %. Q8_0 now gains
+  as much as Q4_0: the interleaving that ate the `smmla` saving is now done
+  once per four rows (weights) or once per matmul (activations).
+- Round 2 ran 25–30 % slower for every build, llama.cpp included, although
+  each run started below 48 °C; only same-round comparisons hold.
+- Gap to llama.cpp (its tok/s ÷ ours, same round): Q4_0 1.9–2.2×, Q8_0
+  1.7–2.3× (2×2: 2.3–3.3×).
+
+Not done yet: a profile of prefill at pp512 (where the gain is smallest in
+round 1) to see what now dominates; repacking the weights at load (rows
+interleaved once, as llama.cpp does) if the weight `zip`s still show.
