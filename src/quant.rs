@@ -271,6 +271,25 @@ pub fn q4_k_scale_min(scales: &[u8; 12], j: usize) -> (u8, u8) {
     }
 }
 
+/// All 8 scales and all 8 mins of a Q4_K block at once, with 32-bit word
+/// operations (ggml's `utmp` trick in its dot kernels): the same values as
+/// [`q4_k_scale_min`] for j = 0..8, without a branch per sub-block.
+#[inline(always)]
+pub fn q4_k_scales_mins(scales: &[u8; 12]) -> ([u8; 8], [u8; 8]) {
+    const M1: u32 = 0x3f3f_3f3f;
+    const M2: u32 = 0x0f0f_0f0f;
+    const M3: u32 = 0x0303_0303;
+    let w = |i: usize| u32::from_le_bytes([scales[4 * i], scales[4 * i + 1], scales[4 * i + 2], scales[4 * i + 3]]);
+    let (u0, u1, u2) = (w(0), w(1), w(2));
+    let sc = [u0 & M1, (u2 & M2) | (((u0 >> 6) & M3) << 4)];
+    let m = [u1 & M1, ((u2 >> 4) & M2) | (((u1 >> 6) & M3) << 4)];
+    let bytes = |a: [u32; 2]| {
+        let (x, y) = (a[0].to_le_bytes(), a[1].to_le_bytes());
+        [x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3]]
+    };
+    (bytes(sc), bytes(m))
+}
+
 /// The 256 4-bit values of a Q4_K block, in element order.
 pub fn q4_k_values(blk: &BlockQ4_K) -> [u8; QK_K] {
     let mut q = [0; QK_K];

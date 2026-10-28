@@ -250,8 +250,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       byte-identical to llama.cpp, `sdot`, `smmla`, repacked four rows at a time), Q4_K and Q6_K
       decoders (identical to gguf's on random blocks) and `sdot` kernels; PPL/KLD match
       llama-perplexity for SmolLM2-135M Q4_K_M and Q5_0 and Qwen2.5-0.5B Q4_K_M; `smmla` for the
-      K-quants on rows unpacked once per matmul (pp512 cycles −41 %). Open: faster K-quant decode
-      kernels (25 % of Q4_K_M decode).
+      K-quants on rows unpacked once per matmul (pp512 cycles −41 %); Q4_K decode scales as vectors
+      (decode cycles −4 %). Open: Q6_K decode (12 % of Q4_K_M decode).
 - [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
 - [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
 

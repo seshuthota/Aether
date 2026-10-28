@@ -567,3 +567,25 @@ screen off so clocks capped at 1.79 / 1.02 GHz for both engines,
 **The prefill gap is closed**: level with llama.cpp for Q4_0 (0 to +14 %),
 ahead for Q8_0 and far ahead for Q4_K_M. These ran with the screen off; a
 check with the screen on (higher, uncapped clocks) is still to do.
+
+## Q4_K decode: scales as vectors (2026-10-29; `raw/kdecode/`)
+
+**Change** (`dot4_q4_k_q8_0`, decode): the 8 six-bit scales and 8 mins of a
+super-block are decoded at once with 32-bit word operations
+(`q4_k_scales_mins`, ggml's `utmp` trick) instead of a branchy call per
+sub-block. Each sub-block's `sdot` result is reduced to one lane with
+pairwise adds (`vpaddq_s32`), so the scales (d·sc·d_x) and the min term
+(dmin·m·Σx·d_x) apply as two vector FMAs per four sub-blocks instead of one
+scalar FMA and a scalar min sum each.
+
+**Result** (Qwen2.5-0.5B Q4_K_M, cores 2–7, cycles of 128 decode steps =
+tg128 − tg1, two rounds; `cycles.txt`):
+
+| | cycles, 128 steps | tg128 tok/s (same runs) | `dot4_q4_k_q8_0` share |
+| --- | --- | --- | --- |
+| before (`9d8e8c1`) | 19.06 G / 18.78 G | 94.9 / 100.4 | 8.6 % |
+| after | 18.09 G / 18.18 G (−4 %) | 107.8 / 107.6 | 6.3 % |
+
+The kernel's own cycles fell by about a quarter; the whole step by 4 %
+because Q4_K is only part of `ffn_down`. PPL 16.7330 (`ppl.txt`; 16.7354
+before, only the float summation order changed).
