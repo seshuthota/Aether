@@ -728,7 +728,13 @@ bisected (`prefill-regress*/`), and **no commit is responsible**:
 - Not transparent huge pages: the phone has THP `always` but defrag
   `never`, and our process had 0 kB of `AnonHugePages` in every run.
 
-So single A/B pairs of timed prefill runs on this phone can be off by
-20 % in either direction. The cycle counts used for the changes above do
-not have this problem; timed comparisons need more rounds, and the cause
-of the slow mode is still open.
+**The cause** (`prefill-regress-q4_0/freq-samples.txt`): sampling cpufreq
+every 0.25 s during such runs, the prime cores' (6–7) `scaling_max_freq`
+drops from 1.69 GHz to **1.02 GHz** partway through the slow runs and
+stays there; in the fast runs it never does. It is a thermal / power cap
+on the prime cluster, applied after the sustained load of the earlier
+tests. (Both caps are far below the 3.53 / 4.32 GHz maximums because the
+screen is off overnight.) So timed A/B pairs on this phone can be off by
+20 % in either direction depending on whether the cap hit; cycle counts
+are unaffected, and timed comparisons should sample `scaling_max_freq`
+or use more rounds.
