@@ -52,8 +52,63 @@ stories15M f32 decode on prime core 7 (`results/phase-6/raw/model-speed.txt`,
 commit `3788a28`): **422 tok/s**, against the Phase 2 scalar baseline of
 88.6 tok/s on the same core (`results/phase-2.md`) — ×4.8.
 
-## Pending
+## GEMM: FLOPs per cycle (2026-10-28)
 
-- GEMM GFLOPS against the FMA peak (`examples/gemm_bench.rs` exists; its
-  phone output was not saved).
-- `simpleperf` profile of the NEON build.
+`examples/gemm_bench.rs`, one kernel and one shape per run on prime core 7,
+under `simpleperf stat -e cpu-cycles:u` (`raw/gemm-cycles.txt`). Dividing
+the floating-point operations by the cycles gives a number that does not
+depend on the clock, which the phone changed during the plain runs
+(`raw/gemm-core7.txt`, `raw/gemm-freq-core7.txt`: core 7 spent about half
+the samples at 1.02 GHz). The cycles also count setup (filling the inputs),
+so these are lower bounds.
+
+| Kernel | 32×288×288 | 64×768×288 | 128×896×896 |
+| --- | --- | --- | --- |
+| scalar | 1.18 | 1.18 | 0.78 |
+| NEON GEMV once per token | 11.5 | 11.5 | 11.1 |
+| NEON GEMM, 4×4 tiles | **27.9** | **29.1** | **27.8** |
+
+(tokens × columns × rows; FLOP/cycle, one multiply-add = 2 FLOPs.)
+
+- **Against the peak.** *Assumption, not measured:* if each Oryon core has
+  four 128-bit FMA pipes, its peak is 4 pipes × 4 lanes × 2 = 32 f32
+  FLOP/cycle. The GEMM then reaches 87–91 % of it. At the 2.44 GHz battery
+  cap that is 68–71 GFLOPS; the best plain run on core 7 measured 74 GFLOPS
+  (`raw/gemm-core7.txt`), consistent with a slightly higher clock at that
+  moment.
+- **GEMV once per token reaches 11 FLOP/cycle**, a third of the peak: each
+  weight is loaded for one multiply-add, so it is limited by loads. The
+  tile reuses each loaded weight for 4 tokens, and that factor shows in the
+  numbers (×2.5).
+
+## Where the time goes in the NEON build (2026-10-28)
+
+stories15M f32 decode, 256 steps, prime core 7, the same run as the Phase 2
+profile (`raw/profile-neon.txt`, `raw/profile-neon-stat.txt`). It still
+runs at 422.4 tok/s, the same speed as when this phase was first measured.
+
+| Symbol | Share of cycles |
+| --- | --- |
+| `kernels::neon::gemv` | 89.2 % |
+| `kernels::neon::attention_head` | 4.8 % |
+| expf, sampler, allocator, sincosf, powf, … | < 1 % each |
+
+Counters for the whole run, against Phase 2's scalar build:
+
+| | scalar (Phase 2) | NEON |
+| --- | --- | --- |
+| cycles | 6.10 G | 1.29 G (×4.7 fewer) |
+| instructions | 9.98 G | 2.60 G (×3.8 fewer) |
+| instructions per cycle | 1.64 | 2.02 |
+| L1D accesses | 2.34 G | 1.86 G |
+| L1D refills | 5.4 M | 81.8 M |
+
+- The matrix-vector product is still nearly all of the time, but now it
+  streams 60.8 MB × 422 = **25.7 GB/s** of weights instead of 5.4 GB/s.
+  That is 42 % of the ~61 GB/s one prime core measured in Phase 1, so
+  this kernel is limited by memory, as Phase 1 predicted for decode.
+- Attention grew from 1.1 % to 4.8 % only because everything else got
+  faster.
+- The L1D refills went up 15×. Likely cause (not measured further): at
+  5.4 GB/s the hardware prefetcher had every line in place before the
+  load; at 25.7 GB/s more loads arrive before their line does.
