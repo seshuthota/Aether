@@ -1,0 +1,16 @@
+# 2026-10-29T01:21:14+05:30, commit 4bcfa25+uncommitted, start 56500 m°C
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 74
+# Capacity level: -1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf | q5_0 | weights 391.7 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 214 ms
+test,tok_per_s,ms
+pp64,242.8,263.6
+pp256,234.4,1092.4
+pp512,179.2,2857.2
+tg16@d0,71.2,224.8
+# tg16@d0 per token: median 13.97 ms, p95 14.38 ms (48 samples)
+ttft_pp64,1.1,911.0
+# peak RSS 461540 kB

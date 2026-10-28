@@ -234,7 +234,7 @@ fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8]
             Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q5_0(b) => neon_quant::mmla4_q5_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
-            Weight::Q4_K(_) | Weight::Q6_K(_) => unreachable!("no smmla kernel for K-quants (see has_mmla_kernel)"),
+            Weight::Q4_K(_) | Weight::Q6_K(_) => unreachable!("K-quants are unpacked first (see unpack_k4)"),
             Weight::Q8_0x4(b) => neon_quant::mmla4_q8_0x4(&b[group4(rows, nb)], x),
             Weight::Q4_0x4(b) => neon_quant::mmla4_q4_0x4(&b[group4(rows, nb)], x),
             Weight::Q5_0x4(b) => neon_quant::mmla4_q5_0x4(&b[group4(rows, nb)], x),
@@ -243,11 +243,53 @@ fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8]
     }
 }
 
-/// Whether [`mmla4`] handles `w`'s format (K-quants go through
-/// [`quant_rows`] instead).
+/// Whether `w` is a K-quant: [`quant_rows_mmla`] unpacks those four rows
+/// at a time ([`unpack_k4`]) instead of calling [`mmla4`].
 #[cfg(target_arch = "aarch64")]
-fn has_mmla_kernel(w: &Weight) -> bool {
-    !matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))
+fn is_k_quant(w: &Weight) -> bool {
+    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))
+}
+
+/// Rows `rows` of a K-quant matrix (rows of `nb` 32-value blocks), unpacked
+/// for [`neon_quant::mmla4_k`]: once per matmul for each group of four
+/// rows, then used for every token.
+#[cfg(target_arch = "aarch64")]
+fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4> {
+    use crate::quant::{QK_K, f16_to_f32, q4_k_scale_min, q4_k_values, q6_k_values};
+    let nk = nb / (QK_K / QK);
+    let mut out = vec![neon_quant::KBlock4 { qs: [0; 4 * QK], sa: [0.0; 4], sb: [0.0; 4], bias: [0.0; 4] }; nb];
+    for (r, &row) in rows.iter().enumerate() {
+        for k in 0..nk {
+            // This super-block's 256 values, and per 32-value block j its
+            // two half scales and bias.
+            let (vals, sab): ([i8; QK_K], [(f32, f32, f32); 8]) = match w {
+                Weight::Q4_K(b) => {
+                    let blk = &b[row * nk + k];
+                    let (d, dmin) = (f16_to_f32(blk.d), f16_to_f32(blk.dmin));
+                    (q4_k_values(blk).map(|q| q as i8), std::array::from_fn(|j| {
+                        let (sc, m) = q4_k_scale_min(&blk.scales, j);
+                        (d * sc as f32, d * sc as f32, -(dmin * m as f32))
+                    }))
+                }
+                Weight::Q6_K(b) => {
+                    let blk = &b[row * nk + k];
+                    let d = f16_to_f32(blk.d);
+                    (q6_k_values(blk), std::array::from_fn(|j| (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)))
+                }
+                _ => unreachable!("unpack_k4 is for K-quants"),
+            };
+            for j in 0..QK_K / QK {
+                let o = &mut out[k * (QK_K / QK) + j];
+                for c in 0..QK / 8 {
+                    for v in 0..8 {
+                        o.qs[32 * c + 8 * r + v] = vals[32 * j + 8 * c + v];
+                    }
+                }
+                (o.sa[r], o.sb[r], o.bias[r]) = sab[j];
+            }
+        }
+    }
+    out
 }
 
 /// [`group`] for four row indices, which must be one whole group.
@@ -272,9 +314,15 @@ unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w
     let nb = xp.len() / pairs;
     for i in r.clone().step_by(4) {
         let rows = [0, 1, 2, 3].map(|k| (i + k).min(r.end - 1));
+        let kb = is_k_quant(w).then(|| unpack_k4(w, rows, nb));
         for p in (0..pairs).step_by(2) {
             let ps = [p, (p + 1).min(pairs - 1)];
-            let v = mmla4(w, rows, ps, xp, nb);
+            let v = match &kb {
+                // SAFETY: callers check has_mmla; both pair slices have nb
+                // entries, as kb does.
+                Some(kb) => unsafe { neon_quant::mmla4_k(kb, ps.map(|p| &xp[p * nb..(p + 1) * nb])) },
+                None => mmla4(w, rows, ps, xp, nb),
+            };
             for (tile, v) in v.iter().enumerate() {
                 let (rp, tp) = (tile / 2, tile % 2);
                 for (k, v) in v.iter().enumerate() {
@@ -331,7 +379,7 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
         let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
         let o = SharedOut(out.as_mut_ptr());
         #[cfg(target_arch = "aarch64")]
-        if t > 1 && has_mmla() && has_mmla_kernel(w) {
+        if t > 1 && has_mmla() {
             let xp = neon_quant::interleave_pairs(&xq, &xd, t);
             match pool.filter(|p| p.threads() > 1) {
                 // SAFETY: each thread writes only its own rows of `out`.
@@ -539,7 +587,8 @@ mod tests {
     }
 
     /// K-quant matrices (random blocks, decoded by gguf) through the
-    /// model's path: one token at a time and all `t` at once, on one and
+    /// model's path: one token at a time (`sdot`) and all `t` at once
+    /// (`smmla` on rows unpacked per group, where i8mm exists), on one and
     /// three threads, against the float64 "b" reference.
     #[test]
     fn k_quant_linear_matches_reference() {
@@ -557,11 +606,15 @@ mod tests {
                     let want = arr(&dir, &format!("out_{name}_b"));
                     let d = want.len() / t;
                     let bound = 1e-6 * (n as f32).sqrt();
+                    let mut first = None;
                     for p in [None, Some(&pool)] {
                         let mut all = vec![f32::NAN; t * d];
                         linear_batch_on(p, &mut all, &x, &w, t);
                         let (_, rel) = max_errors(&all, &want);
                         assert!(rel < bound, "{} {name} batch: rel {rel:.2e}", dir.display());
+                        // Threads split rows; every output is computed the
+                        // same way whichever thread has it.
+                        assert!(first.get_or_insert_with(|| all.clone()) == &all, "{} {name}: threads changed the result", dir.display());
                         for tt in 0..t {
                             let mut one = vec![f32::NAN; d];
                             linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);

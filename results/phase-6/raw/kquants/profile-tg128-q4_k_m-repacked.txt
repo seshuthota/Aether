@@ -1,0 +1,13 @@
+pp1,78.3,12.8
+tg128@d0,84.7,1511.5
+Overhead  Symbol
+32.92%    aether::kernels::neon_quant::gemv4_q5_0x4
+16.20%    aether::kernels::neon_quant::gemv4_q8_0x4
+14.02%    aether::kernels::neon_quant::dot4_q6_k_q8_0
+13.77%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{clos
+10.59%    aether::kernels::neon_quant::dot4_q4_k_q8_0
+3.93%     aether::kernels::quant_rows
+2.24%     <aether::pool::ThreadPool>::run
+1.65%     aether::kernels::neon_quant::mmla4_q5_0x4
+1.30%     aether::kernels::neon::attention_head::<aether::model::transformer::attention::{closure#0}
+0.78%     <aether::pool::ThreadPool>::for_blocks::{closure#0}

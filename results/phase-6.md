@@ -428,5 +428,31 @@ Decode +28 % / +16 %, prefill +21–27 %: **Q4_K_M now runs faster than
 llama.cpp's on this phone** (decode +13 % at d0, +5 % at d512; prefill
 +24–31 %), even though our K-quant matrices still go one token at a time.
 
-Not done yet: `smmla` for Q4_K / Q6_K; the remaining Q4_0 / Q8_0 prefill gap
-(1.15–1.5×).
+**`smmla` for Q4_K / Q6_K** (prefill): each group of four rows is unpacked
+once per matmul (`unpack_k4`) into 32-value blocks of int8 values (Q4_K: q
+in 0..15; Q6_K: q − 32) with, per row, an f32 scale for each 16-value half
+and a bias on Σx (Q4_K's −dmin·m, 0 for Q6_K). `mmla4_k` then runs every
+token over the group: two `smmla` chains per tile (one per half, each with
+its own scales) plus one FMA for the bias, whose Σx·d per token is computed
+with the activation pairs. The unpacked group is scratch (no memory kept),
+and its cost is shared by all tokens.
+
+Accuracy: Qwen2.5-0.5B Q4_K_M PPL 16.7354, KLD 0.031719, same top 90.29 %
+(`aether-phone-qwen-q4_k_m-mmla.txt`), against 16.7088 / 0.031828 / 90.43 %
+with the per-token `sdot` kernels and llama.cpp's 16.7657 ± 0.688: only the
+float summation order changed. 92/92 tests on the phone (the K-quant test
+also checks that 1 and 3 threads give the same bits).
+
+Speed: the timed A/B (`speed-kmmla/`) was unusable (the clock changed mid-run:
+llama.cpp's own pp512 fell to 61 tok/s), so cycles again (pp512, two rounds
+each, `profile-pp512-kmmla-*.txt`):
+
+| | all cycles | K-quant matrices | pp512 in the same runs |
+| --- | --- | --- | --- |
+| before (`4bcfa25`, `sdot` per token) | 79.4 G | 40.9 G (51.5 %) | 173–175 tok/s |
+| after (`mmla4_k`) | 46.8 G (−41 %) | ~10.5 G (`mmla4_k` 16 %, unpack in `quant_rows_mmla` ~5 %) | 331 tok/s |
+
+Q4_K_M prefill is now about twice llama.cpp's on this phone (153–168 tok/s
+in the cooler runs above).
+
+Not done yet: the remaining Q4_0 / Q8_0 prefill gap (1.15–1.5×).

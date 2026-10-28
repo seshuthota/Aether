@@ -537,12 +537,15 @@ fn zip8(a: int8x16_t, b: int8x16_t) -> (int8x16_t, int8x16_t) {
 /// The activations of two tokens, one 32-value block, arranged for `smmla`:
 /// 8 values of the first token, then the same 8 of the second, four times
 /// (`[x0 0..8 | x1 0..8 | x0 8..16 | x1 8..16 | …]`), and the scales
-/// `[d0, d1, d0, d1]` as f32 to match the lanes of an `smmla` result.
+/// `[d0, d1, d0, d1]` as f32 to match the lanes of an `smmla` result. `s`
+/// holds each token's Σ q · d in the same lanes (the K-quant kernels'
+/// bias terms multiply it).
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
 pub struct PairQ8 {
     pub qs: [i8; 2 * QK],
     pub d: [f32; 4],
+    pub s: [f32; 4],
 }
 
 /// Q8_0 activations of `t` tokens (`xq` is `[t, nb]` blocks, `xd` their
@@ -562,7 +565,9 @@ pub fn interleave_pairs(xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
                 qs[16 * k + 8..16 * k + 16].copy_from_slice(&x1[8 * k..8 * k + 8]);
             }
             let (d0, d1) = (xd[t0 * nb + b], xd[t1 * nb + b]);
-            out.push(PairQ8 { qs, d: [d0, d1, d0, d1] });
+            let sum = |x: &[i8; QK], d: f32| x.iter().map(|&q| q as i32).sum::<i32>() as f32 * d;
+            let (s0, s1) = (sum(x0, d0), sum(x1, d1));
+            out.push(PairQ8 { qs, d: [d0, d1, d0, d1], s: [s0, s1, s0, s1] });
         }
     }
     out
@@ -777,6 +782,68 @@ pub unsafe fn mmla4_q4_0x4(group: &[BlockQ4_0x4], x: [&[PairQ8]; 2]) -> [[f32; 4
 pub unsafe fn mmla4_q5_0x4(group: &[BlockQ5_0x4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
     // SAFETY: forwarded from the caller (b < nb = group.len()).
     unsafe { mmla4::<3>(x[0].len(), x, |b| load_q5_0x4(group.get_unchecked(b))) }
+}
+
+/// One 32-value block of four rows of a K-quant matrix, unpacked once per
+/// matmul for [`mmla4_k`]: the values as int8 in [`BlockQ8_0x4`]'s layout
+/// (Q4_K: q in 0..=15; Q6_K: q − 32), each row's f32 scale for values
+/// 0..16 (`sa`) and 16..32 (`sb`) (one Q4_K sub-block, two Q6_K ones), and
+/// each row's coefficient on the activation's Σx (`bias`: Q4_K's −dmin·m,
+/// 0 for Q6_K).
+#[derive(Clone, Copy)]
+pub struct KBlock4 {
+    pub qs: [i8; 4 * QK],
+    pub sa: [f32; 4],
+    pub sb: [f32; 4],
+    pub bias: [f32; 4],
+}
+
+/// Four K-quant rows (unpacked, `g`) × the four tokens of pairs `x[0]`,
+/// `x[1]`, with `smmla`; the result is laid out as in [`mmla4`]. Per block
+/// each tile has two chains of two `smmla`s, one per 16-value half, each
+/// scaled by its half's row scales, plus the bias times Σx.
+///
+/// # Safety
+/// The CPU must have i8mm; both pair slices must have `g.len()` entries.
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla4_k(g: &[KBlock4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: register-only NEON ops (AArch64 baseline).
+    let (mut acc, z) = unsafe { ([vdupq_n_f32(0.0); 4], vdupq_n_s32(0)) };
+    for (b, w) in g.iter().enumerate() {
+        // SAFETY: each block holds 128 int8s and 3 × 4 floats; the caller
+        // guarantees both pair slices have g.len() entries.
+        unsafe {
+            let q = w.qs.as_ptr();
+            let v = |o: usize| vld1q_s8(q.add(o));
+            let wv = [[v(0), v(32), v(64), v(96)], [v(16), v(48), v(80), v(112)]];
+            // [r0, r1, r2, r3] → [r0, r0, r1, r1] and [r2, r2, r3, r3].
+            let dup = |a: &[f32; 4]| {
+                let f = vld1q_f32(a.as_ptr());
+                [vzip1q_f32(f, f), vzip2q_f32(f, f)]
+            };
+            let (sa, sb, bias) = (dup(&w.sa), dup(&w.sb), dup(&w.bias));
+            for tp in 0..2 {
+                let p = x[tp].get_unchecked(b);
+                let xq = p.qs.as_ptr();
+                let xv = [vld1q_s8(xq), vld1q_s8(xq.add(16)), vld1q_s8(xq.add(32)), vld1q_s8(xq.add(48))];
+                let (dx, sx) = (vld1q_f32(p.d.as_ptr()), vld1q_f32(p.s.as_ptr()));
+                for rp in 0..2 {
+                    let lo = smmla(smmla(z, wv[rp][0], xv[0]), wv[rp][1], xv[1]);
+                    let hi = smmla(smmla(z, wv[rp][2], xv[2]), wv[rp][3], xv[3]);
+                    let a = &mut acc[2 * rp + tp];
+                    *a = vfmaq_f32(*a, vcvtq_f32_s32(lo), vmulq_f32(sa[rp], dx));
+                    *a = vfmaq_f32(*a, vcvtq_f32_s32(hi), vmulq_f32(sb[rp], dx));
+                    *a = vfmaq_f32(*a, bias[rp], sx);
+                }
+            }
+        }
+    }
+    let mut out = [[0.0; 4]; 4];
+    for (o, a) in out.iter_mut().zip(acc) {
+        // SAFETY: each `o` holds 4 floats.
+        unsafe { vst1q_f32(o.as_mut_ptr(), a) };
+    }
+    out
 }
 
 /// One repacked group of four rows · one Q8_0 token (decode), with `sdot`:
