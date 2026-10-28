@@ -1,0 +1,14 @@
+# 2026-10-28T22:54:30+05:30, commit 50c2c39, start 44600 m°C
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 93
+# Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |            pp64 |        624.30 ± 9.20 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |           pp256 |        630.97 ± 3.98 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |           pp512 |        471.54 ± 2.07 |
+
+build: d00685831 (8660)

@@ -210,5 +210,90 @@ round 2:
 +2–10 % in every cell, most at pp512 (Q8_0 +10 %), where attention is
 largest. Gap to llama.cpp now 1.7–1.9× (Q4_0) and 1.5–1.9× (Q8_0).
 
-Not done yet: repacking the weights at load (rows
-interleaved once, as llama.cpp does) if the weight `zip`s still show.
+## Repacked weights, NEON activation quantizer (item 6.5, third step; `raw/pending-checks/`)
+
+Built while the phone was away, then checked on it on 2026-10-28 evening.
+**Conditions differ from the morning**: the phone was charging (AC, 19 → 40 %),
+clock caps 1.79 GHz (performance) / 1.96 GHz (prime) instead of ~2.4 GHz,
+every run started below 48 °C. Absolute numbers are therefore not
+comparable with the tables above; each change is an A/B against the commit
+before it, alternating, two rounds (`scripts/prefill-ab.sh` with `NEW=`).
+
+**Repack** (`31513f0`): quantized matrices stored four rows interleaved
+8 bytes at a time with the four scales together (`BlockQ8_0x4`,
+`BlockQ4_0x4`, llama.cpp's `4x8` layout; Q4_0 nibbles stored XOR 8),
+repacked once in `Transformer::new` where i8mm is present, mapped pages
+released after the copy. The `smmla` loop loses its 8 weight `zip`s per
+block; the Q4_0 unpack is one shift or one mask (values ×16, undone exactly
+by a fixed-point int→float conversion). Decode uses a matching `sdot` GEMV
+(8 `sdot`s per block of four rows, as llama.cpp's `gemv_q4_0_4x8_q8_0`).
+Prefill output is bit-identical to the row-major kernel (PPL unchanged to
+the last digit: 19.7486 / 16.3532).
+
+| tok/s, round 1 / round 2 | pp64 | pp256 | pp512 | tg64 @ d0 | tg64 @ d256 | tg64 @ d512 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Q4_0 repacked | 374 / 366 | 323 / 312 | 286 / 285 | 149 / 147 | 134 / 133 | 121 / 121 |
+| Q4_0 row-major | 305 / 279 | 274 / 273 | 252 / 251 | 113 / 110 | 102 / 104 | 95 / 97 |
+| Q4_0 llama.cpp | 554 / 553 | 546 / 544 | 419 / 418 | 151 / 140 | 135 / 131 | 121 / 114 |
+| Q8_0 repacked | 400 / 404 | 333 / 335 | 301 / 299 | 97 / 94 | 87 / 86 | 82 / 83 |
+| Q8_0 row-major | 349 / 350 | 307 / 309 | 286 / 275 | 89 / 89 | 82 / 84 | 78 / 76 |
+| Q8_0 llama.cpp | 558 / 550 | 573 / 566 | 428 / 421 | 92 / 95 | 84 / 90 | 78 / 79 |
+
+- Prefill: Q4_0 +13–31 %, Q8_0 +5–15 %.
+- GEMV on one prime core (`gemv-bench.txt`, `_b_sdot` vs `_b_sdot_x4`):
+  Q4_0 10.3–12.6 → 13.8–19.1 GB/s (256 MB matrix 10.5 → 19.1), Q8_0
+  unchanged to +23 % (DRAM 29.3 → 33.3).
+- Cost: load until the model is ready 192–194 ms for Q4_0 and 305–320 ms
+  for Q8_0, against ~75 ms without repacking (`bench_suite` now times
+  `Transformer::new` too). Peak RSS does not grow (Q4_0 343 vs 349 MB, Q8_0
+  585 vs 590 MB in the A/B runs): the mapped pages are released as each
+  matrix is copied. The repacked weights are heap memory, which Android's
+  low-memory killer counts; mapped file pages it could simply drop.
+- **Decode: Q4_0 +25–34 %, now level with llama.cpp** (it was compute-bound
+  on the nibble unpack, item 6.4); Q8_0 +3–9 %, level with or ahead of
+  llama.cpp.
+
+**NEON activation quantizer** (`0d1510f`): Q8_0 quantization of the
+activations, byte-identical to the reference by construction (exact max,
+same scale math, `vcvtaq` rounds like `roundf`; checked against llama.cpp's
+bytes on the phone). It runs on one thread before every quantized matmul, so
+the other threads wait for it.
+
+| tok/s, round 1 / round 2 | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 NEON quantizer | 466 / 469 | 417 / 415 | 339 / 343 |
+| Q4_0 scalar quantizer | 377 / 415 | 355 / 362 | 307 / 311 |
+| Q4_0 llama.cpp | 608 / 624 | 622 / 631 | 472 / 472 |
+| Q8_0 NEON quantizer | 537 / 518 | 443 / 455 | 368 / 374 |
+| Q8_0 scalar quantizer | 440 / 448 | 374 / 375 | 331 / 326 |
+| Q8_0 llama.cpp | 620 / 624 | 644 / 624 | 466 / 477 |
+
++10–24 %. **Gap to llama.cpp's prefill now 1.15–1.5×** (Q4_0 1.3–1.5×,
+Q8_0 1.15–1.45×); it was 2.3–3.3× before this item's first step.
+
+**Attention split across positions — tried and reverted** (`bdbf963`,
+reverted in `655c34e`; `raw/pending-checks/chunked-decode*/`). Past 128
+positions each head was computed in chunks (unnormalised sum and its max /
+exp-sum per chunk, merged by `e^(m_i − m)` rescaling), so decode had
+(head, chunk) items to share among threads instead of 14 heads. Correct
+(numpy up to 1024 positions; llama2.c over the whole 256 context) but no
+faster: tg64 at d0 / d256 / d512 unchanged, d1024 −2 % and d2048 −5 % for
+Q4_0, +1–2 % for Q8_0. After the repack, attention no longer limits decode
+at these depths: our d0 → d512 drop (−20 %) is llama.cpp's, and without
+chunking we decode faster than llama.cpp at depth (Q4_0 109 vs 101–102
+tok/s at d1024, 84 vs 78 at d2048). It changed PPL by 0.02–0.04 (rounding:
+llama.cpp's own flash-attention on/off moves its PPL by 0.021 / 0.019 on
+this phone, `llamacpp-ppl-*-fa-*.txt`). The long-context llama2.c test it
+came with stays.
+
+**NEON softmax — tried and reverted** (`85d1a12`, reverted in `351d83c`;
+`raw/pending-checks/softmax-*/`): a vector `exp` (range reduction plus a
+degree-5 polynomial, max relative error 1.9e-7) in attention's softmax.
+Decode tg64 at d0–d512 −4 % to +1 % (one Q8_0 run −10 %), prefill −4 % to
++5 %: nothing measurable, so the scalar `expf` stays.
+
+**After both reverts** (`351d83c` = repack + NEON quantizer): 89/89 tests on
+the phone, PPL 19.7486 / 16.3532, the same digits as before the repack
+(`ppl-*-final.txt`): both changes are bit-identical by design.
+
+Not done yet: K-quant formats; the remaining prefill gap (1.15–1.5×).

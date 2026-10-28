@@ -26,39 +26,25 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 2 Scalar | llama2.c loader + tokenizer, forward pass, KV cache, sampler, CLI | llama2.c, bit-identical | stories15M 88.6 tok/s on one prime core | — |
 | 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s | kernel choice for short rows; GEMM GFLOPS |
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
-| 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5), `tokenizers` (433 strings) | — | 360M |
-| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s; PPL matches llama.cpp | `smmla` GEMM (6.5): 2×2 first step done |
-| 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token | prefill 2–6× behind llama.cpp |
+| 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5; 360M ≤ 1.0e-4), `tokenizers` (433 strings) | SmolLM2-360M Q4_0 183 tok/s (charging) | — |
+| 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp | K-quants |
+| 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp | prefill 1.15–1.5× behind llama.cpp (was 2–6×) |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Biggest open items: quantized prefill GEMM with `smmla` (6.5), attention split across positions as
-well as heads, SmolLM2-360M (5.6), a clean Phase 4 sweep.
+Biggest open items (2026-10-28): the remaining prefill gap to llama.cpp (1.15–1.5×), GEMM GFLOPS
+and a NEON profile (3.7), the later phases (K-quants, Vulkan). Attention split across positions was
+tried and gave nothing at depths up to 2048 (results/phase-6.md).
 
-### Pending phone checks (written 2026-10-28, while the phone was away)
+### Phone checks of the host-built commits (2026-10-28): done
 
-Commits built and tested on the host only; the AArch64 paths they add run
-only on the phone. Nothing below is a result until it has run there. Saved
-baseline `bench_suite` builds (rebuild from the commit if gone):
-`bca0a1b` (last phone-verified), `31513f0` (repack), `85d1a12` (+softmax).
-
-- [x] **Full suite** (89/89 on the phone, 2026-10-28, charging): `cargo test --release --target aarch64-linux-android --lib`
-      (89 tests; new or extended: `long_context_matches_llama2c`, repacked layout in `quantized_linear_*`,
-      NEON softmax in `rmsnorm_softmax_swiglu_match_numpy`, NEON quantizer in
-      `quantizers_are_byte_identical_to_llama_cpp`, `smollm2_360m_matches_transformers`,
-      threaded `batched_prefill_matches_llama2c`).
-- [x] **Perplexity** (HEAD 19.7126 / 16.3745; repack alone identical to before; shift from chunked attention 0.02–0.04, the size of llama.cpp's own flash-attention on/off shift on this phone, 0.021 / 0.019: `results/phase-6/raw/pending-checks/`) Q4_0 / Q8_0, wikitext-2 20 × 512 (repack changes decode
-      sums; softmax changes attention): must stay within noise of 19.7486 /
-      16.3532.
-- [ ] **Repack `31513f0` vs `bca0a1b`**: prefill A/B, 2 rounds
-      (`scripts/prefill-ab.sh`); decode A/B at depth 0 and 512
-      (`ARGS="-c 2-7 --pp 1 --tg 64 --depth 0,512" LLAMA_ARGS="-p 0 -n 64 -d 0,512"`);
-      load time and peak RSS from the same runs (repacked weights are heap,
-      mapped pages released); `gemv_bench` rows `_b_sdot` vs `_b_sdot_x4`.
-- [ ] **Softmax `85d1a12` vs `31513f0`**: decode A/B at depth 512 (where
-      attention matters), prefill pp512.
-- [ ] **Quantizer `0d1510f` vs `85d1a12`**: prefill A/B.
-- [ ] **SmolLM2-360M tok/s** (5.6), f32 and Q4_0, cores 2–7.
-- [ ] Older, still open: GEMM GFLOPS and a NEON-build profile (3.7).
+All ran on the phone the same evening (charging, clock caps 1.79 / 1.96
+GHz); results in `results/phase-6.md` ("Repacked weights …") and
+`results/phase-5.md`. Kept: weight repack (`31513f0`; Q4_0 decode +25–34 %,
+level with llama.cpp) and the NEON activation quantizer (`0d1510f`; prefill
++10–24 %, gap to llama.cpp 1.15–1.5×). Reverted for no measurable gain: NEON
+softmax (`85d1a12`) and attention split across positions (`bdbf963`). 89/89
+tests; PPL unchanged. Still open from before: GEMM GFLOPS and a NEON-build
+profile (3.7).
 
 Reference tooling in place: llama.cpp host + Android builds (`~/llama.cpp`, `d00685831`), patched
 llama2.c (`third_party/`), `tools/.venv` with numpy, torch, transformers, tokenizers, gguf.
@@ -185,7 +171,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       token at a time), so prefill becomes GEMM.
 - [x] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
       theoretical peak FMA.
-- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
+- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; NEON softmax tried 2026-10-28, no gain, reverted; rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
       silu/swiglu, rope.
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
@@ -216,7 +202,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **5.5 HF goldens** `tools/hf_dump.py`: forward hooks → `.safetensors` per-layer dumps (read
       by our own parser), greedy `generate(do_sample=False)` tokens, tokenizer corpus (Unicode,
       emoji, code, odd whitespace) → `testdata/smollm2/`.
-- [~] **5.6 Verify** (135M done on host and phone; 360M matches transformers on the host, phone run pending) 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
+- [x] **5.6 Verify** (135M and 360M match transformers on host and phone; 360M tok/s in results/phase-5.md) 135M and 360M: layers within tolerance, greedy tokens equal, tokenizer exact;
       tok/s → `results/phase-5.md` (phone).
 
 ## Phase 6 — Quantization
@@ -227,7 +213,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
-- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 4×4 tiles with activations interleaved once: prefill +28–53 % over 2×2, gap to llama.cpp 1.7–2.3×, results/phase-6.md; next: pp512 profile, repacked weights) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
+- [~] **6.5 Quantized GEMM** (sdot rows-across-tokens version done; smmla 4×4 tiles, activations interleaved once, weights repacked four rows at a time, NEON activation quantizer: gap to llama.cpp's prefill 1.15–1.5×, results/phase-6.md) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
 - [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md written): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →

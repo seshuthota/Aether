@@ -49,4 +49,17 @@ worst relative error per activation 1.0e-4 (`resid_ffn`), 3.2e-5
 twice 135M's 5.5e-5, still a tenth of the 1e-3 bound; both models sum in
 f32, and this one is deeper and wider.
 
-Pending: the same test on the phone, and tok/s.
+On the phone (2026-10-28): the same test passes. Speed, cores 2–7, phone
+charging (clock caps 1.79 / 1.96 GHz, so lower than the battery runs
+elsewhere), quantized in memory from the safetensors
+(`results/phase-6/raw/pending-checks/smollm2-360m-*.txt`):
+
+| Format | weights | pp64 | pp256 | tg64 @ d0 | tg64 @ d256 |
+| --- | --- | --- | --- | --- | --- |
+| f32 | 1447 MB | 239 | 222 | 35.6 | 34.7 |
+| Q8_0 | 385 MB | 471 | 385 | 124 | 94 |
+| Q4_0 | 204 MB | 420 | 352 | 183 | 132 |
+
+Peak RSS is 2.1 GB in every format: the safetensors path widens bf16 to f32
+before quantizing, so the f32 copy exists during load. A GGUF file of the
+quantized model would avoid it.

@@ -93,8 +93,9 @@ fn main() {
     let t_load = Instant::now();
     let (config, weights) = load_any(&path, max_seq).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let weights = weights.convert(&config, format);
-    let load_ms = t_load.elapsed().as_secs_f64() * 1e3;
+    // Until the model is ready: includes the repacking in Transformer::new.
     let mut model = Transformer::new(config, weights);
+    let load_ms = t_load.elapsed().as_secs_f64() * 1e3;
     let threads = cores.as_ref().map_or(1, |c: &Vec<usize>| c.len());
     if let Some(c) = &cores {
         model.set_pool(ThreadPool::new(c).unwrap());

@@ -1,0 +1,10 @@
+# bench_suite testdata/models/SmolLM2-360M | q8_0 | weights 384.6 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 1304 ms
+test,tok_per_s,ms
+pp64,470.9,135.9
+pp256,385.2,664.7
+tg64@d0,123.8,516.8
+# tg64@d0 per token: median 8.06 ms, p95 8.41 ms (192 samples)
+tg64@d256,93.5,684.4
+# tg64@d256 per token: median 10.61 ms, p95 11.50 ms (192 samples)
+ttft_pp64,7.7,130.0
+# peak RSS 2125648 kB
