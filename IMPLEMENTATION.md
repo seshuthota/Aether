@@ -27,12 +27,21 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s; GEMM 28–29 FLOP/cycle (~90 % of an assumed peak) | kernel choice for short rows |
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
 | 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5; 360M ≤ 1.0e-4), `tokenizers` (433 strings) | SmolLM2-360M Q4_0 183 tok/s (charging) | — |
-| 6 Quantization | Q8_0/Q4_0/Q5_0 byte-identical to llama.cpp, Q4_K/Q6_K read from GGUF, `sdot`/`smmla` kernels, PPL/KL mode | llama.cpp quantizers, `gguf` dequantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp; Qwen Q4_K_M faster than llama.cpp | faster K-quant decode |
+| 6 Quantization | Q8_0/Q4_0/Q5_0 byte-identical to llama.cpp, Q4_K/Q6_K read from GGUF, `sdot`/`smmla` kernels, PPL/KL mode | llama.cpp quantizers, `gguf` dequantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp; Qwen Q4_K_M decode 104–111 vs llama.cpp 86 | — |
 | 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp; prefill level or ahead (2026-10-29) | — |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Biggest open items (2026-10-29): the prefill comparison with the screen on (the last ones ran screen-off), faster K-quant decode, the other later phases (Vulkan). Attention split across positions was
-tried and gave nothing at depths up to 2048 (results/phase-6.md).
+Night of 2026-10-29 (results/phase-6.md from "Q4_K decode: scales as vectors" on): Q4_K /
+Q5_0 / Q6_K kernels with `sri` unpacks, K-quant rows unpacked with NEON, q/k/v and gate/up as one
+pool job, workers spin 2.8 ms before parking, RoPE angles once per call, SwiGLU and attention
+softmax on NEON. Qwen2.5-0.5B, cores 2–7, uncapped clocks: decode ahead of llama.cpp in every
+format (Q4_0 tg64 158–180 vs 138–143, Q4_K_M 104–111 vs 86); prefill 10–40 % ahead for Q4_0 /
+Q8_0, 3–7× for Q4_K_M. 92 tests on the phone. Timed runs need the clock caps recorded
+(`prefill-ab.sh` does): a thermal cap on the prime cores (1.69 → 1.02 GHz) moves them by 20 %.
+
+Biggest open items: a screen-on comparison with the user present (all of the above ran with the
+screen off or kept awake by keyevents), decode attention balance (14 heads on 6 threads), the
+other later phases (Vulkan).
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
