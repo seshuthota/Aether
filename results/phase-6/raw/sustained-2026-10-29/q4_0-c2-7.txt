@@ -1,0 +1,41 @@
+# 2026-10-29T04:55:41+05:30 commit 34c7597, start 41500 m°C, boardtempstatus:0lowbatstatus:0reversewlchgstatus:0status:3level:39Capacitylevel:-1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 1145 ms
+test,tok_per_s,ms
+pp1,40.0,25.0
+tg64@d0,172.7,370.7
+# tg64@d0 per token: median 5.42 ms, p95 6.80 ms (64 samples)
+ttft_pp64,12.7,78.8
+# peak RSS 298984 kB
+# monitor: 2 samples over 0.47 s, max temp 64.5 °C, no battery power readings
+sustain_t_s,tok_per_s
+10,121.3
+20,108.6
+31,78.3
+42,81.3
+52,92.5
+63,108.1
+73,108.8
+83,91.0
+93,101.2
+104,93.5
+114,75.9
+124,88.8
+134,73.5
+145,89.3
+156,72.4
+166,137.3
+177,81.2
+187,96.8
+198,98.1
+208,90.5
+219,117.7
+230,86.4
+240,81.8
+250,97.7
+261,86.9
+272,78.8
+282,107.6
+293,105.5
+# sustained: 28480 tokens in 301 s = 94.8 tok/s average
+# monitor: 603 samples over 300.57 s, max temp 80.3 °C, energy 949.96 J, avg power 3.16 W, charge counter: 733.5 J over a 277 s window = 2.65 W
+# energy per token: 0.028 J (2.65 W from charge counter)

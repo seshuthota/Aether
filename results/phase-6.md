@@ -920,3 +920,23 @@ so a fork at about token 80 is expected. Lookup decoding therefore gives
 "greedy under the batched path's numbers"; the same holds for flash-
 decoding against the old whole-context decode (batch 1 column: 0 before,
 up to 0.55 after), and for llama.cpp's own batched vs single-token paths.
+
+## Sustained decode and energy, after the night's work (2026-10-29; `raw/sustained-2026-10-29/`)
+
+The Phase 7 test again (Qwen2.5-0.5B Q4_0, cores 2–7, 64-token decode
+bursts back to back for 300 s, on battery at 39 %, screen kept awake by a
+key event every 50 s, start 41.5 °C; `bench_suite --sustain 300 --monitor`):
+
+| | Phase 7 (2026-10-22) | now (`34c7597`) |
+| --- | --- | --- |
+| average | 85.7 tok/s | **94.8 tok/s** (28,480 tokens in 301 s) |
+| 10-second windows | 112 first 40 s, then 60–89 | 121 first, then 72–137 |
+| max CPU temperature | 84.5 °C | 80.3 °C |
+| power (charge counter) | 3.49 W | 2.65 W (sampler: 3.16 W) |
+| energy per token | 0.041 J | **0.028 J** (0.033 J by the sampler's power) |
+
+The burst at the start (172.7 tok/s for tg64 from cold) falls to ~95 under
+sustained load as the clock caps come down; per token the phone now spends
+about a third less energy, since each token takes less time at a similar
+power. The two power estimates differ (the charge counter covers a 277 s
+window, the sampler the whole 300 s), so the energy figure is ±15 %.
