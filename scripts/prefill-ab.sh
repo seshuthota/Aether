@@ -35,11 +35,25 @@ conditions() {
   echo "# $(date -Iseconds), commit $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- src || echo '+uncommitted'), start $(max_temp) m°C"
   adb shell dumpsys battery | grep -E 'powered: true|status:|level' | sed 's/^ */# /' | tr -d '\r' || true
 }
+# The clock caps (scaling_max_freq, MHz) of the performance and prime
+# cores, sampled every 0.5 s on the phone until stop_caps; caps_seen prints
+# the lowest of each. Thermal limits lower them partway through some runs
+# (prime 1.69 -> 1.02 GHz seen), which moves timings by 20 %.
+CAPS=$REMOTE/caps.txt
+start_caps() {
+  local f=/sys/devices/system/cpu/cpu
+  # setsid: a plain background job keeps `adb shell` from returning.
+  adb shell "rm -f $CAPS $CAPS.stop; setsid sh -c 'while [ ! -e $CAPS.stop ]; do echo \$(cat ${f}2/cpufreq/scaling_max_freq ${f}6/cpufreq/scaling_max_freq) >> $CAPS; sleep 0.5; done' </dev/null >/dev/null 2>&1 &"
+}
+caps_seen() {
+  adb shell "touch $CAPS.stop; sleep 0.6; sort -n -k1,1 $CAPS | head -1 | cut -d' ' -f1; sort -n -k2,2 $CAPS | head -1 | cut -d' ' -f2" | tr -d '\r' | tr '\n' ' ' | awk '{printf "# lowest clock caps: perf %d MHz, prime %d MHz\n", $1 / 1000, $2 / 1000}'
+}
 run() { # name, command...
   local name=$1; shift
   wait_cool; adb shell input keyevent KEYCODE_WAKEUP
-  { conditions; "$@" 2>&1 | grep -v pushed | tr -d '\r'; } > "$OUT/$name.txt"
-  echo ">>> $name"; grep -E '^(pp|tg)|\| *(pp|tg)' "$OUT/$name.txt" || tail -3 "$OUT/$name.txt"
+  start_caps
+  { conditions; "$@" 2>&1 | grep -v pushed | tr -d '\r'; caps_seen; } > "$OUT/$name.txt"
+  echo ">>> $name $(tail -1 "$OUT/$name.txt" | sed 's/# lowest clock caps: //')"; grep -E '^(pp|tg)|\| *(pp|tg)' "$OUT/$name.txt" || tail -3 "$OUT/$name.txt"
 }
 
 # NEW: the build under test (default: this tree's, built now).

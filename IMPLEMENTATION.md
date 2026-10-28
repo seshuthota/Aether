@@ -253,9 +253,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       K-quants on rows unpacked once per matmul (pp512 cycles −41 %); Q4_K decode scales as vectors
       (decode cycles −4 %); Q5_0 unpack with `sri` (Q4_K_M decode +8–11 %); Q6_K with `sri`
       (its cycles −8 %).
-- [~] **Measurement: bimodal timed runs** (2026-10-29): explained — the prime cores' clock cap
-      drops 1.69 → 1.02 GHz partway through some runs (results/phase-6.md, "Night of"). Open: have
-      `prefill-ab.sh` record `scaling_max_freq` per run so capped runs can be told apart.
+- [x] **Measurement: bimodal timed runs** (2026-10-29): explained — the prime cores' clock cap
+      drops 1.69 → 1.02 GHz partway through some runs (results/phase-6.md, "Night of").
+      `prefill-ab.sh` now records the lowest caps seen during each run ("# lowest clock caps").
 - [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
 - [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
 
