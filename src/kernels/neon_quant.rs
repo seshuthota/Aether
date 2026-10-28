@@ -359,9 +359,10 @@ unsafe fn mmla4<B>(rows: [&[B]; 4], x: [&[PairQ8]; 2], load: impl Fn(&B) -> ([in
                 let xv = [vld1q_s8(q), vld1q_s8(q.add(16)), vld1q_s8(q.add(32)), vld1q_s8(q.add(48))];
                 let dx = vld1q_f32(p.d.as_ptr());
                 for rp in 0..2 {
-                    // Two chains of two, so each `smmla` need not wait for
-                    // the one before; the integer sum is exact either way.
-                    let s = vaddq_s32(smmla(smmla(z, w[rp][0], xv[0]), w[rp][1], xv[1]), smmla(smmla(z, w[rp][2], xv[2]), w[rp][3], xv[3]));
+                    // One chain of four per tile: the four tiles (and the
+                    // next block's) are independent, which is enough to keep
+                    // the `smmla` units busy without extra adds.
+                    let s = smmla(smmla(smmla(smmla(z, w[rp][0], xv[0]), w[rp][1], xv[1]), w[rp][2], xv[2]), w[rp][3], xv[3]);
                     acc[2 * rp + tp] = vfmaq_f32(acc[2 * rp + tp], vcvtq_f32_s32(s), vmulq_f32(dw[rp], dx));
                 }
             }

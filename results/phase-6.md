@@ -161,6 +161,32 @@ back (`scripts/prefill-ab.sh`). Prefill tok/s, round 1 / round 2:
 - Gap to llama.cpp (its tok/s ÷ ours, same round): Q4_0 1.9–2.2×, Q8_0
   1.7–2.3× (2×2: 2.3–3.3×).
 
-Not done yet: a profile of prefill at pp512 (where the gain is smallest in
-round 1) to see what now dominates; repacking the weights at load (rows
+**Profile** (`profile-pp512-q4_0.txt`, `profile-pp512-q8_0.txt`;
+`simpleperf record -e cpu-cycles:u`, pp512, cores 2–7): the `mmla4` kernel
+58 % (Q4_0) / 52 % (Q8_0), attention 17 % / 19 % plus `expf` 3–4 %, pool
+workers waiting 12 % / 14 %, quantizing activations 3 %. Per 32-value block
+the Q8_0 loop is about 75 instructions, 16 of them `smmla`: 8 `zip`s
+interleave the four weight rows, 8 `movi` + 4 `add` start and join two
+integer chains per tile, the rest are loads, address arithmetic and the
+float scaling.
+
+**One chain per tile** (`raw/prefill-ab-chain4/`, against `0374996`, same
+script, two rounds): each tile's four `smmla`s in one chain instead of two
+chains of two, which drops 4 `movi` and 4 `add` per block; the four tiles
+are independent, and the integer sum is exact, so the output is unchanged
+bit for bit. Prefill tok/s, round 1 / round 2:
+
+| | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 one chain | 322 / 288 | 297 / 305 | 256 / 266 |
+| Q4_0 two chains | 314 / 328 | 282 / 291 | 248 / 247 |
+| Q4_0 llama.cpp | 623 / 625 | 618 / 630 | 461 / 467 |
+| Q8_0 one chain | 392 / 379 | 320 / 323 | 276 / 275 |
+| Q8_0 two chains | 335 / 335 | 308 / 310 | 268 / 266 |
+| Q8_0 llama.cpp | 626 / 617 | 640 / 645 | 478 / 449 |
+
++3–7 % at pp256 and pp512 in both rounds, +13–17 % for Q8_0 at pp64; Q4_0
+pp64 is noisy (+3 % / −12 %). Kept.
+
+Not done yet: repacking the weights at load (rows
 interleaved once, as llama.cpp does) if the weight `zip`s still show.
