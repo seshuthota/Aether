@@ -738,3 +738,18 @@ screen is off overnight.) So timed A/B pairs on this phone can be off by
 20 % in either direction depending on whether the cap hit; cycle counts
 are unaffected, and timed comparisons should sample `scaling_max_freq`
 or use more rounds.
+
+**With the caps recorded** (`raw/caps-2026-10-29/prefill/`, screen kept on,
+two rounds; each run's lowest caps in its file): runs at the full 2.4 GHz
+caps against each other, tok/s:
+
+| format | pp64 | pp256 | pp512 |
+| --- | --- | --- | --- |
+| Q4_0 ours / llama.cpp | 811–822 / 738 | 761–782 / 732 | 715–718 / 540 |
+| Q8_0 ours / llama.cpp | 877 / 714–717 | 845 / 745–758 | 768 / 539–549 |
+| Q4_K_M ours | 461–463 | 575–581 | 586–589 |
+
+Every llama.cpp Q4_K_M run and one of each other pair were capped (prime
+1.02 GHz) and are left out: e.g. our Q8_0 pp512 469 at the cap vs 768
+without, llama.cpp's Q4_0 pp512 239 vs 540. With equal clocks our prefill
+is 10–40 % ahead of llama.cpp for Q4_0 and Q8_0.
