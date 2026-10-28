@@ -691,3 +691,14 @@ all three formats, 92/92 tests:
 With six cores Q4_0 and Q8_0 decode is limited by memory, so a faster
 kernel on one core does not show there (the Q8_0 d0 median is pulled down
 by two slow rounds; its cycles are unchanged). Q4_K_M gains 8–11 %.
+
+**Q6_K with `sri #2`** (`raw/kdecode-q6k-sri/`): `q − 32` in 6-bit two's
+complement is `q` with bit 5 flipped, so the int8 4·(q − 32) is built from
+the two high bits (from `qh`, flipped once per load by XOR 0xAA, shifted to
+bits 6..7) and the nibble inserted below them with `sri #2`: 3 instructions
+per vector instead of 6, the ×4 folded into the float scale. The timed
+A/B ran at a capped 1.5 GHz and was inconclusive, so profiles (tg256, two
+rounds each): `dot4_q6_k_q8_0` 4.22 / 4.22 G cycles → 3.86 / 3.90 G (−8 %),
+the whole run −1 to −3 %. The Q6_K rows are not repacked (four separate
+row streams), so the kernel is close to its memory speed already. Tests
+92/92 (the K-quant test checks against gguf's decoder).

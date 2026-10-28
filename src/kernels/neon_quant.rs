@@ -413,25 +413,31 @@ unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, acc: &mut [float32x4_t; 2]) {
 }
 
 /// One Q6_K super-block · `x`, added into `acc`.
+///
+/// Each value is built as the int8 4·(q − 32): `q − 32` in 6-bit two's
+/// complement is `q` with bit 5 flipped, so the two high bits (from `qh`,
+/// with every pair's upper bit flipped once by XOR 0xAA) go to bits 6..7 and
+/// `sri #2` inserts the nibble, held at bits 4..7, below them. Three
+/// instructions per vector; the 4 comes out in the float scale.
 #[target_feature(enable = "dotprod")]
 #[inline]
 unsafe fn q6_k_block(w: &BlockQ6_K, x: &XK, acc: &mut float32x4_t) {
-    let d = f16_to_f32(w.d);
+    let d = f16_to_f32(w.d) * 0.25;
     for n in 0..2 {
         // SAFETY: ql holds 128 bytes and qh 64; n < 2 keeps every 16-byte
         // load inside them (64n + 48 + 16 <= 128, 32n + 16 + 16 <= 64).
         unsafe {
             let ql = w.ql.as_ptr().add(64 * n);
-            let qh = [vld1q_u8(w.qh.as_ptr().add(32 * n)), vld1q_u8(w.qh.as_ptr().add(32 * n + 16))];
-            let (m4, m3, off) = (vdupq_n_u8(0x0F), vdupq_n_u8(3), vdupq_n_s8(32));
+            let flip = vdupq_n_u8(0xAA);
+            let qh = [veorq_u8(vld1q_u8(w.qh.as_ptr().add(32 * n)), flip), veorq_u8(vld1q_u8(w.qh.as_ptr().add(32 * n + 16)), flip)];
             for k in 0..4 {
                 let j = 4 * n + k;
                 let lo = |i: usize| {
                     let v = vld1q_u8(ql.add(32 * (k % 2) + 16 * i));
-                    if k < 2 { vandq_u8(v, m4) } else { vshrq_n_u8(v, 4) }
+                    if k < 2 { vshlq_n_u8::<4>(v) } else { vandq_u8(v, vdupq_n_u8(0xF0)) }
                 };
-                let hi = |i: usize| vshlq_n_u8(vandq_u8(vshlq_u8(qh[i], vdupq_n_s8(-2 * k as i8)), m3), 4);
-                let q = |i: usize| vsubq_s8(vreinterpretq_s8_u8(vorrq_u8(lo(i), hi(i))), off);
+                // Bits 2k, 2k + 1 of qh to bits 6, 7.
+                let q = |i: usize| vreinterpretq_s8_u8(sri2(vshlq_u8(qh[i], vdupq_n_s8(6 - 2 * k as i8)), lo(i)));
                 let z = vdupq_n_s32(0);
                 let s = vmulq_n_s32(vdotq_s32(z, q(0), x.v[j][0]), w.scales[2 * j] as i32);
                 let s = vmlaq_n_s32(s, vdotq_s32(z, q(1), x.v[j][1]), w.scales[2 * j + 1] as i32);
@@ -723,6 +729,16 @@ fn sri1(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
     let mut r = a;
     // SAFETY: a register-to-register instruction; touches no memory.
     unsafe { std::arch::asm!("sri {0:v}.16b, {1:v}.16b, #1", inout(vreg) r, in(vreg) b, options(pure, nomem, nostack)) };
+    r
+}
+
+/// `sri a, b, #2`: bits 6..7 of `a`, `b` shifted right by two into bits
+/// 0..5 (see [`sri1`]).
+#[inline(always)]
+fn sri2(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+    let mut r = a;
+    // SAFETY: a register-to-register instruction; touches no memory.
+    unsafe { std::arch::asm!("sri {0:v}.16b, {1:v}.16b, #2", inout(vreg) r, in(vreg) b, options(pure, nomem, nostack)) };
     r
 }
 
