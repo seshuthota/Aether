@@ -47,7 +47,7 @@ llama2.c (`third_party/`), `tools/.venv` with numpy, torch, transformers, tokeni
       numpy, torch (CPU wheel), transformers, safetensors, tokenizers, gguf, matplotlib. ~2 GB.
 - [x] **S3. llama2.c.** (cloned `350e04f`; `tools/stories15m_goldens.sh` applies the patch and regenerates goldens) Clone to `third_party/llama2.c` (gitignored), build `run` on host, apply
       `tools/llama2c-dump.patch` (fwrite of per-layer activations + logits as raw f32).
-- [~] **S4. Model fetch script.** (stories15M + tokenizer.bin downloaded; script pending) `tools/fetch_models.sh` → `testdata/models/` (gitignored):
+- [x] **S4. Model fetch script.** (`tools/fetch_models.sh [part|all]`, skips existing files; also makes the GGUFs with llama.cpp and fetches wikitext-2; URLs checked, stories15M md5 equal to ours) `tools/fetch_models.sh` → `testdata/models/` (gitignored):
       stories15M.bin + tokenizer.bin (~60 MB), SmolLM2-135M (~270 MB), SmolLM2-360M (~720 MB),
       Qwen2.5-0.5B (~1 GB), each only when its phase starts.
 - [x] **S5. llama.cpp for Android.** (`~/llama.cpp/build-android/bin`: llama-bench, llama-cli, llama-perplexity) Cross-build `llama-bench`, `llama-cli`, `llama-perplexity`
