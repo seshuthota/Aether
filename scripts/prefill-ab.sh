@@ -6,6 +6,9 @@
 #
 #   scripts/prefill-ab.sh OUT_DIR BASELINE_BENCH_SUITE_BINARY
 #
+# NEW=BINARY tests another build instead of this tree's (e.g. an older
+# commit's, to measure one change at a time).
+#
 # The tests run are bench_suite's ARGS and llama-bench's LLAMA_ARGS; the
 # defaults are prefill. For decode at depth, for example:
 #
@@ -37,8 +40,11 @@ run() { # name, command...
   echo ">>> $name"; grep -E '^(pp|tg)|\| *(pp|tg)' "$OUT/$name.txt" || tail -3 "$OUT/$name.txt"
 }
 
-cargo build -q --release --target aarch64-linux-android --example bench_suite
-NEW=target/aarch64-linux-android/release/examples/bench_suite
+# NEW: the build under test (default: this tree's, built now).
+if [ -z "${NEW:-}" ]; then
+  cargo build -q --release --target aarch64-linux-android --example bench_suite
+  NEW=target/aarch64-linux-android/release/examples/bench_suite
+fi
 adb push "$LLAMA_BENCH" $REMOTE/llama-bench >/dev/null
 # Keep the screen on (screen-off lowers the clock caps); see phase1-runs.sh.
 ( while :; do sleep 60; adb shell taskset 1 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
