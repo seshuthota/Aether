@@ -321,9 +321,10 @@ fn group4(rows: [usize; 4], nb: usize) -> std::ops::Range<usize> {
 }
 
 /// [`quant_rows`] with `smmla`: rows four at a time, and for each group of
-/// four rows (which then stays in L1) all tokens 2·NP at a time, from
-/// activations interleaved into token pairs once per matmul (`xp`). Rows
-/// and pairs past the end are replaced by the last one; each output's value
+/// four rows (which then stays in L1) all tokens 2·NP at a time and the
+/// last 1–3 pairs in one narrower tile, from activations interleaved into
+/// token pairs once per matmul (`xp`). Rows past the end are replaced by the
+/// last one (an odd last token's pair holds it twice); each output's value
 /// does not depend on its tile partners, so every element comes out the
 /// same however the rows are split across threads.
 ///
@@ -331,45 +332,52 @@ fn group4(rows: [usize; 4], nb: usize) -> std::ops::Range<usize> {
 /// As for [`quant_rows`], with `xp` the pairs of all `t` tokens.
 #[cfg(target_arch = "aarch64")]
 unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xp: &[neon_quant::PairQ8], t: usize) {
-    // Tiles as wide as the batch needs, up to NP pairs.
-    // SAFETY: forwarded.
-    unsafe {
-        match t.div_ceil(2) {
-            1 => rows_mmla::<1>(out, d, r, w, xp, t),
-            2 => rows_mmla::<2>(out, d, r, w, xp, t),
-            3 => rows_mmla::<3>(out, d, r, w, xp, t),
-            _ => rows_mmla::<{ neon_quant::NP }>(out, d, r, w, xp, t),
-        }
-    }
-}
-
-/// [`quant_rows_mmla`] with tiles of P token pairs.
-///
-/// # Safety
-/// As for [`quant_rows_mmla`].
-#[cfg(target_arch = "aarch64")]
-unsafe fn rows_mmla<const P: usize>(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xp: &[neon_quant::PairQ8], t: usize) {
     let pairs = t.div_ceil(2);
     let nb = xp.len() / pairs;
     for i in r.clone().step_by(4) {
         let rows = [0, 1, 2, 3].map(|k| (i + k).min(r.end - 1));
         let kb = is_k_quant(w).then(|| unpack_k4(w, rows, nb));
-        for p in (0..pairs).step_by(P) {
-            let ps: [usize; P] = std::array::from_fn(|k| (p + k).min(pairs - 1));
-            let v = match &kb {
-                // SAFETY: callers check has_mmla; every pair slice has nb
-                // entries, as kb does.
-                Some(kb) => unsafe { neon_quant::mmla4_k(kb, ps.map(|p| &xp[p * nb..(p + 1) * nb])) },
-                None => mmla4(w, rows, ps, xp, nb),
-            };
-            for (rp, tp, v) in v.iter().enumerate().flat_map(|(rp, row)| row.iter().enumerate().map(move |(tp, v)| (rp, tp, v))) {
-                for (k, v) in v.iter().enumerate() {
-                    let (row, tok) = (rows[2 * rp + k / 2], (2 * ps[tp] + k % 2).min(t - 1));
-                    // SAFETY: element (tok, row) lies in this call's rows;
-                    // a duplicate row or token writes the same value again.
-                    unsafe { *out.ptr().add(tok * d + row) = *v };
-                }
+        let kb = kb.as_deref();
+        // Full tiles of NP pairs, then one tile as wide as what is left.
+        let mut p = 0;
+        // SAFETY (all four): forwarded from the caller.
+        unsafe {
+            while p + neon_quant::NP <= pairs {
+                tile::<{ neon_quant::NP }>(out, d, w, kb, rows, p, xp, nb, t);
+                p += neon_quant::NP;
             }
+            match pairs - p {
+                1 => tile::<1>(out, d, w, kb, rows, p, xp, nb, t),
+                2 => tile::<2>(out, d, w, kb, rows, p, xp, nb, t),
+                3 => tile::<3>(out, d, w, kb, rows, p, xp, nb, t),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// One tile of [`quant_rows_mmla`]: rows `rows` × token pairs `p..p + P`
+/// (`kb`: the rows unpacked, for K-quants), written to `out`.
+///
+/// # Safety
+/// As for [`quant_rows_mmla`]; `p + P <= pairs`.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn tile<const P: usize>(out: SharedOut, d: usize, w: &Weight, kb: Option<&[neon_quant::KBlock4]>, rows: [usize; 4], p: usize, xp: &[neon_quant::PairQ8], nb: usize, t: usize) {
+    let ps: [usize; P] = std::array::from_fn(|k| p + k);
+    let v = match kb {
+        // SAFETY: callers check has_mmla; every pair slice has nb entries,
+        // as kb does.
+        Some(kb) => unsafe { neon_quant::mmla4_k(kb, ps.map(|p| &xp[p * nb..(p + 1) * nb])) },
+        None => mmla4(w, rows, ps, xp, nb),
+    };
+    for (rp, tp, v) in v.iter().enumerate().flat_map(|(rp, row)| row.iter().enumerate().map(move |(tp, v)| (rp, tp, v))) {
+        for (k, v) in v.iter().enumerate() {
+            let (row, tok) = (rows[2 * rp + k / 2], (2 * ps[tp] + k % 2).min(t - 1));
+            // SAFETY: element (tok, row) lies in the caller's rows; a
+            // duplicate row or token writes the same value again.
+            unsafe { *out.ptr().add(tok * d + row) = *v };
         }
     }
 }

@@ -973,3 +973,23 @@ After both (Qwen2.5-0.5B Q4_0, cores 2–7, two rounds, tok/s):
 Lookup decoding pays when the output repeats the input (+60–75 % greedy,
 +25–50 % sampled for the code task) and is about neutral on fresh prose
 (within −10 % to +15 %, inside the run-to-run spread).
+
+## Prefill tail tiles: an odd prompt no longer pays for a whole tile (2026-10-29; `raw/lookup/tail-tiles.txt`)
+
+Before, `quant_rows_mmla` ran 4-pair (8-token) `smmla` tiles over a
+batch and only used the narrow widths when the whole batch was 1–3 pairs,
+so a 20-token prompt paid for 24 tokens and a 50-token prompt for 56. Now
+each row group (K-quant rows unpacked once) runs its full 4-pair tiles and
+then one tail tile 1–3 pairs wide (`tile::<P>`). Outputs do not depend on
+tile partners, so PPL is unchanged (Q4_K_M 16.7599) and greedy outputs are
+byte-identical to `3f5ed3e` (Q4_0, Q4_K_M).
+
+| Qwen2.5-0.5B Q4_0, cores 2–7 | pp20 | pp36 | pp50 | cycles (all three) |
+| --- | --- | --- | --- | --- |
+| before (two runs) | 567–570 tok/s | 632–633 | 637 | 22.45 G |
+| after | 613–622 | 665–673 | 687–688 | 21.1 G (−6 %) |
+
+`tools/gen_quant.py` gained batch cases whose lengths leave a tail
+(12 × 640 × 11, 9 × 384 × 13) and K-quant cases (6 × 512 × 11,
+5 × 256 × 13), appended so the existing goldens are unchanged; the
+llama.cpp-format references pass on the phone (95/95 tests).

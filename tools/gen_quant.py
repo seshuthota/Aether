@@ -20,7 +20,7 @@ dot products (sdot / smmla).
 
 Batched cases (prefill: t tokens at once) go to the second directory, one
 quant_<d>x<n>_t<t>/ each, with odd row and token counts for the tails of
-2×2 and 4×4 tiles:
+the tiles (full tiles of 4 token pairs, then 1, 2 or 3 pairs):
 
   w.npy  [d, n] f32          x.npy  [t, n] f32 (each row quantized on its own)
   out_q8_0_b.npy, out_q4_0_b.npy, out_q5_0_b.npy
@@ -91,7 +91,7 @@ def random_blocks(rng, typ, d, n):
 
 def kquants(root):
     rng = np.random.default_rng(608)
-    cases = [(1, 256, 1), (3, 512, 2), (4, 256, 5), (5, 768, 4), (17, 1536, 3), (18, 2560, 8), (64, 1536, 7)]
+    cases = [(1, 256, 1), (3, 512, 2), (4, 256, 5), (5, 768, 4), (17, 1536, 3), (18, 2560, 8), (64, 1536, 7), (6, 512, 11), (5, 256, 13)]
     for d, n, t in cases:
         out = root / f"quant_k_{d}x{n}_t{t}"
         out.mkdir(parents=True, exist_ok=True)
@@ -112,7 +112,7 @@ def kquants(root):
 def batch(root):
     # Own generator, so the single-vector cases above stay byte-identical.
     rng = np.random.default_rng(607)
-    cases = [(1, 32, 2), (3, 64, 3), (5, 160, 4), (6, 96, 5), (17, 576, 8), (18, 2048, 3), (130, 896, 17), (64, 576, 64), (896, 896, 7)]
+    cases = [(1, 32, 2), (3, 64, 3), (5, 160, 4), (6, 96, 5), (17, 576, 8), (18, 2048, 3), (130, 896, 17), (64, 576, 64), (896, 896, 7), (12, 640, 11), (9, 384, 13)]
     for d, n, t in cases:
         w = (rng.standard_normal((d, n)) * 0.05).astype(np.float32)
         w[0, :32] = 0.0
