@@ -208,7 +208,7 @@ round 2:
 | Q8_0 llama.cpp | 611 / 621 | 620 / 649 | 478 / 479 |
 
 +2–10 % in every cell, most at pp512 (Q8_0 +10 %), where attention is
-largest. Gap to llama.cpp now 1.6–1.9× (Q4_0) and 1.6–1.9× (Q8_0).
+largest. Gap to llama.cpp now 1.7–1.9× (Q4_0) and 1.5–1.9× (Q8_0).
 
 Not done yet: repacking the weights at load (rows
 interleaved once, as llama.cpp does) if the weight `zip`s still show.
