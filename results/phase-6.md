@@ -480,4 +480,35 @@ each, `profile-pp512-kmmla-*.txt`):
 Q4_K_M prefill is now about twice llama.cpp's on this phone (153–168 tok/s
 in the cooler runs above).
 
-Not done yet: the remaining Q4_0 / Q8_0 prefill gap (1.15–1.5×).
+## `smmla` tiles of 4 rows × 8 tokens (2026-10-29; `raw/tile8/`)
+
+With attention halved, the `smmla` kernel is 61 % of Q4_0 pp512. Counters
+on it (`raw/attn-blocked/counters-pp512-q4_0.txt`): 3.6 instructions per
+cycle, 24 % of cycles stalled in the back end. It issues as fast as the
+core allows; what limits it is how many instructions it needs. Its loop
+(disassembly) was 58 instructions per block for 16 `smmla`s: 16 `smmla`, and
+42 for weight loads, the nibble unpack, scale conversions, activation
+loads and four scale-and-add steps, all shared by only 4 tokens.
+
+Tiles now cover 4 rows × 8 tokens (`NP` = 4 token pairs, for every format
+including the unpacked K-quants): the weights' loads, unpack and scale
+conversion serve twice as many `smmla`s. The loop is 99 instructions for 32
+`smmla`s (3.1 per `smmla` instead of 3.6). A first version kept the 2×4
+accumulator array as an array of arrays and the compiler wrote it to the
+stack every iteration (8 stores); a flat array keeps it in registers.
+
+Whole-run cycles (pp64 + pp512, two rounds each, `stat-*.txt`) and the
+timed prefill in the same runs:
+
+| Qwen2.5-0.5B | cycles before → after | pp64 tok/s | pp512 tok/s |
+| --- | --- | --- | --- |
+| Q4_0 | 34.4 G → 31.5 G (−8 %) | 493 → 545 | 417 → 435 |
+| Q8_0 | 31.0 G → 30.2 G (−2.5 %) | 564 → 545 | 441 → 439 |
+| Q4_K_M | 51.7 G → 43.2 G (−16 %) | 288 → 336 | 282 → 365 |
+
+Q8_0 has no unpack to share, so it gains least. Each output is computed
+the same way whatever tile it is in, so results are bit-identical (Q4_0 PPL
+19.7470 again, `ppl-qwen-q4_0.txt`; 92/92 tests).
+
+Not done yet: the remaining Q4_0 / Q8_0 prefill gap (llama.cpp's pp64 is
+540–730 tok/s depending on the phone's state; compare in one run).

@@ -225,7 +225,7 @@ fn group(i: usize, nb: usize) -> std::ops::Range<usize> {
 /// called when [`has_mmla`] is true.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8], nb: usize) -> [[f32; 4]; 4] {
+fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; neon_quant::NP], xp: &[neon_quant::PairQ8], nb: usize) -> neon_quant::Tiles {
     let x = ps.map(|p| &xp[p * nb..(p + 1) * nb]);
     // SAFETY: callers check has_mmla (i8mm present); every row and pair
     // slice has nb blocks.
@@ -300,7 +300,7 @@ fn group4(rows: [usize; 4], nb: usize) -> std::ops::Range<usize> {
 }
 
 /// [`quant_rows`] with `smmla`: rows four at a time, and for each group of
-/// four rows (which then stays in L1) all tokens four at a time, from
+/// four rows (which then stays in L1) all tokens 2·NP at a time, from
 /// activations interleaved into token pairs once per matmul (`xp`). Rows
 /// and pairs past the end are replaced by the last one; each output's value
 /// does not depend on its tile partners, so every element comes out the
@@ -315,16 +315,15 @@ unsafe fn quant_rows_mmla(out: SharedOut, d: usize, r: std::ops::Range<usize>, w
     for i in r.clone().step_by(4) {
         let rows = [0, 1, 2, 3].map(|k| (i + k).min(r.end - 1));
         let kb = is_k_quant(w).then(|| unpack_k4(w, rows, nb));
-        for p in (0..pairs).step_by(2) {
-            let ps = [p, (p + 1).min(pairs - 1)];
+        for p in (0..pairs).step_by(neon_quant::NP) {
+            let ps: [usize; neon_quant::NP] = std::array::from_fn(|k| (p + k).min(pairs - 1));
             let v = match &kb {
-                // SAFETY: callers check has_mmla; both pair slices have nb
+                // SAFETY: callers check has_mmla; every pair slice has nb
                 // entries, as kb does.
                 Some(kb) => unsafe { neon_quant::mmla4_k(kb, ps.map(|p| &xp[p * nb..(p + 1) * nb])) },
                 None => mmla4(w, rows, ps, xp, nb),
             };
-            for (tile, v) in v.iter().enumerate() {
-                let (rp, tp) = (tile / 2, tile % 2);
+            for (rp, tp, v) in v.iter().enumerate().flat_map(|(rp, row)| row.iter().enumerate().map(move |(tp, v)| (rp, tp, v))) {
                 for (k, v) in v.iter().enumerate() {
                     let (row, tok) = (rows[2 * rp + k / 2], (2 * ps[tp] + k % 2).min(t - 1));
                     // SAFETY: element (tok, row) lies in this call's rows;

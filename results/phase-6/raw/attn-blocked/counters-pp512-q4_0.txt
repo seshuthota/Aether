@@ -1,0 +1,14 @@
+Event: cpu-cycles:u (type 0, config 0)
+Event count: 29979396870
+61.31%    aether::kernels::neon_quant::mmla4_q4_0x4
+Event: instructions:u (type 0, config 1)
+Event count: 102918901928
+64.07%    aether::kernels::neon_quant::mmla4_q4_0x4
+Event: raw-l1d-cache-refill:u (type 4, config 3)
+Event count: 415031439
+80.66%    aether::kernels::neon_quant::mmla4_q4_0x4
+Event: raw-ase-int-mmla-spec:u (type 4, config 33021)
+Event count: 0
+Event: raw-stall-backend:u (type 4, config 36)
+Event count: 5975312456
+74.16%    aether::kernels::neon_quant::mmla4_q4_0x4
