@@ -69,9 +69,10 @@ Qwen2.5-0.5B Q4_0 (`--depth 0,512`; caps had already fallen to
 ## Equal shares against blocks, same day
 
 The earlier claim (below) that eight cores were slower than two, and that
-blocks fixed it, came from single short runs on a heavily throttled phone
-(`model-speed.txt` records caps of 1.79 GHz for performance and 1.02 GHz for
-prime cores). It was re-measured by building the last equal-share commit
+blocks fixed it, came from single short runs; the first (`model-speed.txt`) was taken on a
+heavily throttled phone (caps of 1.79 GHz for performance and 1.02 GHz for
+prime cores), and the later one (`model-speed-dynamic.txt`) recorded no
+conditions at all. It was re-measured by building the last equal-share commit
 (`67d334f~1`) with the current `bench_suite`, and running both builds
 alternately on the same sets, three rounds
 (`raw/ab-equal-vs-blocks.txt`; the old tree needed two edits to `bench_suite` to load the model through its older loader; caps 2.40 / 2.44 GHz and nothing in the
@@ -93,7 +94,7 @@ tok/s, rounds 1 / 2 / 3:
   threads need no balancing.
 
 So the effect of blocks is real; the size originally claimed (98 → 228) was
-mostly the throttled baseline.
+probably mostly the throttled baseline.
 
 ## Interrupts (`raw/interrupts.csv`)
 
@@ -108,7 +109,7 @@ mostly the throttled baseline.
 - No run in this sweep shows cores 0–1 slowing the set down, so the
   hypothesis "interrupts on cores 0–1 make 0–7 slower than 2–7" is **not
   supported**; the earlier loss (228 against 275) is more likely noise or
-  throttling.
+  throttling, though its conditions were not recorded.
 
 ## Handing out a job (`raw/pool-handoff.txt`, `examples/pool_handoff.rs`)
 
@@ -208,5 +209,5 @@ same speed from both sets (125.0 vs 123.7): two of its threads already
 saturate what decode needs, ours do not. Prefill gains less from more
 cores at short prompts (more synchronisations per unit of work).
 
-**Superseded**: these single short runs were taken with caps down to
-1.02 GHz; see the A/B and the clean sweep above.
+**Superseded**: these are single short runs, the first with caps down to
+1.02 GHz and the second with unrecorded conditions; see the A/B and the clean sweep above.
