@@ -390,3 +390,52 @@ pub fn attention_group<'a>(
         }
     }
 }
+
+/// `e^x` on four lanes, for `x <= 0`. Writes `x = n·ln2 + r` with
+/// `|r| <= ln2/2`, takes `e^r` from a degree-5 polynomial (the coefficients
+/// of ARM's optimized-routines `v_expf`) and multiplies by `2^n`, built
+/// directly in the exponent bits. Max relative error 1.9e-7 on [-87, 0]
+/// (numpy, against float64 `exp`; numpy's own float32 `exp`: 2.0e-7).
+/// Below -87, where `e^x` leaves f32's normal range, the result is 0.
+#[inline(always)]
+fn exp_neg(x: float32x4_t) -> float32x4_t {
+    let c = f32::from_bits;
+    let (inv_ln2, ln2_hi, ln2_lo) = (c(0x3fb8_aa3b), c(0x3f31_7200), c(0x35bf_be8e));
+    let (c0, c1, c2, c3, c4) = (c(0x3c07_2010), c(0x3d2b_9f17), c(0x3e2a_af33), c(0x3eff_fedb), c(0x3f7f_fff6));
+    // SAFETY: register-only NEON ops.
+    unsafe {
+        let n = vrndnq_f32(vmulq_n_f32(x, inv_ln2));
+        let r = vfmaq_n_f32(vfmaq_n_f32(x, n, -ln2_hi), n, -ln2_lo);
+        // 2^n: n + 127 in the exponent field (n >= -126 for x >= -87).
+        let scale = vreinterpretq_f32_s32(vaddq_s32(vshlq_n_s32::<23>(vcvtq_s32_f32(n)), vdupq_n_s32(0x3f80_0000)));
+        // e^r - 1 = c4·r + c3·r² + c2·r³ + c1·r⁴ + c0·r⁵, as two halves.
+        let r2 = vmulq_f32(r, r);
+        let hi = vfmaq_f32(vfmaq_n_f32(vdupq_n_f32(c3), r, c2), vfmaq_n_f32(vdupq_n_f32(c1), r, c0), r2);
+        let poly = vfmaq_f32(vmulq_n_f32(r, c4), hi, r2);
+        let y = vfmaq_f32(scale, poly, scale);
+        vbslq_f32(vcltq_f32(x, vdupq_n_f32(-87.0)), vdupq_n_f32(0.0), y)
+    }
+}
+
+/// SwiGLU in place, four lanes at a time (see [`super::scalar::swiglu`]).
+/// `sigmoid(v)` uses only `e^(−|v|)`, which [`exp_neg`] covers: it is
+/// `1 / (1 + e)` for `v >= 0` and `e / (1 + e)` for `v < 0`. The last 0–3
+/// values go through the scalar version.
+#[inline(never)] // keep a separate symbol so profiles attribute time per kernel
+pub fn swiglu(gate: &mut [f32], up: &[f32]) {
+    assert_eq!(gate.len(), up.len());
+    let n4 = gate.len() / 4 * 4;
+    // SAFETY: vector accesses stay below n4 <= both lengths.
+    unsafe {
+        let (g, u) = (gate.as_mut_ptr(), up.as_ptr());
+        let one = vdupq_n_f32(1.0);
+        for i in (0..n4).step_by(4) {
+            let v = vld1q_f32(g.add(i));
+            let e = exp_neg(vnegq_f32(vabsq_f32(v)));
+            let num = vbslq_f32(vcgeq_f32(v, vdupq_n_f32(0.0)), one, e);
+            let sig = vdivq_f32(num, vaddq_f32(one, e));
+            vst1q_f32(g.add(i), vmulq_f32(vmulq_f32(v, sig), vld1q_f32(u.add(i))));
+        }
+    }
+    super::scalar::swiglu(&mut gate[n4..], &up[n4..]);
+}

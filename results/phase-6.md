@@ -799,3 +799,21 @@ A timed Q4_0 pp512 A/B with the order alternated (`pp512-order.txt`)
 showed again how much the clock cap matters: every run with the prime
 cores capped at 1.02 GHz did 455–491 tok/s, every uncapped one 580–588,
 base and new alike.
+
+## SwiGLU with a NEON `exp` (2026-10-29; `raw/swiglu-neon/`)
+
+The polynomial `exp` written for attention's softmax (`85d1a12`, reverted
+there for no gain) now computes SwiGLU's sigmoid, four lanes at a time:
+`sigmoid(v)` needs only `e^(−|v|)` (`1/(1+e)` for v ≥ 0, `e/(1+e)` below),
+which is in that `exp`'s range. SwiGLU runs over 4864 values per token and
+layer, so scalar `expf` was 2–4 % of a profile.
+
+Values change in the last bits (the numpy SwiGLU test still passes at
+1e-6), and so does PPL, by 0.1–0.2 % (`ppl-*.txt`): Q4_K_M 16.7330 →
+16.7531, Q4_0 19.7470 → 19.7110, Q8_0 16.3494 → 16.3771; llama.cpp's own
+values are 16.7657 ± 0.688 (Q4_K_M), and these shifts are of the size
+that any change of rounding gives after Q8_0 activation quantization.
+
+Cycles of pp64 + tg64 (`cycles.txt`, two rounds): Q4_0 33.3 / 33.3 G →
+30.7 / 31.6 G (−5 to −8 %), Q4_K_M 49.5 / 49.3 G → 47.9 / 47.1 G (−3 to
+−4 %).

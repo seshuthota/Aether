@@ -14,7 +14,17 @@ pub mod scalar;
 use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
-pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax, swiglu};
+pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax};
+
+/// SwiGLU in place, `gate_i = silu(gate_i) * up_i` (see [`scalar::swiglu`]);
+/// NEON with a polynomial `exp` on aarch64.
+#[inline]
+pub fn swiglu(gate: &mut [f32], up: &[f32]) {
+    #[cfg(target_arch = "aarch64")]
+    neon::swiglu(gate, up);
+    #[cfg(not(target_arch = "aarch64"))]
+    scalar::swiglu(gate, up);
+}
 
 /// `out = W · x`, `W` row-major `[out.len(), x.len()]`.
 #[inline]
