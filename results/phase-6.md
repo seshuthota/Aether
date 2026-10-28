@@ -702,3 +702,33 @@ rounds each): `dot4_q6_k_q8_0` 4.22 / 4.22 G cycles → 3.86 / 3.90 G (−8 %),
 the whole run −1 to −3 %. The Q6_K rows are not repacked (four separate
 row streams), so the kernel is close to its memory speed already. Tests
 92/92 (the K-quant test checks against gguf's decoder).
+
+## Night of 2026-10-29: where things stand, and a measurement caveat (`raw/night-2026-10-29/`, `raw/prefill-regress*/`)
+
+`scripts/prefill-ab.sh`, Qwen2.5-0.5B, cores 2–7, two rounds; "start" is
+`9d8e8c1` (before tonight's decode work), "now" is `66aed73`, tok/s:
+
+| test | format | start | now | llama.cpp |
+| --- | --- | --- | --- | --- |
+| tg64 @ d0 | Q4_0 / Q8_0 / Q4_K_M | 156–157 / 99–102 / 83–87 | 158–163 / 101–102 / **104–105** | 138–143 / 91–96 / 86 |
+| tg64 @ d512 | Q4_0 / Q8_0 / Q4_K_M | 129 / 62–82 / 40–65 | 100–102 / 77–84 / 73–87 | 121 / 76–77 / 66–68 |
+| pp256 | Q4_0 / Q8_0 / Q4_K_M | 554–586 / 629–637 / 422–434 | 584–607 / 627–647 / 440–449 | 507–534 / 541–568 / 136–140 |
+| pp512 | Q4_0 / Q8_0 / Q4_K_M | 528–564 / 570–583 / 418 | *431–440 / 460–466 / 289–294* | 366–401 / 369–404 / 60–82 |
+
+Decode is ahead of llama.cpp in every format at d0 (Q4_K_M by 22 %). The
+pp512 column and Q4_0 at d512 looked like a regression, so it was
+bisected (`prefill-regress*/`), and **no commit is responsible**:
+
+- The same binary (byte-identical) gives pp512 either ~530–565 or ~435–460
+  tok/s from one process to the next, whichever commit it is and whatever
+  its file name (`name-test.txt`). A process that starts slow stays slow
+  for all its tests (tg16 after a slow pp512 is slow too).
+- Run alone (`--pp 512`), six runs in a row were all fast (517–529); the
+  slow mode shows up in multi-test runs after pp256 has warmed the phone.
+- Not transparent huge pages: the phone has THP `always` but defrag
+  `never`, and our process had 0 kB of `AnonHugePages` in every run.
+
+So single A/B pairs of timed prefill runs on this phone can be off by
+20 % in either direction. The cycle counts used for the changes above do
+not have this problem; timed comparisons need more rounds, and the cause
+of the slow mode is still open.

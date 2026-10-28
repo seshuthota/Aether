@@ -253,6 +253,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       K-quants on rows unpacked once per matmul (pp512 cycles −41 %); Q4_K decode scales as vectors
       (decode cycles −4 %); Q5_0 unpack with `sri` (Q4_K_M decode +8–11 %); Q6_K with `sri`
       (its cycles −8 %).
+- [ ] **Open measurement problem** (2026-10-29): timed runs of the same binary are bimodal
+      (pp512 ~550 or ~440 tok/s per process; not THP, not the file name). Find the cause (clock
+      residency per core, scheduler, memory placement) before trusting single timed A/B pairs.
 - [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
 - [ ] **L.3 Vulkan** (Adreno), **L.4** speculative decoding, **L.5** NPU: not started.
 

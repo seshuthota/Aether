@@ -1,0 +1,24 @@
+>>> new r1 45700
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 222 ms
+pp64,550.1,116.3
+pp256,571.7,447.8
+pp512,513.6,996.9
+# peak RSS 342480 kB
+>>> base r1 53000
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 216 ms
+pp64,647.8,98.8
+pp256,618.3,414.1
+pp512,562.6,910.1
+# peak RSS 342676 kB
+>>> new r2 56500
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 219 ms
+pp64,620.4,103.2
+pp256,566.3,452.1
+pp512,458.2,1117.4
+# peak RSS 342920 kB
+>>> base r2 56100
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 218 ms
+pp64,638.0,100.3
+pp256,610.6,419.2
+pp512,566.5,903.8
+# peak RSS 342824 kB

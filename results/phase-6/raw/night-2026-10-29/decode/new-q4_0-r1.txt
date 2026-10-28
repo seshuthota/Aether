@@ -1,0 +1,16 @@
+# 2026-10-29T03:08:12+05:30, commit 66aed73, start 54900 m°C
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 55
+# Capacity level: -1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 220 ms
+test,tok_per_s,ms
+pp1,156.2,6.4
+tg64@d0,158.3,404.3
+# tg64@d0 per token: median 6.08 ms, p95 8.45 ms (192 samples)
+tg64@d512,102.2,626.3
+# tg64@d512 per token: median 9.71 ms, p95 10.15 ms (192 samples)
+ttft_pp64,8.1,123.6
+# peak RSS 334568 kB
