@@ -54,6 +54,24 @@ impl Mmap {
         self.len
     }
 
+    /// Tells the kernel bytes `offset..offset + len` are no longer needed
+    /// (`madvise(MADV_DONTNEED)` on the whole pages inside that range): it
+    /// drops them from this process's resident set, and reads them from the
+    /// file again if they are touched later. For data that has been copied
+    /// elsewhere (repacked weights). Errors are ignored: this only saves
+    /// memory.
+    pub fn release(&self, offset: usize, len: usize) {
+        // SAFETY: sysconf has no preconditions.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let start = (self.ptr as usize + offset).next_multiple_of(page);
+        let end = (self.ptr as usize + (offset + len).min(self.len)) / page * page;
+        if end > start {
+            // SAFETY: [start, end) lies inside this read-only file mapping;
+            // dropping its pages cannot change what a later read sees.
+            unsafe { libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED) };
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

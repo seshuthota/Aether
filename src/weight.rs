@@ -6,7 +6,7 @@
 
 use crate::aligned::AlignedBuf;
 use crate::format::mmap::Mmap;
-use crate::quant::{self, BlockQ4_0, BlockQ8_0, QK};
+use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ8_0, BlockQ8_0x4, QK};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -41,6 +41,14 @@ impl<T: Copy> Mapped<T> {
     }
 }
 
+impl<T> Mapped<T> {
+    /// Drops this view's pages from memory (see [`Mmap::release`]); they
+    /// are read from the file again if touched.
+    pub fn release(&self) {
+        self.map.release(self.offset, self.len * std::mem::size_of::<T>());
+    }
+}
+
 impl<T> Deref for Mapped<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
@@ -55,6 +63,16 @@ impl<T> Deref for Mapped<T> {
 pub enum Store<T> {
     Owned(Vec<T>),
     Mapped(Mapped<T>),
+}
+
+impl<T> Store<T> {
+    /// Frees the file pages of a mapped store once its values have been
+    /// copied elsewhere; an owned store is freed when dropped anyway.
+    fn release(&self) {
+        if let Store::Mapped(m) = self {
+            m.release();
+        }
+    }
 }
 
 impl<T> Deref for Store<T> {
@@ -88,6 +106,12 @@ pub enum Weight {
     /// Row-major blocks: row `i` is blocks `i·cols/32 .. (i+1)·cols/32`.
     Q8_0(Store<BlockQ8_0>),
     Q4_0(Store<BlockQ4_0>),
+    /// Q8_0 rows repacked four at a time ([`BlockQ8_0x4`]) for the `smmla`
+    /// kernels: group `g` (rows 4g..4g+4) is blocks `g·cols/32 ..
+    /// (g+1)·cols/32`.
+    Q8_0x4(Vec<BlockQ8_0x4>),
+    /// Q4_0 rows repacked four at a time ([`BlockQ4_0x4`]).
+    Q4_0x4(Vec<BlockQ4_0x4>),
 }
 
 impl From<AlignedBuf> for Weight {
@@ -119,8 +143,16 @@ impl Weight {
     pub fn format(&self) -> Format {
         match self {
             Weight::F32(_) => Format::F32,
-            Weight::Q8_0(_) => Format::Q8_0,
-            Weight::Q4_0(_) => Format::Q4_0,
+            Weight::Q8_0(_) | Weight::Q8_0x4(_) => Format::Q8_0,
+            Weight::Q4_0(_) | Weight::Q4_0x4(_) => Format::Q4_0,
+        }
+    }
+
+    /// "row-major", or "4 rows interleaved" for the repacked variants.
+    pub fn layout(&self) -> &'static str {
+        match self {
+            Weight::Q8_0x4(_) | Weight::Q4_0x4(_) => "4 rows interleaved",
+            _ => "row-major",
         }
     }
 
@@ -128,8 +160,8 @@ impl Weight {
     pub fn format_name(&self) -> &'static str {
         match self {
             Weight::F32(_) => "f32",
-            Weight::Q8_0(_) => "q8_0",
-            Weight::Q4_0(_) => "q4_0",
+            Weight::Q8_0(_) | Weight::Q8_0x4(_) => "q8_0",
+            Weight::Q4_0(_) | Weight::Q4_0x4(_) => "q4_0",
         }
     }
 
@@ -139,6 +171,8 @@ impl Weight {
             Weight::F32(b) => b.len() * 4,
             Weight::Q8_0(b) => std::mem::size_of_val::<[BlockQ8_0]>(b),
             Weight::Q4_0(b) => std::mem::size_of_val::<[BlockQ4_0]>(b),
+            Weight::Q8_0x4(b) => std::mem::size_of_val::<[BlockQ8_0x4]>(b),
+            Weight::Q4_0x4(b) => std::mem::size_of_val::<[BlockQ4_0x4]>(b),
         }
     }
 
@@ -165,6 +199,27 @@ impl Weight {
         }
     }
 
+    /// Repacks Q8_0 / Q4_0 rows of `cols` columns four at a time, for the
+    /// `smmla` kernels, when the row count is a multiple of 4. Anything else
+    /// comes back unchanged. The repacked copy lives on the heap; a mapped
+    /// original's pages are released, so the process does not hold both.
+    pub fn repack(self, cols: usize) -> Weight {
+        let rows = |blocks: usize| blocks / (cols / QK);
+        match self {
+            Weight::Q8_0(b) if rows(b.len()).is_multiple_of(4) => {
+                let w = Weight::Q8_0x4(quant::repack_q8_0(&b, rows(b.len())));
+                b.release();
+                w
+            }
+            Weight::Q4_0(b) if rows(b.len()).is_multiple_of(4) => {
+                let w = Weight::Q4_0x4(quant::repack_q4_0(&b, rows(b.len())));
+                b.release();
+                w
+            }
+            w => w,
+        }
+    }
+
     /// Row `i` (of `out.len()` columns) as f32: an embedding lookup.
     pub fn row_f32(&self, i: usize, out: &mut [f32]) {
         let cols = out.len();
@@ -172,6 +227,8 @@ impl Weight {
             Weight::F32(f) => out.copy_from_slice(&f[i * cols..(i + 1) * cols]),
             Weight::Q8_0(b) => quant::dequantize_q8_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
             Weight::Q4_0(b) => quant::dequantize_q4_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
+            Weight::Q8_0x4(b) => quant::dequantize_q8_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
+            Weight::Q4_0x4(b) => quant::dequantize_q4_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
         }
     }
 }

@@ -70,6 +70,13 @@ fn main() {
             let qbytes = q.bytes() as f64;
             let s = bench(3, iters, || aether::kernels::linear_on(None, black_box(&mut out), black_box(&x), black_box(&q)));
             println!("{format:?}_b_sdot,{d},{n},{},{:.1},{:.2},{:.2},{what}", q.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
+            // The same through the four-row repacked layout, where the CPU
+            // uses it (as models do).
+            if aether::kernels::repack_weights() {
+                let r = Weight::from(w.clone_buf()).convert(n, format).repack(n);
+                let s = bench(3, iters, || aether::kernels::linear_on(None, black_box(&mut out), black_box(&x), black_box(&r)));
+                println!("{format:?}_b_sdot_x4,{d},{n},{},{:.1},{:.2},{:.2},{what}", r.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
+            }
             #[cfg(target_arch = "aarch64")]
             {
                 use aether::kernels::neon_quant as nq;
@@ -77,7 +84,7 @@ fn main() {
                 let s = bench(3, iters, || match &q {
                     Weight::Q8_0(b) => out.iter_mut().enumerate().for_each(|(i, o)| *o = nq::dot_q8_0_f32(black_box(&b[i * nb..(i + 1) * nb]), &x)),
                     Weight::Q4_0(b) => out.iter_mut().enumerate().for_each(|(i, o)| *o = nq::dot_q4_0_f32(black_box(&b[i * nb..(i + 1) * nb]), &x)),
-                    Weight::F32(_) => unreachable!(),
+                    _ => unreachable!(),
                 });
                 println!("{format:?}_a_dequant,{d},{n},{},{:.1},{:.2},{:.2},{what}", q.bytes(), s.median / 1e3, qbytes / s.median, qbytes / s.min);
             }

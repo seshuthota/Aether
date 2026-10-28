@@ -15,7 +15,7 @@
 //! two rows × two tokens per instruction, in tiles of four rows × four
 //! tokens.
 
-use crate::quant::{BlockQ4_0, BlockQ8_0, QK, f16_to_f32};
+use crate::quant::{BlockQ4_0, BlockQ4_0x4, BlockQ8_0, BlockQ8_0x4, QK, f16_to_f32};
 use std::arch::aarch64::*;
 
 /// 8 int8 → two float32x4.
@@ -321,37 +321,52 @@ pub fn interleave_pairs(xq: &[BlockQ8_0], xd: &[f32], t: usize) -> Vec<PairQ8> {
     out
 }
 
-/// Rows `rows[0..4]` · the four tokens of pairs `x[0]`, `x[1]`, for any block
-/// type whose `load` gives its 32 values as int8 and its f16 scale. Per
-/// block, the four rows are loaded and interleaved once (rows 0,1 and rows
-/// 2,3), then used against both token pairs: 16 `smmla`s for 16 outputs.
+/// One block column of four weight rows, ready for `smmla`: for each row
+/// pair (rows 0,1 and rows 2,3) its four 8-value chunks as `[row a chunk |
+/// row b chunk]`, and the four rows' f16 scales.
+type Rows4 = ([[int8x16_t; 4]; 2], [u16; 4]);
+
+/// Row-major rows (each as values 0..16 and 16..32) → [`Rows4`]: interleaves
+/// rows 0,1 and rows 2,3 eight bytes at a time.
+#[inline(always)]
+fn interleave4(w: [[int8x16_t; 2]; 4], d: [u16; 4]) -> Rows4 {
+    let ((a0, a1), (a2, a3)) = (zip8(w[0][0], w[1][0]), zip8(w[0][1], w[1][1]));
+    let ((c0, c1), (c2, c3)) = (zip8(w[2][0], w[3][0]), zip8(w[2][1], w[3][1]));
+    ([[a0, a1, a2, a3], [c0, c1, c2, c3]], d)
+}
+
+/// int32 sums → f32; `X16` when the weights came in ×16 (repacked Q4_0),
+/// undone exactly by a fixed-point conversion with 4 fraction bits.
+#[inline(always)]
+fn to_f32<const X16: bool>(s: int32x4_t) -> float32x4_t {
+    // SAFETY: register-only NEON ops.
+    unsafe { if X16 { vcvtq_n_f32_s32::<4>(s) } else { vcvtq_f32_s32(s) } }
+}
+
+/// Four weight rows · the four tokens of pairs `x[0]`, `x[1]`, over `nb`
+/// blocks, where `load(b)` gives block column `b` of the rows as
+/// [`Rows4`]. Per block: 16 `smmla`s for 16 outputs.
 ///
 /// Returns four 2×2 tiles, tile `2·rp + tp` for row pair `rp` and token pair
 /// `tp`, each `[r0·t0, r0·t1, r1·t0, r1·t1]`. Every output has its own lane,
 /// integer sums and float additions, so its value does not depend on the
 /// rows or tokens it shares a tile with (passing the same row or pair twice
-/// is how callers handle the edges).
+/// is how callers handle the edges), nor on whether the rows were repacked.
 ///
 /// # Safety
-/// The CPU must have i8mm; the four rows and both pair slices must have the
-/// same number of blocks.
+/// The CPU must have i8mm; `load` must be valid for `0..nb` and both pair
+/// slices must have `nb` entries.
 #[target_feature(enable = "i8mm")]
-unsafe fn mmla4<B>(rows: [&[B]; 4], x: [&[PairQ8]; 2], load: impl Fn(&B) -> ([int8x16_t; 2], u16)) -> [[f32; 4]; 4] {
+unsafe fn mmla4<const X16: bool>(nb: usize, x: [&[PairQ8]; 2], load: impl Fn(usize) -> Rows4) -> [[f32; 4]; 4] {
     // SAFETY: register-only NEON ops (AArch64 baseline).
     let (mut acc, z) = unsafe { ([vdupq_n_f32(0.0); 4], vdupq_n_s32(0)) };
-    for b in 0..x[0].len() {
-        // SAFETY: the caller guarantees every slice has at least b + 1
-        // entries; each PairQ8 holds 64 int8s and 4 floats.
+    for b in 0..nb {
+        let (w, d) = load(b);
+        // SAFETY: the caller guarantees both pair slices have nb entries;
+        // each PairQ8 holds 64 int8s and 4 floats.
         unsafe {
-            let (w0, d0) = load(rows[0].get_unchecked(b));
-            let (w1, d1) = load(rows[1].get_unchecked(b));
-            let (w2, d2) = load(rows[2].get_unchecked(b));
-            let (w3, d3) = load(rows[3].get_unchecked(b));
-            let ((a0, a1), (a2, a3)) = (zip8(w0[0], w1[0]), zip8(w0[1], w1[1]));
-            let ((c0, c1), (c2, c3)) = (zip8(w2[0], w3[0]), zip8(w2[1], w3[1]));
-            let w = [[a0, a1, a2, a3], [c0, c1, c2, c3]];
             // [d0, d1, d2, d3] → [d0, d0, d1, d1] and [d2, d2, d3, d3].
-            let dw = f16x4_to_f32([d0, d1, d2, d3]);
+            let dw = f16x4_to_f32(d);
             let dw = [vzip1q_f32(dw, dw), vzip2q_f32(dw, dw)];
             for tp in 0..2 {
                 let p = x[tp].get_unchecked(b);
@@ -363,7 +378,7 @@ unsafe fn mmla4<B>(rows: [&[B]; 4], x: [&[PairQ8]; 2], load: impl Fn(&B) -> ([in
                     // next block's) are independent, which is enough to keep
                     // the `smmla` units busy without extra adds.
                     let s = smmla(smmla(smmla(smmla(z, w[rp][0], xv[0]), w[rp][1], xv[1]), w[rp][2], xv[2]), w[rp][3], xv[3]);
-                    acc[2 * rp + tp] = vfmaq_f32(acc[2 * rp + tp], vcvtq_f32_s32(s), vmulq_f32(dw[rp], dx));
+                    acc[2 * rp + tp] = vfmaq_f32(acc[2 * rp + tp], to_f32::<X16>(s), vmulq_f32(dw[rp], dx));
                 }
             }
         }
@@ -376,28 +391,147 @@ unsafe fn mmla4<B>(rows: [&[B]; 4], x: [&[PairQ8]; 2], load: impl Fn(&B) -> ([in
     out
 }
 
-/// Four Q8_0 rows × four tokens with `smmla`; see [`mmla4`].
-///
-/// # Safety
-/// As for [`mmla4`].
-#[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q8_0(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
-    // SAFETY: forwarded from the caller; each block holds 32 int8s.
-    unsafe { mmla4(rows, x, |w| ([vld1q_s8(w.qs.as_ptr()), vld1q_s8(w.qs.as_ptr().add(16))], w.d)) }
+/// Q8_0 rows as 32 int8s (values 0..16, 16..32).
+#[inline(always)]
+fn load_q8_0(w: &BlockQ8_0) -> [int8x16_t; 2] {
+    // SAFETY: each block holds 32 int8s.
+    unsafe { [vld1q_s8(w.qs.as_ptr()), vld1q_s8(w.qs.as_ptr().add(16))] }
 }
 
-/// Four Q4_0 rows × four tokens with `smmla`: each row's nibbles are
-/// unpacked once for all four tokens. See [`mmla4`].
+/// Repacked Q8_0: the 16-byte loads are already row pairs.
+#[inline(always)]
+fn load_q8_0x4(w: &BlockQ8_0x4) -> Rows4 {
+    let q = w.qs.as_ptr();
+    // SAFETY: each block holds 128 int8s; offsets reach at most 112 + 16.
+    let v = |o: usize| unsafe { vld1q_s8(q.add(o)) };
+    ([[v(0), v(32), v(64), v(96)], [v(16), v(48), v(80), v(112)]], w.d)
+}
+
+/// Repacked Q4_0 (nibbles XOR 8): a shift left by 4 gives the low nibbles
+/// ×16 as signed int8, a mask the high ones; no subtraction of 8.
+#[inline(always)]
+fn load_q4_0x4(w: &BlockQ4_0x4) -> Rows4 {
+    let q = w.qs.as_ptr();
+    // SAFETY: each block holds 64 bytes; register-only ops after the loads.
+    unsafe {
+        let (lo, hi) = (|v: uint8x16_t| vreinterpretq_s8_u8(vshlq_n_u8::<4>(v)), |v: uint8x16_t| vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0xF0))));
+        // Half h, row pair rp at byte 32h + 16rp: low nibbles are chunk h,
+        // high nibbles chunk h + 2.
+        let rp = |o: usize| {
+            let (h0, h1) = (vld1q_u8(q.add(o)), vld1q_u8(q.add(32 + o)));
+            [lo(h0), lo(h1), hi(h0), hi(h1)]
+        };
+        ([rp(0), rp(16)], w.d)
+    }
+}
+
+/// Four row-major Q8_0 rows × four tokens with `smmla`; see [`mmla4`].
 ///
 /// # Safety
-/// As for [`mmla4`].
+/// As for [`mmla4`], every row with `x[0].len()` blocks.
 #[target_feature(enable = "i8mm")]
-pub unsafe fn mmla4_q4_0(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
-    // SAFETY: forwarded from the caller; 16 bytes of nibbles per block.
+pub unsafe fn mmla4_q8_0(rows: [&[BlockQ8_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: forwarded from the caller (b < nb = every row's length).
     unsafe {
-        mmla4(rows, x, |w| {
-            let (lo, hi) = unpack_q4(vld1q_u8(w.qs.as_ptr()));
-            ([lo, hi], w.d)
+        mmla4::<false>(x[0].len(), x, |b| {
+            let r = rows.map(|r| r.get_unchecked(b));
+            interleave4(r.map(load_q8_0), r.map(|r| r.d))
         })
     }
+}
+
+/// Four row-major Q4_0 rows × four tokens with `smmla`: each row's nibbles
+/// are unpacked once for all four tokens. See [`mmla4`].
+///
+/// # Safety
+/// As for [`mmla4`], every row with `x[0].len()` blocks.
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla4_q4_0(rows: [&[BlockQ4_0]; 4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: forwarded from the caller (b < nb = every row's length);
+    // 16 bytes of nibbles per block.
+    unsafe {
+        mmla4::<false>(x[0].len(), x, |b| {
+            let r = rows.map(|r| r.get_unchecked(b));
+            interleave4(r.map(|r| <[int8x16_t; 2]>::from(unpack_q4(vld1q_u8(r.qs.as_ptr())))), r.map(|r| r.d))
+        })
+    }
+}
+
+/// One repacked group of four Q8_0 rows × four tokens: no interleaving in
+/// the loop. See [`mmla4`].
+///
+/// # Safety
+/// As for [`mmla4`], `group` with `x[0].len()` blocks.
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla4_q8_0x4(group: &[BlockQ8_0x4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: forwarded from the caller (b < nb = group.len()).
+    unsafe { mmla4::<false>(x[0].len(), x, |b| load_q8_0x4(group.get_unchecked(b))) }
+}
+
+/// One repacked group of four Q4_0 rows × four tokens. See [`mmla4`].
+///
+/// # Safety
+/// As for [`mmla4`], `group` with `x[0].len()` blocks.
+#[target_feature(enable = "i8mm")]
+pub unsafe fn mmla4_q4_0x4(group: &[BlockQ4_0x4], x: [&[PairQ8]; 2]) -> [[f32; 4]; 4] {
+    // SAFETY: forwarded from the caller (b < nb = group.len()).
+    unsafe { mmla4::<true>(x[0].len(), x, |b| load_q4_0x4(group.get_unchecked(b))) }
+}
+
+/// One repacked group of four rows · one Q8_0 token (decode), with `sdot`:
+/// per block 8 `sdot`s, as llama.cpp's `gemv_q4_0_4x8_q8_0`. Each token
+/// chunk is broadcast to both halves of a register, so `sdot` against a row
+/// pair gives `[a lo, a hi, b lo, b hi]` partial sums; a pairwise add of the
+/// two row pairs' results gives the four rows.
+///
+/// # Safety
+/// The CPU must have `dotprod`; `load` must be valid for `0..x.len()`, and
+/// `xd` as long as `x`.
+#[target_feature(enable = "dotprod")]
+unsafe fn gemv4<const X16: bool>(x: &[BlockQ8_0], xd: &[f32], load: impl Fn(usize) -> Rows4) -> [f32; 4] {
+    let (mut acc, z) = ([vdupq_n_f32(0.0); 2], vdupq_n_s32(0));
+    for b in 0..x.len() {
+        let (w, d) = load(b);
+        // SAFETY: b < x.len() = xd.len(); each block holds 32 int8s.
+        unsafe {
+            let xb = x.get_unchecked(b);
+            let (x01, x23) = (vreinterpretq_s64_s8(vld1q_s8(xb.qs.as_ptr())), vreinterpretq_s64_s8(vld1q_s8(xb.qs.as_ptr().add(16))));
+            let a = [
+                vreinterpretq_s8_s64(vdupq_laneq_s64::<0>(x01)),
+                vreinterpretq_s8_s64(vdupq_laneq_s64::<1>(x01)),
+                vreinterpretq_s8_s64(vdupq_laneq_s64::<0>(x23)),
+                vreinterpretq_s8_s64(vdupq_laneq_s64::<1>(x23)),
+            ];
+            let r = w.map(|w| vdotq_s32(vdotq_s32(vdotq_s32(vdotq_s32(z, w[0], a[0]), w[1], a[1]), w[2], a[2]), w[3], a[3]));
+            let s = vpaddq_s32(r[0], r[1]);
+            let scales = vmulq_n_f32(f16x4_to_f32(d), *xd.get_unchecked(b));
+            // Even and odd blocks into separate accumulators, so
+            // consecutive FMAs do not wait on each other.
+            acc[b & 1] = vfmaq_f32(acc[b & 1], to_f32::<X16>(s), scales);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: `out` holds 4 floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), vaddq_f32(acc[0], acc[1])) };
+    out
+}
+
+/// One repacked group of four Q8_0 rows · one Q8_0 token; see [`gemv4`].
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group`, `x` and `xd` the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn gemv4_q8_0x4(group: &[BlockQ8_0x4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+    // SAFETY: forwarded from the caller (b < x.len() = group.len()).
+    unsafe { gemv4::<false>(x, xd, |b| load_q8_0x4(group.get_unchecked(b))) }
+}
+
+/// One repacked group of four Q4_0 rows · one Q8_0 token; see [`gemv4`].
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group`, `x` and `xd` the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn gemv4_q4_0x4(group: &[BlockQ4_0x4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+    // SAFETY: forwarded from the caller (b < x.len() = group.len()).
+    unsafe { gemv4::<true>(x, xd, |b| load_q4_0x4(group.get_unchecked(b))) }
 }

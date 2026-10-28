@@ -58,29 +58,40 @@ impl Weights {
     /// Converts every matrix (not the norms) to `format`, as llama.cpp's
     /// `llama-quantize --pure` does: the embedding/classifier included.
     pub fn convert(self, c: &Config, format: Format) -> Weights {
+        self.map_matrices(c, |w, cols| w.convert(cols, format))
+    }
+
+    /// Repacks every quantized matrix four rows at a time for the `smmla`
+    /// kernels (see [`Weight::repack`]).
+    pub fn repack(self, c: &Config) -> Weights {
+        self.map_matrices(c, |w, cols| w.repack(cols))
+    }
+
+    /// Applies `f(matrix, columns)` to every matrix, not the norms.
+    fn map_matrices(self, c: &Config, f: impl Fn(Weight, usize) -> Weight) -> Weights {
         let (dim, hidden) = (c.dim, c.hidden_dim);
         Weights {
-            token_embedding: self.token_embedding.convert(dim, format),
+            token_embedding: f(self.token_embedding, dim),
             layers: self
                 .layers
                 .into_iter()
                 .map(|l| LayerWeights {
                     attn_norm: l.attn_norm,
-                    wq: l.wq.convert(dim, format),
-                    wk: l.wk.convert(dim, format),
-                    wv: l.wv.convert(dim, format),
-                    wo: l.wo.convert(dim, format),
+                    wq: f(l.wq, dim),
+                    wk: f(l.wk, dim),
+                    wv: f(l.wv, dim),
+                    wo: f(l.wo, dim),
                     bq: l.bq,
                     bk: l.bk,
                     bv: l.bv,
                     ffn_norm: l.ffn_norm,
-                    w_gate: l.w_gate.convert(dim, format),
-                    w_down: l.w_down.convert(hidden, format),
-                    w_up: l.w_up.convert(dim, format),
+                    w_gate: f(l.w_gate, dim),
+                    w_down: f(l.w_down, hidden),
+                    w_up: f(l.w_up, dim),
                 })
                 .collect(),
             final_norm: self.final_norm,
-            classifier: self.classifier.map(|w| w.convert(dim, format)),
+            classifier: self.classifier.map(|w| f(w, dim)),
         }
     }
 
@@ -241,7 +252,10 @@ pub struct Transformer {
 }
 
 impl Transformer {
+    /// On CPUs where the repacked `smmla` kernels run (see
+    /// [`k::repack_weights`]), quantized matrices are repacked here, once.
     pub fn new(config: Config, weights: Weights) -> Transformer {
+        let weights = if k::repack_weights() { weights.repack(&config) } else { weights };
         let c = &config;
         let cache = c.n_layers * c.seq_len * c.kv_dim();
         let state = State {

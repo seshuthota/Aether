@@ -117,6 +117,7 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q4_0(b) => crate::quant::scalar::dot_q4_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         Weight::F32(_) => unreachable!(),
+        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) => unreachable!("repacked rows go four at a time"),
     }
 }
 
@@ -129,7 +130,8 @@ fn has_dot4() -> bool {
 }
 
 /// Rows `i..i+4` · one quantized activation. Only called when
-/// [`has_dot4`] is true.
+/// [`has_dot4`] is true; for repacked weights `i` is a multiple of 4 (rows
+/// are handed out in blocks of [`ROW_BLOCK`]).
 #[inline]
 #[allow(unused_variables)]
 fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
@@ -143,6 +145,8 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
             match w {
                 Weight::Q8_0(b) => neon_quant::dot4_q8_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q4_0(b) => neon_quant::dot4_q4_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
+                Weight::Q8_0x4(b) => neon_quant::gemv4_q8_0x4(&b[group(i, nb)], x, xd),
+                Weight::Q4_0x4(b) => neon_quant::gemv4_q4_0x4(&b[group(i, nb)], x, xd),
                 Weight::F32(_) => unreachable!(),
             }
         }
@@ -157,6 +161,25 @@ fn has_mmla() -> bool {
     neon_quant::has_i8mm()
 }
 
+/// Whether models should repack their quantized matrices four rows at a
+/// time (see [`Weight::repack`]): yes where the `smmla` kernels run, which
+/// then need no interleaving in their loops (decode uses the matching
+/// `sdot` GEMV).
+pub fn repack_weights() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    return has_mmla() && has_dot4();
+    #[cfg(not(target_arch = "aarch64"))]
+    return false;
+}
+
+/// The blocks of the repacked group holding rows `i..i+4` (`i` a multiple
+/// of 4), rows of `nb` blocks.
+#[cfg(target_arch = "aarch64")]
+fn group(i: usize, nb: usize) -> std::ops::Range<usize> {
+    assert!(i.is_multiple_of(4), "repacked rows start at a multiple of 4");
+    i / 4 * nb..(i / 4 + 1) * nb
+}
+
 /// Rows `rows` · the tokens of pairs `ps` (see [`neon_quant::mmla4`]). Only
 /// called when [`has_mmla`] is true.
 #[cfg(target_arch = "aarch64")]
@@ -169,9 +192,18 @@ fn mmla4(w: &Weight, rows: [usize; 4], ps: [usize; 2], xp: &[neon_quant::PairQ8]
         match w {
             Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
+            Weight::Q8_0x4(b) => neon_quant::mmla4_q8_0x4(&b[group4(rows, nb)], x),
+            Weight::Q4_0x4(b) => neon_quant::mmla4_q4_0x4(&b[group4(rows, nb)], x),
             Weight::F32(_) => unreachable!(),
         }
     }
+}
+
+/// [`group`] for four row indices, which must be one whole group.
+#[cfg(target_arch = "aarch64")]
+fn group4(rows: [usize; 4], nb: usize) -> std::ops::Range<usize> {
+    assert!(rows == [0, 1, 2, 3].map(|k| rows[0] + k), "repacked rows go four at a time");
+    group(rows[0], nb)
 }
 
 /// [`quant_rows`] with `smmla`: rows four at a time, and for each group of
@@ -391,13 +423,19 @@ mod tests {
                 for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
                     let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
                     buf.copy_from_slice(&w);
+                    let copy = buf.clone_buf();
                     let q = Weight::from(buf).convert(ws[1], format);
                     let want = arr(&dir, &format!("out_{name}_b"));
-                    for p in [None, Some(&pool)] {
-                        let mut out = vec![f32::NAN; ws[0]];
-                        linear_on(p, &mut out, &x, &q);
-                        let (_, rel) = max_errors(&out, &want);
-                        assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} {name}: rel {rel:.2e}", dir.display());
+                    // Row-major, and repacked four rows at a time where the
+                    // CPU uses that layout.
+                    let repacked = repack_weights().then(|| Weight::from(copy).convert(ws[1], format).repack(ws[1]));
+                    for q in std::iter::once(&q).chain(repacked.as_ref()) {
+                        for p in [None, Some(&pool)] {
+                            let mut out = vec![f32::NAN; ws[0]];
+                            linear_on(p, &mut out, &x, q);
+                            let (_, rel) = max_errors(&out, &want);
+                            assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} {name} {:?}: rel {rel:.2e}", dir.display(), q.layout());
+                        }
                     }
                 }
             }
@@ -422,6 +460,7 @@ mod tests {
                 for (format, name) in [(crate::weight::Format::Q8_0, "q8_0"), (crate::weight::Format::Q4_0, "q4_0")] {
                     let mut buf = crate::aligned::AlignedBuf::zeros(w.len());
                     buf.copy_from_slice(&w);
+                    let copy = buf.clone_buf();
                     let q = Weight::from(buf).convert(ws[1], format);
                     let want = arr(&dir, &format!("out_{name}_b"));
                     let mut one = vec![f32::NAN; t * ws[0]];
@@ -431,6 +470,16 @@ mod tests {
                     let mut many = vec![f32::NAN; t * ws[0]];
                     linear_batch_on(Some(&pool), &mut many, &x, &q, t);
                     assert_eq!(one, many, "{} {name}: threads changed the result", dir.display());
+                    // Repacked four rows at a time (where the CPU uses it):
+                    // the same `smmla` sums, so the same bits.
+                    if repack_weights() {
+                        let r = Weight::from(copy).convert(ws[1], format).repack(ws[1]);
+                        for p in [None, Some(&pool)] {
+                            let mut out = vec![f32::NAN; t * ws[0]];
+                            linear_batch_on(p, &mut out, &x, &r, t);
+                            assert_eq!(one, out, "{} {name} {:?}: repacking changed the result", dir.display(), r.layout());
+                        }
+                    }
                 }
             }
         })

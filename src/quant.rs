@@ -143,6 +143,113 @@ pub fn dequantize_q4_0(blocks: &[BlockQ4_0], out: &mut [f32]) {
     }
 }
 
+// --- Repacked layouts: four rows interleaved ---------------------------
+//
+// For `smmla` (and the matching `sdot` GEMV), four rows' blocks at the same
+// column are stored together, 8 bytes at a time, so that one 16-byte load is
+// already `[row 0 chunk | row 1 chunk]` (or rows 2 and 3) and the kernel
+// needs no `zip`s. Group `g` (rows 4g..4g+4), block `b` sits at `g·nb + b`.
+// This is llama.cpp's `block_q8_0x4` / `block_q4_0x4` with an 8-byte
+// interleave (its `Q4_0_4x8` repack).
+
+/// Four Q8_0 rows at one block column: `qs[32c + 8r..32c + 8r + 8]` holds
+/// values `8c..8c + 8` of row `r`, for chunks c = 0..4.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockQ8_0x4 {
+    /// The four rows' scales as f16 bits.
+    pub d: [u16; 4],
+    pub qs: [i8; 4 * QK],
+}
+
+/// Four Q4_0 rows at one block column: `qs[32h + 8r..32h + 8r + 8]` holds
+/// bytes `8h..8h + 8` of row `r`'s block, for halves h = 0, 1 (so the low
+/// nibbles are values `8h..`, the high nibbles values `16 + 8h..`). Every
+/// nibble is stored XOR 8: read as a signed 4-bit number it is then `q − 8`
+/// directly, so the kernel's unpack is one shift (low nibble, ×16) or one
+/// mask (high nibble, ×16), and the ×16 is undone exactly when the integer
+/// sum is converted to float.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockQ4_0x4 {
+    pub d: [u16; 4],
+    pub qs: [u8; 2 * QK],
+}
+
+const _: () = assert!(std::mem::size_of::<BlockQ8_0x4>() == 4 * 34);
+const _: () = assert!(std::mem::size_of::<BlockQ4_0x4>() == 4 * 18);
+
+/// Row-major Q8_0 blocks (`rows` rows, a multiple of 4) → groups of four.
+pub fn repack_q8_0(b: &[BlockQ8_0], rows: usize) -> Vec<BlockQ8_0x4> {
+    assert!(rows.is_multiple_of(4) && b.len().is_multiple_of(rows), "rows must be a multiple of 4");
+    let nb = b.len() / rows;
+    let mut out = Vec::with_capacity(b.len() / 4);
+    for g in 0..rows / 4 {
+        for k in 0..nb {
+            let src = [0, 1, 2, 3].map(|r| &b[(4 * g + r) * nb + k]);
+            let mut qs = [0; 4 * QK];
+            for c in 0..QK / 8 {
+                for (r, blk) in src.iter().enumerate() {
+                    qs[32 * c + 8 * r..32 * c + 8 * r + 8].copy_from_slice(&blk.qs[8 * c..8 * c + 8]);
+                }
+            }
+            out.push(BlockQ8_0x4 { d: src.map(|blk| blk.d), qs });
+        }
+    }
+    out
+}
+
+/// Row-major Q4_0 blocks (`rows` rows, a multiple of 4) → groups of four,
+/// nibbles XOR 8.
+pub fn repack_q4_0(b: &[BlockQ4_0], rows: usize) -> Vec<BlockQ4_0x4> {
+    assert!(rows.is_multiple_of(4) && b.len().is_multiple_of(rows), "rows must be a multiple of 4");
+    let nb = b.len() / rows;
+    let mut out = Vec::with_capacity(b.len() / 4);
+    for g in 0..rows / 4 {
+        for k in 0..nb {
+            let src = [0, 1, 2, 3].map(|r| &b[(4 * g + r) * nb + k]);
+            let mut qs = [0; 2 * QK];
+            for h in 0..2 {
+                for (r, blk) in src.iter().enumerate() {
+                    for j in 0..8 {
+                        qs[32 * h + 8 * r + j] = blk.qs[8 * h + j] ^ 0x88;
+                    }
+                }
+            }
+            out.push(BlockQ4_0x4 { d: src.map(|blk| blk.d), qs });
+        }
+    }
+    out
+}
+
+/// Row `r` (0..4) of a group of repacked Q8_0 blocks, as f32.
+pub fn dequantize_q8_0x4(group: &[BlockQ8_0x4], r: usize, out: &mut [f32]) {
+    assert_eq!(out.len(), group.len() * QK);
+    for (blk, o) in group.iter().zip(out.as_chunks_mut::<QK>().0.iter_mut()) {
+        let d = f16_to_f32(blk.d[r]);
+        for c in 0..QK / 8 {
+            for j in 0..8 {
+                o[8 * c + j] = blk.qs[32 * c + 8 * r + j] as f32 * d;
+            }
+        }
+    }
+}
+
+/// Row `r` (0..4) of a group of repacked Q4_0 blocks, as f32.
+pub fn dequantize_q4_0x4(group: &[BlockQ4_0x4], r: usize, out: &mut [f32]) {
+    assert_eq!(out.len(), group.len() * QK);
+    for (blk, o) in group.iter().zip(out.as_chunks_mut::<QK>().0.iter_mut()) {
+        let d = f16_to_f32(blk.d[r]);
+        for h in 0..2 {
+            for j in 0..8 {
+                let q = blk.qs[32 * h + 8 * r + j] ^ 0x88;
+                o[8 * h + j] = ((q & 0x0F) as i32 - 8) as f32 * d;
+                o[16 + 8 * h + j] = ((q >> 4) as i32 - 8) as f32 * d;
+            }
+        }
+    }
+}
+
 /// Scalar dot products of one quantized row with `x`. These are the
 /// portable versions (host builds); `kernels::neon_quant` has the NEON ones.
 pub mod scalar {
@@ -263,6 +370,32 @@ mod tests {
             let mut xq = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
             quantize_q8_0(&x, &mut xq);
             assert_eq!(xq, blocks_from_bytes::<BlockQ8_0>(&std::fs::read(dir.join("x_q8_0.bin")).unwrap()));
+        }
+    }
+
+    /// Repacking only moves bytes: every row of a repacked matrix
+    /// dequantizes to exactly the values of the row-major one.
+    #[test]
+    fn repacked_rows_dequantize_like_row_major() {
+        for dir in cases() {
+            let (d, n, _, _) = load(&dir);
+            if !d.is_multiple_of(4) {
+                continue;
+            }
+            let q8: Vec<BlockQ8_0> = blocks_from_bytes(&std::fs::read(dir.join("w_q8_0.bin")).unwrap());
+            let q4: Vec<BlockQ4_0> = blocks_from_bytes(&std::fs::read(dir.join("w_q4_0.bin")).unwrap());
+            let (p8, p4) = (repack_q8_0(&q8, d), repack_q4_0(&q4, d));
+            let nb = n / QK;
+            let (mut want, mut got) = (vec![0.0; n], vec![0.0; n]);
+            for i in 0..d {
+                let g = i / 4 * nb..(i / 4 + 1) * nb;
+                dequantize_q8_0(&q8[i * nb..(i + 1) * nb], &mut want);
+                dequantize_q8_0x4(&p8[g.clone()], i % 4, &mut got);
+                assert_eq!(want, got, "{} q8_0 row {i}", dir.display());
+                dequantize_q4_0(&q4[i * nb..(i + 1) * nb], &mut want);
+                dequantize_q4_0x4(&p4[g], i % 4, &mut got);
+                assert_eq!(want, got, "{} q4_0 row {i}", dir.display());
+            }
         }
     }
 
