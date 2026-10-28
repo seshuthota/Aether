@@ -784,3 +784,18 @@ on the position and the pair index. Now `rotations()` computes the
 `powf` + `sincosf` + `rope_halves` 3.3 % → `powf` + `sincosf` + `rope_halves`
 + `bias_rope` 1.1 %. The cycle A/B (`cycles.txt`) is within its noise, as a
 2 % change would be.
+
+## Prefill: q/k/v and gate/up as one job each, too (2026-10-29; `raw/prefill-fused/`)
+
+`linear_many_batch_on` is `linear_many_on` for `t` tokens: the shared input
+is quantized and interleaved into pairs once instead of three (two) times,
+and the threads take row blocks from all the matrices, so k and v (128 rows
+each, 8 blocks for 6 threads) no longer leave threads idle at their end.
+Same values: PPL Q4_0 19.7470, Q4_K_M 16.7330 (`ppl-*.txt`), 92/92 tests.
+
+Cycles (`cycles.txt`, two rounds, reps 5): pp64 Q4_0 8.20 / 8.16 G → 7.85 /
+7.85 G (−4 %), Q4_K_M 10.60 / 10.82 → 10.26 / 10.27 G (−4 %); pp512 −1 %.
+A timed Q4_0 pp512 A/B with the order alternated (`pp512-order.txt`)
+showed again how much the clock cap matters: every run with the prime
+cores capped at 1.02 GHz did 455–491 tok/s, every uncapped one 580–588,
+base and new alike.

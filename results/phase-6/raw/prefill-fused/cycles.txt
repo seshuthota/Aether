@@ -1,0 +1,48 @@
+>>> q4_0 base pp64 r1
+pp64,739.9,86.5
+  8,196,612,358  cpu-cycles:u   # 2.006802 GHz
+>>> q4_0 new pp64 r1
+pp64,771.1,83.0
+  7,850,447,306  cpu-cycles:u   # 1.988198 GHz
+>>> q4_0 base pp512 r1
+pp512,647.7,790.4
+  60,024,808,176  cpu-cycles:u   # 2.035385 GHz
+>>> q4_0 new pp512 r1
+pp512,590.4,867.2
+  60,433,570,011  cpu-cycles:u   # 1.875031 GHz
+>>> q4_k_m base pp64 r1
+pp64,556.3,115.0
+  10,596,751,009  cpu-cycles:u   # 1.989103 GHz
+>>> q4_k_m new pp64 r1
+pp64,595.3,107.5
+  10,261,419,431  cpu-cycles:u   # 1.987283 GHz
+>>> q4_k_m base pp512 r1
+pp512,516.1,992.0
+  71,746,588,275  cpu-cycles:u   # 1.923685 GHz
+>>> q4_k_m new pp512 r1
+pp512,552.0,927.5
+  70,670,267,180  cpu-cycles:u   # 2.042480 GHz
+>>> q4_0 base pp64 r2
+pp64,741.5,86.3
+  8,162,654,752  cpu-cycles:u   # 1.983467 GHz
+>>> q4_0 new pp64 r2
+pp64,770.0,83.1
+  7,847,722,346  cpu-cycles:u   # 1.987734 GHz
+>>> q4_0 base pp512 r2
+pp512,643.4,795.8
+  59,954,879,363  cpu-cycles:u   # 2.034751 GHz
+>>> q4_0 new pp512 r2
+pp512,586.0,873.7
+  58,700,013,890  cpu-cycles:u   # 1.808772 GHz
+>>> q4_k_m base pp64 r2
+pp64,499.1,128.2
+  10,823,564,968  cpu-cycles:u   # 1.748628 GHz
+>>> q4_k_m new pp64 r2
+pp64,517.6,123.7
+  10,266,841,518  cpu-cycles:u   # 1.762444 GHz
+>>> q4_k_m base pp512 r2
+pp512,484.8,1056.1
+  71,236,724,150  cpu-cycles:u   # 1.805098 GHz
+>>> q4_k_m new pp512 r2
+pp512,485.9,1053.7
+  70,760,049,507  cpu-cycles:u   # 1.807094 GHz

@@ -429,9 +429,8 @@ impl Transformer {
             // this layer's cache, so the GEMM writes them in place.
             let layer_off = l * c.seq_len * kv_dim;
             let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
-            k::linear_batch_on(pool, &mut b.q[..t * dim], &b.xb[..t * dim], &lw.wq, t);
-            k::linear_batch_on(pool, &mut s.key_cache[c0..c1], &b.xb[..t * dim], &lw.wk, t);
-            k::linear_batch_on(pool, &mut s.value_cache[c0..c1], &b.xb[..t * dim], &lw.wv, t);
+            let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut s.key_cache[c0..c1], &mut s.value_cache[c0..c1]];
+            k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&lw.wq, &lw.wk, &lw.wv], t);
             // Bias, then RoPE at the token's position (K and V rows are in
             // the cache already).
             par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, q, lw.bq.as_ref(), start + i));
@@ -467,8 +466,7 @@ impl Transformer {
             for i in 0..t {
                 obs.tap("ffn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
-            k::linear_batch_on(pool, &mut b.hb[..t * hidden], &b.xb[..t * dim], &lw.w_gate, t);
-            k::linear_batch_on(pool, &mut b.hb2[..t * hidden], &b.xb[..t * dim], &lw.w_up, t);
+            k::linear_many_batch_on(pool, &mut [&mut b.hb[..t * hidden], &mut b.hb2[..t * hidden]], &b.xb[..t * dim], &[&lw.w_gate, &lw.w_up], t);
             let hb2 = &b.hb2;
             par_chunks_mut(pool, &mut b.hb[..t * hidden], hidden, &|i, g| k::swiglu(g, &hb2[i * hidden..(i + 1) * hidden]));
             for i in 0..t {
