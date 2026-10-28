@@ -92,6 +92,32 @@ pub fn dot_q4_0_f32(row: &[BlockQ4_0], x: &[f32]) -> f32 {
     unsafe { vaddvq_f32(acc) }
 }
 
+/// Quantizes `x` (a multiple of 32 long) into Q8_0 blocks, byte for byte
+/// as [`crate::quant::quantize_q8_0`] (llama.cpp's reference quantizer):
+/// the max of |x| is exact, the scale is computed the same way, and
+/// `vcvtaq` rounds halves away from zero like C's `roundf`. Eight vector
+/// loads per block instead of 32 scalar steps; it runs on one thread before
+/// every quantized matmul is shared out, so the others wait for it.
+pub fn quantize_q8_0(x: &[f32], out: &mut [BlockQ8_0]) {
+    assert_eq!(x.len(), out.len() * QK, "length must be blocks × 32");
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::<QK>().0) {
+        // SAFETY: each chunk holds 32 floats (8 loads of 4); each block 32
+        // int8s (2 stores of 16).
+        unsafe {
+            let p = v.as_ptr();
+            let a: [float32x4_t; 8] = std::array::from_fn(|k| vld1q_f32(p.add(4 * k)));
+            let amax = vmaxvq_f32(a.iter().fold(vdupq_n_f32(0.0), |m, &a| vmaxq_f32(m, vabsq_f32(a))));
+            let d = amax / 127.0;
+            let id = if d != 0.0 { 1.0 / d } else { 0.0 };
+            blk.d = crate::quant::f32_to_f16(d);
+            let q = a.map(|a| vcvtaq_s32_f32(vmulq_n_f32(a, id)));
+            let h = [0, 1, 2, 3].map(|k| vcombine_s16(vmovn_s32(q[2 * k]), vmovn_s32(q[2 * k + 1])));
+            vst1q_s8(blk.qs.as_mut_ptr(), vcombine_s8(vmovn_s16(h[0]), vmovn_s16(h[1])));
+            vst1q_s8(blk.qs.as_mut_ptr().add(16), vcombine_s8(vmovn_s16(h[2]), vmovn_s16(h[3])));
+        }
+    }
+}
+
 /// True when this CPU has the `sdot` instruction (checked once by std).
 pub fn has_dotprod() -> bool {
     std::arch::is_aarch64_feature_detected!("dotprod")

@@ -99,6 +99,9 @@ pub fn matmul_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
 /// integer dot-product kernels.
 fn quantize_activation(x: &[f32]) -> Vec<BlockQ8_0> {
     let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
+    #[cfg(target_arch = "aarch64")]
+    neon_quant::quantize_q8_0(x, &mut q);
+    #[cfg(not(target_arch = "aarch64"))]
     crate::quant::quantize_q8_0(x, &mut q);
     q
 }

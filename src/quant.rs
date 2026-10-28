@@ -370,6 +370,13 @@ mod tests {
             let mut xq = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; x.len() / QK];
             quantize_q8_0(&x, &mut xq);
             assert_eq!(xq, blocks_from_bytes::<BlockQ8_0>(&std::fs::read(dir.join("x_q8_0.bin")).unwrap()));
+            // The NEON quantizer (activations, AArch64): the same bytes.
+            #[cfg(target_arch = "aarch64")]
+            for (v, file) in [(&w, "w_q8_0.bin"), (&x, "x_q8_0.bin")] {
+                let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; v.len() / QK];
+                crate::kernels::neon_quant::quantize_q8_0(v, &mut q);
+                assert_eq!(q, blocks_from_bytes::<BlockQ8_0>(&std::fs::read(dir.join(file)).unwrap()), "{} neon {file}", dir.display());
+            }
         }
     }
 
