@@ -294,6 +294,59 @@ mod tests {
         .unwrap();
     }
 
+    /// A greedy run over the model's whole context (`long.dump`, ~220
+    /// positions), so attention past 128 positions is split into chunks and
+    /// merged. Decode one token at a time on one thread and on four (chunks
+    /// handed out across threads), then a single 200-token prefill on one and
+    /// on four: every token identical to llama2.c, every activation within
+    /// tolerance, and threads never change a bit.
+    #[test]
+    fn long_context_matches_llama2c() {
+        let Some(path) = golden("stories15M/long.dump") else { return };
+        let (reference, _) = read_dump(&path);
+        let check = |ours: &Activations, label: &str| {
+            let mut worst: f32 = 0.0;
+            for (key, r) in &reference {
+                if key.0 == "prompt" || key.0 == "next" {
+                    continue;
+                }
+                let Some(o) = ours.get(key) else { continue };
+                let (_, rel) = max_errors(o, r);
+                assert!(rel < 1e-4, "{label} {key:?}: relative error {rel:.3e} vs llama2.c");
+                worst = worst.max(rel);
+            }
+            println!("long context, {label}: worst relative error {worst:.2e}");
+        };
+        let cores: Vec<usize> = crate::sys::affinity::online_cpus().unwrap().into_iter().take(4).collect();
+        let (one, _) = replay("stories15M/long.dump", Sampler::new(0.0, 0.9, 0, 0)).unwrap();
+        check(&one, "decode, 1 thread");
+        let c = cores.clone();
+        let many = std::thread::spawn(move || replay_on("stories15M/long.dump", Sampler::new(0.0, 0.9, 0, 0), Some(&c)).unwrap().0).join().unwrap();
+        assert!(one == many, "four threads changed a long-context decode activation");
+
+        let get = |name: &str, pos: usize| reference.get(&(name.to_string(), -1, pos)).map(|v| v[0] as usize);
+        let prompt: Vec<usize> = (0..).map_while(|i| get("prompt", i)).collect();
+        let seq: Vec<usize> = (0..201).map(|p| if p < prompt.len() { prompt[p] } else { get("next", p - 1).unwrap() }).collect();
+        let prefill = |cores: Option<Vec<usize>>| {
+            let seq = seq.clone();
+            std::thread::spawn(move || {
+                let mut t = model().unwrap();
+                if let Some(cores) = cores {
+                    t.set_pool(crate::pool::ThreadPool::new(&cores).unwrap());
+                }
+                let mut obs = Collect::default();
+                let logits = t.forward_batch_traced(&seq[..200], 0, &mut obs).to_vec();
+                assert_eq!(crate::kernels::argmax(&logits), seq[200], "token after a 200-token prefill");
+                obs.0
+            })
+            .join()
+            .unwrap()
+        };
+        let (p1, p4) = (prefill(None), prefill(Some(cores)));
+        check(&p1, "200-token prefill");
+        assert!(p1 == p4, "four threads changed a long prefill activation");
+    }
+
     /// Temperature 0.8, top-p 0.9, seed 42: the same xorshift stream and the
     /// same nucleus procedure must pick the same tokens as `run -s 42`.
     #[test]

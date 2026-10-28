@@ -247,42 +247,97 @@ fn exp_neg(x: float32x4_t) -> float32x4_t {
     }
 }
 
-/// Softmax in place, four lanes at a time: max, then `e^(x - max)` with
-/// [`exp_neg`] and their sum, then a division by the sum. The last 0-3
-/// values go through the same vector code, padded with -inf (whose `e^x` is
-/// 0, so the sum is unchanged).
-pub fn softmax(x: &mut [f32]) {
+/// The largest element of `x` (not empty).
+fn max_f32(x: &[f32]) -> f32 {
     let n4 = x.len() / 4 * 4;
-    let tail = |x: &[f32]| {
-        let mut t = [f32::NEG_INFINITY; 4];
-        t[..x.len() - n4].copy_from_slice(&x[n4..]);
-        t
-    };
-    // SAFETY: vector accesses stay below n4 <= x.len(); the tail goes
-    // through a local 4-float array.
-    unsafe {
-        let p = x.as_mut_ptr();
-        let mut m = vld1q_f32(tail(x).as_ptr());
-        for i in (0..n4).step_by(4) {
-            m = vmaxq_f32(m, vld1q_f32(p.add(i)));
+    let mut m = f32::NEG_INFINITY;
+    if n4 > 0 {
+        // SAFETY: vector loads stay below n4 <= x.len().
+        unsafe {
+            let p = x.as_ptr();
+            let mut v = vld1q_f32(p);
+            for i in (4..n4).step_by(4) {
+                v = vmaxq_f32(v, vld1q_f32(p.add(i)));
+            }
+            m = vmaxvq_f32(v);
         }
-        let max = vdupq_n_f32(vmaxvq_f32(m));
+    }
+    x[n4..].iter().fold(m, |m, &v| m.max(v))
+}
+
+/// `x[i] = e^(x[i] - max)` in place with [`exp_neg`]; returns their sum.
+/// The last 0-3 values go through the same vector code, padded with -inf
+/// (whose `e^x` is 0, so the sum is unchanged).
+fn exp_sub_sum(x: &mut [f32], max: f32) -> f32 {
+    let n4 = x.len() / 4 * 4;
+    let k = x.len() - n4;
+    let mut t = [f32::NEG_INFINITY; 4];
+    t[..k].copy_from_slice(&x[n4..]);
+    // SAFETY: vector accesses stay below n4 <= x.len(); the tail goes
+    // through the local 4-float array `t`.
+    unsafe {
+        let (p, m) = (x.as_mut_ptr(), vdupq_n_f32(max));
         let mut sum = vdupq_n_f32(0.0);
         for i in (0..n4).step_by(4) {
-            let e = exp_neg(vsubq_f32(vld1q_f32(p.add(i)), max));
+            let e = exp_neg(vsubq_f32(vld1q_f32(p.add(i)), m));
             vst1q_f32(p.add(i), e);
             sum = vaddq_f32(sum, e);
         }
-        let mut t = tail(x);
-        let e = exp_neg(vsubq_f32(vld1q_f32(t.as_ptr()), max));
-        sum = vaddq_f32(sum, e);
-        let sum = vdupq_n_f32(vaddvq_f32(sum));
-        for i in (0..n4).step_by(4) {
-            vst1q_f32(p.add(i), vdivq_f32(vld1q_f32(p.add(i)), sum));
-        }
-        vst1q_f32(t.as_mut_ptr(), vdivq_f32(e, sum));
-        let k = x.len() - n4;
+        let e = exp_neg(vsubq_f32(vld1q_f32(t.as_ptr()), m));
+        vst1q_f32(t.as_mut_ptr(), e);
         x[n4..].copy_from_slice(&t[..k]);
+        vaddvq_f32(vaddq_f32(sum, e))
+    }
+}
+
+/// Softmax in place, four lanes at a time: max, then `e^(x - max)` and
+/// their sum ([`exp_sub_sum`]), then a division by the sum.
+pub fn softmax(x: &mut [f32]) {
+    let sum = exp_sub_sum(x, max_f32(x));
+    let n4 = x.len() / 4 * 4;
+    // SAFETY: vector accesses stay below n4 <= x.len().
+    unsafe {
+        let (p, s) = (x.as_mut_ptr(), vdupq_n_f32(sum));
+        for i in (0..n4).step_by(4) {
+            vst1q_f32(p.add(i), vdivq_f32(vld1q_f32(p.add(i)), s));
+        }
+    }
+    x[n4..].iter_mut().for_each(|v| *v /= sum);
+}
+
+/// `scores[i] = q · keys(start + i) / sqrt(head_size)`, each dot product
+/// [`dot_row`] (four independent 4-lane chains).
+fn scores_into<'a>(scores: &mut [f32], q: &[f32], keys: impl Fn(usize) -> &'a [f32], start: usize) {
+    let hs = q.len();
+    let scale = 1.0 / (hs as f32).sqrt();
+    for (i, s) in scores.iter_mut().enumerate() {
+        let k = keys(start + i);
+        assert_eq!(k.len(), hs);
+        // SAFETY: k and q both hold hs floats (checked).
+        *s = unsafe { dot_row(k.as_ptr(), q.as_ptr(), hs) } * scale;
+    }
+}
+
+/// `out = Σ weights[i] · values(start + i)`, 4 lanes of `out` per FMA.
+fn weighted_values<'a>(out: &mut [f32], weights: &[f32], values: impl Fn(usize) -> &'a [f32], start: usize) {
+    let hs = out.len();
+    out.fill(0.0);
+    let hs4 = hs / 4 * 4;
+    let op = out.as_mut_ptr();
+    for (i, &a) in weights.iter().enumerate() {
+        let v = values(start + i);
+        assert_eq!(v.len(), hs);
+        // SAFETY: out and v hold hs floats (checked); vector accesses stay
+        // below hs4 <= hs.
+        unsafe {
+            let av = vdupq_n_f32(a);
+            for j in (0..hs4).step_by(4) {
+                vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+            }
+        }
+        for j in hs4..hs {
+            out[j] += a * v[j];
+        }
     }
 }
 
@@ -303,33 +358,29 @@ pub fn attention_head<'a>(
     pos: usize,
     scores: &mut [f32],
 ) {
-    let hs = q.len();
-    assert_eq!(out.len(), hs);
+    assert_eq!(out.len(), q.len());
     let scores = &mut scores[..=pos];
-    let scale = 1.0 / (hs as f32).sqrt();
-    for (t, s) in scores.iter_mut().enumerate() {
-        let k = keys(t);
-        assert_eq!(k.len(), hs);
-        // SAFETY: k and q both hold hs floats (checked).
-        *s = unsafe { dot_row(k.as_ptr(), q.as_ptr(), hs) } * scale;
-    }
+    scores_into(scores, q, keys, 0);
     softmax(scores);
-    out.fill(0.0);
-    let hs4 = hs / 4 * 4;
-    let op = out.as_mut_ptr();
-    for (t, &a) in scores.iter().enumerate() {
-        let v = values(t);
-        assert_eq!(v.len(), hs);
-        // SAFETY: out and v hold hs floats (checked); vector accesses stay
-        // below hs4 <= hs.
-        unsafe {
-            let av = vdupq_n_f32(a);
-            for j in (0..hs4).step_by(4) {
-                vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
-            }
-        }
-        for j in hs4..hs {
-            out[j] += a * v[j];
-        }
-    }
+    weighted_values(out, scores, values, 0);
+}
+
+/// One chunk of a head's positions; same contract as
+/// [`super::scalar::attention_part`].
+#[inline(never)] // keep a separate symbol so profiles attribute time per kernel
+pub fn attention_part<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    range: std::ops::Range<usize>,
+    scores: &mut [f32],
+) -> (f32, f32) {
+    assert_eq!(out.len(), q.len());
+    let scores = &mut scores[..range.len()];
+    scores_into(scores, q, keys, range.start);
+    let max = max_f32(scores);
+    let sum = exp_sub_sum(scores, max);
+    weighted_values(out, scores, values, range.start);
+    (max, sum)
 }

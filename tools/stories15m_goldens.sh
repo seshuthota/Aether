@@ -8,6 +8,9 @@
 #   greedy.dump    activations at every layer boundary + logits + tokens,
 #                  greedy decoding (-t 0) of PROMPT for STEPS positions
 #   sampled.dump   tokens only matter here: -t 0.8 -p 0.9 -s 42
+#   long.dump      greedy for the model's whole context (256 positions, or
+#                  until llama2.c stops at a BOS): long enough for attention
+#                  to be split into chunks
 #   corpus.txt     tokenizer test strings (0x1E separated)
 #   encoded.txt    llama2.c's encoding of each corpus string
 set -euo pipefail
@@ -30,6 +33,7 @@ cc -O2 -o "$L2C/encode" -I "$L2C" tools/llama2c_encode.c -lm
 
 AETHER_DUMP="$OUT/greedy.dump"  "$L2C/run" "$MODEL" -z "$TOK" -t 0 -n $STEPS -i "$PROMPT" > "$OUT/greedy.txt"
 AETHER_DUMP="$OUT/sampled.dump" "$L2C/run" "$MODEL" -z "$TOK" -t 0.8 -p 0.9 -s 42 -n $STEPS -i "$PROMPT" > "$OUT/sampled.txt"
+AETHER_DUMP="$OUT/long.dump"    "$L2C/run" "$MODEL" -z "$TOK" -t 0 -n 256 -i "$PROMPT" > "$OUT/long.txt"
 
 tools/.venv/bin/python -I tools/gen_tokenizer_corpus.py "$OUT/corpus.txt"
 "$L2C/encode" "$TOK" < "$OUT/corpus.txt" > "$OUT/encoded.txt"
