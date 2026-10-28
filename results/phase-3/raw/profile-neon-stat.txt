@@ -1,0 +1,12 @@
+# 2026-10-28T23:42:42+05:30, commit 176f688, core 7, 38000 m°C, cap cpu7 2438400 kHz
+weights: f32, 60.8 MB
+prefill: 5 tokens in 6.7 ms (746.6 tok/s) | decode: 217 tokens in 513.7 ms (422.4 tok/s) | peak RSS 122892 kB
+Performance counter statistics:
+
+#         count  event_name               # count / runtime
+  1,292,182,251  cpu-cycles:u             # 2.180801 GHz 
+  2,604,854,481  instructions:u           # 4.396 G/sec  
+     81,810,027  raw-l1d-cache-refill:u   # 138.070 M/sec
+  1,858,497,274  raw-l1d-cache:u          # 3.137 G/sec  
+
+Total test time: 0.600968 seconds.

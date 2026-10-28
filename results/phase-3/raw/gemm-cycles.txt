@@ -1,0 +1,46 @@
+# 2026-10-28T23:41:28+05:30, commit 176f688+uncommitted, core 7, start 37600 m°C, screen mWakefulness=Asleep
+>>> scalar 32,288,288
+scalar,32,288,288,4.475,1.19,1.20
+# total flops executed (warm-up included): 2664824832
+  2,258,491,541  cpu-cycles:u     # 0.997714 GHz
+  3,757,392,487  instructions:u   # 1.660 G/sec 
+>>> scalar 64,768,288
+scalar,64,768,288,23.831,1.19,1.20
+# total flops executed (warm-up included): 5039456256
+  4,263,549,572  cpu-cycles:u     # 1.000056 GHz
+  7,089,381,029  instructions:u   # 1.663 G/sec 
+>>> scalar 128,896,896
+scalar,128,896,896,264.276,0.78,0.78
+# total flops executed (warm-up included): 5343543296
+  6,893,847,025  cpu-cycles:u     # 1.000971 GHz
+  7,420,610,438  instructions:u   # 1.077 G/sec 
+>>> neon_gemv_per_token 32,288,288
+neon_gemv_per_token,32,288,288,0.438,12.11,12.15
+# total flops executed (warm-up included): 2664824832
+  231,922,933  cpu-cycles:u     # 0.956034 GHz
+  875,138,086  instructions:u   # 3.607 G/sec 
+>>> neon_gemv_per_token 64,768,288
+neon_gemv_per_token,64,768,288,2.415,11.72,11.90
+# total flops executed (warm-up included): 5039456256
+    439,745,056  cpu-cycles:u     # 0.980143 GHz
+  1,637,364,619  instructions:u   # 3.650 G/sec 
+>>> neon_gemv_per_token 128,896,896
+neon_gemv_per_token,128,896,896,18.040,11.39,11.50
+# total flops executed (warm-up included): 5343543296
+    480,457,028  cpu-cycles:u     # 0.979541 GHz
+  1,653,133,538  instructions:u   # 3.370 G/sec 
+>>> neon_gemm 32,288,288
+neon_gemm,32,288,288,0.172,30.91,30.91
+# total flops executed (warm-up included): 2664824832
+   95,647,529  cpu-cycles:u     # 0.919784 GHz
+  627,859,934  instructions:u   # 6.038 G/sec 
+>>> neon_gemm 64,768,288
+neon_gemm,64,768,288,0.914,30.99,31.00
+# total flops executed (warm-up included): 5039456256
+    173,366,725  cpu-cycles:u     # 0.934234 GHz
+  1,171,011,981  instructions:u   # 6.310 G/sec 
+>>> neon_gemm 128,896,896
+neon_gemm,128,896,896,7.065,29.09,29.56
+# total flops executed (warm-up included): 5343543296
+    192,513,835  cpu-cycles:u     # 0.941033 GHz
+  1,210,848,248  instructions:u   # 5.919 G/sec 

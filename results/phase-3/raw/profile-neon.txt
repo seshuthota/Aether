@@ -1,0 +1,30 @@
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf-neon.data taskset 80 ./aether testdata/models/stories15M/stories15M.bin -t 0 -n 256 -i Once upon a time -q f32 -c 7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 2309
+Event count: 1328434886
+
+Overhead  Symbol
+89.19%    aether::kernels::neon::gemv
+4.82%     aether::kernels::neon::attention_head::<aether::model::transformer::attention::{closure#0}::{closure#0}, aether::model::transformer::attention::{closure#0}::{closure#1}>
+0.80%     expf
+0.75%     <aether::model::sampler::Sampler>::sample
+0.41%     scudo::HybridMutex::tryLock()
+0.40%     sincosf
+0.39%     <aether::model::llama2c::Cursor>::take
+0.36%     powf
+0.33%     aether::kernels::neon::gemm_rows
+0.27%     __memcpy_aarch64_nt
+0.21%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::allocate(unsigned long, scudo::Chunk::Origin, unsigned long, bool)
+0.18%     aether::kernels::scalar::rope_adjacent
+0.17%     <aether::model::llama2c::Cursor>::take_layers
+0.16%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::deallocate(void*, scudo::Chunk::Origin, unsigned long, unsigned long)
+0.14%     aether::kernels::scalar::rmsnorm
+0.13%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::quarantineOrDeallocateChunk(scudo::Options const&, void*, scudo::Chunk::UnpackedHeader*, unsigned long)
+0.11%     __memset_aarch64_nt
+0.09%     @plt
+0.08%     __aarch64_ldadd2_relax
+0.08%     malloc
+0.07%     [linker]elf64_sym const* soinfo_do_lookup_impl<false>(char const*, version_info const*, soinfo**, SymbolLookupList const&) (.__uniq.331521225453620004837736674378903349473.llvm.7678340668049463045)
+0.06%     [linker]__strcmp_aarch64
+0.06%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::populateFreeListAndPopBlocks(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::RegionInfo*, unsigned int*, unsigned short)

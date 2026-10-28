@@ -24,15 +24,14 @@ All nine phases have working, verified code; `master` has everything up to `dc63
 | 0 Setup | Cargo project, phone runner, timing harness, `Tensor` | — | — | `notes/phase-0.md` (user) |
 | 1 Hardware | `AlignedBuf`, pinning, sysfs/battery readers, sampler, bandwidth kernels | — (measurements) | DRAM read 61 GB/s one prime core, 67 GB/s all cores; 0.066 J/GB prime | — |
 | 2 Scalar | llama2.c loader + tokenizer, forward pass, KV cache, sampler, CLI | llama2.c, bit-identical | stories15M 88.6 tok/s on one prime core | — |
-| 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s | kernel choice for short rows; GEMM GFLOPS |
+| 3 NEON | NEON GEMV (3 steps), GEMM, batched prefill, NEON attention | numpy goldens; llama2.c tokens | GEMV 53 GB/s in L2, 41 GB/s from DRAM; stories15M 422 tok/s; GEMM 28–29 FLOP/cycle (~90 % of an assumed peak) | kernel choice for short rows |
 | 4 Threads | pinned pool, dynamic row blocks, caller on fastest core | bit-identical to 1 thread | SmolLM2 Q4_0 275 tok/s on cores 2–7 | clean sweep; cores 0–1 hypothesis |
 | 5 SmolLM2 | JSON, mmap, safetensors, GQA, rotate-half RoPE, byte-level BPE | `transformers` (≤ 5.5e-5; 360M ≤ 1.0e-4), `tokenizers` (433 strings) | SmolLM2-360M Q4_0 183 tok/s (charging) | — |
 | 6 Quantization | Q8_0/Q4_0 byte-identical to llama.cpp, `sdot` kernels, PPL/KL mode | llama.cpp quantizers, `llama-perplexity` | Q8_0 GEMV 32 GB/s, Q4_0 repacked 19 GB/s (one core); PPL matches llama.cpp | K-quants |
 | 7 Qwen2.5 + GGUF | GGUF reader, Qwen2 (biases, θ 1e6), NFC + Qwen tokenizer, ChatML, bench suite | `transformers`, `tokenizers`, `llama-perplexity`, `llama-bench` | Q4_0 decode 111–129 tok/s (cores 2–7), 0.041 J/token; after the repack level with llama.cpp | prefill 1.15–1.5× behind llama.cpp (was 2–6×) |
 | 8 App | C ABI (`include/aether.h`), JNI shim, Kotlin app | app speed = CLI speed | ~95–100 tok/s streaming chat | — |
 
-Biggest open items (2026-10-28): the remaining prefill gap to llama.cpp (1.15–1.5×), GEMM GFLOPS
-and a NEON profile (3.7), the later phases (K-quants, Vulkan). Attention split across positions was
+Biggest open items (2026-10-28): the remaining prefill gap to llama.cpp (1.15–1.5×), the later phases (K-quants, Vulkan). Attention split across positions was
 tried and gave nothing at depths up to 2048 (results/phase-6.md).
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -43,8 +42,8 @@ GHz); results in `results/phase-6.md` ("Repacked weights …") and
 level with llama.cpp) and the NEON activation quantizer (`0d1510f`; prefill
 +10–24 %, gap to llama.cpp 1.15–1.5×). Reverted for no measurable gain: NEON
 softmax (`85d1a12`) and attention split across positions (`bdbf963`). 89/89
-tests; PPL unchanged. Still open from before: GEMM GFLOPS and a NEON-build
-profile (3.7).
+tests; PPL unchanged. 3.7 (GEMM FLOP/cycle and the NEON-build profile) done
+the same night, results/phase-3.md.
 
 Reference tooling in place: llama.cpp host + Android builds (`~/llama.cpp`, `d00685831`), patched
 llama2.c (`third_party/`), `tools/.venv` with numpy, torch, transformers, tokenizers, gguf.
@@ -176,7 +175,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
       (decides nightly vs `asm!` for Phase 6).
-- [~] **3.7 Swap in, re-verify** (verified: tokens identical; results/phase-3.md written, ×4.8 over scalar; GEMM GFLOPS and a NEON-build profile still to take on the phone): stories15M tokens still identical; speedup + profile →
+- [x] **3.7 Swap in, re-verify** (verified: tokens identical, ×4.8 over scalar; GEMM 28–29 FLOP/cycle on core 7, NEON-build profile: gemv 89 %, 25.7 GB/s; results/phase-3.md): stories15M tokens still identical; speedup + profile →
       `results/phase-3.md` (phone).
 
 ## Phase 4 — Threading & core placement
