@@ -1,0 +1,12 @@
+pp1,147.2,6.8
+tg64@d1024,85.1,752.3
+Event count: 103732972387
+Overhead  Symbol
+36.99%    aether::kernels::neon_quant::mmla4_q4_0x4
+26.48%    aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{clo
+9.90%     aether::kernels::neon_quant::gemv4_q4_0x4
+5.97%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{clos
+5.41%     aether::kernels::neon::attention_head::<aether::model::transformer::attention::{closure#0}
+5.16%     expf
+1.66%     aether::kernels::quant_rows_mmla
+1.12%     @plt

@@ -221,13 +221,8 @@ pub unsafe fn gemm_rows(out: *mut f32, d: usize, rows: std::ops::Range<usize>, x
 }
 
 /// Attention of one query head over positions `0..=pos`; same contract as
-/// [`super::scalar::attention_head`].
-///
-/// The scalar version's score loop is one long chain of dependent adds per
-/// key (the compiler may not reorder float sums, so it cannot vectorize it):
-/// at depth 512 that chain dominated Qwen2.5's decode step. Here each score
-/// is [`dot_row`] (four independent 4-lane chains), and the weighted sum of
-/// values adds 4 lanes of `out` per FMA. Softmax stays scalar (`exp`).
+/// [`super::scalar::attention_head`]. It is [`attention_group`] with one
+/// head, so the two give the same bits.
 #[inline(never)] // keep a separate symbol so profiles attribute time per kernel
 pub fn attention_head<'a>(
     out: &mut [f32],
@@ -237,35 +232,95 @@ pub fn attention_head<'a>(
     pos: usize,
     scores: &mut [f32],
 ) {
-    let hs = q.len();
-    assert_eq!(out.len(), hs);
-    let scores = &mut scores[..=pos];
+    attention_group(out, q, q.len(), keys, values, pos, scores)
+}
+
+/// Positions per block in [`group_fixed`]: 32 keys of 64 floats are 8 KB,
+/// so a block stays in L1 while every head of the group uses it.
+const POS_BLOCK: usize = 32;
+
+/// [`attention_group`] for head size `4·V`, with the vectors of one head
+/// in registers: the query while its scores are computed (four positions at
+/// a time, two accumulators each, the four sums reduced together by two
+/// pairwise adds), and the output while the values are summed (each
+/// multiply-add then loads only the value). Positions go in blocks of
+/// [`POS_BLOCK`], heads inside a block.
+///
+/// # Safety
+/// `q` and `out` must hold g·4V floats, `scores` g·(pos + 1), and every
+/// `keys(t)` / `values(t)` 4V floats (checked by the caller).
+#[inline(always)]
+unsafe fn group_fixed<'a, const V: usize>(
+    out: &mut [f32],
+    q: &[f32],
+    keys: &impl Fn(usize) -> &'a [f32],
+    values: &impl Fn(usize) -> &'a [f32],
+    n: usize,
+    scores: &mut [f32],
+) {
+    let (hs, g) = (4 * V, q.len() / (4 * V));
     let scale = 1.0 / (hs as f32).sqrt();
-    for (t, s) in scores.iter_mut().enumerate() {
-        let k = keys(t);
-        assert_eq!(k.len(), hs);
-        // SAFETY: k and q both hold hs floats (checked).
-        *s = unsafe { dot_row(k.as_ptr(), q.as_ptr(), hs) } * scale;
-    }
-    super::scalar::softmax(scores);
-    out.fill(0.0);
-    let hs4 = hs / 4 * 4;
-    let op = out.as_mut_ptr();
-    for (t, &a) in scores.iter().enumerate() {
-        let v = values(t);
-        assert_eq!(v.len(), hs);
-        // SAFETY: out and v hold hs floats (checked); vector accesses stay
-        // below hs4 <= hs.
-        unsafe {
-            let av = vdupq_n_f32(a);
-            for j in (0..hs4).step_by(4) {
-                vst1q_f32(op.add(j), vfmaq_f32(vld1q_f32(op.add(j)), av, vld1q_f32(v.as_ptr().add(j))));
+    // SAFETY (whole body): every pointer below indexes q / out (g·hs
+    // floats), a key or value row (hs floats) or scores (g·n floats) within
+    // the bounds the caller guarantees.
+    unsafe {
+        let load = |p: *const f32| -> [float32x4_t; V] { std::array::from_fn(|j| vld1q_f32(p.add(4 * j))) };
+        for tb in (0..n).step_by(POS_BLOCK) {
+            let te = (tb + POS_BLOCK).min(n);
+            for h in 0..g {
+                let qv = load(q.as_ptr().add(h * hs));
+                let sh = scores.as_mut_ptr().add(h * n);
+                let mut t = tb;
+                while t + 4 <= te {
+                    let mut acc = [[vdupq_n_f32(0.0); 2]; 4];
+                    for (p, a) in acc.iter_mut().enumerate() {
+                        let k = keys(t + p).as_ptr();
+                        for j in 0..V {
+                            a[j % 2] = vfmaq_f32(a[j % 2], vld1q_f32(k.add(4 * j)), qv[j]);
+                        }
+                    }
+                    let s = acc.map(|a| vaddq_f32(a[0], a[1]));
+                    let r = vpaddq_f32(vpaddq_f32(s[0], s[1]), vpaddq_f32(s[2], s[3]));
+                    vst1q_f32(sh.add(t), vmulq_n_f32(r, scale));
+                    t += 4;
+                }
+                for t in t..te {
+                    let k = keys(t).as_ptr();
+                    let mut a = [vdupq_n_f32(0.0); 2];
+                    for j in 0..V {
+                        a[j % 2] = vfmaq_f32(a[j % 2], vld1q_f32(k.add(4 * j)), qv[j]);
+                    }
+                    *sh.add(t) = vaddvq_f32(vaddq_f32(a[0], a[1])) * scale;
+                }
             }
         }
-        for j in hs4..hs {
-            out[j] += a * v[j];
+        for s in scores[..g * n].chunks_exact_mut(n) {
+            super::scalar::softmax(s);
+        }
+        for tb in (0..n).step_by(POS_BLOCK) {
+            let te = (tb + POS_BLOCK).min(n);
+            for h in 0..g {
+                let op = out.as_mut_ptr().add(h * hs);
+                let mut o = if tb == 0 { [vdupq_n_f32(0.0); V] } else { load(op) };
+                for t in tb..te {
+                    let (a, v) = (*scores.get_unchecked(h * n + t), values(t).as_ptr());
+                    for j in 0..V {
+                        o[j] = vfmaq_n_f32(o[j], vld1q_f32(v.add(4 * j)), a);
+                    }
+                }
+                for (j, oj) in o.iter().enumerate() {
+                    vst1q_f32(op.add(4 * j), *oj);
+                }
+            }
         }
     }
+}
+
+/// `row`, after checking it holds `hs` floats.
+#[inline(always)]
+fn checked(row: &[f32], hs: usize) -> &[f32] {
+    assert_eq!(row.len(), hs);
+    row
 }
 
 /// [`attention_head`] for the `g` query heads that read the same keys and
@@ -273,8 +328,10 @@ pub fn attention_head<'a>(
 /// and `out` hold the g heads one after another (g·hs floats), `scores`
 /// at least g·(pos + 1). Each key and value row is loaded once and used by
 /// all g heads while it sits in L1, instead of being read again from L2
-/// for every head. Each head's arithmetic is that of [`attention_head`],
-/// in the same order, so the results are bit-identical.
+/// for every head. Head sizes 64 and 48 (every model here) take
+/// [`group_fixed`]; others a general loop of [`dot_row`]s. A head's result
+/// does not depend on the other heads of its group, so it matches
+/// [`attention_head`] bit for bit.
 #[inline(never)] // keep a separate symbol so profiles attribute time per kernel
 pub fn attention_group<'a>(
     out: &mut [f32],
@@ -288,6 +345,15 @@ pub fn attention_group<'a>(
     let g = q.len() / hs;
     assert!(g * hs == q.len() && out.len() == q.len());
     let n = pos + 1;
+    assert!(scores.len() >= g * n);
+    if hs == 64 || hs == 48 {
+        let (k, v) = (|t: usize| checked(keys(t), hs), |t: usize| checked(values(t), hs));
+        // SAFETY: lengths checked above and in `checked`.
+        unsafe {
+            if hs == 64 { group_fixed::<16>(out, q, &k, &v, n, scores) } else { group_fixed::<12>(out, q, &k, &v, n, scores) }
+        }
+        return;
+    }
     let scores = &mut scores[..g * n];
     let scale = 1.0 / (hs as f32).sqrt();
     for t in 0..n {

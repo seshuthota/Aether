@@ -1,0 +1,5 @@
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 496.4 MB/s (8536272 bytes in 0.016s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1050 skipped.
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 299078 tokens (tokenized in 310 ms), weights q8_0 525.0 MB
+[1]9.6848,[2]13.4003,[3]13.4732,[4]13.3469,[5]13.4557,[6]13.8925,[7]14.2553,[8]15.2970,[9]16.2649,[10]16.8444,[11]17.1115,[12]17.2019,[13]17.9645,[14]17.4141,[15]17.2809,[16]17.7409,[17]16.4690,[18]16.5500,[19]16.3654,[20]16.3494,
+Final estimate: PPL = 16.3494 +/- 0.67070  (5100 tokens scored in 71.1 s)

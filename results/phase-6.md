@@ -341,6 +341,31 @@ the inner loops: each score ends in a horizontal add of four vectors, and
 the weighted sum of values loads and stores the output for every
 multiply-add (16 loads, 16 FMAs, 16 stores per position and head).
 
+**Then the inner loops** (`group_fixed`, head sizes 64 and 48 as const
+generics; `raw/attn-blocked/`). One head's vectors now stay in registers:
+the query while its scores are computed, four positions at a time with two
+accumulators each, the four sums reduced by two pairwise adds instead of
+four horizontal ones; and the output (16 registers) while the values are
+summed, so each multiply-add loads only the value. Positions go in blocks
+of 32 (8 KB of keys), the group's heads inside a block, so the block stays
+in L1 for all of them. `attention_head` (decode) is the same code with one
+head.
+
+| Qwen2.5-0.5B Q4_0, cycles (two rounds each) | before (`6708f5b`) | after |
+| --- | --- | --- |
+| pp512: attention | 6.59 G (19.7 %) | 3.31 G (11.1 %), −50 % |
+| pp512: all | 33.46 G | 29.83 G, −11 % |
+| prefill to depth 1024: attention | 27.5 G | 13.7 G, −50 % |
+| 64 decode steps at depth 1024: attention | 6.0 G | 4.7 G, −22 % |
+
+The summation order changed, so the results are no longer the same bits as
+before: PPL Q4_0 19.7486 → 19.7470, Q8_0 16.3532 → 16.3494 (`ppl-qwen-*.txt`),
+a tenth of what llama.cpp's own flash-attention switch moves its PPL here.
+92/92 tests on the phone (new numpy cases with head size 48, stories15M's;
+`monitor::samples_until_stopped` failed once in a full run while the phone
+was asleep, passed on every rerun: its first battery read was slow under
+load).
+
 ## Q4_K_M files: Q5_0, Q4_K, Q6_K (2026-10-29; `raw/kquants/`)
 
 `Q4_K_M` is the GGUF mix most people download. Made with

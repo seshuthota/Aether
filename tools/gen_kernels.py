@@ -89,7 +89,7 @@ def main():
             x = f32(heads * hs)
             save(root, f"rope_{heads}x{hs}_p{pos}", x=x, out=rope_ref(x, pos, hs, 10000.0, False))
             save(root, f"rope_halves_{heads}x{hs}_p{pos}", x=x, out=rope_ref(x, pos, hs, 10000.0, True))
-    for hs in (2, 5, 8, 17, 64, 128):
+    for hs in (2, 5, 8, 17, 64, 128, 48):  # 48: stories15M (appended last, so earlier cases keep their data)
         for n in (1, 2, 7, 64, 257, 1024):
             q, k, v = f32(hs), f32(n, hs), f32(n, hs)
             sc = k.astype(np.float64) @ q.astype(np.float64) / np.sqrt(hs)
