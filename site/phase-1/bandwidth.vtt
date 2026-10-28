@@ -1,0 +1,121 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.084
+Bandwidth. How fast can one core read memory?
+
+00:00:05.934 --> 00:00:12.468
+To write each new token, the model reads every one of its weights from memory. Every token, all of them.
+
+00:00:12.917 --> 00:00:18.475
+So the number that matters is simple: how many bytes per second can a core read?
+
+00:00:18.926 --> 00:00:25.158
+That's called bandwidth. We write it in gigabytes per second: billions of bytes, every second.
+
+00:00:26.107 --> 00:00:32.257
+Back in Phase 0, we summed a big array on this phone, and it ran at three point three gigabytes per second.
+
+00:00:32.708 --> 00:00:38.661
+So, is that how fast memory is? No. That's how fast the additions were. Let's see why.
+
+00:00:41.061 --> 00:00:48.535
+Here's that sum: s plus-equals x, one element at a time. Each box is one addition, and time runs to the right.
+
+00:00:48.985 --> 00:00:55.739
+Watch. Each addition needs the answer from the one before it. So it waits. And waits again. One long chain.
+
+00:00:56.189 --> 00:01:02.618
+So what we timed was additions waiting on each other. Memory was barely trying.
+
+00:01:03.068 --> 00:01:09.265
+Now split the work into four separate sums, s zero to s three, and add them together at the very end.
+
+00:01:09.715 --> 00:01:17.909
+Same eight additions. But the four chains run side by side, and they're finished here, while the single chain is still going.
+
+00:01:19.108 --> 00:01:24.945
+Faster additions ask memory for data sooner. Now memory can finally become the limit.
+
+00:01:25.395 --> 00:01:31.116
+And that's what we want to measure. So the rule is: several independent sums, always.
+
+00:01:33.566 --> 00:01:39.995
+There are four classic ways to stream through memory. Copy reads one float and writes one: eight bytes per element.
+
+00:01:40.445 --> 00:01:47.199
+Scale moves the same bytes, plus a multiply. It asks: does a little math slow the stream down?
+
+00:01:47.649 --> 00:01:51.373
+Add reads two floats and writes one. Twelve bytes.
+
+00:01:51.823 --> 00:01:56.940
+And read only reads, into several sums. Four bytes, and nothing is written back.
+
+00:01:57.390 --> 00:02:02.008
+Decode is this last row. Weights are read, and never written back.
+
+00:02:03.208 --> 00:02:10.601
+Copy also pays for writes, which decode never does. So judge decode against the read, not the copy.
+
+00:02:12.251 --> 00:02:20.120
+One more trap. Take a single copy run: one gigabyte read, and one gigabyte written, in one second. Made-up numbers, just to count.
+
+00:02:20.570 --> 00:02:24.607
+Count both, and you get two gigabytes per second.
+
+00:02:25.057 --> 00:02:29.617
+Count only the read, and the very same run is one gigabyte per second.
+
+00:02:30.067 --> 00:02:34.987
+Same run, two answers. So pick one way of counting, and write it down.
+
+00:02:37.436 --> 00:02:47.708
+Now the main experiment. Time the read at many buffer sizes, from four kilobytes up to two hundred and fifty-six megabytes. On the right: where the buffer fits.
+
+00:02:48.158 --> 00:02:54.111
+A small buffer fits in L1, the cache closest to the core. The read is fast.
+
+00:02:54.561 --> 00:02:59.922
+Grow it past L1's size, and the speed falls off a cliff. Now it lives in L2.
+
+00:03:00.372 --> 00:03:05.489
+A new, lower plateau. It stays flat as long as the buffer still fits in L2.
+
+00:03:05.939 --> 00:03:11.938
+Past L2, there may be a small step for the system-level cache. Or just a slope.
+
+00:03:12.389 --> 00:03:18.226
+And from tens of megabytes on, every read goes all the way out to D-RAM. Flat again.
+
+00:03:18.976 --> 00:03:24.407
+Only now do we name each flat stretch, once we've seen where the cliffs really are.
+
+00:03:24.856 --> 00:03:30.414
+This flat right end, measured on one pinned core, is the number decode will be judged by.
+
+00:03:31.615 --> 00:03:36.813
+Not the tall left end. That's a cache talking, not the phone's memory.
+
+00:03:38.463 --> 00:03:48.886
+A bandwidth number on its own can't be compared with next week's. So write down which cores you used, and that the pin worked. Whether the screen was on. Whether it was charging.
+
+00:03:49.336 --> 00:03:54.534
+The starting temperature. The real clock during the run. And the exact build and commit.
+
+00:03:55.384 --> 00:03:59.619
+Then run the read for five whole minutes. The first few seconds look great.
+
+00:04:00.069 --> 00:04:05.987
+But as the phone heats up, it slows down. This lower number is what a real chat actually gets.
+
+00:04:06.437 --> 00:04:09.313
+Keep both. They're different results.
+
+00:04:10.964 --> 00:04:15.802
+So: use several independent sums, or you're measuring waiting.
+
+00:04:16.252 --> 00:04:21.450
+Bandwidth is bytes divided by seconds. Count the bytes the same way every time.
+
+00:04:21.900 --> 00:04:27.029
+And sweep the size. The flat right end is D-RAM: decode's yardstick.

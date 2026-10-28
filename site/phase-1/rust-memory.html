@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raw memory in Rust · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · Rust tools 1</p>
+
+<h1>Raw memory in Rust</h1>
+<p class="lede">The aligned allocator is the first thing Phase 1 builds. <code>Vec&lt;f32&gt;</code> cannot promise 64-byte alignment, so you ask the allocator directly. That means a raw pointer, an <code>unsafe</code> block, and a few rules the compiler can no longer check for you.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>The wrapper type itself is yours to write in the session. The snippets compile for <code>aarch64-linux-android</code> <span class="tag m">measured</span>, with Rust 1.99.</p>
+<details class="probe js-only" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (4 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="why" data-prereq="alignment.html" data-prereq-title="Alignment" id="p-aligned">
+    <p>Is the address <code>0x1040</code> aligned to 64?</p>
+    <ul>
+      <li data-right>Yes <div class="why">An address is aligned to 64 when it is a multiple of 64, and <code>0x1040</code> is 65 × 64.</div></li>
+      <li>No, it doesn’t end in <code>00</code> <div class="why">Multiples of 64 (<code>0x40</code>) end in <code>00</code>, <code>40</code>, <code>80</code> or <code>C0</code> in hex.</div></li>
+      <li>Only if it holds an <code>f32</code> <div class="why">Alignment belongs to the address. The type only sets how much alignment you need.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="unsafe" id="p-unsafe">
+    <p>Does <code>let x: u32 = 1.5;</code> compile inside an <code>unsafe { }</code> block?</p>
+    <ul>
+      <li>Yes, <code>unsafe</code> turns the compiler’s checks off <div class="why"><code>unsafe</code> allows a few extra operations. Types, borrows and slice bounds are still checked.</div></li>
+      <li data-right>No, types are still checked <div class="why"><code>unsafe</code> adds operations; it removes no checks.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="layout calls rules" id="p-dealloc">
+    <p>You allocated 4,000 bytes at alignment 64. What must you pass to <code>dealloc</code>?</p>
+    <ul>
+      <li data-right>The same <code>Layout</code>: 4,000 bytes, alignment 64 <div class="why"><code>dealloc</code> needs the exact <code>Layout</code> you allocated with.</div></li>
+      <li>Any <code>Layout</code> of 4,000 bytes <div class="why">Alignment matters when freeing too. A different <code>Layout</code> is undefined behaviour and can corrupt the allocator’s bookkeeping.</div></li>
+      <li>Nothing: Rust frees it when the pointer goes out of scope <div class="why">A raw pointer has no owner, so nothing frees it for you. Forgetting <code>dealloc</code> is a leak.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="wrapper" id="p-drop">
+    <p>Which trait’s method does Rust call when a value goes away?</p>
+    <ul>
+      <li data-right><code>Drop</code> <div class="why">Rust calls <code>Drop::drop</code> when the value goes out of scope.</div></li>
+      <li><code>Clone</code> <div class="why"><code>Clone</code> makes copies; it runs only when you call <code>.clone()</code>.</div></li>
+      <li><code>Send</code> <div class="why"><code>Send</code> is a marker for “can move to another thread”. It has no method.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#why">Why isn’t Vec enough?</a>
+  <a href="#unsafe">Does unsafe switch off the borrow checker?</a>
+  <a href="#layout">How do you describe an allocation?</a>
+  <a href="#calls">How do you allocate, use and free it?</a>
+  <a href="#rules">Which rules do you keep now?</a>
+  <a href="#wrapper">Why wrap the pointer in a type?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="What the engine needs from memory, and what this page builds.">What are we trying to do here?</h2>
+<p>Memory is one long row of bytes. Each byte has a number, its <strong>address</strong>. A <strong>buffer</strong> is a run of neighbouring bytes, and its address is the address of its first byte. Every array of weights or activations in the engine lives in a buffer of <code>f32</code> values, 4 bytes each.</p>
+<p>The CPU does not fetch one byte at a time. It moves memory in 64-byte blocks called <strong>cache lines</strong>. If a buffer starts exactly at the start of a cache line, its first 16 floats arrive in one fetch. If it starts in the middle of one, some loads straddle two lines. The <a href="alignment.html">Alignment</a> page covers what that costs. So Phase 1 wants every float buffer to start at an address that is a multiple of 64.</p>
+<pre><code> memory:  ... | 64-byte line | 64-byte line | 64-byte line | ...
+ good:          [buffer starts here ...........
+ bad:                 [buffer starts mid-line .........</code></pre>
+<p>Rust’s usual tool for a buffer, <code>Vec&lt;f32&gt;</code>, does not let you ask for that. This page covers what you use instead: asking the allocator for memory directly, the <code>unsafe</code> code that takes, the rules you then have to keep yourself, and the small type that keeps them for you. By the end you can read and write every line of the allocator Phase 1 needs.</p>
+
+<h2 id="why" data-short="Why not Vec" data-step="Vec asks for 4-byte alignment and can’t adopt memory that has more.">Why isn’t <code>Vec</code> enough?</h2>
+<p>Start from one plain fact. An address is <strong>aligned to 64</strong> when it is a multiple of 64. <code>0x1040</code> is (it is 65 × 64). <code>0x1004</code> is not; it is only 4-aligned.</p>
+<pre><code> 0x1000          0x1040          0x1080     multiples of 64
+ |---------------|---------------|
+  ^ 0x1004         ^ 0x1040
+    4-aligned only   64-aligned</code></pre>
+<div class="quiz" data-quiz="predict" data-for="why" id="g-why">
+  <p>You make a <code>Vec&lt;f32&gt;</code> of 1,000 floats. Does its buffer start on a multiple of 64?</p>
+  <ul>
+    <li>Always: heap buffers start on a cache line <div class="why"><code>Vec</code> asks only for the alignment its element needs, and an <code>f32</code> needs 4.</div></li>
+    <li data-right>Sometimes, by luck; nothing promises it <div class="why">The allocator may hand back a multiple of 64, but <code>Vec</code> only asked for 4.</div></li>
+    <li>Never <div class="why">Nothing prevents it: any multiple of 4 can come back, including multiples of 64.</div></li>
+  </ul>
+</div>
+<p>A <code>Vec&lt;f32&gt;</code> asks the <strong>allocator</strong> (the code that hands out heap memory) for 4-byte alignment, because that is all an <code>f32</code> needs. So the answer to the guess is “sometimes”: the address might happen to be a multiple of 64, but nothing promises it, so the buffer may start in the middle of a cache line. The <a href="alignment.html#rust">Alignment</a> page covers why you want 64.</p>
+<p>The next idea most people reach for: allocate 64-aligned memory yourself and hand it to a <code>Vec</code>. That fails. <code>Vec::from_raw_parts</code> requires that the memory was allocated with the same alignment as <code>f32</code>, because when the <code>Vec</code> is dropped it frees with alignment 4. Freeing with a different layout than you allocated with is <strong>undefined behaviour</strong>: the compiler assumes it never happens, so anything can happen. The buffer needs its own type that remembers how it was allocated.</p>
+<p><strong>Takeaway: <code>Vec</code> cannot promise 64-byte alignment, and it cannot adopt memory that has it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="why" id="c-why">
+  <p>You allocate 64-aligned memory yourself and turn it into a <code>Vec&lt;f32&gt;</code> with <code>Vec::from_raw_parts</code>. What goes wrong?</p>
+  <ul>
+    <li data-right>When the <code>Vec</code> is dropped, it frees with alignment 4 <div class="why">It frees with a different <code>Layout</code> from the allocation: undefined behaviour, which <code>from_raw_parts</code> forbids.</div></li>
+    <li>Nothing; the <code>Vec</code> keeps the 64-byte alignment <div class="why">The <code>Vec</code> only knows its element type, <code>f32</code>, so it frees with alignment 4.</div></li>
+    <li>It fails to compile <div class="why"><code>from_raw_parts</code> is <code>unsafe</code>, so the compiler can’t check this rule. The bug shows at run time, if ever.</div></li>
+  </ul>
+</div>
+
+<h2 id="unsafe" data-short="What unsafe allows" data-step="unsafe adds a few operations and keeps every other check.">Does <code>unsafe</code> switch off the borrow checker?</h2>
+<p>The allocator hands back a <strong>raw pointer</strong>, <code>*mut u8</code>: just an address, with no owner and no lifetime. Safe Rust refuses to use one.</p>
+<div class="quiz" data-quiz="predict" data-for="unsafe" id="g-unsafe">
+  <p>The allocator returns <code>*mut u8</code>, a raw pointer. Why does safe Rust refuse to read through it?</p>
+  <ul>
+    <li data-right>It has no owner and no lifetime, so the compiler can’t prove it’s valid <div class="why">The borrow checker works by tracking owners and borrows. A raw pointer gives it nothing to track.</div></li>
+    <li>Raw pointers are slow <div class="why">Speed is not the reason. The refusal is about what the compiler can prove.</div></li>
+    <li>It might be misaligned <div class="why">Alignment is one risk, but Rust refuses every raw-pointer read, because it can’t tell who owns the memory.</div></li>
+  </ul>
+</div>
+<p>Safe Rust guarantees no dangling pointers, no double frees and no data races because the <strong>borrow checker</strong> tracks who owns each value and how long each borrow lives. For a raw pointer it has nothing to track.</p>
+<p>An <code>unsafe { }</code> block lets you do five extra things. Two of them matter here:</p>
+<ul>
+  <li>call a function marked <code>unsafe</code>, such as <code>alloc</code> and <code>dealloc</code>,</li>
+  <li>read or write through a raw pointer.</li>
+</ul>
+<p>So no, it does not switch anything off. Everything else is still checked inside the block: types, borrows, bounds on slices. A <code>let x: u32 = 1.5;</code> in there still fails to compile. <code>unsafe</code> does not mean “anything goes.” It means “I have checked the rules the compiler can’t, and I wrote down why.” The habit to build now: a short <code>// SAFETY:</code> comment above each block, saying what you checked.</p>
+<p><strong>Takeaway: <code>unsafe</code> adds a few operations and keeps every other check. The comment records what you checked.</strong></p>
+<div class="quiz" data-quiz="check" data-for="unsafe" id="c-unsafe">
+  <p>Inside an <code>unsafe { }</code> block you take two <code>&amp;mut</code> borrows of the same <code>Vec</code> and use both. What happens?</p>
+  <ul>
+    <li data-right>A compile error, the same as outside the block <div class="why"><code>unsafe</code> adds operations such as dereferencing raw pointers. Types, borrows and slice bounds are still checked.</div></li>
+    <li>It compiles, because the block is <code>unsafe</code> <div class="why">That is the “<code>unsafe</code> means anything goes” idea. References are checked inside the block as outside it.</div></li>
+    <li>It compiles but panics at run time <div class="why">The borrow checker runs at compile time and adds no run-time checks. This is refused before the program exists.</div></li>
+  </ul>
+</div>
+
+<h2 id="layout" data-short="Layout" data-step="A Layout is a size plus a power-of-two alignment.">How do you describe an allocation?</h2>
+<p>The allocator needs two facts: how many bytes, and what alignment. A <code>std::alloc::Layout</code> holds both. The alignment must be a power of two. 1,000 floats are 4,000 bytes, at alignment 4 unless you ask for more. You pass the same <code>Layout</code> to allocate and to free.</p>
+<pre><code>let layout = Layout::array::&lt;f32&gt;(n) // n × 4 bytes, align 4
+    .unwrap()
+    .align_to(64)                     // ask for 64 instead
+    .unwrap();</code></pre>
+<div class="quiz" data-quiz="predict" data-for="layout" id="g-layout">
+  <p><code>Layout::array::&lt;f32&gt;(1000).unwrap().align_to(1)</code>: what alignment comes out?</p>
+  <ul>
+    <li>1 <div class="why"><code>align_to</code> raises the alignment and never lowers it.</div></li>
+    <li data-right>4 <div class="why"><code>f32</code> needs 4, and <code>align_to</code> keeps the larger of the two.</div></li>
+    <li>An error <div class="why">1 is a power of two (2⁰), so it is allowed.</div></li>
+  </ul>
+</div>
+<ul>
+  <li><code>::&lt;f32&gt;</code> names the element type, so the size of one element is known.</li>
+  <li><code>Layout::array::&lt;f32&gt;(n)</code> fails only if <code>n × 4</code> is too large to describe. It returns a <code>Result</code>.</li>
+  <li><code>.unwrap()</code> takes the value out of the <code>Result</code>, and panics (stops the program with an error) if it was an error.</li>
+  <li><code>.align_to(64)</code> keeps the size and raises the alignment. It never lowers it, so <code>.align_to(1)</code> still gives 4. Try 48 in the widget: not a power of two, so it returns an error.</li>
+</ul>
+<div class="widget" data-layout>
+  <h3>Build a Layout</h3>
+  <p>Pick how many floats you want and the alignment you ask for. The lines show what each call returns.</p>
+  <div class="controls">
+    <label class="field">floats (n)<input data-n type="number" min="0" max="1000000000" value="1000" autocomplete="off"></label>
+    <label class="field">align_to<select class="pick" data-align autocomplete="off">
+      <option value="4">4</option><option value="16">16</option><option value="64" selected>64</option><option value="48">48</option>
+    </select></label>
+  </div>
+  <pre class="formula" data-out></pre>
+  <p class="note" data-note></p>
+</div>
+<p><strong>Takeaway: a <code>Layout</code> is a size plus a power-of-two alignment, and the same one goes to <code>alloc</code> and <code>dealloc</code>.</strong></p>
+<div class="quiz" data-quiz="check" data-for="layout" id="c-layout">
+  <p>Which of these fails?</p>
+  <ul>
+    <li data-right><code>Layout::array::&lt;f32&gt;(1000).unwrap().align_to(48)</code> <div class="why">48 is not a power of two, so <code>align_to</code> returns an error.</div></li>
+    <li><code>Layout::array::&lt;f32&gt;(1000).unwrap().align_to(64)</code> <div class="why">64 is 2⁶, a power of two. This is the call the allocator uses.</div></li>
+    <li><code>Layout::array::&lt;f32&gt;(0)</code> <div class="why">A size-0 <code>Layout</code> is valid. Passing it to <code>alloc</code> is the mistake (see the rules below).</div></li>
+  </ul>
+</div>
+
+<h2 id="calls" data-short="Allocate, use, free" data-step="Allocate, check, use as a slice, free: the order is yours to keep.">How do you allocate, use and free it?</h2>
+<p>You need memory, a way to use it as a slice, and a way to give it back, and the compiler checks none of the order. Each step comes first on its own; the whole thing is at the end. The examples use <code>n = 1000</code> and the <code>layout</code> above.</p>
+<div class="quiz" data-quiz="predict" data-for="calls" id="g-calls">
+  <p>You allocate, make a slice from the pointer, free the memory, then read <code>floats[0]</code>. Which step does the compiler stop?</p>
+  <ul>
+    <li data-right>None of them <div class="why">A slice from a raw pointer has no link to the allocation, so the compiler can’t see the free.</div></li>
+    <li>The read after the free <div class="why">It would with a <code>Vec</code>. A slice from a raw pointer isn’t tied to the memory’s lifetime.</div></li>
+    <li>The free, because the slice still exists <div class="why">The compiler doesn’t know the slice and the pointer share memory. That link exists only in your head.</div></li>
+  </ul>
+</div>
+
+<h3>Step 1: allocate</h3>
+<pre><code>// SAFETY: layout.size() is 4000, not 0.
+// p is a *mut u8, or null if out of memory.
+let p = unsafe { alloc_zeroed(layout) };</code></pre>
+<ul>
+  <li><code>alloc_zeroed</code> asks the global allocator for <code>layout.size()</code> bytes at <code>layout.align()</code>, filled with zero bits. On Android the global allocator is the system one: Bionic’s <code>malloc</code> family underneath.</li>
+  <li>Zero bits are <code>0.0</code> as an <code>f32</code>, so every float has a value. Plain <code>alloc</code> leaves the bytes uninitialised, and reading them as floats before writing is undefined behaviour.</li>
+  <li>For a 64-byte alignment, Rust’s system allocator allocates and then writes the zeros itself: one pass over the memory at allocation time. That pass also touches every page, so the page faults happen there and not inside the timed loop.</li>
+  <li><code>p</code> points at the first byte. It is null if the allocator could not give you memory.</li>
+</ul>
+
+<h3>Step 2: check it</h3>
+<pre><code>if p.is_null() {
+    handle_alloc_error(layout);
+}
+assert_eq!(p as usize % 64, 0);</code></pre>
+<ul>
+  <li><code>handle_alloc_error</code> aborts the program the same way <code>Vec</code> does on out-of-memory.</li>
+  <li><code>p as usize % 64</code> reads the address as a number. <code>0x1040 % 64</code> is 0, so the assert passes; <code>0x1004 % 64</code> is 4, so it would fail.</li>
+</ul>
+
+<h3>Step 3: make a slice</h3>
+<pre><code>{
+    // SAFETY: p is non-null and 64-aligned, so also 4-aligned,
+    // as f32 needs. It is valid for n floats (zeroed, so each
+    // is 0.0) and nothing else uses it.
+    let floats: &amp;mut [f32] = unsafe {
+        std::slice::from_raw_parts_mut(p.cast::&lt;f32&gt;(), n)
+    };
+    floats[0] = 1.5;
+}   // floats ends here</code></pre>
+<ul>
+  <li><code>from_raw_parts_mut</code> turns pointer plus length into an ordinary <code>&amp;mut [f32]</code>. A <strong>slice</strong> is a pointer plus a length that Rust bounds-checks. You promise the pointer is valid for <code>n</code> floats and nothing else is using it.</li>
+  <li><code>p.cast::&lt;f32&gt;()</code> changes the pointer’s type from <code>*mut u8</code> to <code>*mut f32</code>, not the address. That is fine here: any multiple of 64 is also a multiple of 4, and 4 is all an <code>f32</code> needs.</li>
+  <li>The <code>{ }</code> block makes the end of the slice’s life visible. It ends before <code>dealloc</code>.</li>
+</ul>
+
+<h3>Step 4: free it</h3>
+<pre><code>// SAFETY: p came from alloc_zeroed with this same layout,
+// and this is the only dealloc.
+unsafe { dealloc(p, layout) };</code></pre>
+<ul>
+  <li><code>dealloc</code> gives the memory back. It needs the exact <code>Layout</code> you allocated with, and it must run exactly once.</li>
+</ul>
+
+<h3>All four together</h3>
+<pre><code> alloc_zeroed ──► check null ──► { slice } ──► dealloc ──► any use = bug
+                                         ^ the slice ends here</code></pre>
+<pre><code>use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
+
+let n = 1000;                         // floats wanted
+let layout = Layout::array::&lt;f32&gt;(n) // n × 4 bytes, align 4
+    .unwrap()
+    .align_to(64)                     // ask for 64 instead
+    .unwrap();
+
+// SAFETY: layout.size() is 4000, not 0.
+// p is a *mut u8, or null if out of memory.
+let p = unsafe { alloc_zeroed(layout) };
+if p.is_null() {
+    handle_alloc_error(layout);
+}
+assert_eq!(p as usize % 64, 0);
+
+{
+    // SAFETY: p is non-null and 64-aligned, so also 4-aligned,
+    // as f32 needs. It is valid for n floats (zeroed, so each
+    // is 0.0) and nothing else uses it.
+    let floats: &amp;mut [f32] = unsafe {
+        std::slice::from_raw_parts_mut(p.cast::&lt;f32&gt;(), n)
+    };
+    floats[0] = 1.5;
+}   // floats ends here
+
+// SAFETY: p came from alloc_zeroed with this same layout,
+// and this is the only dealloc.
+unsafe { dealloc(p, layout) };    // same layout, exactly once</code></pre>
+
+<figure>
+<svg class="fig" viewBox="0 0 680 150" role="img" aria-label="Lifetime of a raw allocation">
+  <rect x="16" y="40" width="130" height="48" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="81" y="60" text-anchor="middle">alloc_zeroed</text>
+  <text class="mono" x="81" y="78" text-anchor="middle" font-size="11">layout</text>
+  <rect x="186" y="40" width="300" height="48" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <text x="336" y="60" text-anchor="middle">use it as &amp;[f32] / &amp;mut [f32]</text>
+  <text class="muted" x="336" y="78" text-anchor="middle" font-size="11">bounds-checked, normal Rust</text>
+  <rect x="526" y="40" width="138" height="48" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="595" y="60" text-anchor="middle">dealloc</text>
+  <text class="mono" x="595" y="78" text-anchor="middle" font-size="11">same layout</text>
+  <path d="M146 64 H186 M486 64 H526" stroke="var(--ink)"/>
+  <rect x="526" y="104" width="138" height="30" rx="4" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="595" y="124" text-anchor="middle" font-size="12">any use after this</text>
+  <text class="muted" x="16" y="124" font-size="12">The compiler does not see this timeline. You do.</text>
+</svg>
+<figcaption>Nothing stops the slice from outliving <code>dealloc</code> in the loose code above. That is the hole the wrapper type closes.</figcaption>
+</figure>
+<p><strong>Takeaway: allocate, check, use, free, in that order, with the slice finished before <code>dealloc</code>.</strong></p>
+<div class="quiz" data-quiz="check" data-for="calls" id="c-calls">
+  <p>Why <code>alloc_zeroed</code> and not plain <code>alloc</code>?</p>
+  <ul>
+    <li data-right>Reading uninitialised memory as <code>f32</code> is undefined behaviour; zeroed bytes are valid floats <div class="why">Zero bits are 0.0, so the buffer is safe to read straight away. The bytes from plain <code>alloc</code> are not.</div></li>
+    <li><code>alloc_zeroed</code> is faster <div class="why">It does more work: the zeros are written in an extra pass.</div></li>
+    <li>Plain <code>alloc</code> can’t give 64-byte alignment <div class="why">Both take the same <code>Layout</code>, so both honour its alignment. Only the starting bytes differ.</div></li>
+  </ul>
+</div>
+
+<h2 id="rules" data-short="The five rules" data-step="Five rules the compiler no longer checks, and what breaks for each.">Which rules do you keep now?</h2>
+<p>Some mistakes with raw memory hide in edge cases. The first one you will meet is an empty buffer, where <code>n</code> is 0.</p>
+<div class="quiz" data-quiz="predict" data-for="rules" id="g-rules">
+  <p>Your buffer has <code>n = 0</code> floats. What is <code>layout.size()</code>, and can you call <code>alloc</code> with it?</p>
+  <ul>
+    <li data-right>0, and calling <code>alloc</code> with size 0 is undefined behaviour <div class="why">The allocator is never allowed to see size 0. The empty case needs its own path.</div></li>
+    <li>0, and <code>alloc</code> returns null <div class="why">That would be a reasonable design, but the rule is stricter: calling it at all is undefined behaviour.</div></li>
+    <li>64, because <code>align_to(64)</code> rounds the size up <div class="why"><code>align_to</code> changes the alignment, not the size. Zero floats is zero bytes.</div></li>
+  </ul>
+</div>
+<p>That is one of five rules. With a <code>Vec</code>, the compiler enforces these. With a raw allocation, you do:</p>
+<table>
+  <thead><tr><th>Rule</th><th>What breaks if you don’t</th></tr></thead>
+  <tbody>
+    <tr><td>Free with the same <code>Layout</code> you allocated with.</td><td>The allocator’s bookkeeping is corrupted. It may crash later, somewhere unrelated.</td></tr>
+    <tr><td>Free exactly once.</td><td>Twice is a double free. Never is a leak.</td></tr>
+    <tr><td>No use after free.</td><td>You read memory that now belongs to someone else.</td></tr>
+    <tr><td>Never call <code>alloc</code> with size 0.</td><td>Undefined behaviour. For <code>n = 0</code>, skip the allocator and use a <strong>dangling pointer</strong> (non-null but pointing at nothing, <code>NonNull::dangling()</code>) with length 0, and skip <code>dealloc</code> too. The empty case is the one exception to 64-byte alignment: <code>NonNull::dangling()</code> is only 4-aligned, which does not matter because nothing is ever read through it.</td></tr>
+    <tr><td>Initialise before reading.</td><td><code>alloc_zeroed</code> handles this. Plain <code>alloc</code> does not.</td></tr>
+  </tbody>
+</table>
+<p>None of these show up as compile errors. Some pass on the host and crash on the phone, or the reverse. That is why the <a href="alignment.html#build">tests on the Alignment page</a> include awkward sizes and <code>n = 0</code>.</p>
+<p><strong>Takeaway: five rules, none checked by the compiler, each broken in a way that may only show up later.</strong></p>
+<div class="quiz" data-quiz="check" data-for="rules" id="c-rules">
+  <p>What should the wrapper do for <code>n = 0</code>?</p>
+  <ul>
+    <li data-right>Skip the allocator: store a dangling, non-null pointer and length 0, and have <code>Drop</code> skip <code>dealloc</code> <div class="why">The allocator never sees size 0, and an empty slice from the dangling pointer is fine.</div></li>
+    <li>Store a null pointer with length 0 <div class="why">A slice’s pointer must be non-null even when the slice is empty. That is what <code>NonNull::dangling()</code> is for.</div></li>
+    <li>Call <code>alloc</code> anyway; size 0 is harmless <div class="why">Size 0 is the one size <code>alloc</code> must never get: undefined behaviour.</div></li>
+  </ul>
+</div>
+
+<h2 id="wrapper" data-short="The wrapper type" data-step="One type holds the unsafe code; Drop and the borrow checker keep the rules.">Why wrap the pointer in a type?</h2>
+<p>The rules above rest on you remembering them at every call site. Put the pointer, the length and the layout in one struct instead.</p>
+<div class="quiz" data-quiz="predict" data-for="wrapper" id="g-wrapper">
+  <p>Put the pointer, the length and the layout in one struct. What could then call <code>dealloc</code> for you, exactly once?</p>
+  <ul>
+    <li data-right>Rust itself, when the struct goes away <div class="why">That is the <code>Drop</code> trait: Rust calls its method once, when the value goes out of scope.</div></li>
+    <li>The borrow checker <div class="why">The borrow checker only checks borrows at compile time. It never runs code.</div></li>
+    <li>Nothing; every caller still has to remember <div class="why">That is the problem the struct removes. Callers can forget; Rust can’t.</div></li>
+  </ul>
+</div>
+<p>The fields (name is a placeholder; the methods are yours to write):</p>
+<pre><code>struct AlignedBuf {
+    ptr: NonNull&lt;f32&gt;,   // start of the memory
+    len: usize,          // number of floats
+    layout: Layout,      // what dealloc needs later
+}</code></pre>
+<p>Then three things become automatic:</p>
+<ol class="steps">
+  <li><strong>Drop frees it.</strong> <code>Drop</code> is the trait whose method Rust calls when a value goes away. Implement it to call <code>dealloc</code> with the stored layout. Rust calls it exactly once. Double free is gone, and you can’t forget to free.</li>
+  <li><strong>Borrows can’t outlive it.</strong> A method like <code>fn as_slice(&amp;self) -&gt; &amp;[f32]</code> ties the slice to the struct. The borrow checker now refuses use-after-free, which it could not see with a loose pointer.</li>
+  <li><strong>The unsafe is in one place.</strong> A handful of lines inside the type, each with a comment. Every caller writes safe code.</li>
+</ol>
+<p>A struct holding a raw pointer is not automatically shareable across threads (<code>Send</code>, the marker for “can move to another thread”). For the Phase 1 parallel sweep you won’t need it to be: each worker borrows a plain <code>&amp;[f32]</code> chunk from <code>as_slice</code>, and slices of floats can be shared. See <a href="rust-threads.html#scope">Threads</a>.</p>
+<div class="callout"><span class="lbl">Another route</span><p>A type like <code>#[repr(align(64))] struct Line([f32; 16]);</code> is 64-byte aligned, so a <code>Vec&lt;Line&gt;</code> is too, with no <code>unsafe</code>. The cost is that lengths come in steps of 16 floats and you convert to a flat <code>&amp;[f32]</code> yourself. The plan asks for the allocator wrapper, which is also the better lesson.</p></div>
+<p><strong>Takeaway: one type holds the unsafe code, so <code>Drop</code> and the borrow checker enforce the rules for every caller.</strong></p>
+<div class="quiz" data-quiz="check" data-for="wrapper" id="c-wrapper">
+  <p>The wrapper has <code>fn as_slice(&amp;self) -&gt; &amp;[f32]</code>. You drop the buffer while a slice from it is still in use. What happens?</p>
+  <ul>
+    <li data-right>A compile error: the slice borrows the buffer <div class="why">The slice’s lifetime is tied to <code>&amp;self</code>, so the borrow checker refuses to let the buffer go first.</div></li>
+    <li>It compiles and reads freed memory <div class="why">That is the loose-pointer code from the previous section. Tying the slice to <code>&amp;self</code> is exactly what changes it.</div></li>
+    <li>It panics at run time <div class="why">No check runs at run time. The borrow checker refuses it at compile time.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A <code>Vec</code> cannot give you 64-byte alignment, so you allocate with a <code>Layout</code> and the raw allocator calls: allocate, check, slice, free.</p>
+<p><code>unsafe</code> lifts a few restrictions and keeps the rest; write a <code>SAFETY:</code> comment for every block.</p>
+<p>Wrap it all in one type so <code>Drop</code> and the borrow checker keep the rules for you.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

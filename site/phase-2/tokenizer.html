@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text to tokens · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 02</p>
+<h1>Text to tokens</h1>
+<p class="lede">A model cannot read letters. It reads <strong>token ids</strong>: whole numbers, each standing for a piece of text from a fixed list of 32,000. The tokenizer turns your prompt into ids on the way in and ids back into text on the way out. This page shows how, step by step, with the real merges stories15M makes.</p>
+<nav class="toc">
+  <a href="#why">Why not letters, why not words?</a>
+  <a href="#vocab">What is in the vocabulary, and what is a score?</a>
+  <a href="#merge">How do you merge the best pair?</a>
+  <a href="#bytes">What if a character is not in the vocabulary?</a>
+  <a href="#space">Why does the first word get a space in front?</a>
+  <a href="#decode">How do ids turn back into text?</a>
+  <a href="#verified">How do you know it matches llama2.c?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="why">Why not letters, why not words?</h2>
+<p>Two obvious choices both fail:</p>
+<ul>
+  <li><strong>One token per letter.</strong> A tiny vocabulary, but a sentence becomes very long, and every token costs a full forward pass. The model would also have to learn spelling before it could learn meaning.</li>
+  <li><strong>One token per word.</strong> Short sequences, but the vocabulary would need every word in every language, and any new word (a name, a typo) would be impossible to write.</li>
+</ul>
+<p>Subword tokenizers sit in between. Common words are one token (“ time”, “ upon”); rare words are built from pieces (“ happ” + “ily”); and in the worst case, any text at all can still be written byte by byte. This is <em>byte-pair encoding</em> (BPE). A <strong>token</strong> is one such piece of text with its id.</p>
+<p><strong>Takeaway: pieces between letters and words keep sequences short, and the byte case means any text can be written.</strong></p>
+
+<h2 id="vocab">What is in the vocabulary, and what is a score?</h2>
+<p>The model chooses from a fixed list, so the tokenizer file stores that list. <code>tokenizer.bin</code> stores, for each of the 32,000 tokens, its bytes and a <strong>score</strong>. A few ids are special:</p>
+<table>
+  <thead><tr><th>Id</th><th>Token</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0</td><td><code>&lt;unk&gt;</code></td><td>unknown (never produced here, thanks to byte fallback)</td></tr>
+    <tr><td class="num">1</td><td><code>&lt;s&gt;</code></td><td>BOS, beginning of sequence: every prompt starts with it</td></tr>
+    <tr><td class="num">2</td><td><code>&lt;/s&gt;</code></td><td>EOS, end of sequence. (stories15M actually ends a story by emitting BOS, the start of the next one; the generator stops on that.)</td></tr>
+    <tr><td class="num">3–258</td><td><code>&lt;0x00&gt;</code>…<code>&lt;0xFF&gt;</code></td><td>one token for every possible byte</td></tr>
+    <tr><td class="num">259…</td><td>“ t”, “ a”, “on”, “ the”, …</td><td>merged pieces, roughly from most to least common</td></tr>
+  </tbody>
+</table>
+<p>The score says how good a merge is: when two neighbouring pieces could be joined into a vocabulary token, the one with the higher score wins. Common pieces got high scores during the tokenizer’s training. (In this file the scores are negative numbers; “higher” means closer to zero.) Read “higher” as “more negative” and the merges happen in the wrong order.</p>
+<p><strong>Takeaway: the vocabulary is a fixed list of 32,000 pieces, and each score decides which merge wins.</strong></p>
+
+<h2 id="merge">How do you merge the best pair?</h2>
+<p>Start from single characters, glue neighbours together, best pair first, and stop when no neighbouring pair is a vocabulary token. The algorithm, as written in <code>src/tokenizer/llama2c.rs</code>:</p>
+<ol class="steps">
+  <li><strong>Start.</strong> Put BOS (id 1). Then the token for a single space (see <a href="#space">below</a>).</li>
+  <li><strong>Split into characters.</strong> Each character that is in the vocabulary becomes its token. Any other becomes one byte token per byte (<a href="#bytes">byte fallback</a>).</li>
+  <li><strong>Merge.</strong> Look at every adjacent pair. Of the pairs whose joined text is a vocabulary token, take the one with the highest score and merge it into one token. Repeat until no adjacent pair is in the vocabulary.</li>
+</ol>
+<div class="widget" data-bpe>
+  <h3>Watch the merges</h3>
+  <p>Real merges from stories15M's tokenizer, traced from the file. ␣ is a space. The highlighted chip is the merge just made.</p>
+  <div class="controls">
+    <label class="field">Text<select data-pick></select></label>
+    <button class="btn" type="button" data-step>Step</button>
+    <button class="btn" type="button" data-play>Play</button>
+    <button class="btn" type="button" data-reset>Reset</button>
+  </div>
+  <div class="chips" data-chips></div>
+  <p class="note" data-note></p>
+</div>
+
+<p>The merges run from common to rare. In “Once upon a time” the first merge is “ t”, then “ a”, then “on”: short, very common pairs, which have the highest scores. Whole words like “ Once” come last, because they need their pieces to exist first. Each loop looks at every pair, so this simple version does about <var>n</var> merges × <var>n</var> pairs of work. That is fine: a prompt is tokenized once, and it takes microseconds next to the model. Merging in a different order can give a different split, and then the ids no longer match llama2.c’s.</p>
+<p><strong>Takeaway: merge the highest-scoring neighbouring pair, repeat until none is left, and keep the order exact.</strong></p>
+
+<h2 id="bytes">What if a character is not in the vocabulary?</h2>
+<p>Take a character the vocabulary does not have, say an emoji. The tokenizer falls back to bytes. Each character is stored as <strong>UTF-8</strong> bytes, the standard way to write characters as numbers from 0 to 255. An emoji is 4 bytes, so it becomes 4 byte tokens. Each byte token is its byte value + 3, because the 256 byte tokens start at id 3.</p>
+<p>So no input can fail to encode. The model may have seen little text like that, but it can still be written down. Skip the fallback and such a character has nowhere to go.</p>
+
+<h3>Step 1: look the piece up</h3>
+<pre><code>match self.lookup.get(&amp;b[i..end]) {</code></pre>
+<ul>
+  <li><code>b[i..end]</code> is the bytes from position <code>i</code> up to, not including, <code>end</code>: the piece being tried.</li>
+  <li><code>get</code> returns <code>Some</code> with the id if the piece is in the vocabulary, and <code>None</code> if not. <code>match</code> branches on which one it is.</li>
+</ul>
+
+<h3>Step 2: the known case</h3>
+<pre><code>Some(&amp;id) =&gt; tokens.push(id),                  // a known character</code></pre>
+<ul>
+  <li><code>Some(&amp;id)</code> unpacks the id. The <code>&amp;</code> copies the number out of the reference that <code>get</code> returned.</li>
+  <li><code>tokens.push(id)</code> adds it to the output list.</li>
+</ul>
+
+<h3>Step 3: the fallback case</h3>
+<pre><code>None =&gt; tokens.extend(b[i..end].iter().map(|&amp;byte| byte as usize + 3)), // its bytes</code></pre>
+<ul>
+  <li><code>.iter()</code> walks the bytes one at a time.</li>
+  <li><code>|&amp;byte| byte as usize + 3</code> is a small function that turns each byte into its id. <code>as usize</code> changes the type, and <code>+ 3</code> skips the three special ids 0, 1 and 2.</li>
+  <li><code>extend</code> adds all of those ids to the list, one per byte.</li>
+</ul>
+
+<h3>All three together</h3>
+<pre><code>match self.lookup.get(&amp;b[i..end]) {
+    Some(&amp;id) =&gt; tokens.push(id),                                   // a known character
+    None =&gt; tokens.extend(b[i..end].iter().map(|&amp;byte| byte as usize + 3)), // its bytes
+}</code></pre>
+<p><strong>Takeaway: a known piece maps to one id, and an unknown one falls back to one id per byte, so every input encodes.</strong></p>
+
+<h2 id="space">Why does the first word get a space in front?</h2>
+<p>SentencePiece, the tokenizer family Llama uses, treats a space as part of the <em>next</em> word: the vocabulary has “ time” (with a space) far more often than “time”. So a word at the start of a prompt, with no space before it, would not look like the same word elsewhere in a sentence.</p>
+<p>To make the first word look like every other word, the encoder puts a space token in front of the text. This is called the <em>dummy prefix</em>. That is why the traces above start with ␣.</p>
+<p>When decoding, the opposite happens: if a token follows BOS and starts with a space, that space is dropped, so the output does not begin with a blank.</p>
+<p><strong>Takeaway: the encoder adds a leading space so the first word matches the usual pieces, and decoding removes it again.</strong></p>
+
+<h2 id="decode">How do ids turn back into text?</h2>
+<p>Decoding is the reverse, and it is simpler: a table lookup, id → bytes. The program looks up each id and writes out its bytes. Two small rules: the dummy-prefix space after BOS is dropped, and a byte token like <code>&lt;0xF0&gt;</code> turns back into the single byte 0xF0.</p>
+<p>Byte tokens can arrive one at a time, half an emoji per step, so the program prints raw bytes, and the terminal shows the character once all of its bytes have arrived.</p>
+<p><strong>Takeaway: decoding is a table lookup from ids to bytes, with two rules for the leading space and byte tokens.</strong></p>
+
+<h2 id="verified">How do you know it matches llama2.c?</h2>
+<p>A tokenizer that is almost right still gives the model wrong ids, so the check has to be exact. The tokenizer is compared with llama2.c’s own encoder on <strong>323 test strings</strong> generated by <code>tools/gen_tokenizer_corpus.py</code>: plain English, runs of whitespace, accented letters, Chinese and Japanese, emoji, control bytes and random mixtures. Every string gives exactly the same ids <span class="tag m">measured</span>. A second test decodes every encoding and checks the original text comes back.</p>
+<p>Phase 5 needs a different tokenizer for SmolLM2 and Qwen (byte-level BPE, which ranks merges from an explicit list instead of by score). It is checked the same way, against Hugging Face’s <code>tokenizers</code> library, on 433 strings.</p>
+<p><strong>Takeaway: the encoder must give identical ids on 323 strings, and decoding must give back the original text.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>“Once upon a time” is 16 characters. Why are there 5 ids, and what is the first one?</summary>
+<p>The first is BOS (1). The merges turn the 17 starting pieces (space + 16 characters) into 4 tokens: “ Once”, “ upon”, “ a”, “ time”. 1 + 4 = 5.</p>
+</details>
+<details class="check"><summary>Why can the tokenizer never fail, even on text in a script it has never seen?</summary>
+<p>Byte fallback: any character not in the vocabulary is written as its UTF-8 bytes, and all 256 byte values are tokens (ids 3–258).</p>
+</details>
+<details class="check"><summary>Two different adjacent pairs could both be merged. Which one goes first?</summary>
+<p>The one whose merged token has the higher score. If two have the same score, the leftmost. The order matters: merging a different pair first can lead to a different final split.</p>
+</details>
+<details class="check"><summary>Why does a token cost so much more than a character to the model?</summary>
+<p>Because the model runs one full <a href="forward.html">forward pass</a> per token, reading all 60.8 MB of weights. Fewer, longer tokens mean fewer passes for the same text.</p>
+</details>
+
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A model reads token ids, so the tokenizer converts text to pieces and back, and byte fallback covers anything unseen.</p>
+<p>Encoding merges the highest-scoring neighbouring pair until none is left; the leading-space and decoding rules make the round trip exact.</p>
+<p>Encoding matches llama2.c exactly on 323 strings, and decoding gets the original text back.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

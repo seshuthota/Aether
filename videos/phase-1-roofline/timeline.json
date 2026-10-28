@@ -1,0 +1,223 @@
+{
+  "duration": 217.636,
+  "recorded": 31,
+  "lines": [
+    {
+      "id": "title",
+      "start": 0.0,
+      "seconds": 4.838,
+      "recorded": true,
+      "text": "The roofline. Is your code waiting on memory, or on math?"
+    },
+    {
+      "id": "two-bytes",
+      "start": 6.688,
+      "seconds": 7.311,
+      "recorded": true,
+      "text": "A core needs two things. First, bytes. They arrive from memory at some rate: that's bandwidth, bytes per second."
+    },
+    {
+      "id": "two-math",
+      "start": 14.45,
+      "seconds": 8.809,
+      "recorded": true,
+      "text": "Second, arithmetic. The core adds and multiplies those numbers. Each add or multiply is one FLOP, and the core can do so many per second."
+    },
+    {
+      "id": "two-question",
+      "start": 23.709,
+      "seconds": 4.792,
+      "recorded": true,
+      "text": "So which one runs out first? It comes down to a single number."
+    },
+    {
+      "id": "wpb-sum",
+      "start": 30.151,
+      "seconds": 8.507,
+      "recorded": true,
+      "text": "Take the Phase 0 sum. One float is four bytes, and it gets one add. One FLOP for four bytes: a quarter of a FLOP per byte."
+    },
+    {
+      "id": "wpb-gemv",
+      "start": 39.508,
+      "seconds": 8.112,
+      "recorded": true,
+      "text": "Decode's matrix times vector. Each four-byte weight gets a multiply and an add. Two FLOPs for four bytes: half a FLOP per byte."
+    },
+    {
+      "id": "wpb-prefill",
+      "start": 48.471,
+      "seconds": 8.507,
+      "recorded": true,
+      "text": "Prefill with thirty-two tokens reuses that same weight thirty-two times. Sixty-four FLOPs from the same four bytes: sixteen per byte."
+    },
+    {
+      "id": "wpb-name",
+      "start": 57.828,
+      "seconds": 5.999,
+      "recorded": true,
+      "text": "FLOPs per byte. It's called arithmetic intensity: how much work each byte brings with it."
+    },
+    {
+      "id": "limit-setup",
+      "start": 65.477,
+      "seconds": 7.358,
+      "recorded": true,
+      "text": "Now some made-up limits. Memory delivers thirty gigabytes per second. The core can do twenty-eight billion FLOPs per second."
+    },
+    {
+      "id": "limit-feed",
+      "start": 73.285,
+      "seconds": 6.081,
+      "recorded": true,
+      "text": "At half a FLOP per byte, thirty gigabytes a second can only feed fifteen billion FLOPs a second."
+    },
+    {
+      "id": "limit-gemv",
+      "start": 79.816,
+      "seconds": 6.951,
+      "recorded": true,
+      "text": "The shorter bar is the limit. The core sits idle about half the time, waiting for bytes. That's memory-bound."
+    },
+    {
+      "id": "limit-prefill",
+      "start": 87.767,
+      "seconds": 5.558,
+      "recorded": true,
+      "text": "Now slide up to sixteen FLOPs per byte. Memory could feed four hundred and eighty."
+    },
+    {
+      "id": "limit-compute",
+      "start": 93.776,
+      "seconds": 5.616,
+      "recorded": true,
+      "text": "Way more than the core can use. Now the core is the limit. That's compute-bound."
+    },
+    {
+      "id": "roof-axes",
+      "start": 101.592,
+      "seconds": 7.648,
+      "recorded": true,
+      "text": "Do that for every possible work per byte, and plot it. Work per byte along the bottom, the best possible speed up the side."
+    },
+    {
+      "id": "roof-slope",
+      "start": 109.69,
+      "seconds": 6.998,
+      "recorded": true,
+      "text": "On the left, more work per byte means more speed, because every byte brings more math with it. That's the bandwidth roof."
+    },
+    {
+      "id": "roof-flat",
+      "start": 117.138,
+      "seconds": 4.757,
+      "recorded": true,
+      "text": "Then it hits the core's peak, and goes flat. That's the compute roof."
+    },
+    {
+      "id": "roof-ridge",
+      "start": 122.345,
+      "seconds": 5.314,
+      "recorded": true,
+      "text": "Where the two meet is the ridge. Left of it, memory-bound. Right of it, compute-bound."
+    },
+    {
+      "id": "roof-log",
+      "start": 128.46,
+      "seconds": 6.359,
+      "recorded": true,
+      "text": "Each step along both axes is ten times bigger. That's what keeps the slope a straight line."
+    },
+    {
+      "id": "pts-gemv",
+      "start": 135.269,
+      "seconds": 3.956,
+      "recorded": true,
+      "text": "Decode's matrix times vector lands here, low on the slope."
+    },
+    {
+      "id": "pts-prefill",
+      "start": 139.675,
+      "seconds": 3.515,
+      "recorded": true,
+      "text": "Prefill lands up here, on the flat roof."
+    },
+    {
+      "id": "pts-raise",
+      "start": 143.64,
+      "seconds": 6.592,
+      "recorded": true,
+      "text": "Watch what happens if we double the core's speed. The flat roof rises. The decode dot doesn't move at all."
+    },
+    {
+      "id": "pts-lesson",
+      "start": 151.032,
+      "seconds": 5.314,
+      "recorded": true,
+      "text": "For decode, faster math doesn't help. Reading fewer bytes does."
+    },
+    {
+      "id": "pts-q4",
+      "start": 156.796,
+      "seconds": 7.915,
+      "recorded": true,
+      "text": "Store each weight in four bits, and the same math needs about seven times fewer bytes. The dot slides right, and climbs the slope."
+    },
+    {
+      "id": "pts-q4-flat",
+      "start": 165.161,
+      "seconds": 6.87,
+      "recorded": true,
+      "text": "Until it meets the flat roof. From there, the math is the limit again. Where exactly that happens, we'll have to measure."
+    },
+    {
+      "id": "below-sum",
+      "start": 172.881,
+      "seconds": 5.872,
+      "recorded": true,
+      "text": "One last point. The Phase 0 sum, at a quarter of a FLOP per byte. Its roof is up here."
+    },
+    {
+      "id": "below-real",
+      "start": 179.203,
+      "seconds": 6.754,
+      "recorded": true,
+      "text": "But we measured it way down here: point eight two billion FLOPs per second. Far below its roof."
+    },
+    {
+      "id": "below-why",
+      "start": 186.757,
+      "seconds": 7.59,
+      "recorded": true,
+      "text": "A roof is a limit, not a promise. The sum wasn't waiting on memory. It was waiting on its own chain of adds."
+    },
+    {
+      "id": "below-gap",
+      "start": 194.797,
+      "seconds": 5.999,
+      "recorded": true,
+      "text": "A point under the roof means something else is slowing it down. Finding out what, is the skill."
+    },
+    {
+      "id": "recap-1",
+      "start": 202.997,
+      "seconds": 4.003,
+      "recorded": true,
+      "text": "So: work per byte decides which limit you hit."
+    },
+    {
+      "id": "recap-2",
+      "start": 207.449,
+      "seconds": 3.596,
+      "recorded": true,
+      "text": "Left of the ridge, memory is the limit. Decode lives there."
+    },
+    {
+      "id": "recap-3",
+      "start": 211.496,
+      "seconds": 4.49,
+      "recorded": true,
+      "text": "And the roof is only an upper bound. If you're below it, go find out why."
+    }
+  ]
+}

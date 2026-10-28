@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The forward pass in code · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 10</p>
+<h1>The forward pass in code</h1>
+<p class="lede">Every part from pages 3 to 9 meets in one function: <code>forward_traced</code> in <code>src/model/transformer.rs</code>. It takes one token id and its position and returns 32,000 logits, one raw score for each vocabulary entry. This page walks through it line by line, with the work each line costs, so you can see where a token’s time must go before measuring it.</p>
+<nav class="toc">
+  <a href="#signature">What goes in, and what comes out?</a>
+  <a href="#buffers">Where does the working memory live?</a>
+  <a href="#walk">What does each line cost?</a>
+  <a href="#budget">Where does a token’s time go?</a>
+  <a href="#observer">How do you watch the values without slowing it down?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="signature">What goes in, and what comes out?</h2>
+<p>Generation calls the model once per token, and each call needs to know where in the text it is. So the function takes two numbers and returns one array:</p>
+<pre><code>pub fn forward(&amp;mut self, token: usize, pos: usize) -&gt; &amp;[f32]</code></pre>
+<ul>
+  <li><code>token</code> is the id from the <a href="tokenizer.html">tokenizer page</a>, such as 9038.</li>
+  <li><code>pos</code> is the position: 0 for the first token, 1 for the second, and so on.</li>
+  <li><code>&amp;[f32]</code> is a slice, a borrowed view of 32,000 floats: the logits.</li>
+</ul>
+<p>One token, one position, 32,000 logits back. Positions must come in order 0, 1, 2…, because step <var>pos</var> reads the cache entries that steps 0 to <var>pos</var> − 1 wrote. The function takes <code>&amp;mut self</code> because it writes into the cache and the scratch buffers; the weights are only read.</p>
+<p><strong>Takeaway: one call takes a token id and its position, and positions must arrive in order.</strong></p>
+
+<h2 id="buffers">Where does the working memory live?</h2>
+<p>Each step needs scratch space: arrays for the stream, the normalised copy and the scores. All of it is allocated once, in <code>Transformer::new</code>, and reused for every token. Generating text allocates nothing. Allocating them again for each token would repeat that work.</p>
+<table>
+  <thead><tr><th>Buffer</th><th>Size (stories15M)</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>x</code></td><td class="num">288</td><td>the residual stream</td></tr>
+    <tr><td><code>xb</code>, <code>xb2</code></td><td class="num">288 each</td><td>normalised input, attention output, projections</td></tr>
+    <tr><td><code>q</code></td><td class="num">288</td><td>this token's queries, all heads</td></tr>
+    <tr><td><code>hb</code>, <code>hb2</code></td><td class="num">768 each</td><td>MLP gate and up</td></tr>
+    <tr><td><code>att</code></td><td class="num">6 × 256</td><td>attention scores, one row per head</td></tr>
+    <tr><td><code>key_cache</code>, <code>value_cache</code></td><td class="num">6 × 256 × 288 each</td><td>the <a href="kv-cache.html">KV cache</a></td></tr>
+    <tr><td><code>logits</code></td><td class="num">32,000</td><td>the output</td></tr>
+  </tbody>
+</table>
+<p>Everything except the cache adds up to about 150 KB, so it lives in the L1 and L2 caches (small, fast memories next to the core) the whole time. The weights are what streams from memory.</p>
+<p><strong>Takeaway: the scratch space is allocated once, and the weights are what streams from memory.</strong></p>
+
+<h2 id="walk">What does each line cost?</h2>
+<p>Each line is one step of the forward pass. A <strong>multiply-add</strong> is one multiply and one add, the unit this table counts. The code with the observer calls (<a href="#observer">below</a>) left out. Multiply-adds are for stories15M <span class="tag c">calculated</span>.</p>
+<table class="code-walk">
+  <thead><tr><th>Code</th><th>What it does</th><th>Multiply-adds</th></tr></thead>
+  <tbody>
+    <tr><td>x.copy_from_slice(token_embedding row)</td><td>copy row <var>token</var> of the table into <code>x</code> (<a href="embedding-norm.html">page 3</a>)</td><td class="num">0</td></tr>
+    <tr><td colspan="3"><strong>for each of the 6 layers:</strong></td></tr>
+    <tr><td>rmsnorm(xb, x, attn_norm)</td><td>normalised copy of the stream</td><td class="num">≈ 600</td></tr>
+    <tr><td>matmul(q, xb, wq)</td><td>queries (<a href="qkv.html">page 4</a>)</td><td class="num">82,944</td></tr>
+    <tr><td>matmul(key_cache[at], xb, wk)</td><td>keys, straight into the cache</td><td class="num">82,944</td></tr>
+    <tr><td>matmul(value_cache[at], xb, wv)</td><td>values, straight into the cache</td><td class="num">82,944</td></tr>
+    <tr><td>rope(q), rope(key_cache[at])</td><td>rotate by position (<a href="rope.html">page 5</a>)</td><td class="num">≈ 1,150</td></tr>
+    <tr><td>attention(xb, q, cache, pos)</td><td>6 heads over positions 0..=pos (<a href="attention.html">page 6</a>)</td><td class="num">576 × (pos + 1)</td></tr>
+    <tr><td>matmul(xb2, xb, wo)</td><td>mix the heads</td><td class="num">82,944</td></tr>
+    <tr><td>add(x, xb2)</td><td>residual: <code>x += attention</code></td><td class="num">288 adds</td></tr>
+    <tr><td>rmsnorm(xb, x, ffn_norm)</td><td>normalised copy again</td><td class="num">≈ 600</td></tr>
+    <tr><td>matmul(hb, xb, w_gate)</td><td>gate, 768 wide (<a href="mlp.html">page 8</a>)</td><td class="num">221,184</td></tr>
+    <tr><td>matmul(hb2, xb, w_up)</td><td>up, 768 wide</td><td class="num">221,184</td></tr>
+    <tr><td>swiglu(hb, hb2)</td><td>silu(gate) × up</td><td class="num">768 + 768 exp</td></tr>
+    <tr><td>matmul(xb, hb, w_down)</td><td>back to 288</td><td class="num">221,184</td></tr>
+    <tr><td>add(x, xb)</td><td>residual: <code>x += mlp</code></td><td class="num">288 adds</td></tr>
+    <tr><td colspan="3"><strong>after the layers:</strong></td></tr>
+    <tr><td>rmsnorm_inplace(x, final_norm)</td><td>last normalisation</td><td class="num">≈ 600</td></tr>
+    <tr><td>matmul(logits, x, classifier)</td><td>one score per token (the tied embedding table)</td><td class="num">9,216,000</td></tr>
+  </tbody>
+</table>
+<p>Read each row as a call. The first argument is the one that gets written, as in <code>matmul(q, xb, wq)</code>: <code>q</code> is written, while <code>xb</code> and <code>wq</code> are only read. <code>add(x, xb2)</code> writes <code>x</code>.</p>
+<p><strong>Takeaway: the first argument of each call is the one it writes, and the multiply-add column says what it costs.</strong></p>
+
+<h2 id="budget">Where does a token’s time go?</h2>
+<p>Adding up the table gives the work for one token, in multiply-adds.</p>
+<div class="statrow">
+  <div class="stat"><b>5.97 M</b><span>multiply-adds in the 6 layers' matrices</span></div>
+  <div class="stat"><b>9.22 M</b><span>in the classifier alone</span></div>
+  <div class="stat"><b>15.19 M</b><span>total, = weights read</span></div>
+  <div class="stat"><b>≤ 0.9 M</b><span>everything else: attention, up to 0.88 M at position 255 (0.39 M on average over a 222-token story); norms, RoPE and SwiGLU about 0.02 M</span></div>
+</div>
+<p>Two lessons from this table, both confirmed by the profile on <a href="baseline.html">page 12</a>:</p>
+<ul>
+  <li><strong>Matrix-vector products are almost all of the work.</strong> Make <code>matmul</code> fast and the whole model is fast. Everything else can stay simple for a long time.</li>
+  <li><strong>For this small model, the classifier is 61 % of it.</strong> A 32,000-word vocabulary on a 288-wide model is lopsided. In bigger models the layers dominate: Qwen2.5-0.5B's 24 layers hold about 2.6 times as many weights as its classifier <span class="tag c">calculated</span>.</li>
+</ul>
+<p>Every weight is used for exactly one multiply-add, so the multiply-adds equal the weights read: 15.19 M weights, 60.8 MB per token. That is 2 FLOPs (floating-point operations) per 4 bytes, and it is why decode, the step that makes one token at a time, ends up a memory problem (<a href="../phase-1/roofline.html">roofline</a>).</p>
+<p><strong>Takeaway: nearly all the work is matrix-vector products, and for this model the classifier is most of it.</strong></p>
+
+<h2 id="observer">How do you watch the values without slowing it down?</h2>
+<p>To compare with llama2.c you need values from inside the function, not only the final logits. The real function, <code>forward_traced</code>, takes one more argument: an <em>observer</em>. After each step it calls <code>obs.tap("name", layer, pos, data)</code>:</p>
+<pre><code>k::rmsnorm(&amp;mut s.xb, &amp;s.x, &amp;lw.attn_norm, c.norm_eps);
+obs.tap("attn_norm", Some(l), pos, &amp;s.xb);</code></pre>
+<ul>
+  <li><code>&amp;mut s.xb</code> is the output, <code>&amp;s.x</code> the input, <code>&amp;lw.attn_norm</code> the layer’s gain, <code>c.norm_eps</code> the epsilon (page 3).</li>
+  <li><code>tap</code> hands the result to the observer: a name, the layer number (<code>Some(l)</code> wraps it, Rust’s way of saying “there is a value”), the position and the data.</li>
+</ul>
+<p>Normal generation passes <code>NoTrace</code>, whose <code>tap</code> is empty and marked <code>#[inline(always)]</code>, which asks the compiler to paste the body into each call. So the compiler deletes every call: it costs nothing. The tests pass an observer that records every activation, which is how each of them is compared with llama2.c (<a href="correctness.html">next page</a>). The same 14 names appear in the reference’s dump, so a mismatch points straight at the first step that went wrong.</p>
+<p><strong>Takeaway: the observer costs nothing in normal runs, and it gives the tests a point to compare at each step.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why must positions be fed in order?</summary>
+<p>Step <var>pos</var> reads the keys and values that steps 0 to <var>pos</var> − 1 wrote into the cache. Skip one and attention reads an empty or stale row.</p>
+</details>
+<details class="check"><summary>Which single line costs the most for stories15M?</summary>
+<p>The classifier: 32,000 × 288 = 9.2 M multiply-adds, more than all six layers together.</p>
+</details>
+<details class="check"><summary>Why doesn't the tracing slow down normal generation?</summary>
+<p>With <code>NoTrace</code> every <code>tap</code> is an empty inlined function, so the compiler removes the calls. Rust's generics generate a separate copy of <code>forward_traced</code> for each observer type.</p>
+</details>
+<details class="check"><summary>A matrix-vector product reads every weight once. What does that make the FLOPs per byte?</summary>
+<p>One multiply-add (2 FLOPs) per 4-byte weight: 0.5 FLOP per byte. Very low, which is why decode ends up limited by memory bandwidth once the arithmetic is fast.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A token costs one call, and nearly all of it is weights streaming through matrix-vector products.</p>
+<p>Because the call runs in a fixed order and writes known buffers, a test can compare it step by step against a reference at no cost to normal runs.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

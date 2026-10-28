@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory hierarchy · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 1</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>Cache sizes and bandwidths on this page are illustrations. Measured since: the L1 cliff sits just below 96 KB, and one prime core reads ~61 GB/s from DRAM. The full table is on <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>The memory hierarchy</h1>
+<p class="lede">A core can do hundreds of operations in the time it takes to fetch one number from main memory. Caches hide that gap, but only for data that gets used again soon. Decode reads gigabytes of weights once per token and never gets back to the start before they have been pushed out. So every token reads them from DRAM again, and memory speed, not core speed, sets the pace.</p>
+<figure class="film" id="film">
+  <video controls playsinline preload="metadata" poster="memory-hierarchy.jpg">
+    <source src="memory-hierarchy.mp4?v=2" type="video/mp4">
+  </video>
+  <figcaption>The whole page in about three minutes, no sound needed. Watch it first, then read the sections below for the details. Sizes and times in the film are typical orders of magnitude, not measurements from this phone.</figcaption>
+</figure>
+<nav class="toc">
+  <a href="#problem">Why does a fast core wait on memory?</a>
+  <a href="#cache">What does a cache do on each load?</a>
+  <a href="#ladder">How many caches does a chip have?</a>
+  <a href="#bandwidth">Latency or bandwidth: which one limits you?</a>
+  <a href="#decode">Why does decode miss on every token?</a>
+  <a href="#levers">What actually makes decode faster?</a>
+  <a href="#one">Why might one core not fill the bus?</a>
+  <a href="#sweep">What will Phase 1 measure?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="problem">Why does a fast core wait on memory?</h2>
+<p>A prime core here runs at about 4.3 GHz. A GHz is a billion clock cycles per second, so one cycle lasts about a quarter of a nanosecond. A nanosecond is a billionth of a second. In one cycle the core can start several instructions, such as a few adds or multiply-adds.</p>
+<p>The weights live in DRAM, the phone’s main memory, which is a separate chip. A read that has to go all the way there typically takes on the order of 100 nanoseconds <span class="tag a">assumption</span>. That is roughly 400 cycles. If the core waited for every number it needed, it would sit idle almost all the time.</p>
+<div class="callout"><span class="lbl">An everyday picture</span><p>Think of a cook. The cutting board is right there. The fridge is a few steps away. The supermarket is across town. A sensible cook keeps what they are using on the board and what they will need soon in the fridge. Registers, caches and DRAM are the board, the fridge and the supermarket.</p></div>
+<p><strong>Takeaway: a load that reaches DRAM costs hundreds of cycles, so the core needs copies of its data closer by.</strong></p>
+
+<h2 id="cache">What does a cache do on each load?</h2>
+<p>Waiting 400 cycles for every load is too slow. A cache is a small, fast memory next to the core that keeps copies of data recently read from DRAM. The program does not manage it. The hardware does it on every load, in five steps:</p>
+<ol class="steps">
+  <li><strong>Check.</strong> The core needs a number at some address. It first asks the cache: do you have a copy?</li>
+  <li><strong>Miss.</strong> If not, that is a cache miss. The request goes on to DRAM, and the core waits for the slow trip.</li>
+  <li><strong>Copy a whole line.</strong> DRAM does not send just the 4 bytes asked for. It sends the whole 64-byte cache line around them, 16 <code>f32</code>s, and the cache keeps it.</li>
+  <li><strong>Hit.</strong> The next time the core needs that number, or one of its neighbours in the same line, the cache has it. That is a hit, and it takes a few cycles instead of hundreds.</li>
+  <li><strong>Evict.</strong> The cache is small. When it is full and a new line comes in, an old line is thrown out, usually the one unused for the longest time.</li>
+</ol>
+<h3>Why do caches guess right?</h3>
+<p>A cache helps only if the program comes back to data it already loaded. Reusing data this way is called locality. Programs usually do, in two ways:</p>
+<ul>
+  <li><strong>Temporal locality:</strong> if you used it, you will probably use it again soon. A loop counter, or a small table read over and over.</li>
+  <li><strong>Spatial locality:</strong> if you used this byte, you will probably use the next one. Walking an array in order (stride 1) uses all 16 floats of every line it pays for. Walking down a column of a <a href="../phase-0/tensors.html">row-major</a> matrix (each row stored one after another) uses one float per line and throws the other 15 away.</li>
+</ul>
+<p>Hardware also has a prefetcher. It notices a steady stream of addresses and asks DRAM for the next lines before the program does. That hides the wait for a stream, but it cannot create reuse the program does not have.</p>
+<p><strong>Takeaway: a miss costs hundreds of cycles, and a cache pays off only when the program reuses the lines it fetched.</strong></p>
+
+<h2 id="ladder">How many caches does a chip have?</h2>
+<p>One cache trades size against speed, so real chips stack several. A load checks them from the top down and stops at the first level that has a copy. Each step down is larger and slower. The ratios matter most here; the exact sizes and speeds on this phone are what the Phase 1 sweep will show.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 250" role="img" aria-label="Memory hierarchy from registers to DRAM">
+  <rect x="250" y="12" width="180" height="32" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="340" y="33" text-anchor="middle">registers · under 1 KB</text>
+  <rect x="210" y="56" width="260" height="32" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="340" y="77" text-anchor="middle">L1 · private to one core, tens of KB</text>
+  <rect x="160" y="100" width="360" height="32" rx="4" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <text x="340" y="121" text-anchor="middle">L2 · shared by a cluster, megabytes</text>
+  <rect x="110" y="144" width="460" height="32" rx="4" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <text x="340" y="165" text-anchor="middle">SLC · shared with GPU and the rest of the chip</text>
+  <rect x="40" y="188" width="600" height="36" rx="4" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="340" y="211" text-anchor="middle">DRAM · gigabytes, shared with Android</text>
+</svg>
+<figcaption>Wider means bigger, not faster. The top is next to the core and fast; the bottom is far away and slow. A model’s weights live in the bottom bar.</figcaption>
+</figure>
+<ul>
+  <li><strong>Registers</strong> are the only storage an instruction works on directly. NEON is Arm’s vector instruction set, and one NEON register is 128 bits: four <code>f32</code>s, or sixteen <code>i8</code>s. There are 32 NEON registers and 31 general-purpose ones, about 0.75 KB in all.</li>
+  <li><strong>L1</strong> is the first cache, private to one core, split into an instruction cache and a data cache. A hit takes a few cycles. First-generation laptop Oryon (Qualcomm’s CPU core design) had a 96 KB data L1 (Hot Chips 2024). This phone has a later mobile Oryon, so do not copy that number here. The sweep will show where the L1 cliff really is.</li>
+  <li><strong>L2</strong> on Oryon is shared by a cluster, a group of cores that share one L2, rather than private. Launch coverage of the 8 Elite said 12 MB per cluster, two clusters. <span class="tag a">assumption</span> If the sweep on one prime core falls off well before 12 MB, either the claim was wrong or one core cannot use the whole cluster cache by itself. Either result teaches something.</li>
+  <li><strong>SLC</strong>, the system-level cache, sits in front of DRAM and is shared with the GPU and other parts of the chip. Its size on this phone is not published in anything we have checked.</li>
+  <li><strong>DRAM</strong> is LPDDR5X, shared with Android, the GPU, the modem and the display. A read that misses every cache costs hundreds of cycles, and the whole chip shares the same bus.</li>
+</ul>
+<div class="widget" data-latency>
+  <h3>How far away is each rung?</h3>
+  <p>Nanoseconds are hard to feel. Switch to the human scale, where one nanosecond becomes one second. The numbers are typical for phone CPUs <span class="tag a">assumption</span>, not measurements of this phone.</p>
+  <div class="controls">
+    <span class="seg" role="radiogroup" aria-label="Scale">
+      <label><input type="radio" name="latscale" data-scale value="real" checked>Real time</label>
+      <label><input type="radio" name="latscale" data-scale value="human">Human scale (1 ns = 1 s)</label>
+    </span>
+  </div>
+  <div class="bars" data-bars></div>
+  <p class="note">The bars use a <a href="plotting.html">log scale</a>, so each step right is a multiple, not an addition. Drawn to normal scale, the DRAM bar would be 120 times the L1 bar. On the human scale an L1 hit is one second and a trip to DRAM is two minutes.</p>
+</div>
+<p><strong>Takeaway: each level is larger and slower than the one above it, and the weights sit in DRAM at the bottom.</strong></p>
+
+<h2 id="bandwidth">Latency or bandwidth: which one limits you?</h2>
+<p>These are two different numbers. A common mistake is to read one as the other.</p>
+<ul>
+  <li><strong>Latency</strong> is how long <em>one</em> load waits, start to finish. The widget above is about latency.</li>
+  <li><strong>Bandwidth</strong> is how many bytes per second arrive when many loads are in flight at once. A load in flight has been sent and not yet answered.</li>
+</ul>
+<p>Back to the cook. If every trip to the supermarket takes an hour, one shopper making one trip at a time brings home very little per day. A delivery service with twenty vans on the road still takes an hour per trip, yet groceries arrive twenty times as fast. The trip time (latency) did not change. The number of trips under way at once did.</p>
+<p>A core works the same way. When the next load does not depend on the one before, it does not wait. It sends several requests to memory and tracks them until they come back. The prefetcher adds more. Those requests in flight are what fill the bus.</p>
+<p>Decode streams through gigabytes of weights, and every load is independent, so bandwidth is the number that limits it. A pointer-chasing benchmark, where each load’s address comes from the previous load, measures latency. A streaming read measures bandwidth. Phase 1 measures the second one.</p>
+<details class="check"><summary>Why was the Phase 0 sum only 3.3 GB/s?</summary>
+<p>Each add waited for the add before it (<code>s = s + x[i]</code>). That chain of waits, not the memory, set the pace, so the loop never had enough loads in flight to show what the memory can do. A bandwidth kernel uses independent loads and counts bytes per second.</p>
+</details>
+<p><strong>Takeaway: latency is how long one load waits, bandwidth is how many bytes arrive per second, and decode is limited by bandwidth.</strong></p>
+
+<h2 id="decode">Why does decode miss on every token?</h2>
+<p>Decode needs the same weights for every token, and the caches are far too small to keep them. To produce one token, decode runs every layer of the model in order. Each layer multiplies its weight matrices by one small vector, and <a href="../start/llm.html#matvec">in that multiply</a> every weight is used exactly once. Then the next token starts again at layer 1.</p>
+<p>Follow the cache through one token:</p>
+<ol class="steps">
+  <li>The first weights stream in from DRAM. Each is a miss (the prefetcher can start them early, but they still come from DRAM).</li>
+  <li>The cache fills up. From then on every new line pushes out an old one, and the oldest are the earliest layers.</li>
+  <li>When the token ends, the cache holds only the last few megabytes of weights.</li>
+  <li>The next token starts at layer 1. Those weights were pushed out gigabytes ago, so they miss again. So does everything after them.</li>
+</ol>
+<p>Now the real sizes. A 0.5B-parameter model (a model with half a billion weights) in <code>f32</code> is 2 GB. Even if two clusters really have 12 MB of L2 each, plus a few megabytes of SLC, the caches hold around 1% of the weights. The other 99% come from DRAM on every token.</p>
+<p>There are two kinds of miss here. A <strong>compulsory</strong> miss happens the first time a line is ever loaded; nothing avoids it. A <strong>capacity</strong> miss happens because the working set (the data the code keeps coming back to) is bigger than the cache. Decode’s weight misses are capacity misses, on every token, and no reordering of the loop changes that.</p>
+<div class="widget" data-fit>
+  <h3>Will it fit?</h3>
+  <p>Pick a working set and compare it with the cache sizes. The cache sizes are claims and orders of magnitude <span class="tag a">assumption</span>, not measurements. SLC is left out because its size is unknown.</p>
+  <div class="controls">
+    <label class="field">Working set<input type="range" data-size min="10" max="32" step="0.25" value="13"></label>
+    <span class="seg" role="radiogroup" aria-label="Examples" data-presets></span>
+  </div>
+  <div class="bars" data-fitbars></div>
+  <p class="note" data-fitnote></p>
+</div>
+<p><strong>Takeaway: the weights are far bigger than the cache, so every token misses, and reordering the loop does not change that.</strong></p>
+
+<h2 id="levers">What actually makes decode faster?</h2>
+<p>If every token has to read the weights from DRAM, the speed limit is simple:</p>
+<p class="formula">tokens per second ≤ bandwidth (bytes/s) ÷ bytes read per token</p>
+<p>For example, 2 GB of weights at about 85 GB/s <span class="tag a">assumption</span> caps decode at about 42 tokens per second <span class="tag c">calculated</span>. That is the <a href="../phase-0/decode-ceiling.html">decode ceiling</a> from Phase 0. Only two things move it:</p>
+<ul>
+  <li><strong>Read fewer bytes.</strong> <a href="../phase-0/decode-ceiling.html#quant">Quantization</a> stores each weight in 8 or 4 bits instead of 32. A 2 GB model becomes 0.5 GB at 8 bits or 0.25 GB at 4 bits, so each token reads a quarter or an eighth of the bytes.</li>
+  <li><strong>Use each byte for more than one token.</strong> Prefill (reading the prompt) applies every weight to many prompt tokens per read. Batching (running several requests through the model together) and speculative decoding (a small model drafts several tokens and the large model checks them in one pass) do the same. Then the weight is reused while it is still in cache.</li>
+</ul>
+<p>A faster core is not on the list. It finishes its arithmetic sooner and then waits longer. The model is still 2 GB.</p>
+<p><strong>Takeaway: read fewer bytes per token, or reuse each byte for more tokens; a faster core does neither.</strong></p>
+
+<h2 id="one">Why might one core not fill the bus?</h2>
+<p>The plan says a single phone core usually cannot use all of DRAM’s bandwidth, which is why decode wants several threads (separate streams of work, each on its own core). The reason follows from the earlier sections:</p>
+<ul>
+  <li>A core can track only a limited number of outstanding misses. If it runs out before the bus is full, the bus waits on the core, like a delivery service that owns too few vans.</li>
+  <li>The path from one core to the memory controller has its own width. Laptop Oryon, a different chip, could pull on the order of 100 GB/s from one thread in Qualcomm’s own slides. That is a warning, not a result: this phone might fill the bus from one core, or it might not.</li>
+  <li>Several cores issuing misses together can fill a bus that one core cannot. They also compete with each other, and a slow core makes the others wait at the end of a shared job. <a href="topology.html">Pinning</a> (fixing each thread to a chosen core) lets you choose which cores run.</li>
+</ul>
+<div class="callout warn"><span class="lbl">Do not import the laptop number</span><p>Chips and Cheese and Qualcomm’s Hot Chips talk describe first-generation Oryon in a laptop. This phone is a later mobile core, with two clusters, a phone memory controller and a thermal budget with no fan. Single-thread DRAM bandwidth here is an open question. Write your guess down before the run, or you cannot tell later whether it was right. Then run the read benchmark.</p></div>
+<p><strong>Takeaway: one core may run out of misses to track before the bus is full, and this phone’s one prime core was measured at about 61 GB/s from DRAM.</strong></p>
+
+<h2 id="sweep">What will Phase 1 measure?</h2>
+<p>The plan needs the real cache sizes and the real DRAM bandwidth, and the working-set sweep finds both. The <a href="bandwidth.html#sweep">sweep</a> reads a buffer over and over and records bytes per second, starting with a tiny buffer and doubling it each step. While the buffer fits in L1, every pass after the first hits L1 and the number is high. When it outgrows L1, it drops to L2 speed. When it outgrows L2 and SLC, it drops again to DRAM speed. Those drops, the cliffs, are where the real cache sizes are. The DRAM level is the bandwidth that sets the decode ceiling.</p>
+<table>
+  <thead><tr><th>Claim</th><th>Source</th><th>Use it as</th></tr></thead>
+  <tbody>
+    <tr><td>12 MB L2 per cluster</td><td>Launch coverage of Qualcomm’s briefing, October 2024</td><td>A mark to look for on the sweep. If the cliff is elsewhere, the coverage was wrong or incomplete.</td></tr>
+    <tr><td>96 KB L1 data</td><td>Hot Chips 2024, laptop Oryon</td><td>Not this chip. Do not label a phone cliff with it until the sweep agrees.</td></tr>
+    <tr><td>~100 ns DRAM latency</td><td>Typical for phone CPUs</td><td>An order of magnitude to build intuition. Phase 1 does not measure latency directly.</td></tr>
+    <tr><td>LPDDR5X, up to 5300 MHz</td><td>Qualcomm product brief 87-83196-1</td><td>The memory type, not GB/s. “5300 MHz” does not say clock versus transfer rate, and the brief does not give this phone’s bus width.</td></tr>
+    <tr><td>~85 GB/s</td><td>A back-of-envelope from Phase 0</td><td>An assumption. The measured all-core read replaces it.</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the cliffs give the real cache sizes, and the DRAM level gives the bandwidth that sets the decode ceiling.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>A cache hit and a cache miss: what is the difference, and roughly how big?</summary>
+<p>A hit means the cache already had a copy, so the load finishes in a few cycles. A miss means it did not, so the load goes further down the ladder, to DRAM in the worst case, which typically costs hundreds of cycles.</p>
+</details>
+<details class="check"><summary>You read one <code>f32</code>. How many bytes come from DRAM?</summary>
+<p>A whole cache line: 64 bytes, 16 floats. If you then use the neighbours, they are free hits. If you skip them, as in a column walk, you paid for 64 bytes to use 4.</p>
+</details>
+<details class="check"><summary>Does stories15M, at 60 MB in <code>f32</code>, fit in L2?</summary>
+<p>Not even under the 12 MB claim, nor with both clusters together. Even the tiny model streams from DRAM every token. Try it in the “Will it fit?” widget.</p>
+</details>
+<details class="check"><summary>Why doesn’t a bigger L2 fix decode?</summary>
+<p>Because the model is gigabytes and the L2, even at the claimed size, is tens of megabytes. The misses are capacity misses. A bigger cache helps data that fits; the weights do not.</p>
+</details>
+<details class="check"><summary>Latency did not change, but bandwidth went up. How?</summary>
+<p>More loads were in flight at once. Each trip took as long as before, but more trips overlapped, so more bytes arrived per second.</p>
+</details>
+<details class="check"><summary>Why might eight cores read DRAM faster than one, and why not eight times faster?</summary>
+<p>Faster, if one core cannot keep enough misses in flight to fill the bus. Not eight times, if the bus fills up first, if cores sharing an L2 get in each other’s way, or if the memory controller is the limit. The pinned sweep shows which of these happened.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A load that misses every cache waits hundreds of cycles, so the chip stacks caches and moves data in 64-byte lines.</p>
+<p>Decode misses on every token because the weights are far bigger than the cache, so its speed follows DRAM bandwidth.</p>
+<p>The Phase 1 sweep will replace the guesses on this page with measured cache cliffs and a bandwidth number.</p>
+
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

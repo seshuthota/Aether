@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Power and heat · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 6</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>Measured since, with one change: SELinux denies the shell user <code>/sys/class/power_supply</code>, so the battery files on this page cannot be read without root. Energy came from Android’s battery charge counter instead, which refreshes only every 45–85 s; temperatures and clocks were read from sysfs. Method, numbers and limits: <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>Power and heat</h1>
+<p class="lede">A phone has no fan, and its battery is the one power meter you can read. The fastest setting is often not the cheapest one. Phase 1 has to turn energy into a measured number, not a vibe.</p>
+<nav class="toc">
+  <a href="#joule">What is energy, and how do you get it?</a>
+  <a href="#files">Which battery files do you read?</a>
+  <a href="#sample">How often do you read the battery?</a>
+  <a href="#heat">Why does the phone slow down during a long run?</a>
+  <a href="#record">What do you write down with each run?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="joule">What is energy, and how do you get it?</h2>
+<p>A benchmark gives you a time, but the battery pays in energy. <strong>Power</strong> is how fast energy is spent. <strong>Energy</strong> is the total spent. Its unit is the <strong>joule</strong>, and one joule is one watt for one second.</p>
+<p class="pull">energy (joules) = average power (watts) × time (seconds).</p>
+<p>Take two runs at the same average power. The 5-minute run lasts 300 seconds, so it spends 30 times the energy of a 10-second run. Time alone changes the total.</p>
+<p>At the battery, power is <strong>voltage</strong> times <strong>current</strong>. Current is the flow of charge, in amps. Voltage is the push behind it, in volts. Read both. Do not assume a fixed voltage: it drops as the charge runs down and sags further under load. A current-only estimate, multiplied by a nominal voltage, is off by an amount that changes from run to run. Sample both, at the same moments.</p>
+<p>The numbers you actually want, once a model exists, are joules per token and joules per GB read. Phase 1 can only produce the second. Joules per GB on a prime core versus a performance core tells you whether the faster core is the one you want for a long session. Faster and cheaper are different questions, so collect both. Record only speed, and you can pick the setting that finishes first but drains the battery faster.</p>
+<p><strong>Takeaway: energy is power times time, and you need voltage and current read together to get power.</strong></p>
+
+<h2 id="files">Which battery files do you read?</h2>
+<p>The plan points at <code>/sys/class/power_supply/battery/</code>. Each file has its own meaning and unit, and the phone decides both. Learn them before any code reads them.</p>
+<table>
+  <thead><tr><th>File</th><th>Usual meaning</th><th>Catch</th></tr></thead>
+  <tbody>
+    <tr><td><code>current_now</code></td><td>Instantaneous current</td><td>Units are often microamps, not amps. The sign flips by device: charging can be positive and discharging negative, or the reverse. Read the sibling <code>current_avg</code> if it exists, and a short idle sample, before you trust a sign.</td></tr>
+    <tr><td><code>voltage_now</code></td><td>Battery voltage</td><td>Often microvolts. Divide consciously. Write the unit you assumed in the results file.</td></tr>
+    <tr><td><code>status</code></td><td>Charging, discharging, full</td><td>A run on the charger is a different thermal and electrical condition. The plan says unplug for energy numbers. A plugged-in phone may also hide discharge current.</td></tr>
+  </tbody>
+</table>
+<p>A microamp is a millionth of an amp, so a reading of 1,000,000 in <code>current_now</code> means 1 A. Skip that conversion and the number is a million times too large, and nothing will warn you.</p>
+<p>These paths are conventional Android. Phase 0 did not open them. The first implementation step is to <code>adb shell ls</code> the directory and read one sample by hand, including the units, before any background thread exists. (On this phone that first step is blocked: see the note at the top of the page.) If this phone names the gauge differently, the code follows the phone, not the plan’s example path.</p>
+<p>Frequency and temperature sit elsewhere:</p>
+<ul>
+  <li><code>/sys/devices/system/cpu/cpuN/cpufreq/scaling_cur_freq</code> — the clock right now, in kHz.</li>
+  <li><code>/sys/class/thermal/</code> — thermal zones. Names vary. Note which zone you logged. A battery sensor and a CPU sensor are not interchangeable.</li>
+</ul>
+<p><strong>Takeaway: read one sample of each file by hand, and write its unit down before you write any code.</strong></p>
+
+<h2 id="sample">How often do you read the battery?</h2>
+<p>One reading at the start and one at the end gives you an average, but not the shape. Did the power jump in the middle, or fall? To see that, sample on a <strong>background thread</strong>, a second thread that runs beside the timed work, a few times a second.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 140" role="img" aria-label="Sampler beside the benchmark">
+  <rect x="16" y="36" width="400" height="36" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="216" y="59" text-anchor="middle">timed read benchmark, pinned</text>
+  <rect x="440" y="20" width="220" height="22" rx="3" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <rect x="440" y="48" width="220" height="22" rx="3" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <rect x="440" y="76" width="220" height="22" rx="3" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text class="mono" x="550" y="36" text-anchor="middle" font-size="11">current, voltage</text>
+  <text class="mono" x="550" y="64" text-anchor="middle" font-size="11">scaling_cur_freq</text>
+  <text class="mono" x="550" y="92" text-anchor="middle" font-size="11">thermal zone</text>
+  <text class="muted" x="16" y="110" font-size="12">average the samples that fall inside the timed window, not the samples from process startup</text>
+</svg>
+<figcaption>The sampler is not on the timed thread. Its own cost should be small next to a DRAM-sized read. If it is not, you will see it in the GB/s, and that is a bug in the monitor.</figcaption>
+</figure>
+<p>Average power over the timed window, times the timed duration, is the energy of the run. Leave the warm-up out of the energy if you left it out of the time. Otherwise the joules and the seconds describe different intervals.</p>
+<p>The battery measures the whole phone, not your process. The display, the modem, the OS and your code all draw from it. You cannot get “joules of the kernel only” from the battery. You can get “joules of the phone while this kernel ran, screen in a known state, radio as quiet as you can make it, unplugged.” That is the number to compare across core sets. A difference of a few percent is the sensor and the OS. A difference of two times is the core set.</p>
+<p><strong>Takeaway: sample on its own thread, and compare energy only over the same window.</strong></p>
+
+<h2 id="heat">Why does the phone slow down during a long run?</h2>
+<p>A short benchmark can be fast, and the same code minutes later can be slower. The cause is heat. The <strong>governor</strong> is the kernel code that picks the clock speed. It lowers <code>scaling_cur_freq</code> as the SoC (the phone’s main chip) heats up. Performance in the first 10 seconds is not performance after 5 minutes.</p>
+<p>The plan asks for a long run that logs frequency and temperature and notes how far bandwidth drops.</p>
+<p>What you are looking for is not a single throttled GB/s. It is the curve: how many seconds until the clocks step down, which cores step down, and whether bandwidth follows the clock (compute-bound or latency-bound) or stays flat (already waiting on a bus that did not change). A streaming DRAM read may throttle less than a hot NEON kernel, or the memory controller itself may be on the same thermal budget. The log answers it. A prediction will not.</p>
+<p>Screen on is a different experiment from screen off. The display is a large, steady load, and it changes the thermals. Pick one for the table, and say which. Mixing the two makes the rows incomparable.</p>
+<p><strong>Takeaway: one GB/s number hides the heat, so log the clock over time and report the curve.</strong></p>
+
+<h2 id="record">What do you write down with each run?</h2>
+<p>A number without its conditions cannot be checked or compared. So every results row, from this phase onward, carries these:</p>
+<ul>
+  <li>commit, release build,</li>
+  <li>cores pinned (fixed to specific cores), and that the pin succeeded,</li>
+  <li>screen, charger, starting temperature,</li>
+  <li>median time (the middle of several runs) and the GB/s convention, which says which bytes you counted,</li>
+  <li>average current, average voltage, the units you divided by, joules,</li>
+  <li>frequency range observed during the window.</li>
+</ul>
+<p>Leave one out and a later reader cannot tell whether a difference came from your code or from the conditions.</p>
+<p>A table of GB/s with none of that is not the Phase 1 deliverable. The explanation of why prime and performance differ, or do not, is the deliverable.</p>
+<p><strong>Takeaway: a result means little until its conditions are written next to it.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why multiply current by voltage instead of using current alone?</summary>
+<p>Power is their product. Voltage sags under load. Two runs with the same current and different voltages did not spend the same energy. The files are often micro-units; forgetting the 10<sup>6</sup> makes the joules nonsense, so write the conversion next to the number.</p>
+</details>
+<details class="check"><summary>Why unplug?</summary>
+<p>A charging phone is not discharging the battery at the rate your process costs, and the current sign or magnitude may describe the charger. Thermals are also different. Energy numbers in the plan are unplugged numbers.</p>
+</details>
+<details class="check"><summary>The first 10 seconds sustain 25 GB/s and minute 5 sustains 15. Which one goes in the table?</summary>
+<p>Both, labeled. The first is the optimistic roof for a short benchmark. The second is what a conversation feels like. Comparing a kernel’s 14 GB/s against the optimistic 25 and calling it 56% efficient is the wrong fraction if the phone cannot hold 25.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Power and heat are measured the same careful way as speed.</p>
+<p>Read the right pair of values, sample without disturbing the run, and keep the conditions beside every result, because energy and clock speed only mean something under the conditions that produced them.</p>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

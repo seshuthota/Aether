@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dependency chains · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 02</p>
+<h1>Dependency chains</h1>
+<p class="lede">An instruction can take several cycles to give its result, yet the core can start a new one every cycle. Those are two different numbers, latency and throughput. The gap between them is where the scalar loop lost most of its speed. This page shows the gap and the fix: several running sums that do not wait on each other.</p>
+<nav class="toc">
+  <a href="#latency">What is the difference between latency and throughput?</a>
+  <a href="#chain">Why does one running sum leave the core idle?</a>
+  <a href="#widget">What does the pipeline look like with 1, 2 or 4 sums?</a>
+  <a href="#code">How do you write four sums in code?</a>
+  <a href="#measured">How much faster is it on the phone?</a>
+  <a href="#how-many">How many chains are enough?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="latency">What is the difference between latency and throughput?</h2>
+<p>Picture a laundry with one machine that takes an hour per load. But the machine is really four drums in a row, so you can start a new load every 15 minutes. The <strong>latency</strong> is the time from putting one load in to taking it out: one hour. The <strong>throughput</strong> is how often loads come out: four an hour, but only if you always have four loads ready. If each load needs the previous one out first (you only own one shirt), you get one load an hour, however fast the machine is.</p>
+<p>A CPU’s floating-point unit works the same way. It is <em>pipelined</em>, meaning it is split into stages so that several operations are in flight at once. An FMA passes through several stages, each taking a cycle, and a new FMA can enter the first stage every cycle. Take FMA latency as about 4 cycles <span class="tag a">assumption</span>, a typical value for this class of core, not measured here.</p>
+<p><strong>Takeaway: latency is how long one operation takes, and throughput is how many can start per cycle, but only if they do not wait on each other.</strong></p>
+
+<h2 id="chain">Why does one running sum leave the core idle?</h2>
+<p>Here is a sum that adds one product at a time into a single accumulator, <code>acc</code>, the running total. The line <code>vfmaq_f32</code> is a fused multiply-add: it multiplies two vectors and adds the result to <code>acc</code>, in one instruction.</p>
+<pre><code>acc = vfmaq_f32(acc, w0, x0);   // needs acc
+acc = vfmaq_f32(acc, w1, x1);   // needs the acc from the line above
+acc = vfmaq_f32(acc, w2, x2);   // needs the acc from the line above
+…</code></pre>
+<ul>
+  <li>Each line adds one more product to <code>acc</code>.</li>
+  <li>Each line needs the <code>acc</code> that the line above just wrote, so it cannot start until that result exists, about 4 cycles later.</li>
+</ul>
+<p>So the unit starts one FMA every 4 cycles and sits idle the other 3. The core is not slow; the program gives it nothing else to do. A run of operations where each one needs the previous result is a <strong>dependency chain</strong>. It is the same kind of chain that limited the Phase 0 sum and the Phase 2 scalar matmul. (Those chained plain adds finish sooner than an FMA. That is how the scalar matmul reached <a href="../phase-2/baseline.html#chain">1.77 cycles per step</a>.) Ignore the chain and the loop waits 3 cycles out of every 4, under the 4-cycle assumption above.</p>
+<p><strong>Takeaway: one running sum makes every operation wait for the one before it.</strong></p>
+
+<h2 id="widget">What does the pipeline look like with 1, 2 or 4 sums?</h2>
+<p>Each row in the widget is one accumulator, and each column is one cycle. A coloured block is one FMA in flight (4 cycles), and “+” marks where it started. Stripes are cycles where that accumulator has nothing in flight. Count the “+” signs: each is one FMA started <span class="tag a">illustration</span>.</p>
+<div class="widget" data-chains>
+  <h3>One, two or four accumulators</h3>
+  <div class="controls">
+    <span class="seg" role="radiogroup" aria-label="Accumulators">
+      <label><input type="radio" name="acc" data-acc value="1" checked>1 accumulator</label>
+      <label><input type="radio" name="acc" data-acc value="2">2</label>
+      <label><input type="radio" name="acc" data-acc value="4">4</label>
+    </span>
+  </div>
+  <div class="timeline" data-grid></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>With four accumulators, FMA 0 goes to accumulator 0, FMA 1 to accumulator 1, and so on. FMA 4 goes back to accumulator 0, whose previous result is just ready. A new FMA starts every cycle: four times the work in the same time, from exactly the same instructions.</p>
+<p>The price has two parts. You get four partial sums at the end instead of one, and they must be added together. And the additions now happen in a different order than in the scalar loop, so the result differs in the last bits (<a href="../phase-2/correctness.html#order">why that is fine</a>). Leave one partial sum out of the final addition and the answer is wrong.</p>
+<p><strong>Takeaway: more sums keep the pipeline busy, at the cost of one final addition step and a slightly different order of additions.</strong></p>
+
+<h2 id="code">How do you write four sums in code?</h2>
+<p>The <code>dot_row</code> function in <code>src/kernels/neon.rs</code> uses this idea. Build it in three pieces first.</p>
+
+<h3>Step 1: start four accumulators</h3>
+<pre><code>let mut a = [vdupq_n_f32(0.0); 4];</code></pre>
+<ul>
+  <li><code>[…; 4]</code> makes an array of four accumulators.</li>
+  <li><code>vdupq_n_f32(0.0)</code> fills one NEON register, a vector of four float lanes, with zeros.</li>
+  <li>Four accumulators with four lanes each give 16 independent running sums.</li>
+</ul>
+
+<h3>Step 2: feed them in a loop</h3>
+<pre><code>for j in (0..n16).step_by(16) {
+    for (k, acc) in a.iter_mut().enumerate() {
+        *acc = vfmaq_f32(*acc, vld1q_f32(row.add(j + 4 * k)), vld1q_f32(x.add(j + 4 * k)));
+    }
+}</code></pre>
+<ul>
+  <li><code>(0..n16).step_by(16)</code> visits the start of each 16-float block: 0, 16, 32, and so on.</li>
+  <li><code>a.iter_mut().enumerate()</code> hands out each accumulator with its index <code>k</code>, from 0 to 3.</li>
+  <li><code>vld1q_f32</code> loads four floats, and <code>row.add(j + 4 * k)</code> moves the pointer to the right four.</li>
+  <li><code>*acc = …</code> writes the new sum back into that accumulator.</li>
+  <li>The inner <code>for k in 0..4</code> loop is unrolled by the compiler into four separate FMAs, each on its own register.</li>
+</ul>
+
+<h3>Step 3: add the four sums together</h3>
+<pre><code>let s = vaddvq_f32(vaddq_f32(vaddq_f32(a[0], a[1]), vaddq_f32(a[2], a[3])));</code></pre>
+<ul>
+  <li><code>vaddq_f32</code> adds two vectors lane by lane, so the four accumulators are paired and then combined.</li>
+  <li><code>vaddvq_f32</code> adds the four lanes of the last vector into one float, <code>s</code>.</li>
+</ul>
+
+<h3>All of it together</h3>
+<pre><code>let mut a = [vdupq_n_f32(0.0); 4];
+for j in (0..n16).step_by(16) {
+    for (k, acc) in a.iter_mut().enumerate() {
+        *acc = vfmaq_f32(*acc, vld1q_f32(row.add(j + 4 * k)), vld1q_f32(x.add(j + 4 * k)));
+    }
+}
+// … a 4-float loop and a scalar tail for what is left …
+let s = vaddvq_f32(vaddq_f32(vaddq_f32(a[0], a[1]), vaddq_f32(a[2], a[3])));</code></pre>
+<p>Skip the <code>…</code> code, which handles the leftover floats, and the last few floats of each row are missing from the dot product.</p>
+<p><strong>Takeaway: four accumulators, each fed by its own load and FMA, then combined once at the end.</strong></p>
+
+<h2 id="measured">How much faster is it on the phone?</h2>
+<p>The bars below measure the same 288 × 288 matrix (stories15M’s <code>wq</code>) on one prime core. The unit is GB/s, gigabytes of weights read per second, so longer bars are faster <span class="tag m">measured</span>.</p>
+<div class="bars">
+  <div class="bar alt"><span>scalar (Phase 2)</span><i style="--w:7.6%"></i><b>5.3 GB/s</b></div>
+  <div class="bar alt"><span>NEON, 1 accumulator</span><i style="--w:25.5%"></i><b>17.8 GB/s</b></div>
+  <div class="bar"><span>NEON, 4 accumulators</span><i style="--w:59.5%"></i><b>41.6 GB/s</b></div>
+</div>
+<p>Going from one to four accumulators is a 2.3× gain with no extra arithmetic. On this L2-sized matrix the kernel is now limited by how fast it can load, not by latency. The <a href="gemv.html">next page</a> attacks the loads.</p>
+<p><strong>Takeaway: the same instructions with four accumulators went from 17.8 to 41.6 GB/s on this matrix.</strong></p>
+
+<h2 id="how-many">How many chains are enough?</h2>
+<p>The rule is: enough chains to cover latency × the number of FMAs the core can start per cycle. If FMA latency is 4 cycles and the core has several FMA units, you would want more than four chains to keep them all busy. Too few chains and the core waits. Too many and you run out of registers.</p>
+<p>Registers are the ceiling from the other side. Each chain needs a register, and the inputs need registers too, out of 32. The engine’s GEMV uses 8 chains (4 rows × 2), the GEMM 16. Past that point, the limit is usually loads or memory, not chains.</p>
+<p><strong>Takeaway: add chains until latency is covered, then the limit moves to loads, memory or registers.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What is the difference between latency and throughput?</summary>
+<p>Latency: how long one operation takes from start to result. Throughput: how many operations can be started per cycle when they do not depend on each other.</p>
+</details>
+<details class="check"><summary>Why can't the compiler add accumulators to the scalar loop by itself?</summary>
+<p>Several accumulators change the order of float additions, which changes the result's last bits. The compiler is not allowed to change your answer without permission.</p>
+</details>
+<details class="check"><summary>With FMA latency 4 and one FMA unit, how many accumulators do you need to keep it busy?</summary>
+<p>Four: while one waits 4 cycles for its result, the other three each start one FMA, and by then the first is ready again.</p>
+</details>
+<details class="check"><summary>Why can't you just use 32 accumulators?</summary>
+<p>There are only 32 registers, and the loaded weights and inputs need some. Accumulators that do not fit spill to memory, which costs more than the extra chains gain.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A chain of operations that each wait for the last one leaves the core idle most of the time.</p>
+<p>Several independent sums keep the pipeline busy, and they must be added together at the end.</p>
+<p>Add sums until latency is covered; past that, registers and loads set the speed.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

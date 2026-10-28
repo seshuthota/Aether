@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the GEMM micro-kernel · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 3 · 06</p>
+<h1>Inside the GEMM micro-kernel</h1>
+<p class="lede">GEMM (general matrix-matrix multiply) is what prefill runs: the weight matrix times a whole batch of token vectors. Its inner loop, the micro-kernel, computes a small tile of the output, 4 weight rows × 4 tokens, entirely in registers. This page explains why a tile, why 4 × 4, and the loop order around it that makes each weight come from memory only once.</p>
+<nav class="toc">
+  <a href="#problem">Why isn’t one GEMV per token enough?</a>
+  <a href="#tile">How does a 4 × 4 tile reuse its loads?</a>
+  <a href="#widget">Why not a bigger tile?</a>
+  <a href="#code">What does the micro-kernel look like in code?</a>
+  <a href="#order">Which loop goes on the outside?</a>
+  <a href="#edges">What happens when the batch is not a multiple of 4?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="problem">Why isn’t one GEMV per token enough?</h2>
+<p>The simplest GEMM runs the GEMV once per token. That is correct, but each token’s GEMV streams the whole matrix again. So <var>T</var> tokens read the weights <var>T</var> times: no reuse at all, and prefill would be no faster per token than decode. (The scalar <code>matmul_batch</code> does exactly that; it only exists as the fallback for the PC.)</p>
+<p>To reuse weights, the work has to be reorganised. A weight, once in a register, should be multiplied by several tokens before it is thrown away. And a token vector, once in a register, should meet several weight rows.</p>
+<p><strong>Takeaway: one GEMV per token reads every weight once per token, so nothing is reused.</strong></p>
+
+<h2 id="tile">How does a 4 × 4 tile reuse its loads?</h2>
+<p>Take 4 weight rows and 4 tokens. For each 4-float slice <var>j</var>:</p>
+<ol class="steps">
+  <li>Load 4 weight vectors (one per row) and 4 token vectors (one per token): 8 loads.</li>
+  <li>Multiply every weight vector with every token vector, each pair into its own accumulator: 4 × 4 = 16 FMAs.</li>
+</ol>
+<p>Each load now feeds 2 FMAs, against 0.5 for GEMV’s step 2 (2 loads per FMA) and 0.8 for GEMV’s step 3 (1.25 loads per FMA). After the last slice, accumulator (<var>r</var>, <var>c</var>) holds row <var>r</var> · token <var>c</var> in 4 lanes, which <code>vaddvq_f32</code> folds into the output.</p>
+<div class="widget" data-tile>
+  <h3>Tile size vs register budget</h3>
+  <p>Copper: weight rows loaded per step. Blue: token vectors. Teal: one accumulator per pair.</p>
+  <div class="controls">
+    <label class="field">weight rows <span data-r-label></span><input type="range" data-r min="1" max="8" value="4"></label>
+    <label class="field">tokens <span data-c-label></span><input type="range" data-c min="1" max="8" value="4"></label>
+  </div>
+  <div class="tilegrid" data-grid></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p><strong>Takeaway: a 4 × 4 tile does 16 FMAs for 8 loads, so each load is used twice or more.</strong></p>
+
+<h2 id="widget">Why not a bigger tile?</h2>
+<p>Bigger tiles mean more FMAs per load: 4 × 4 gives 16 per 8 loads, and 6 × 4 gives 24 per 10. But every accumulator needs a register, and so does every loaded vector. With 32 NEON registers, 4 × 4 uses 16 + 8 = 24, leaving room for addresses and loop bookkeeping in the general registers without spilling. 5 × 5 would need 35: too many. Fast libraries use tiles like 8 × 12 with tricks this kernel does not (loading one register and using its individual lanes, for example). 4 × 4 is a clear, safe first version.</p>
+<p><strong>Takeaway: a bigger tile reuses loads more, but once the registers run out, values spill to memory.</strong></p>
+
+<h2 id="code">What does the micro-kernel look like in code?</h2>
+<p>This is <code>gemm_rows</code> in <code>src/kernels/neon.rs</code>. Build it in three steps.</p>
+
+<h3>Step 1: set up the rows, tokens and accumulators</h3>
+<pre><code>let wr = [0, 1, 2, 3].map(|k| wp.add((i + k) * n));     // 4 weight rows
+let xr = [0, 1, 2, 3].map(|k| xp.add((tt + k) * n));    // 4 tokens
+let mut acc = [[vdupq_n_f32(0.0); 4]; 4];               // acc[row][token]</code></pre>
+<ul>
+  <li><code>[0, 1, 2, 3].map(…)</code> builds four pointers, one per row (or token), by adding an offset to a base pointer.</li>
+  <li><code>acc</code> is a 4 × 4 grid of vector accumulators, one per (row, token) pair, all starting at zero.</li>
+</ul>
+
+<h3>Step 2: load one slice of each</h3>
+<pre><code>for j in (0..n4).step_by(4) {
+    let wv = wr.map(|p| vld1q_f32(p.add(j)));            // 4 loads
+    let xv = xr.map(|p| vld1q_f32(p.add(j)));            // 4 loads</code></pre>
+<ul>
+  <li><code>(0..n4).step_by(4)</code> walks the row in 4-float slices.</li>
+  <li><code>wv</code> holds the four weight vectors for this slice, and <code>xv</code> holds the four token vectors. That is 8 loads.</li>
+</ul>
+
+<h3>Step 3: multiply every pair</h3>
+<pre><code>    for r in 0..4 {
+        for c in 0..4 {
+            acc[r][c] = vfmaq_f32(acc[r][c], wv[r], xv[c]);   // 16 FMAs
+        }
+    }
+}</code></pre>
+<ul>
+  <li>Each weight vector meets each token vector, so the 16 pairs each get one FMA.</li>
+  <li>The loops only pick which accumulator and which vectors to use. The compiler unrolls them into 16 separate instructions.</li>
+</ul>
+
+<h3>All of it together</h3>
+<pre><code>let wr = [0, 1, 2, 3].map(|k| wp.add((i + k) * n));     // 4 weight rows
+let xr = [0, 1, 2, 3].map(|k| xp.add((tt + k) * n));    // 4 tokens
+let mut acc = [[vdupq_n_f32(0.0); 4]; 4];               // acc[row][token]
+for j in (0..n4).step_by(4) {
+    let wv = wr.map(|p| vld1q_f32(p.add(j)));            // 4 loads
+    let xv = xr.map(|p| vld1q_f32(p.add(j)));            // 4 loads
+    for r in 0..4 {
+        for c in 0..4 {
+            acc[r][c] = vfmaq_f32(acc[r][c], wv[r], xv[c]);   // 16 FMAs
+        }
+    }
+}</code></pre>
+<p>The arrays of registers (<code>acc</code>, <code>wv</code>, <code>xv</code>) look like memory, but because their sizes are fixed and the loops are unrolled, the compiler can keep every element in its own register. Whether it did is visible in the generated assembly (<code>objdump -d</code> on the binary): no loads or stores of <code>acc</code> should appear inside the loop. That check has not been recorded yet. 16 accumulators is also 16 independent chains, so FMA <a href="chains.html">latency</a> is well covered.</p>
+<p><strong>Takeaway: the 16 sums stay in registers, and each step reloads only the 8 vectors it needs.</strong></p>
+
+<h2 id="order">Which loop goes on the outside?</h2>
+<p>Around the micro-kernel there are two loops: one over blocks of 4 weight rows, and one over blocks of 4 tokens. Their order decides how often each weight comes from memory.</p>
+<pre><code>for i in (r0..r0 + k4).step_by(4) {          // each block of 4 weight rows …
+    for tt in (0..t4).step_by(4) {            // … meets every block of 4 tokens
+        /* micro-kernel */
+    }
+}</code></pre>
+<p>A block of 4 weight rows is 4 × <var>n</var> floats: 4.6 KB for stories15M, 78 KB for Qwen’s down projection. That fits in the L1 or L2 cache. While the token loop sweeps every token block, those 4 rows stay in cache, so they come from DRAM once per call. The tokens are re-read for every row block, but the batch of token vectors is small (for 64 tokens of 288 floats, 74 KB) and stays in cache too.</p>
+<p>The other order (tokens outside, rows inside) would stream the whole weight matrix once per 4 tokens: reuse of 4 instead of <var>T</var>. That is the mistake this order avoids.</p>
+<p><strong>Takeaway: keep the weight-row loop outside, so each block of rows stays in cache while every token passes over it.</strong></p>
+
+<h2 id="edges">What happens when the batch is not a multiple of 4?</h2>
+<p>When the number of tokens or rows is not a multiple of 4, the leftovers fall back to the GEMV paths: leftover tokens go through <code>gemv</code> one by one over the tiled rows, leftover rows through <code>dot_row</code> per token. The <a href="tails.html">tail</a> problem again, one level up. The goldens include batch sizes like 2, 5, 7, 13 and 33, and the model test prefills batches of 5, 12 and 13, to exercise every edge.</p>
+<p>The same function also takes a range of rows (<code>gemm_rows</code>), so that in <a href="../phase-4/split.html">Phase 4</a> several threads can each compute their own rows of the output at the same time without touching each other’s.</p>
+<p><strong>Takeaway: the leftovers take the slower GEMV paths, and the tests use batch sizes that hit every edge.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Per 4-float step, how many loads and FMAs does the 4 × 4 tile do?</summary>
+<p>8 loads (4 weight, 4 token) and 16 FMAs: 2 FMAs per load.</p>
+</details>
+<details class="check"><summary>Why not a 6 × 6 tile?</summary>
+<p>36 accumulators + 12 loaded vectors = 48 registers. There are 32. The extra values would spill to memory inside the loop, costing more than the reuse gains.</p>
+</details>
+<details class="check"><summary>Why put the weight-row loop outside the token loop?</summary>
+<p>So a block of 4 weight rows stays in cache while every token block passes over it: each weight comes from DRAM once per call. The opposite order re-streams the weights for every token block.</p>
+</details>
+<details class="check"><summary>Running GEMV once per token gives the right answer. Why is it slow for prefill?</summary>
+<p>It reads the whole weight matrix once per token: no reuse, so prefill would be as memory-bound as decode.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>A 4 × 4 tile turns 8 loads into 16 FMAs, and the 16 sums stay in registers.</p>
+<p>The loop order decides whether a block of weight rows stays in cache while all the tokens pass over it.</p>
+<p>Leftover rows and tokens take the slower paths, and the tests cover those sizes.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The decode ceiling · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · the idea</p>
+
+
+<h1>The decode ceiling</h1>
+<p class="lede">This is the idea Phase 0 was building toward. During decode, generating one token, the model reads nearly every weight, uses each weight once, and then has to read them all again for the next token. Speed is capped by how fast those bytes can arrive.</p>
+<p class="pull">tokens per second ≤ memory bandwidth ÷ bytes of weights read per token.</p>
+<p><strong>Memory bandwidth</strong> is how many bytes per second can move from memory to the processor. The formula above divides it by the bytes each token needs.</p>
+<nav class="toc">
+  <a href="#bytes">How big are the weights?</a>
+  <a href="#table">What is the best speed the phone could reach?</a>
+  <a href="#why">Why can’t faster math fix it?</a>
+  <a href="#prefill">Does reading the prompt hit the same limit?</a>
+  <a href="#quant">Why does a smaller format go faster?</a>
+  <a href="#not">Which of these numbers are measured?</a>
+  <a href="#lab">What happens when the bandwidth changes?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="bytes">How big are the weights?</h2>
+<p>Every token needs the weights, so their size sets how many bytes must move. A <strong>parameter</strong> is one learned number in the model. A 0.5 billion parameter model has 500 million of them. At f32, which is 4 bytes per number (a 32-bit float), that is 2,000,000,000 bytes, or 2 GB:</p>
+<table>
+  <thead><tr><th>Format</th><th>Bytes each</th><th>Weight bytes</th></tr></thead>
+  <tbody>
+    <tr><td>f32</td><td>4</td><td>2 GB <span class="tag c">calculated</span></td></tr>
+    <tr><td>f16 or bf16</td><td>2</td><td>1 GB</td></tr>
+    <tr><td>int8</td><td>1</td><td>0.5 GB</td></tr>
+    <tr><td>ideal 4-bit</td><td>0.5</td><td>0.25 GB</td></tr>
+  </tbody>
+</table>
+<p>“GB” here is 10<sup>9</sup> bytes, the same unit as GB/s. So 0.5×10<sup>9</sup> × 4 = 2×10<sup>9</sup>. A <strong>cache</strong> is a small, fast memory close to the processor. A phone’s caches hold megabytes, so two gigabytes of weights do not fit. They come from <strong>DRAM</strong>, the main memory chips. If you assume the weights sit in cache, every ceiling below comes out too high.</p>
+<p><strong>Takeaway: at f32 the weights are 2 GB, which cannot fit in cache, so they come from DRAM.</strong></p>
+
+<h2 id="table">What is the best speed the phone could reach?</h2>
+<p>Suppose the phone reads 30 GB/s, and each weight is read once per token <span class="tag a">assumption</span>. Divide: 30 GB/s ÷ 2 GB = 15 tokens per second for f32. Smaller formats divide into bigger numbers:</p>
+<table>
+  <thead><tr><th>Format</th><th>Size</th><th>Max tokens/sec</th></tr></thead>
+  <tbody>
+    <tr><td>f32</td><td>2 GB</td><td>15</td></tr>
+    <tr><td>int8</td><td>0.5 GB</td><td>60</td></tr>
+    <tr><td>ideal 4-bit</td><td>0.25 GB</td><td>120</td></tr>
+  </tbody>
+</table>
+<p>Halving the bytes per weight doubles the ceiling. Compute barely changes between these formats. The saving is moving fewer bytes. That is why <strong>quantization</strong> (storing each weight in fewer bits) is not optional on a phone if you care about tokens per second. Skip it and tokens per second stay capped at 15.</p>
+
+<figure>
+<svg class="fig" viewBox="0 0 680 200" role="img" aria-label="Weights stream from DRAM, each used once">
+  <rect x="24" y="36" width="160" height="88" rx="6" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="104" y="70" text-anchor="middle">DRAM</text>
+  <text class="muted" x="104" y="90" text-anchor="middle" font-size="12">weights, gigabytes</text>
+  <text class="muted" x="104" y="106" text-anchor="middle" font-size="12">do not fit in cache</text>
+  <path d="M184 80 H300" stroke="var(--ink)" stroke-width="2" fill="none"/>
+  <text class="muted" x="242" y="70" text-anchor="middle" font-size="12">GB/s</text>
+  <rect x="300" y="36" width="150" height="88" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="375" y="70" text-anchor="middle">one core</text>
+  <text class="muted" x="375" y="90" text-anchor="middle" font-size="12">1 multiply-add</text>
+  <text class="muted" x="375" y="106" text-anchor="middle" font-size="12">per weight</text>
+  <text x="24" y="160" font-size="13">f32: 2 operations per 4 bytes read. The math finishes. The next weight has not arrived.</text>
+  <text x="24" y="180" font-size="13">Next token: read the weights again. Nothing from this token’s weights is still hot.</text>
+</svg>
+<figcaption>Decode is a stream, not a reuse. The ceiling is the width of the pipe, not the speed of the multiply.</figcaption>
+</figure>
+
+<p><strong>Takeaway: at 30 GB/s, f32 tops out at 15 tokens per second, and every halving of the bytes doubles that.</strong></p>
+
+<h2 id="why">Why can’t faster math fix it?</h2>
+<p>Faster math sounds like the cure. It is not, because a token does not wait on the math. It waits on the bytes. Two facts show why.</p>
+<ol class="steps">
+  <li><strong>Each weight is used once per token.</strong> In decode, a weight matrix multiplies one input vector, a list of numbers for the current token. Each weight takes part in one multiply-add, one multiply plus one add, and is not needed again for that token. The page counts that as 2 FLOPs (floating-point operations). For f32 that is 2 FLOPs per 4 bytes read. That ratio is called <strong>arithmetic intensity</strong>, FLOPs per byte read, and it is very low. The CPU finishes the math long before the next weights arrive, even if compute were free. More peak FLOPs do not raise this ceiling.</li>
+  <li><strong>The weights do not fit in cache.</strong> Caches are megabytes. The model is gigabytes. The next token reads the weights from DRAM again. No reuse spreads the cost of that trip.</li>
+</ol>
+<pre><code>token 1:  read every weight from DRAM ──► multiply ──► token 1 out
+token 2:  read every weight from DRAM ──► multiply ──► token 2 out
+                 ^ the same weights again, because the cache is too small to keep them</code></pre>
+<p>So the bound is bandwidth ÷ bytes read. How wide the <strong>FMA units</strong> (the circuits that do a multiply-add) are does not enter it. Unlimited compute does not make a token faster than the weights can be fetched, because the weights are an input to the math. Ignore this and you can spend effort on the math, which cannot move the ceiling.</p>
+<p><strong>Takeaway: the ceiling is bandwidth ÷ bytes read, so faster math does not raise it.</strong></p>
+
+<h2 id="prefill">Does reading the prompt hit the same limit?</h2>
+<p>Before the first new token, the model must read the whole prompt. That is <strong>prefill</strong>, and it is a different job, because many tokens go through the weights at once. Take 100 prompt tokens. Each weight can be used 100 times while it sits in a <strong>register</strong> (the CPU’s own tiny storage) or a cache, if the kernel works in blocks, or tiles, so that the activations are the small side. Intensity goes up by about that factor. Prefill can be compute-bound. Decode stays bandwidth-bound.</p>
+<p>Same engine, two strategies. The plan splits GEMV (one token times a matrix) from GEMM (many tokens at once). Decode uses GEMV and prefill uses GEMM. Phase 0 writes neither kernel. It only needs the split to be clear before any kernel is written. Ignore it and you apply the decode ceiling to prompt processing, where it does not hold.</p>
+<p><strong>Takeaway: prefill can be compute-bound because it reuses each weight, while decode has one token and cannot.</strong></p>
+
+<h2 id="quant">Why does a smaller format go faster?</h2>
+<p>The ideal 4-bit row assumed 0.25 GB, which is exactly 4 bits per weight. Real 4-bit formats need more, because they store extra numbers alongside the weights. A <strong>nibble</strong> is 4 bits, half a byte. A <strong>block</strong> is a group of weights that share one stored <strong>scale</strong>, a number that turns the small stored integers back into real weights.</p>
+<p>llama.cpp’s <code>Q4_0</code> stores 32 weights as nibbles (16 bytes) plus one f16 scale (a 16-bit float, 2 bytes): 16 + 2 = 18 bytes per block, 4.5 bits per weight, about 0.28 GB for 0.5B parameters <span class="tag c">calculated</span>. <code>Q8_0</code> is 32 int8 values (8-bit integers) plus one f16 scale, 34/32 = 8.5 bits, about 0.53 GB. The ceiling moves, but not by the full ideal factor. Use the ideal 4-bit size and you overstate the ceiling, because the real formats are bigger.</p>
+<p>Two other leaks, both still ahead of us:</p>
+<ul>
+  <li>Attention also reads the KV cache, which grows with context length. Weights are not the only bytes.</li>
+  <li>You will not get the full assumed bandwidth. A scalar sum of 16 MB already showed ~3.3 GB/s, and that was a latency chain, not DRAM. Phase 1 measures the DRAM number the ceiling should actually use.</li>
+</ul>
+<p><strong>Takeaway: fewer bytes per weight means fewer bytes to read per token, so a smaller format goes faster, but real 4-bit formats store a scale per block and so save a little less than the ideal 4 bits.</strong></p>
+
+<h2 id="not">Which of these numbers are measured?</h2>
+<p>Most numbers on this page are assumptions or calculations. The table labels each one.</p>
+<table>
+  <thead><tr><th>Number</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>30 GB/s in the exercise</td><td><span class="tag a">assumption</span> Chosen so the arithmetic is round. Not this phone.</td></tr>
+    <tr><td>~85 GB/s</td><td><span class="tag a">assumption</span> A guess from “LPDDR5X, 64-bit bus, ~10.6 GT/s.” Qualcomm’s brief says LPDDR5X up to 5300 MHz and does not state GB/s. Bus width on this iQOO is not something we read. Do not quote 85 as a spec.</td></tr>
+    <tr><td>3.3 GB/s scalar sum</td><td><span class="tag c">calculated</span> from a <span class="tag m">measured</span> 4.9 ms. It is the dependency chain, not DRAM. Using it as “the phone’s bandwidth” would make every later kernel look falsely close to the ceiling.</td></tr>
+    <tr><td>15 / 60 / 120 tok/s</td><td><span class="tag c">calculated</span> upper bounds under the 30 GB/s assumption, weights only, ideal packing. Real decode will be lower.</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: none of the tokens-per-second numbers here is a measurement of this phone.</strong></p>
+
+<h2 id="lab">What happens when the bandwidth changes?</h2>
+<p>Bandwidth is the number you are least sure of, so the lab lets you move it. Pick a model and move the assumed bandwidth. The table and bars update. Nothing here is a benchmark result. It is the ceiling for weights only, before any real-world losses.</p>
+<div class="widget" data-ceiling>
+  <h3>Bandwidth ÷ weight bytes</h3>
+  <div class="controls">
+    <label class="field">model
+      <select class="pick" data-model>
+        <option value="15000000">stories15M (Phase 2)</option>
+        <option value="135000000">SmolLM2-135M (Phase 5)</option>
+        <option value="500000000" selected>0.5B, the exercise above</option>
+        <option value="494000000">Qwen2.5-0.5B (Phase 7)</option>
+      </select>
+    </label>
+    <label class="field">assumed bandwidth
+      <input data-bw type="range" min="5" max="90" value="30">
+    </label>
+    <strong data-bw-label>30 GB/s</strong>
+  </div>
+  <table>
+    <thead><tr><th>Format</th><th>Packing</th><th>Weight bytes</th><th>tok/s ceiling</th><th></th></tr></thead>
+    <tbody data-table></tbody>
+  </table>
+</div>
+<p><strong>Takeaway: the ceiling grows in direct proportion to bandwidth and shrinks as the weight bytes grow.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why can’t unlimited compute beat “model size ÷ bandwidth”?</summary>
+<p>Each weight is an input. It has to arrive from DRAM, it is used once, and it does not stay in cache for the next token. The multiply cannot start on a weight that has not arrived, and a faster multiply does not make the next weight arrive sooner.</p>
+</details>
+<details class="check"><summary>Why does prefill escape the same ceiling?</summary>
+<p>Many prompt tokens share one read of a weight, if the kernel keeps that weight live while it is applied to the tile. Intensity rises with the tile. Decode has a tile of one.</p>
+</details>
+<details class="check"><summary>What would make the 15 tok/s figure wrong even if bandwidth really were 30 GB/s?</summary>
+<p>KV-cache traffic, scales and block overhead in a real quant format, and any byte the kernel reads that is not a weight. Also the assumption that the kernel actually reaches 30 GB/s. The figure is a ceiling, not a prediction.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Decode reads every weight from DRAM for every token, so the bytes per weight set the speed ceiling.</p>
+<p>Faster math does not raise that ceiling, but smaller weights do.</p>
+<p>Prefill is a different case, and every number here is an assumption or a calculation, not a measurement.</p>
+
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

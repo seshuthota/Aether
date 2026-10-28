@@ -1,0 +1,34 @@
+{
+  "skill": "3b1b-explainer",
+  "test_cases": [
+    {
+      "name": "alignment_rewrite",
+      "input": "Turn my static alignment slides about cache lines and split loads into a 3Blue1Brown-style explainer. Give me a timed script and storyboard.",
+      "assertions": [
+        "Produces a beat sheet that starts with intuition before the formal definition of alignment",
+        "Includes progressive revelation cues (elements appear live with narration)",
+        "Specifies motion for the split-load case (load walks and changes color on the spoken phrase)",
+        "Ends with an animated recap"
+      ]
+    },
+    {
+      "name": "new_concept_plan",
+      "input": "I need a 3b1b-style video explaining why false sharing happens and how 64-byte alignment prevents it. Outline the beats and key visual moves.",
+      "assertions": [
+        "Opens with a concrete motivation or puzzle",
+        "Builds the cache-line picture before naming false sharing",
+        "Describes animated motion of lines bouncing between cores",
+        "Keeps visual language consistent (semantic colors)"
+      ]
+    },
+    {
+      "name": "script_sync_check",
+      "input": "Here is my draft narration for a vectors intro. Rewrite the visual cues so the animation is the explanation, not a voiceover on finished frames.",
+      "assertions": [
+        "Rewrites so arrows, axes, or operations appear or move while being described",
+        "Moves any early formal definition later",
+        "Adds pause notes after key reveals"
+      ]
+    }
+  ]
+}

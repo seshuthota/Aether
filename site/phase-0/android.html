@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The phone · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 0 · concept 2</p>
+
+
+<h1>The phone</h1>
+<p class="lede">A built binary still has to be copied to the phone and run there. You also need to see the hardware you are about to measure. Phase 0 did that inspection, and Phase 1 will use the same files as its instruments.</p>
+<nav class="toc">
+  <a href="#adb">What is adb, and how do you use it?</a>
+  <a href="#where">Where is a binary allowed to run?</a>
+  <a href="#chip">What does this chip report about itself?</a>
+  <a href="#features">Which CPU features do the later phases need?</a>
+  <a href="#fail">What do you check when a run goes silent?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="adb">What is adb, and how do you use it?</h2>
+<p>Your code is built on the PC, and the phone is a separate computer. You need a way to send it files and run commands there. That is <code>adb</code>, the Android Debug Bridge. Two commands cover Phase 0:</p>
+<ul>
+  <li><code>adb push &lt;local&gt; &lt;remote&gt;</code> copies a file to the phone.</li>
+  <li><code>adb shell &lt;command&gt;</code> runs one command there, the way a single SSH command would.</li>
+</ul>
+<p>Example: this phone was attached over Wi-Fi, not USB, at <code>192.168.29.11</code> with a port. The port changed between sessions, from 45375 to 42065 <span class="tag m">measured</span>, so the address you used last time may not work. When a run produces no test output, run <code>adb devices</code> first.</p>
+<p>Android adds SELinux, a security layer that sits on top of the usual Unix file rules. Some things that work on a desktop Linux box are denied here, even when the read, write and execute flags look right. Ignore that and a copy that works on the PC can be refused here. The practical rule for Phase 0 is narrower than all of SELinux: there is one directory the shell user can both write and execute.</p>
+<p><strong>Takeaway: adb carries every file and command to the phone, so check it first when a run goes quiet.</strong></p>
+
+<h2 id="where">Where is a binary allowed to run?</h2>
+<p>A file you copy to the phone can still be refused when you run it. The phone allows execution only in some folders. <code>/data/local/tmp</code> is the folder the shell user can write to and run from, and the runner uses <code>/data/local/tmp/aether</code>. Anything copied there still needs <code>chmod +x</code>, which marks a file as runnable.</p>
+<p>Example: the same hello-world program, run from <code>/sdcard</code>, returned <code>Permission denied</code> <span class="tag m">measured</span>. <code>/sdcard</code> is the shared storage a file manager shows you. It is mounted <code>noexec</code>, a mount setting that forbids running programs from it. Push there and every run is refused the same way.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 150" role="img" aria-label="Two directories, only one can execute">
+  <rect class="good" x="24" y="28" width="290" height="90" rx="8" fill="var(--ok-soft)" stroke="var(--ok)"/>
+  <text x="169" y="62" text-anchor="middle">/data/local/tmp/aether</text>
+  <text class="muted" x="169" y="84" text-anchor="middle" font-size="12">write and execute</text>
+  <text class="muted" x="169" y="102" text-anchor="middle" font-size="12">the runner’s directory</text>
+  <rect class="bad" x="360" y="28" width="290" height="90" rx="8" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <text x="505" y="62" text-anchor="middle">/sdcard</text>
+  <text class="muted" x="505" y="84" text-anchor="middle" font-size="12">Permission denied</text>
+  <text class="muted" x="505" y="102" text-anchor="middle" font-size="12">mounted noexec</text>
+</svg>
+<figcaption>Same binary, two paths. Only one of them is allowed to execute.</figcaption>
+</figure>
+<p><strong>Takeaway: copy binaries to /data/local/tmp/aether, because that is the one place here that can run them.</strong></p>
+
+<h2 id="chip">What does this chip report about itself?</h2>
+<p>Before you trust a benchmark, you need the exact chip, its core count and its clock speeds. The phone reports them through a few readers: <code>getprop</code> prints Android’s system properties (named settings such as <code>ro.soc.model</code>), <code>/proc/cpuinfo</code> lists each CPU, and <code>cpuinfo_max_freq</code> gives the fastest clock a core may run at. The table is what came back <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Property</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>ro.soc.model</code></td><td>SM8750</td></tr>
+    <tr><td><code>ro.soc.manufacturer</code></td><td>QTI</td></tr>
+    <tr><td><code>ro.product.model</code></td><td>I2401 (iQOO 13)</td></tr>
+    <tr><td><code>ro.build.version.release</code></td><td>16</td></tr>
+    <tr><td><code>ro.build.version.sdk</code></td><td>36</td></tr>
+    <tr><td><code>uname -m</code></td><td>aarch64</td></tr>
+    <tr><td>CPU part, all 8 cores</td><td><code>0x001</code></td></tr>
+  </tbody>
+</table>
+<p>Example: <code>cpuinfo_max_freq</code> reports 3532800 for the performance cores. That is in kHz, thousands of hertz, so 3,532,800 ÷ 1,000,000 = 3.5328 GHz, the 3.53 GHz quoted below.</p>
+<p>Qualcomm’s product brief (the chip maker’s spec sheet) for SM8750 describes an Oryon CPU with prime cores up to 4.32 GHz on this version of the platform (a faster bin exists; this phone is not it) and performance cores up to 3.53 GHz. A bin is one speed grade of the same chip. The sysfs frequencies match that bin exactly. There is no third, slower class.</p>
+<figure>
+<svg class="fig" viewBox="0 0 720 168" role="img" aria-label="Eight cores in two frequency classes">
+  <text class="muted" x="20" y="22" font-size="12">cpuinfo_max_freq</text>
+  <!-- perf cores -->
+  <g>
+    <rect x="20" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="92" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="164" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="236" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="308" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="380" y="40" width="64" height="72" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  </g>
+  <g>
+    <rect x="476" y="40" width="96" height="72" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+    <rect x="580" y="40" width="96" height="72" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  </g>
+  <text class="mono" x="52" y="72" text-anchor="middle" font-size="12">cpu0</text>
+  <text class="mono" x="124" y="72" text-anchor="middle" font-size="12">cpu1</text>
+  <text class="mono" x="196" y="72" text-anchor="middle" font-size="12">cpu2</text>
+  <text class="mono" x="268" y="72" text-anchor="middle" font-size="12">cpu3</text>
+  <text class="mono" x="340" y="72" text-anchor="middle" font-size="12">cpu4</text>
+  <text class="mono" x="412" y="72" text-anchor="middle" font-size="12">cpu5</text>
+  <text class="mono" x="524" y="72" text-anchor="middle" font-size="12">cpu6</text>
+  <text class="mono" x="628" y="72" text-anchor="middle" font-size="12">cpu7</text>
+  <text class="muted" x="230" y="96" text-anchor="middle" font-size="11">3.53 GHz</text>
+  <text class="muted" x="576" y="96" text-anchor="middle" font-size="11">4.32 GHz</text>
+  <text x="230" y="146" text-anchor="middle">performance, cores 0–5</text>
+  <text x="576" y="146" text-anchor="middle">prime, cores 6–7</text>
+</svg>
+<figcaption>All eight cores report the same CPU part. The split is frequency, not a little-core design. 3532800 kHz and 4320000 kHz, read from sysfs.</figcaption>
+</figure>
+<div class="callout warn"><span class="lbl">The plan was too general</span><p>A generic Snapdragon story has prime, performance, and efficiency cores. This chip has no efficiency cores. One thread on a slow core dragging a parallel matmul is a real problem on older phones. Whether the 3.53 versus 4.32 split matters for bandwidth and energy is a Phase 1 question, not something to assume from the plan.</p></div>
+<p>The clock a core is running at right now is a different file, <code>scaling_cur_freq</code>. It moves: idle cores sit slower and ramp up (climb to a higher clock) under load. That ramp is one reason a timing needs warm-up. Skip the warm-up and the timing can include the slow start. Phase 0 did not catch the ramp in the sum experiment, because the earlier experiments had already kept a core busy. The mechanism is still real, so Phase 1 reads this file while a benchmark runs.</p>
+<p><strong>Takeaway: eight cores in two speed classes, read from the phone’s own files and matching Qualcomm’s spec.</strong></p>
+
+<h2 id="features">Which CPU features do the later phases need?</h2>
+<p>Later phases use optional instruction sets, and some chips have them while others do not. Each one is a CPU feature. The kernel lists a core’s features on the <code>Features</code> line of <code>/proc/cpuinfo</code>. Here is that line for the first core <span class="tag m">measured</span>, with the flags Phase 3 and Phase 6 will care about:</p>
+<table>
+  <thead><tr><th>Flag</th><th>Present</th><th>Later use</th></tr></thead>
+  <tbody>
+    <tr><td><code>asimd</code></td><td>yes</td><td>Base NEON. 128-bit vector registers. Phase 3.</td></tr>
+    <tr><td><code>asimddp</code></td><td>yes</td><td>Dot-product instructions. Quantized GEMV in Phase 6.</td></tr>
+    <tr><td><code>i8mm</code></td><td>yes</td><td>8-bit matrix multiply (<code>smmla</code>). Quantized GEMM, if the intrinsics are stable on the toolchain.</td></tr>
+    <tr><td><code>bf16</code></td><td>yes</td><td>Arithmetic on bfloat16 (“brain float”) numbers: <code>BFDOT</code> and <code>BFMMLA</code> multiply bf16 pairs and add into f32, <code>BFCVT</code> converts f32 to bf16. Safetensors weights are often bf16; just reading them needs no special instruction.</td></tr>
+    <tr><td><code>fphp</code>, <code>asimdhp</code></td><td>yes</td><td>Half precision.</td></tr>
+    <tr><td><code>sve</code> / <code>sve2</code></td><td>no</td><td>Do not plan SVE kernels for this phone.</td></tr>
+  </tbody>
+</table>
+<p>A flag marked yes is on this chip. A flag missing from the line is not, so code that needs it has no path on this phone. The full line also includes crypto and pointer-auth flags (<code>aes</code>, <code>sha2</code>, <code>paca</code>, and others). They do not change the inference plan.</p>
+<p>Detect features at runtime with <code>is_aarch64_feature_detected!</code>, a Rust macro that asks the chip while the program runs, once kernels start to diverge. Hard-code “this is an 8 Elite” into the op instead, and the same binary picks the wrong code on any other phone. That habit starts in Phase 3; Phase 0 only needs the idea.</p>
+<p>Qualcomm’s brief also lists LPDDR5X (the phone’s main memory type), up to 5300 MHz, and up to 24 GB. It does not publish a GB/s figure, and “5300 MHz” does not by itself say whether that is the clock or the transfer rate. The ~85 GB/s figure you may see (a 64-bit bus × ~10.6 billion transfers per second) is a back-of-envelope guess, a quick estimate from simple arithmetic, to verify. <span class="tag a">assumption</span> Quote it as a measurement and you are reporting a guess. Phase 1 measures what one core and all cores actually move.</p>
+<p><strong>Takeaway: this chip has the dot-product and i8mm flags but no SVE, so do not plan SVE kernels for it.</strong></p>
+
+<h2 id="fail">What do you check when a run goes silent?</h2>
+<p>A test run can print nothing and still look like a code problem. After a config change, one did exactly that. The config was fine, but <code>adb</code> reported no devices, so the runner could not push the binary. Cargo’s output then showed only the failure from <code>adb</code>, which is easy to miss if you are looking for <code>test result</code>. Check the phone before you debug the linker path, or you will chase the wrong fault.</p>
+<p>Both <code>/proc</code> and <code>/sys</code> are folders where the kernel shows its state as files. These are the ones you will read again in Phase 1, already confirmed to exist as a category of interface:</p>
+<ul>
+  <li><code>/proc/cpuinfo</code> — features and CPU part.</li>
+  <li><code>/sys/devices/system/cpu/cpuN/cpufreq/</code> — max and current frequency.</li>
+  <li><code>/sys/class/thermal/</code> — temperatures. Not sampled in Phase 0.</li>
+  <li><code>/sys/class/power_supply/battery/</code> — current and voltage. Units and sign vary by device. Not sampled in Phase 0.</li>
+</ul>
+<p><strong>Takeaway: in this case the silent run came from adb, so check adb devices before the code or the linker.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why <code>/data/local/tmp</code> and not <code>/sdcard</code>?</summary>
+<p>The adb shell user can write and execute under <code>/data/local/tmp</code>. <code>/sdcard</code> refused to execute the binary. The runner’s first lines create that directory, push, and <code>chmod +x</code>.</p>
+</details>
+<details class="check"><summary>How many core classes does this phone have?</summary>
+<p>Two frequency classes, eight cores, one CPU part. Cores 0–5 max out at 3.53 GHz. Cores 6–7 max out at 4.32 GHz. No efficiency cores.</p>
+</details>
+<details class="check"><summary>Which of those facts is a measurement, and which is a datasheet claim?</summary>
+<p>The frequencies, the CPU part, the feature flags, the model, and the SDK level were read off the phone. “Oryon”, the LPDDR5X line, and any cache size are from Qualcomm’s brief or launch coverage. Cache sizes were not read from sysfs in Phase 0. Do not treat them as measured until the working-set sweep shows the cliffs.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>When a run goes quiet or fails to start, the cause is usually one of three plumbing facts: adb, the folder, the chip.</p>
+<p>Check adb first, put binaries in /data/local/tmp, and plan only for features this chip has: two speed classes, dot-product and i8mm, no SVE.</p>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

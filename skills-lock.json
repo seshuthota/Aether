@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "manimgx": {
+      "source": "academa-labs/manimgx",
+      "sourceType": "github",
+      "skillPath": "skills/manimgx/SKILL.md",
+      "computedHash": "73ce7d01852db8f68b8b023ce21655278e28df793de3252d12018731257966e8"
+    }
+  }
+}

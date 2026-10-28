@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 1 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · measured</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>Phase 1 has since been built and measured (2026-10-21, on battery). These pages were written first, as the concepts to have before writing the benchmarks; where they guess, the measured answer is on <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>Phase 1 — hardware and the memory model</h1>
+<p class="lede">The point of this phase is a table you can explain, not a kernel. The pages below are the concepts behind it, written before the measurements; <a href="results.html">What Phase 1 measured</a> is the table itself.</p>
+<nav class="toc">
+  <a href="#order">In what order should you read these pages?</a>
+  <a href="#done">What counts as done?</a>
+  <a href="#known">What is already known from Phase 0?</a>
+  <a href="#build">What did Phase 1 build?</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="order">In what order should you read these pages?</h2>
+<p>Read everything at once and the pages blur together. Take them in this order: the hardware first, then each Rust page just before the step that needs it, and the results last.</p>
+<ol>
+  <li><a href="memory.html">Memory hierarchy</a> — why a weight read is a trip to DRAM, and why one core may not fill the bus.</li>
+  <li><a href="alignment.html">Alignment</a> — 16 bytes, 64 bytes, and what is wrong with <code>Vec&lt;f32&gt;</code> for the kernels you have not written.</li>
+  <li><a href="topology.html">Cores and pinning</a> — the map already measured, and <code>sched_setaffinity</code>.</li>
+  <li><a href="bandwidth.html">Bandwidth</a> — which kernels to time, how to count bytes, and how a size sweep reveals caches.</li>
+  <li><a href="roofline.html">Roofline</a> — the picture that puts the Phase 0 sum and a future GEMV on the same axes.</li>
+  <li><a href="power.html">Power and heat</a> — joules, the battery files, and why a 5-minute run is a different experiment.</li>
+  <li><a href="profiling.html">simpleperf</a> — what a profile is for, and why the release build already keeps symbols.</li>
+</ol>
+<p>Then the Rust tools, each read just before the step that needs it:</p>
+<ol start="8">
+  <li><a href="rust-memory.html">Raw memory in Rust</a> — <code>Layout</code>, <code>alloc</code>, <code>unsafe</code>, and why the allocator is its own type.</li>
+  <li><a href="rust-pinning.html">Calling Linux from Rust</a> — FFI, the <code>libc</code> crate, and <code>sched_setaffinity</code>.</li>
+  <li><a href="rust-threads.html">Threads in Rust</a> — the sampler’s stop flag, and scoped threads for the parallel sweep.</li>
+  <li><a href="rust-sysfs.html">Reading /sys from Rust</a> — text to numbers, units, and failures.</li>
+  <li><a href="plotting.html">Plotting the sweep</a> — CSV with conditions, a log axis, matplotlib.</li>
+</ol>
+<p>And last, the answers:</p>
+<ol start="13">
+  <li><a href="results.html">What Phase 1 measured</a> — the yardstick table, the sweeps as plots, and what each number means.</li>
+</ol>
+<p>Take them one at a time when you implement, the same way Phase 0 was taken. The pages are here so the explanation is waiting, not so the phase gets implemented in one sitting.</p>
+<p><strong>Takeaway: read the hardware first, each Rust page at the step that needs it, and the results last.</strong></p>
+
+<h2 id="done">What counts as done?</h2>
+<p>You need a finish line before you start. The plan’s success criterion is a table in <code>results/</code>, recorded with the conditions of the run:</p>
+<ul>
+  <li>effective bandwidth at L1, L2, and whatever last-level cache the sweep shows,</li>
+  <li>single-core DRAM read bandwidth,</li>
+  <li>all-core DRAM read bandwidth,</li>
+  <li>sustained bandwidth after the phone has been hot for minutes,</li>
+  <li>energy per GB on a prime core versus a performance core.</li>
+</ul>
+<p>Those numbers become the yardstick for every later kernel. A GEMV (a matrix times a vector) that moves 20 GB/s means nothing until you know what a pure read on the same core could move. Phase 0’s 3.3 GB/s sum is not that yardstick. It was latency-bound, meaning each step waited on the one before it.</p>
+<p>A phase is finished when you can explain the table: where the cliffs are, why one core does not match eight, why the 5-minute number is lower, and which core class spends fewer joules per byte. Hitting a percentage of a theoretical peak is not the criterion.</p>
+<p><strong>Takeaway: the table is the finish line, and its numbers, recorded with their conditions, are the yardstick for later kernels.</strong></p>
+
+<h2 id="known">What is already known from Phase 0?</h2>
+<p>Phase 0 already measured a few facts about the phone, so you start from them. Each bullet carries its tag: measured, calculated or assumption. An f32 is a 4-byte, 32-bit float.</p>
+<ul>
+  <li>Eight Oryon cores, CPU part <code>0x001</code>. Cores 0–5 max 3.53 GHz, cores 6–7 max 4.32 GHz. No efficiency class. <span class="tag m">measured</span></li>
+  <li>NEON, dotprod, i8mm, bf16, fp16. No SVE. <span class="tag m">measured</span></li>
+  <li>A scalar f32 sum of 16 MB took ~4.9 ms, about 3.3 GB/s. That is a dependency chain. <span class="tag m">measured</span> time, <span class="tag c">calculated</span> rate.</li>
+  <li>Qualcomm’s brief: LPDDR5X up to 5300 MHz, up to 24 GB, 3 nm, SM8750. No published GB/s, no published cache sizes in the brief we read. Launch coverage said 12 MB of L2 per cluster. Treat that as a hypothesis for the sweep, not as a result. <span class="tag a">assumption</span></li>
+  <li><code>Tensor</code> uses <code>Vec&lt;f32&gt;</code>. Alignment is 4 bytes.</li>
+</ul>
+<p><strong>Takeaway: the core layout and instruction set are measured, and the 3.3 GB/s sum measures the sum, not the memory.</strong></p>
+
+<h2 id="build">What did Phase 1 build?</h2>
+<p>The plan’s five steps are all done. Here is where each one lives, and which page explains the Rust it uses.</p>
+<p>The aligned buffer is <code>src/aligned.rs</code>, the sweeps are <code>examples/bw_sweep.rs</code> and <code>examples/bw_sustained.rs</code>, pinning and sysfs are in <code>src/sys/</code>, and the sampler is <code>src/monitor.rs</code>. Step 5 changed: the battery files could not be read, so energy comes from Android’s charge counter (<a href="results.html#energy">why</a>).</p>
+<ol class="steps">
+  <li>An aligned allocator, so buffers can be 64-byte aligned instead of 4. <a href="rust-memory.html">Rust tools: raw memory</a>.</li>
+  <li>Bandwidth kernels: copy, scale, add, and a pure read. The read is the one that matches decode.</li>
+  <li>A working-set sweep from about 4 KB to about 256 MB. Plot GB/s against size. The drops are the cache boundaries. <a href="plotting.html">Rust tools: plotting</a>.</li>
+  <li>The same sweep pinned to one prime core, one performance core, and the performance cores together. <a href="rust-pinning.html">Pinning</a> and <a href="rust-threads.html#scope">scoped threads</a>.</li>
+  <li>A sampler, in a background thread, of battery current, voltage, core frequencies, and temperatures. Report average power and joules for the run. <a href="rust-threads.html#stop">Threads</a> and <a href="rust-sysfs.html">reading /sys</a>.</li>
+</ol>
+<p>Record, every time: which cores, screen on or off, charging or not, starting temperature. A number without those conditions cannot be compared with next week’s number.</p>
+<p><strong>Takeaway: Phase 1 built an aligned allocator, bandwidth kernels, sweeps, pinning and a sampler, and every number they produce is recorded with its conditions so it can be compared later.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Phase 1 is finished when you can explain the table in <code>results</code>, not when a percentage of peak is reached.</p>
+<p>Each later kernel will be compared against the yardstick numbers from the sweeps.</p>
+<p>Record the conditions with every number, or the number will not mean anything next week.</p>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

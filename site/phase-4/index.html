@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 4 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 4 · threads</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The thread pool and the split matmuls are in the engine, and threaded results are bit-identical to single-threaded ones, checked against the same numpy, llama2.c and Hugging Face goldens. The speeds on these pages are measured on battery. A clean sweep of twelve core sets, run twice, is in; it corrected several of the first measurements, and the pages say where.</p></div>
+
+<h1>Phase 4 — threads</h1>
+<p class="lede">Phase 3 made one core fast. Phase 4 spreads each matrix product across several cores, using <strong>threads</strong>: streams of work that the operating system runs on separate cores. The hard part is not the arithmetic. Decode hands out a couple of hundred small jobs per token, and each job ends only when its slowest thread does. The first threaded build gained almost nothing beyond two cores. Fixing that taught most of what this phase is about.</p>
+<div class="callout"><span class="lbl">Models used here</span><p>Most speeds on these pages come from Q4_0 models, whose weights are stored in 4 bits (32 weights in 18 bytes instead of 128), and the quantized kernels first turn the input into Q8_0, an 8-bit format. Those formats are taught on <a href="../phase-6/blocks.html">Block quantization</a> in Phase 6. Here they only matter because fewer bytes per weight make each job shorter.</p></div>
+<nav class="toc">
+  <a href="#idea">How do you share the work without waiting?</a>
+  <a href="#result">How much faster did threads make it?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#code">Which files hold the code?</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="idea">How do you share the work without waiting?</h2>
+<p>Each matrix product has to be split across threads. The split must avoid three costs: starting threads, one slow thread holding up the rest, and a change in the result. Four ideas handle them:</p>
+<ul>
+  <li>Keep one thread per core alive for the whole run, and hand it work by changing a counter it is watching. Starting threads or waking them through the kernel costs more than a job is worth, so doing it per job loses time.</li>
+  <li>Split each matrix product by rows, so every row is still summed by one thread in the same order and the result does not change.</li>
+  <li>Hand the rows out in small blocks, so faster cores take more and nobody waits long at the end.</li>
+  <li>Put the thread that does the serial work on the fastest core.</li>
+</ul>
+<p>Then measure which cores are worth using: on this phone, speed stops growing at about six cores, and the last two add nothing measurable.</p>
+<p><strong>Takeaway: keep threads alive, split by rows, and hand out small blocks, or the slowest thread sets the pace.</strong></p>
+
+<h2 id="result">How much faster did threads make it?</h2>
+<p>Three measurements sum up the phase. <strong>µs</strong> means microseconds, millionths of a second.</p>
+<div class="statrow">
+  <div class="stat"><b>160 → 335 tok/s</b><span>SmolLM2-135M Q4_0 decode, core 7 alone → cores 2–7, mean of two passes <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>264 → 342 tok/s</b><span>cores 2–7, equal shares → blocks, same day, same conditions, round 1 of the repeat <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>1.3 vs 506 µs</b><span>handing out one job on cores 2–7: the pool vs fresh threads <span class="tag m">measured</span></span></div>
+</div>
+
+<p><strong>Takeaway: the pool hands out one job in 1.3 µs, against 506 µs for fresh threads.</strong></p>
+
+<h2 id="order">Which page should I read first?</h2>
+<p>Four pages, in this order. The first explains the cost of a hand-out and how the pool pays less; the rest cover how work is split, how threads wait, and which cores to use.</p>
+<ol>
+  <li><a href="pool.html">Threads that stay</a>: how many jobs a token hands out, what a hand-out costs three ways, and how the pool does it with two counters.</li>
+  <li><a href="split.html">Splitting the work</a>: rows, not pieces of rows; why equal shares failed; blocks from a shared counter; attention by head.</li>
+  <li><a href="waiting.html">Waiting: spin, then park</a>: the trade between reacting fast and leaving the core free, the lost wake-up, and false sharing.</li>
+  <li><a href="cores.html">Choosing cores</a>: prime and performance cores, the caller on the fastest core, and what each core set measured.</li>
+</ol>
+<p><strong>Takeaway: read the pool page first, since the later pages build on the counters it explains.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<p>Four things the sweep did not settle. Each one is a question for a later run, not a result.</p>
+<ul>
+  <li><strong>A steadier sweep</strong>: the phone throttled during the Qwen and five-minute runs (clock caps fell to 1.6–2.0 GHz), and some runs started with another app in the foreground. A repeat on a cooler phone would settle the energy comparison and the 6–7 against 2–7 gap on Qwen.</li>
+  <li><strong>Why 0–7 swings so much</strong>: with blocks it ran from 237 to 346 tokens per second between runs (<a href="split.html">Splitting the work</a>).</li>
+  <li><strong>Where the rest of the time goes</strong>: SmolLM2 on six cores reads its weights at about 38 % of the memory bandwidth (<a href="cores.html#roof">Choosing cores</a>).</li>
+  <li><strong>Multi-thread bandwidth</strong>: the GB/s numbers are calculated from tokens per second; <code>gemv_bench</code> only runs one thread.</li>
+</ul>
+
+<p><strong>Takeaway: the energy comparison and the 6–7 against 2–7 gap on Qwen need a steadier run on a cooler phone to settle.</strong></p>
+
+<h2 id="code">Which files hold the code?</h2>
+<p>Find the file for the page you are reading. The results file holds the measurements, with the conditions they were taken under.</p>
+<table>
+  <thead><tr><th>File</th><th>Job</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/pool.rs</code></td><td>The thread pool: pinned workers, epoch and done counters, spin then park, <code>for_blocks</code></td></tr>
+    <tr><td><code>src/kernels/mod.rs</code></td><td><code>matmul_on</code>, <code>linear_on</code>: the matmuls split by rows; the bit-identity test</td></tr>
+    <tr><td><code>src/model/transformer.rs</code></td><td>Attention split by head; the pool passed to every matmul</td></tr>
+    <tr><td><code>src/sys/affinity.rs</code></td><td>Pinning a thread to cores; parsing <code>-c 2-7</code></td></tr>
+    <tr><td><code>examples/bench_suite.rs</code></td><td>Prefill and decode speed for a model on a core set</td></tr>
+    <tr><td><code>results/phase-4.md</code></td><td>Measurements and their conditions</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the pool lives in src/pool.rs, and the matmul splits live in src/kernels/mod.rs.</strong></p>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Threads that stay alive and take work from a counter cost far less than fresh threads for each job.</p>
+<p>Splitting by whole rows keeps the result the same, and small blocks keep the cores busy.</p>
+<p>Measure the core sets before choosing one: on this phone, speed stopped growing at about six cores.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

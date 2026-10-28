@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calling Linux from Rust · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="kernel">
+<p class="kicker">Phase 1 · Rust tools 2</p>
+
+<h1>Calling Linux from Rust</h1>
+<p class="lede">Rust’s standard library has no “run this thread on cpu6.” Linux does, as a C function called <code>sched_setaffinity</code>. Calling a C function from Rust is called FFI, and the <code>libc</code> crate is what makes it a one-liner.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p><a href="topology.html#pin">Cores and pinning</a> explains what pinning is for. This page is the Rust side. The snippets compile for <code>aarch64-linux-android</code> against <code>libc</code> 0.2.190 <span class="tag m">measured</span>; they have not been run on the phone as written. The engine’s own version, <code>src/sys/affinity.rs</code>, pins every benchmark since Phase 1.</p>
+<details class="probe js-only" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (2 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="thread" id="p-inherit">
+    <p>One thread is pinned to the set {cpu0–cpu5}. Does it run on six cores at once?</p>
+    <ul>
+      <li data-right>No: it is one thread, which the scheduler may move between those six <div class="why">A wider set gives the scheduler choices. It doesn’t split one thread.</div></li>
+      <li>Yes: one copy on each allowed core <div class="why">A set allows cores; it does not make copies. Parallel work needs one thread per core.</div></li>
+      <li>No: a set with more than one core is rejected <div class="why">Several cores in one set is allowed; only a set with no usable core fails.</div></li>
+    </ul>
+  </div>
+  <div class="quiz" data-quiz="probe" data-for="errors" id="p-fail">
+    <p>A pin fails, and your code ignores the return value. What goes wrong?</p>
+    <ul>
+      <li data-right>The thread runs unpinned, but the result file still says the pinned core <div class="why">A silent failed pin leaves the thread unpinned, so the label is wrong.</div></li>
+      <li>Nothing: the pin still holds, because the call failed <div class="why">A failed call did not pin anything.</div></li>
+      <li>The program stops at once with an error <div class="why">Nothing stops it. Without a check, the benchmark keeps going with the wrong label.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<!-- One link per h2, in order. learn.js turns this into the step map. -->
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#ffi">How can Rust call a C function?</a>
+  <a href="#dep">How do you get libc?</a>
+  <a href="#mask">What is a CPU set?</a>
+  <a href="#call">What does the call look like?</a>
+  <a href="#errors">What if it fails?</a>
+  <a href="#thread">Does pinning apply to the whole program?</a>
+  <a href="#verify">How do you check it worked?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="What pinning needs from Rust, and what this page builds.">What are we trying to do here?</h2>
+<p>Phase 1 measures how fast each core reads memory. A number means little unless you know which core made it, and an unpinned thread can move between cores while it runs. Pinning fixes that: it asks the Linux kernel, the part of the operating system that runs threads, to keep a thread on the cores you name. A thread is one stream of instructions, and a core is one processing unit on the chip.</p>
+<p>The engine needs pinning so that every benchmark names its cores. The request is <code>sched_setaffinity</code>, and it lives in Android’s C library, not in Rust’s standard library. To make it from Rust you need three things, one section each below: a way to call a C function (FFI), the <code>libc</code> crate that declares it, and a CPU set that lists the cores you allow. <code>unsafe</code> marks code the compiler cannot fully check, so you vouch for it yourself.</p>
+<p>By the end you can write a function that pins the current thread to one core. You can say why its call is <code>unsafe</code>, what to do when it fails, and how to check that the pin held.</p>
+
+<h2 id="ffi" data-short="Calling C" data-step="Rust calls C through a declaration of its name and types.">How can Rust call a C function?</h2>
+<p>Pinning a thread needs a function that is written in C. Android’s C library, Bionic, already contains <code>sched_setaffinity</code>, and Rust reaches it through FFI, the foreign function interface.</p>
+<div class="quiz" data-quiz="predict" data-for="ffi" id="g-ffi">
+  <p>Rust has no source code for <code>sched_setaffinity</code>. What must you give Rust so it can make the call?</p>
+  <ul>
+    <li data-right>The function’s exact name, argument types and return type <div class="why">That declaration is FFI. Rust trusts it, because it cannot read the C code.</div></li>
+    <li>Nothing: Rust finds the name and works out the types <div class="why">Rust cannot read the C code, so it cannot work out the types. They must be written down.</div></li>
+    <li>The C source file, compiled into your program <div class="why">The function is already compiled into Bionic. Rust needs its declaration, not its source.</div></li>
+  </ul>
+</div>
+<p>It is compiled machine code with a C calling convention. Rust can call it, as long as Rust is told the function’s exact name, argument types and return type. That declaration is FFI.</p>
+<p>The compiler can’t check that the declaration matches the real C function, or that you passed valid pointers. If you get either wrong, nothing warns you. So every FFI call is <code>unsafe</code>, for the same reason as on the <a href="rust-memory.html#unsafe">raw memory</a> page: you are vouching for something the compiler cannot see.</p>
+<p><strong>Takeaway: FFI means telling Rust a C function’s signature, and every call is <code>unsafe</code> because you vouch for it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="ffi" id="c-ffi">
+  <p>Why is calling <code>sched_setaffinity</code> unsafe in Rust, when the C function itself is fine?</p>
+  <ul>
+    <li data-right>The compiler cannot check the declaration or the pointer you pass <div class="why">The compiler can’t check the declaration, or that the pointer is a valid <code>cpu_set_t</code> of that size. You vouch.</div></li>
+    <li>C is less safe than Rust, so every call into it needs <code>unsafe</code> <div class="why">The C function is fine. The problem is what the compiler cannot see from the Rust side of the call.</div></li>
+    <li>Foreign code runs somewhere else on the phone <div class="why">Foreign means defined outside Rust. That is why a declaration is needed, not why the call is unsafe.</div></li>
+  </ul>
+</div>
+
+<h2 id="dep" data-short="The libc crate" data-step="libc supplies the declarations, not the logic.">How do you get <code>libc</code>?</h2>
+<p>Phase 1 needs one C function and the C types it uses, and each has to be declared in Rust by name, type and constant.</p>
+<div class="quiz" data-quiz="predict" data-for="dep" id="g-dep">
+  <p>What does the <code>libc</code> crate contain?</p>
+  <ul>
+    <li data-right>Declarations of C functions, types and constants, with almost no logic <div class="why">Those declarations are the work you would otherwise do by hand. The crate adds no logic of its own.</div></li>
+    <li>A faster version of <code>sched_setaffinity</code>, written in Rust <div class="why"><code>libc</code> does not replace the C function. It declares it, so the real C code runs.</div></li>
+    <li>The engine’s inference code, ready-made <div class="why"><code>libc</code> is the doorway to the operating system, not inference code. Engine logic is yours to write.</div></li>
+  </ul>
+</div>
+<p>Writing those declarations by hand for every C function would be slow and easy to get wrong. The <code>libc</code> crate (a crate is a Rust library) is a big list of them, for every platform Rust supports, plus the C types and constants. It contains almost no logic of its own. One line in <code>Cargo.toml</code>:</p>
+<pre><code>[dependencies]
+libc = "0.2"</code></pre>
+<p>Does this break the from-scratch rule? No. <code>libc</code> is the doorway to the operating system, not inference code. The plan names it for exactly this job.</p>
+<p><strong>Takeaway: <code>libc</code> is the declarations of the operating system’s C functions, not engine code.</strong></p>
+
+<h2 id="mask" data-short="The CPU set" data-step="One bit per core; set the bits of the cores you allow.">What is a CPU set?</h2>
+<p>The call needs a list of the allowed cores, called a CPU set (<code>cpu_set_t</code>). A bit is a single digit, 0 or 1, and the set uses one bit per core.</p>
+<div class="quiz" data-quiz="predict" data-for="mask" id="g-mask">
+  <p>The CPU set is a row of bits, one per core. Which set allows only cpu6?</p>
+  <ul>
+    <li data-right>Bit 6 on, every other bit off <div class="why">Each bit stands for one core number, counting from 0. Bit 6 is cpu6.</div></li>
+    <li>The number 6 written into the first byte <div class="why">The set holds one bit per core. It does not store the core number.</div></li>
+    <li>Every bit on except bit 6 <div class="why">Set bits allow cores. You start from an empty set and turn on the bits you want.</div></li>
+  </ul>
+</div>
+<p>A <strong>CPU set</strong>, <code>cpu_set_t</code>, is a row of bits, one per CPU number. For example, with only bit 6 set, “cpu6 is allowed.” On 64-bit Android it is 1024 bits long, far more than eight cores need. <code>CPU_ZERO</code> clears every bit and <code>CPU_SET(n, …)</code> turns bit <code>n</code> on.</p>
+<div class="widget" data-cpumask>
+  <h3>Build a CPU set</h3>
+  <p>Click cores to allow them. Cores 0–5 are the 3.53 GHz performance cores and 6–7 the 4.32 GHz prime cores <span class="tag m">measured</span> in Phase 0.</p>
+  <div class="cores" data-cores></div>
+  <pre class="formula" data-out></pre>
+  <p class="note" data-note></p>
+</div>
+<p><strong>Takeaway: a CPU set is one bit per core; set the bits of the cores you allow.</strong></p>
+<div class="quiz" data-quiz="check" data-for="mask" id="c-mask">
+  <p>The mask for {cpu0, cpu6} as a byte, bit 7 on the left?</p>
+  <ul>
+    <li data-right><code>01000001</code>, which is <code>0x41</code> <div class="why"><code>01000001</code>, which is <code>0x41</code>. Bit 0 for cpu0, bit 6 for cpu6.</div></li>
+    <li><code>10000010</code>, which is <code>0x82</code> <div class="why">That reads bit 0 on the left. With bit 7 on the left, cpu0 is the rightmost digit.</div></li>
+    <li><code>00000011</code>, which is <code>0x03</code> <div class="why">That counts the two cores in the set, not their numbers. Bits are placed by core number.</div></li>
+  </ul>
+</div>
+
+<h2 id="call" data-short="The four steps" data-step="Zero a set, allow a core, call with the size, check the result.">What does the call look like?</h2>
+<p>The call takes four steps, all inside one <code>unsafe</code> block. Each is shown alone first.</p>
+<div class="quiz" data-quiz="predict" data-for="call" id="g-call">
+  <p>Why must the call be given the size of the set?</p>
+  <ul>
+    <li data-right>C cannot know how long the set is, so you tell it in bytes <div class="why">C needs the size because it cannot see the set’s length. You state it in bytes.</div></li>
+    <li>It picks which thread is pinned <div class="why">The first argument picks the thread. The size only describes the set.</div></li>
+    <li>It caps how many cores you may allow <div class="why">The set has room for 1024 bits, far more than eight cores. The size is not a core limit.</div></li>
+  </ul>
+</div>
+
+<h3>Step 1: make an empty set</h3>
+<pre><code>let mut set: libc::cpu_set_t = std::mem::zeroed();
+libc::CPU_ZERO(&amp;mut set);</code></pre>
+<ul>
+  <li><code>std::mem::zeroed()</code> gives a value of all-zero bytes. C structs have no constructor. All-zero bytes is a valid empty set. It is <code>unsafe</code> because all-zero is not valid for every type; here it is.</li>
+  <li><code>CPU_ZERO</code> is a macro in C. <code>libc</code> provides it as a Rust function, marked <code>unsafe</code>.</li>
+</ul>
+
+<h3>Step 2: allow one core</h3>
+<pre><code>libc::CPU_SET(cpu, &amp;mut set);</code></pre>
+<ul>
+  <li><code>CPU_SET</code> is also a macro in C, and an <code>unsafe</code> function in <code>libc</code>. It turns bit <code>cpu</code> on.</li>
+</ul>
+
+<h3>Step 3: ask Linux</h3>
+<pre><code>let rc = libc::sched_setaffinity(
+    0,
+    std::mem::size_of::&lt;libc::cpu_set_t&gt;(),
+    &amp;set,
+);</code></pre>
+<ul>
+  <li>The first argument <code>0</code> says which thread. 0 means “the thread making this call.”</li>
+  <li><code>size_of::&lt;cpu_set_t&gt;()</code>: C does not know how long the set is. You tell it, in bytes.</li>
+</ul>
+
+<h3>Step 4: check the result</h3>
+<pre><code>if rc != 0 {
+    return Err(std::io::Error::last_os_error());
+}</code></pre>
+<ul>
+  <li>C functions report failure with a return value, here −1, and leave the reason in <code>errno</code>. <code>rc != 0</code> catches it.</li>
+</ul>
+
+<h3>All four together</h3>
+<pre><code>fn pin_to(cpu: usize) -&gt; std::io::Result&lt;()&gt; {
+    // SAFETY: `set` is all-zero bytes, a valid empty cpu_set_t;
+    // the size passed is the size of that type; `&amp;set` stays
+    // alive for the whole call.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_ZERO(&amp;mut set);
+        libc::CPU_SET(cpu, &amp;mut set);
+        let rc = libc::sched_setaffinity(
+            0,
+            std::mem::size_of::&lt;libc::cpu_set_t&gt;(),
+            &amp;set,
+        );
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}</code></pre>
+<p><strong>Takeaway: zero a set, turn on the core, call with the set’s size, and check the return value.</strong></p>
+<div class="quiz" data-quiz="check" data-for="call" id="c-call">
+  <p>You make a set with <code>mem::zeroed()</code> and then call <code>CPU_SET</code> for cpu6, without <code>CPU_ZERO</code>. Which cores are allowed?</p>
+  <ul>
+    <li data-right>Only cpu6: all-zero bytes are an empty set, and <code>CPU_SET</code> turns on bit 6 <div class="why">All-zero bytes are a valid empty set, so no bit is on before <code>CPU_SET</code>.</div></li>
+    <li>Every core, because <code>mem::zeroed</code> leaves the bits undefined <div class="why">All-zero bytes are a valid empty set here. The zeroed start is defined, not undefined.</div></li>
+    <li>It doesn’t compile: <code>mem::zeroed</code> is <code>unsafe</code> <div class="why">Inside <code>pin_to</code>’s <code>unsafe</code> block it compiles. You vouch that all-zero bytes are valid; for <code>cpu_set_t</code> they are.</div></li>
+  </ul>
+</div>
+
+<h2 id="errors" data-short="Failure" data-step="Turn errno into an error and stop; never ignore the return value.">What if it fails?</h2>
+<p>Pinning can fail, for example when you name a core the thread may not use. When it does, the call returns −1.</p>
+<div class="quiz" data-quiz="predict" data-for="errors" id="g-errors">
+  <p>How do you find out why it failed, as readable text?</p>
+  <ul>
+    <li data-right><code>std::io::Error::last_os_error()</code>, which reads <code>errno</code> <div class="why">It reads <code>errno</code> and wraps it as a normal Rust error that prints as text.</div></li>
+    <li>Read the return value: −1 names the reason <div class="why">−1 only says the call failed. The reason is in <code>errno</code>, not in the return value.</div></li>
+    <li>Nothing: the call prints its own message <div class="why">The call returns −1 and stops there. The reason waits in <code>errno</code> until you read it.</div></li>
+  </ul>
+</div>
+<p>The call returns −1 and leaves a number in <code>errno</code>, which is hard to read. <code>std::io::Error::last_os_error()</code> reads <code>errno</code> and gives you a normal Rust error that prints as text, like <code>Invalid argument (os error 22)</code>. The common failure is <code>EINVAL</code>: the set contains no CPU the thread is allowed to use. Asking for cpu9 on an 8-core phone does that. So can Android itself, if the group of processes it put your shell in is restricted to some cores; the kernel only lets you pick inside what that group allows.</p>
+<div class="callout warn"><span class="lbl">Easy to get wrong</span><p>Ignoring the return value. A pin that failed silently leaves the thread unpinned, and the result file still says “cpu6.” Return the error, and have the benchmark stop if it fails.</p></div>
+<p><strong>Takeaway: turn <code>errno</code> into a Rust error and stop the benchmark; a silent failed pin gives wrong results under the right label.</strong></p>
+<div class="quiz" data-quiz="check" data-for="errors" id="c-errors">
+  <p>Your set holds only cpu9 on an 8-core phone. What does the error say?</p>
+  <ul>
+    <li data-right><code>Invalid argument (os error 22)</code>, after the call returns −1 <div class="why">That is <code>EINVAL</code>: the set contains no CPU the thread may use.</div></li>
+    <li>Nothing: the pin goes ahead on the cores that exist <div class="why">A set with only cpu9 gives <code>EINVAL</code>, a failure, not a quiet pin.</div></li>
+    <li>A message saying the core does not exist <div class="why">The text is the <code>errno</code> message, <code>Invalid argument (os error 22)</code>, not a description of cpu9.</div></li>
+  </ul>
+</div>
+
+<h2 id="thread" data-short="Per thread" data-step="A mask belongs to a thread and is inherited, so each worker pins itself.">Does pinning apply to the whole program?</h2>
+<p>Pinning sets a mask on one thread. The parallel sweep starts eight workers from the main thread, so the question is what each worker starts with.</p>
+<div class="quiz" data-quiz="predict" data-for="thread" id="g-thread">
+  <p>You pin the main thread to cpu6, then spawn eight workers and pin none of them. Where do the workers run?</p>
+  <ul>
+    <li data-right>All on cpu6, because each starts with a copy of its creator’s mask <div class="why">A new thread copies its creator’s mask, so all eight inherit cpu6.</div></li>
+    <li>Spread over all eight cores, since the scheduler balances them <div class="why">The scheduler moves threads, but only inside the mask they inherited.</div></li>
+    <li>Anywhere: a mask belongs to the program, not to a thread <div class="why">A mask belongs to a thread. Each worker has its own copy, taken from main.</div></li>
+  </ul>
+</div>
+<p>Where do they run? Linux keeps one affinity mask per thread, not per program. Two consequences for Phase 1:</p>
+<ul>
+  <li>A new thread starts with a copy of its creator’s mask. Pin the main thread to cpu6 and then spawn eight workers, and all eight crowd onto cpu6.</li>
+  <li>For the parallel sweep, each worker pins <em>itself</em> to its own core as the first thing it does. The <a href="rust-threads.html#scope">Threads</a> page shows that shape.</li>
+</ul>
+<p>A mask with several cores on one thread is allowed, but it is not the parallel case. One thread with the set {0–5} is still one thread, which the scheduler may move between those six cores.</p>
+<p><strong>Takeaway: the mask belongs to a thread and is inherited, so each worker pins itself.</strong></p>
+
+<h2 id="verify" data-short="Checking the pin" data-step="Print sched_getcpu() once, outside the timed loop.">How do you check it worked?</h2>
+<p><code>libc::sched_getcpu()</code> returns the core the calling thread is on right now. Each call costs a little time, so where you call it matters.</p>
+<p>After pinning to cpu6 it should return 6, every time. Printing it once at the start of a run is a cheap check. Calling it inside a timed loop is not, because it is extra work in the thing you are measuring.</p>
+<p><strong>Takeaway: print <code>sched_getcpu()</code> once at the start, not inside the timed loop.</strong></p>
+<div class="quiz" data-quiz="check" data-for="verify" id="c-verify">
+  <p>You pin to cpu6 and print <code>sched_getcpu()</code> once. It returns 3. What should you do?</p>
+  <ul>
+    <li data-right>Treat the pin as not working, and do not trust the run’s label <div class="why">After pinning to cpu6 it should return 6, every time. So 3 means the pin did not hold.</div></li>
+    <li>Nothing: threads move, so 3 is normal <div class="why">A pinned thread should stay on its core. Movement means the pin did not hold.</div></li>
+    <li>Call it again inside the timed loop and average the results <div class="why">That adds work to the timed loop, which is the thing this check is meant to avoid.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Rust reaches Linux’s pinning call through FFI, using <code>libc</code>; the call is <code>unsafe</code> because you vouch for it.</p>
+<p>Build a one-bit CPU set, call with its size, and treat a failed pin as an error.</p>
+<p>Each thread has its own mask: pin every worker itself, and check once with <code>sched_getcpu()</code>.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

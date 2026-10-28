@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The one template for every page: a guided page (guess, explanation, check
+     per section). Copy it to phase-N/topic.html, follow GUIDED-PAGES.md, add
+     one line to js/pages.js, then run scripts/check-guided-pages.py on it (repository root,
+     not the site: https://github.com/seshuthota/Aether/blob/main/scripts/check-guided-pages.py).
+     This template assumes the page sits one folder deep; at the top level,
+     drop the "../". phase-1/rust-memory.html is the worked example. -->
+<title>Topic name · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase N · topic</p>
+
+<h1>Topic name</h1>
+<p class="lede">One or two sentences: what this idea is, and why the engine needs it.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<!-- Optional skim test: 3–4 questions, each naming the sections it covers in data-for. Delete the whole <details> if the page has none. -->
+<details class="probe js-only" data-probe>
+  <summary>Already know some of this? Test yourself to see what you can skim (3 questions)</summary>
+  <p>The result tells you which sections to read closely and which you can skim. Skip this if the topic is new to you.</p>
+  <div class="quiz" data-quiz="probe" data-for="first" id="p-first">
+    <p>A question about the first section?</p>
+    <ul>
+      <li data-right>Right answer <div class="why">Why it is right, in one sentence.</div></li>
+      <li>Wrong answer <div class="why">The idea behind picking it, and what is true.</div></li>
+    </ul>
+  </div>
+  <div data-probe-out></div>
+</details>
+</div>
+
+<!-- One link per h2, in order. learn.js turns this into the step map. -->
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#first">First question the reader would ask?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="One line: what the engine needs, and what this page builds.">What are we trying to do here?</h2>
+<p>Explanation first, no questions: what the topic is, why the engine needs it, and what the reader can do by the end. Define every term the guesses below will use.</p>
+
+<h2 id="first" data-short="Short label" data-step="One line: what this section establishes.">First question the reader would ask?</h2>
+<p>Set up the problem in a sentence or two. Every term the guess uses is defined above this point.</p>
+<div class="quiz" data-quiz="predict" data-for="first" id="g-first">
+  <p>The guess: points at the problem; the answer is what this section explains.</p>
+  <ul>
+    <li data-right>Right answer <div class="why">Why, in one sentence.</div></li>
+    <li>A tempting wrong answer <div class="why">The idea behind picking it, and what is true.</div></li>
+    <li>Another wrong answer, from a different wrong idea <div class="why">Same.</div></li>
+  </ul>
+</div>
+<p>The explanation, starting from the guess. Tag numbers: <span class="tag m">measured</span> <span class="tag c">calculated</span> <span class="tag a">assumption</span></p>
+<pre><code>// At most 72 characters per line.
+// Long comments go on their own line.
+let x = 1;</code></pre>
+<ul>
+  <li>Bullets on the non-obvious parts of the snippet.</li>
+</ul>
+<p><strong>Takeaway: one line.</strong></p>
+<div class="quiz" data-quiz="check" data-for="first" id="c-first">
+  <p>A check that applies the idea to a new case, answerable from this section alone.</p>
+  <ul>
+    <li data-right>Right answer <div class="why">Why it is right.</div></li>
+    <li>Wrong answer <div class="why">Which wrong idea picks it, and what is true.</div></li>
+    <li>Wrong answer <div class="why">Same.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Two or three short lines.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase N numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

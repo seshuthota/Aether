@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- A scroll-driven explainer, not a guided page: one sticky stage (an SVG
+     drawn by js/machine/*.js) and a column of steps. Each step names its
+     scene in data-scene and fills the stage's status bar from data-hud
+     ("Data | Unit | At once | Result | Limit"). -->
+<title>Inside the machine · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+<style>
+:root {
+  --a: #9a4e22; --a-soft: #f8ece4; --a-ink: #7a3a16;
+  --x: #1d4e89; --x-soft: #e7eef6; --x-ink: #163d6b;
+  --p: #0c5c54; --p-soft: #e4f1ee; --p-ink: #084842;
+  --r: #6a3d9a; --r-soft: #efe8f6; --r-ink: #522c7a;
+  --w: #a5650a; --w-soft: #fbefd9; --w-ink: #7f4d06;
+  --hdr: 3.3rem;
+  --stage-h: 58svh;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --a: #e0a07a; --a-soft: #2c211b; --a-ink: #f0c2a4;
+    --x: #9ec0e8; --x-soft: #1a2430; --x-ink: #c4daf3;
+    --p: #7dcec4; --p-soft: #1a2c29; --p-ink: #b7ebe4;
+    --r: #c6a6ec; --r-soft: #261e31; --r-ink: #e0cdf7;
+    --w: #e6b450; --w-soft: #2b2414; --w-ink: #f3d38f;
+  }
+}
+:root[data-theme="dark"] {
+  --a: #e0a07a; --a-soft: #2c211b; --a-ink: #f0c2a4;
+  --x: #9ec0e8; --x-soft: #1a2430; --x-ink: #c4daf3;
+  --p: #7dcec4; --p-soft: #1a2c29; --p-ink: #b7ebe4;
+  --r: #c6a6ec; --r-soft: #261e31; --r-ink: #e0cdf7;
+  --w: #e6b450; --w-soft: #2b2414; --w-ink: #f3d38f;
+}
+html { scroll-behavior: auto; }
+
+/* ------------------------------------------------ page */
+/* The shared .layout, widened: the stage needs more room than a text column. */
+.layout.wide { max-width: 100rem; }
+.layout.wide .story { padding: 0; }
+.layout.wide main { max-width: none; }
+.intro { max-width: 46rem; margin: 0 auto; padding: 1.25rem 1.25rem 1rem; }
+.intro h1 { margin-bottom: .6rem; }
+.legend { display: flex; flex-wrap: wrap; gap: .4rem .9rem; margin: 1rem 0 0; padding: 0; list-style: none; font-size: .9rem; color: var(--muted); }
+.legend i { display: inline-block; width: .85rem; height: .85rem; border-radius: .2rem; vertical-align: -.1rem; margin-right: .35rem; border: 1.5px solid; }
+.legend .a { background: var(--a-soft); border-color: var(--a); }
+.legend .x { background: var(--x-soft); border-color: var(--x); }
+.legend .p { background: var(--p-soft); border-color: var(--p); }
+.legend .r { background: var(--r-soft); border-color: var(--r); }
+.legend .w { background: var(--w-soft); border-color: var(--w); }
+kbd { font-family: var(--mono); font-size: .8em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: .3rem; padding: 0 .3rem; background: var(--surface); }
+
+.story {
+  display: grid; grid-template-columns: minmax(18rem, 25rem) minmax(0, 1fr);
+  gap: 2rem; max-width: 92rem; margin: 0 auto; padding: 0 1.5rem;
+}
+.steps { grid-column: 1; grid-row: 1; padding-bottom: 40vh; }
+.stage-wrap {
+  grid-column: 2; grid-row: 1; align-self: start;
+  position: sticky; top: calc(var(--hdr) + .6rem);
+  height: calc(100svh - var(--hdr) - 1.2rem);
+}
+.act {
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--accent); margin: 3.5rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line);
+}
+.step {
+  min-height: 78vh; display: flex; flex-direction: column; justify-content: center;
+  padding: 1.5rem 0; opacity: .38; transition: opacity .35s;
+}
+.step.is-active { opacity: 1; }
+.step h2 { margin-top: 0; }
+.step p { margin: .5rem 0; }
+.step .take { font-weight: 650; }
+.step ul { margin: .4rem 0; padding-left: 1.2rem; }
+.step pre { font-size: .76rem; }
+.try { font-size: .92rem; color: var(--muted); border-left: 3px solid var(--w); padding-left: .7rem; }
+
+/* ------------------------------------------------ stage */
+.stage {
+  display: flex; flex-direction: column; height: 100%; gap: .45rem;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: .6rem .7rem;
+  box-shadow: 0 1px 0 var(--line), 0 18px 40px -28px color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.stage-top { display: flex; align-items: center; gap: .6rem; font-size: .8rem; color: var(--muted); }
+.stage-top [data-act] { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.progress { flex: 1 1 auto; height: 3px; background: var(--bg-2); border-radius: 3px; overflow: hidden; min-width: 2rem; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.stage button, .ctl button {
+  font: inherit; font-size: .8rem; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: .45rem; padding: .25rem .6rem; cursor: pointer;
+}
+.stage button:hover { border-color: var(--muted); }
+.stage button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: .45rem 0 0 .45rem; margin-left: 0; }
+.seg button:last-child { border-radius: 0 .45rem .45rem 0; }
+[data-speed] button { padding: .15rem .4rem; font-size: .72rem; }
+.hud { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .35rem; margin: 0; }
+.hud div { background: var(--bg); border: 1px solid var(--line); border-radius: .45rem; padding: .25rem .45rem; min-width: 0; }
+.hud dt { font-family: var(--mono); font-size: .6rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+.hud dd { margin: 0; font-size: .78rem; line-height: 1.25; color: var(--ink); }
+.stage svg { flex: 1 1 auto; min-height: 0; width: 100%; display: block; }
+.ctl { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem .9rem; min-height: 1.9rem; }
+.ctl-group { display: inline-flex; align-items: center; gap: .45rem; }
+.ctl-label { font-size: .75rem; color: var(--muted); }
+.ctl input[type=range] { width: 9rem; accent-color: var(--accent); }
+.ctl output { font-family: var(--mono); font-size: .8rem; min-width: 3rem; }
+.ctl .replay { color: var(--accent-ink); }
+.ctl .act-btn { background: var(--w-soft); border-color: var(--w); color: var(--w-ink); }
+.readout { font-size: .82rem; color: var(--muted); max-height: 9.5rem; overflow: auto; }
+.readout:empty { display: none; }
+.readout p { margin: .2rem 0; }
+.readout table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+.readout th, .readout td { text-align: left; padding: .15rem .5rem .15rem 0; border-bottom: 1px solid var(--line); }
+.readout th { font-weight: 600; color: var(--ink); }
+.readout tr.on td { color: var(--ink); font-weight: 650; }
+
+/* ------------------------------------------------ shapes */
+.stage svg text { font-family: var(--sans); }
+.node.box rect { fill: var(--surface); stroke: var(--muted); stroke-width: 1.4; }
+.node.box .v { font-family: var(--mono); font-weight: 500; text-anchor: middle; fill: var(--ink); }
+.node.box .sub { font-family: var(--mono); font-size: 10.5px; text-anchor: middle; fill: var(--faint); }
+.node.box.unit rect { fill: var(--bg-2); stroke: var(--muted); }
+.node.box.unit .v { font-family: var(--sans); fill: var(--ink); }
+.node.box.reg rect { fill: var(--bg); stroke: var(--faint); stroke-dasharray: 3 3; }
+.node.box.ghost rect { fill: none; stroke: var(--faint); stroke-dasharray: 3 3; }
+.node.box.ghost .v { fill: var(--faint); }
+.node.box.c-n rect { fill: var(--surface); stroke: var(--muted); }
+.node.box.c-a rect { fill: var(--a-soft); stroke: var(--a); } .node.box.c-a .v { fill: var(--a-ink); }
+.node.box.c-x rect { fill: var(--x-soft); stroke: var(--x); } .node.box.c-x .v { fill: var(--x-ink); }
+.node.box.c-p rect { fill: var(--p-soft); stroke: var(--p); } .node.box.c-p .v { fill: var(--p-ink); }
+.node.box.c-r rect { fill: var(--r-soft); stroke: var(--r); } .node.box.c-r .v { fill: var(--r-ink); }
+.node.box.c-w rect { fill: var(--w-soft); stroke: var(--w); } .node.box.c-w .v { fill: var(--w-ink); }
+.node.box .v.word { font-family: var(--sans); }
+.node.box.mono .v { font-family: var(--mono); }
+.node.box.hotbox rect { fill: none; stroke: var(--p); stroke-width: 2.4; }
+.node.box.codehl rect { fill: color-mix(in srgb, var(--p) 32%, transparent); stroke: none; }
+.node.text text { fill: var(--ink); }
+.node.text.lbl text { fill: var(--muted); }
+.node.text.faint text { fill: var(--faint); }
+.node.text.cap text { font-family: var(--serif); fill: var(--ink); }
+.node.text.mono text { font-family: var(--mono); }
+.node.text.b text { font-weight: 650; }
+.node.text.code text { font-family: var(--mono); fill: var(--code-fg); white-space: pre; }
+.node.text.warn text { fill: var(--w); }
+.node.text.a text { fill: var(--a); } .node.text.x text { fill: var(--x); }
+.node.text.p text { fill: var(--p); } .node.text.r text { fill: var(--r); }
+.node.frame rect { fill: none; stroke: var(--line); stroke-width: 1.4; }
+.node.frame text { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; fill: var(--faint); }
+.node.frame.hw rect { fill: color-mix(in srgb, var(--bg-2) 45%, transparent); stroke: var(--muted); }
+.node.frame.sub rect { fill: color-mix(in srgb, var(--bg-2) 25%, transparent); stroke: var(--line); }
+.node.frame.reg rect { stroke: var(--muted); stroke-dasharray: 4 3; }
+.node.frame.hot rect { stroke: var(--p); stroke-width: 2.2; stroke-dasharray: 6 4; fill: color-mix(in srgb, var(--p) 7%, transparent); }
+.node.frame.codebg rect { fill: var(--code-bg); stroke: none; }
+.node.line line { stroke: var(--muted); stroke-width: 1.5; }
+.node.line path { fill: var(--muted); }
+.node.line.faint line { stroke: var(--faint); } .node.line.faint path { fill: var(--faint); }
+.node.line.dash line { stroke-dasharray: 5 4; }
+.node.line.warn line { stroke: var(--w); } .node.line.warn path { fill: var(--w); }
+.node.line.thick line { stroke-width: 3; }
+.node.line.zoom line { stroke: var(--faint); stroke-dasharray: 2 3; }
+.node.line.c-p line { stroke: var(--p); } .node.line.c-p path { fill: var(--p); }
+.node.line.c-w line { stroke: var(--w); } .node.line.c-w path { fill: var(--w); }
+.node.path path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.node.path.dots path { fill: var(--p); stroke: none; }
+.node.path.bits path { fill: var(--bg-2); stroke: var(--line); stroke-width: 1; }
+.node.path.bits.on path { fill: var(--p-soft); stroke: var(--p); }
+.node.path.cells.even path { fill: var(--p-soft); stroke: var(--p); stroke-width: .6; }
+.node.path.cells.odd path { fill: var(--x-soft); stroke: var(--x); stroke-width: .6; }
+.node.path.wg path { fill: color-mix(in srgb, var(--p) 6%, transparent); stroke: var(--muted); stroke-width: .8; }
+.node.path.loop path { stroke: var(--p); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.node.path.barsP path { fill: var(--a-soft); stroke: var(--a); stroke-width: .8; }
+.node.path.cellsP path { fill: var(--r-soft); stroke: var(--r); stroke-width: .8; }
+
+/* ------------------------------------------------ end */
+.outro { max-width: 46rem; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
+
+/* ------------------------------------------------ narrow screens: stage on top */
+@media (max-width: 900px) {
+  .layout.wide { padding: 0 0 3rem; }
+  .story { display: block; padding: 0; }
+  .stage-wrap { position: sticky; top: var(--hdr); height: var(--stage-h); z-index: 3; background: var(--bg); padding: .35rem .5rem; }
+  .stage { padding: .4rem .45rem; gap: .3rem; border-radius: 10px; }
+  .hud { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .2rem; }
+  .hud div { padding: .12rem .3rem; }
+  .hud dt { font-size: .5rem; letter-spacing: .06em; }
+  .hud dd { font-size: .62rem; max-height: 2.4em; overflow: hidden; }
+  .readout { max-height: 4.6rem; font-size: .74rem; }
+  .ctl { gap: .3rem .5rem; min-height: 0; }
+  .ctl button, .stage button { font-size: .72rem; padding: .2rem .45rem; }
+  .ctl input[type=range] { width: 6.5rem; }
+  .steps { padding: 0 1rem 40vh; }
+  .step { min-height: 55svh; scroll-margin-top: calc(var(--hdr) + var(--stage-h) + .5rem); justify-content: flex-start; padding-top: 1.2rem; }
+  .act { margin-top: 2rem; }
+}
+@media (max-width: 520px) {
+  .hud div:nth-child(4) { display: none; }
+  .hud { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  [data-speed] { display: none; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#story">Skip to the story</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout wide">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<div class="intro">
+  <p class="kicker">Start here · 05</p>
+  <h1>Inside the machine: one multiply-add, from math to silicon</h1>
+  <p class="lede">What physically happens when a phone runs one piece of an AI model: memory, registers, NEON lanes, caches, GPU threads, NPU tensor units, and how an engine picks between them. One tiny example, followed all the way through.</p>
+  <p>Scroll, or press <kbd>→</kbd> and <kbd>←</kbd>. The picture follows the text; each step has a <strong>Replay</strong> button, and some have controls to try. The bar above the picture answers five questions at every step: where the data is, which unit works on it, how many values it handles at once, where the result goes, and what limits the speed.</p>
+  <ul class="legend">
+    <li><i class="a"></i>weights (A)</li>
+    <li><i class="x"></i>inputs (x)</li>
+    <li><i class="p"></i>products, compute</li>
+    <li><i class="r"></i>sums, results (y)</li>
+    <li><i class="w"></i>overhead, waiting</li>
+  </ul>
+  <p style="font-size:.9rem;color:var(--muted)">Numbers are tagged: <span class="tag m">measured</span> on this phone (iQOO 13, Snapdragon 8 Elite), <span class="tag c">calculated</span> from measured or published shapes, <span class="tag a">illustration</span> for anything drawn to explain, not measured.</p>
+</div>
+
+<div class="story" id="story">
+<div class="stage-wrap">
+  <div class="stage" data-stage>
+    <div class="stage-top">
+      <span data-act></span>
+      <span class="progress"><i data-progress></i></span>
+      <span class="seg" data-speed role="group" aria-label="Animation speed"><button type="button" data-v="0.5" aria-pressed="false">½×</button><button type="button" data-v="1" aria-pressed="true">1×</button><button type="button" data-v="2" aria-pressed="false">2×</button></span>
+      <button type="button" data-prev aria-label="Previous step">←</button>
+      <button type="button" data-next aria-label="Next step">→</button>
+    </div>
+    <dl class="hud" data-hud>
+      <div><dt>Data</dt><dd>—</dd></div>
+      <div><dt>Unit</dt><dd>—</dd></div>
+      <div><dt>At once</dt><dd>—</dd></div>
+      <div><dt>Result</dt><dd>—</dd></div>
+      <div><dt>Limit</dt><dd>—</dd></div>
+    </dl>
+    <svg viewBox="0 0 800 560" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Animated diagram for the current step; the text beside it describes the same thing"></svg>
+    <div class="ctl" data-ctl></div>
+    <div class="readout" data-readout aria-live="polite"></div>
+  </div>
+</div>
+
+<div class="steps">
+
+<p class="act">Act I · The arithmetic</p>
+
+<section class="step" data-scene="problem" data-hud="Numbers on paper | none yet | — | y, unknown | —">
+  <h2>What is the machine trying to calculate?</h2>
+  <p>Almost all the work in a language model is one shape of sum: a grid of <strong>weights</strong> <var>A</var> times a list of <strong>inputs</strong> <var>x</var> gives a list of <strong>outputs</strong> <var>y</var>. Written <var>y</var> = <var>A</var> × <var>x</var>.</p>
+  <p>Here it is tiny: 4 rows of 8 weights, 8 inputs, 4 outputs. The same 40 numbers, in the same colours, travel through every step of this page.</p>
+  <p class="take">Everything below is about how a phone finds these four numbers.</p>
+</section>
+
+<section class="step" data-scene="products" data-hud="Row 0 of A, all of x | you, for now | 1 pair | 8 products | —">
+  <h2>How do you get the first output?</h2>
+  <p>Take row 0 of <var>A</var>. Pair each weight with the input in the same position: 2 with 2, 1 with 3, 3 with 1, and so on. Multiply each pair.</p>
+  <p>Eight pairs give eight <strong>products</strong>: 4, 3, 3, 8, 0, 2, 2, 15.</p>
+  <p class="take">One output needs one product per weight in its row.</p>
+</section>
+
+<section class="step" data-scene="accumulate" data-hud="8 products | you, for now | 1 addition | the running sum, then y[0] | —">
+  <h2>What happens to the eight products?</h2>
+  <p>They are added into a running sum, one at a time. The place that holds a running sum is an <strong>accumulator</strong>: 0, then 4, 7, 10, 18, 18, 20, 22, 37.</p>
+  <p>Multiply matching pairs, add up the products: that is a <strong>dot product</strong>. Its result, 37, is <var>y</var>[0].</p>
+  <p class="take">A dot product is a chain of multiply-adds: make a product, add it to the accumulator, repeat.</p>
+</section>
+
+<section class="step" data-scene="allrows" data-hud="A and x | you, for now | 1 row at a time | y = [37, 34, 22, 36] | —">
+  <h2>And the other three outputs?</h2>
+  <p>Each row of <var>A</var> does its own dot product with the same <var>x</var>: 34, 22 and 36. Matrix × vector is one dot product per row, 32 <strong>multiply-adds</strong> in all.</p>
+  <p>Real models do the same thing at a different size. stories15M does 15.2 million multiply-adds per token; Qwen2.5-0.5B about 494 million, roughly one per weight <span class="tag c">calculated</span>.</p>
+  <p class="take">Matrix multiplication is a huge number of small multiply-add steps. That step is the unit of work for the rest of the page.</p>
+</section>
+
+<p class="act">Act II · One core, one number at a time</p>
+
+<section class="step" data-scene="memory" data-hud="Memory (DRAM), at addresses | — | — | — | —">
+  <h2>Where do the numbers actually live?</h2>
+  <p>Hardware cannot multiply “the number 2”. It multiplies bits stored somewhere. <strong>Memory</strong> is a long row of numbered byte slots; a slot's number is its <strong>address</strong>.</p>
+  <p>A 32-bit float (<code>f32</code>) takes 4 bytes, so row 0's eight weights sit in eight neighbouring slots: 0x1000, 0x1004, 0x1008… The inputs <var>x</var> sit somewhere else, also side by side. Hexadecimal is only a naming habit; what matters is that neighbours in the math are neighbours in memory.</p>
+  <p class="take">Before any arithmetic, each number has to be fetched from an address.</p>
+</section>
+
+<section class="step" data-scene="load" data-hud="Memory → registers s1, s2 | loads, multiplier, adder | 1 pair | s0, the accumulator | —">
+  <h2>What does the core do for one multiply-add?</h2>
+  <p>A <strong>core</strong> is one processor that runs a stream of instructions. On Arm, arithmetic only works on <strong>registers</strong>: a few dozen named slots inside the core, each holding one value, that the arithmetic units read and write directly.</p>
+  <p>So one multiply-add is four instructions: <strong>load</strong> the weight into s1, load the input into s2, multiply into s3, add s3 into the accumulator s0.</p>
+  <p class="take">One multiply-add = load, load, multiply, add.</p>
+</section>
+
+<section class="step" data-scene="loop" data-hud="Memory → registers | one core, scalar | 1 pair per instruction | s0, then y[0] | each add waits for the one before">
+  <h2>And for the whole row?</h2>
+  <p>The Rust loop repeats those four instructions eight times, one pair at a time:</p>
+  <pre><code>for i in 0..8 {
+    acc += w[i] * x[i];
+}</code></pre>
+  <ul>
+    <li><code>acc</code> lives in register s0 for the whole loop.</li>
+    <li>The loop adds its own instructions: add 1 to <code>i</code>, compare with 8, branch back.</li>
+    <li>Each <code>+=</code> needs the previous one's result, so the additions form a chain.</li>
+  </ul>
+  <p class="take">The CPU isn't “doing matrix multiplication”. It runs a sequence of small instructions that adds up to one.</p>
+</section>
+
+<section class="step" data-scene="layers" data-hud="Registers | load/store, FP, integer, branch units | one instruction per unit | registers | instruction count">
+  <h2>How does a line of code become hardware activity?</h2>
+  <p>Four layers stack up. The math becomes a Rust line; the compiler turns that line into instructions; each instruction keeps one hardware unit busy for a moment: loads go to the load/store unit, <code>FMUL</code> and <code>FADD</code> to the floating-point/SIMD unit, the loop counter to an integer unit, the branch to the branch unit.</p>
+  <p>A modern core overlaps several instructions at once. For this loop on this phone: 1.64 instructions per cycle <span class="tag m">measured</span>, about 1.77 cycles per multiply-add <span class="tag c">calculated</span> (Phase 2).</p>
+  <p class="take">Each line of Rust is a few instructions; each instruction is a moment of work for one unit.</p>
+</section>
+
+<p class="act">Act III · Many lanes</p>
+
+<section class="step" data-scene="simd" data-hud="Registers | one core, SIMD unit | 4 pairs | 4 products in one register | —">
+  <h2>What if one instruction could handle several pairs?</h2>
+  <p><strong>SIMD</strong> means Single Instruction, Multiple Data: one instruction that works on a short row of numbers (a <strong>vector</strong>) at once. Each position in the vector is a <strong>lane</strong>.</p>
+  <p>On the left, four multiplies take four ticks. On the right, one instruction does all four in one tick.</p>
+  <p>This is still <em>one</em> core running <em>one</em> instruction stream. The multiplier is simply four lanes wide. SIMD is not four cores.</p>
+  <p class="take">SIMD: same core, same instruction stream, several pairs per instruction.</p>
+</section>
+
+<section class="step" data-scene="neon" data-hud="NEON registers v1, v2 | NEON fused multiply-add | 4 lanes | v0's lanes, then one sum | 2 loads per multiply-add">
+  <h2>What does SIMD look like on this phone?</h2>
+  <p><strong>NEON</strong> is Arm's SIMD. It has 32 registers, <code>v0</code>–<code>v31</code>, each 128 bits: room for 4 <code>f32</code> lanes.</p>
+  <ul>
+    <li><code>vld1q_f32</code> loads 4 neighbouring floats in one instruction. That is why neighbours in memory matter.</li>
+    <li><code>vfmaq_f32</code> is a fused multiply-add: <code>acc += w × a</code> in all 4 lanes, multiply and add in one step.</li>
+    <li>The 4 lanes keep 4 separate partial sums across chunks: [4, 3, 3, 8], then [4, 5, 5, 23].</li>
+    <li><code>vaddvq_f32</code> adds the lanes once, at the very end: 37.</li>
+  </ul>
+  <p class="try">Try 1, 4 and 8 lanes. Eight <code>f32</code> lanes need 256-bit registers (x86 has them); this phone's NEON is 128-bit and gets 8 lanes only with 16-bit numbers.</p>
+  <p class="take">Load 4, multiply-add 4, keep 4 partial sums, add the lanes once at the end.</p>
+</section>
+
+<section class="step" data-scene="notmagic" data-hud="L2 or DRAM | NEON | 4 lanes | — | dependency chains, then memory">
+  <h2>So NEON makes it 4× faster?</h2>
+  <p>Not by itself. Measured on one prime core, the first NEON version was 3.4× faster than scalar, not 4×: with one accumulator, every multiply-add has to wait a few cycles for the previous one's result. That wait is a <strong>dependency chain</strong>. Four accumulators make four independent chains, and the speed more than doubles again <span class="tag m">measured</span>.</p>
+  <p>Switch the matrix to DRAM: the bars stop near the ~61 GB/s that one prime core can read from memory. The lanes are waiting for bytes.</p>
+  <p class="take">SIMD multiplies the arithmetic. It does not bring bytes in faster. Speed is set by whichever runs out first.</p>
+</section>
+
+<section class="step" data-scene="waiting" data-hud="Cache vs DRAM | NEON, often idle | 4 lanes | — | memory latency">
+  <h2>What does waiting for memory look like?</h2>
+  <p>When the data is already close, the SIMD unit stays busy. When each chunk has to come all the way from DRAM on request, the unit sits idle far longer than the multiply takes.</p>
+  <p>Streaming through an array is rescued by the <strong>prefetcher</strong>: a circuit that spots a steady pattern of addresses and fetches the next data before it is asked for. Then the limit becomes how many bytes per second memory can deliver, its <strong>bandwidth</strong> <span class="tag a">illustration</span>.</p>
+  <p class="take">A fast SIMD unit that is fed slowly is a slow SIMD unit.</p>
+</section>
+
+<p class="act">Act IV · Feeding the lanes</p>
+
+<section class="step" data-scene="cache" data-hud="Registers ← L1 ← L2 ← system cache ← DRAM | load/store unit | one 64-byte line per miss | a register | distance to the data">
+  <h2>Why is some memory fast and some slow?</h2>
+  <p>Between the registers and DRAM sit <strong>caches</strong>: smaller, faster memories that keep copies of recently used data. On this phone: L1, 96 KB per core; L2, 12 MB shared by a cluster of cores; a system-level cache shared with the GPU and NPU; then gigabytes of DRAM.</p>
+  <p>Finding data in a cache is a <strong>hit</strong>; not finding it is a <strong>miss</strong>, and the request goes one level further. Data moves in 64-byte <strong>cache lines</strong> <span class="tag m">measured</span>: one miss on <code>x[0]</code> brings 16 floats.</p>
+  <p class="try">Load <code>x[0]</code> (a miss), then <code>x[1]</code> (a hit), then the far-away weight.</p>
+  <p>A miss that the prefetcher did not predict typically costs hundreds of cycles <span class="tag a">assumption, not measured here</span>. Steady streams hide most of it: one prime core read ~102 GB/s from L1 and ~61 from DRAM <span class="tag m">measured</span>.</p>
+  <p class="take">Moving data can cost more than the arithmetic. Neighbours travel together, so layout matters.</p>
+</section>
+
+<section class="step" data-scene="quant" data-hud="DRAM → cache lines → registers | — | 4, 8, 16 or 32 per register | — | bytes per weight">
+  <h2>What if each number were smaller?</h2>
+  <p>The same 64-byte line holds 16 <code>f32</code>, 32 <code>f16</code>, 64 <code>int8</code>, or 128 4-bit values. The same 128-bit register holds 4, 8 or 16 lanes.</p>
+  <p>Generating a token reads every weight once, so bytes per weight set a ceiling on tokens per second. Halve the bytes and the ceiling doubles. That is <strong>quantization</strong>: storing weights in fewer bits.</p>
+  <p class="try">Switch the number type and compare the ceiling with the measured speed in the table.</p>
+  <p class="take">Quantization is a bandwidth trick: the same memory traffic carries more weights.</p>
+</section>
+
+<section class="step" data-scene="scale" data-hud="DRAM: int8 + one scale per block | — | — | approximate real values | —">
+  <h2>How can a small integer stand for 0.03?</h2>
+  <p>Store an integer plus a <strong>scale</strong>, shared by a block of weights: value ≈ integer × scale.</p>
+  <p>If row 0's real weights were 0.02, 0.01, 0.03…, they would be stored as exactly the integers used all along, 2, 1, 3…, with scale 0.01 <span class="tag a">illustration</span>. Q8_0, the format the engine uses, keeps 32 int8 weights and one 16-bit scale in 34 bytes.</p>
+  <p class="take">Quantized weights are small integers plus a scale per block; the scale is applied after the integer arithmetic.</p>
+</section>
+
+<section class="step" data-scene="qdot" data-hud="int8 in memory → v1, v2 | NEON sdot | 16 products per instruction | int32 lanes → f32 | bytes in, unpacking">
+  <h2>What does a quantized dot product do?</h2>
+  <ul>
+    <li>One vector load brings 16 int8 weights; another brings 16 int8 inputs.</li>
+    <li><code>sdot</code> multiplies 16 pairs and adds each group of 4 products into one 32-bit lane: four int32 accumulators per instruction.</li>
+    <li>Integer sums are exact: 18 + 19 = 37.</li>
+    <li>Only then come floats: 37 × 0.01 × 0.1 = 0.037, once per block.</li>
+  </ul>
+  <p>Using <code>sdot</code> instead of turning weights back into floats first took the Q8_0 GEMV from 12 to 32 GB/s <span class="tag m">measured</span> (Phase 6).</p>
+  <p class="take">Integer multiply-adds into int32, then one float multiply per block: the inner loop of a quantized LLM on this CPU.</p>
+</section>
+
+<p class="act">Act V · Many workers: the GPU</p>
+
+<section class="step" data-scene="gpu-rows" data-hud="A and x in memory | 4 workers | 4 rows at once | y[0..3] together | —">
+  <h2>What if many workers each took a row?</h2>
+  <p>The four dot products do not depend on each other. Hand each row to its own worker. Each worker still does its 8 steps in order, but all four run at once.</p>
+  <p>NEON made one worker wider. This makes more workers.</p>
+  <p class="take">A GPU's parallelism comes from outputs that do not depend on each other.</p>
+</section>
+
+<section class="step" data-scene="gpu-many" data-hud="Weights in DRAM | thousands of GPU threads | 4864 outputs | y, all rows | —">
+  <h2>How many workers could a real layer keep busy?</h2>
+  <p>Qwen2.5-0.5B's MLP up projection has 4864 rows: 4864 independent dot products, each 896 long.</p>
+  <p>A GPU is built to run thousands of lightweight <strong>threads</strong>. A thread is one worker running the same small program on its own piece of the data. They are not thousands of CPU cores: they are grouped, and a group shares one instruction stream.</p>
+  <p class="take">One output, one thread: the GPU's natural shape.</p>
+</section>
+
+<section class="step" data-scene="gpu-groups" data-hud="Weights in DRAM | workgroups of threads | one wave per instruction | y[i] from thread i | —">
+  <h2>How does a GPU organise thousands of threads?</h2>
+  <p>Threads come in <strong>workgroups</strong>: threads scheduled together on one part of the GPU, which can share fast on-chip memory and wait for each other. Thread <var>i</var> computes <var>y</var>[<var>i</var>].</p>
+  <p>Inside a workgroup, threads run in <strong>waves</strong> that execute the same instruction together (SIMT, single instruction, multiple threads). That is the GPU's version of SIMD lanes, written one thread at a time <span class="tag a">conceptual model</span>.</p>
+  <p class="try">Change the workgroup size: the same 4864 threads, cut differently.</p>
+  <p class="take">GPU = many threads, grouped into workgroups, executed in waves.</p>
+</section>
+
+<section class="step" data-scene="gpu-kernel" data-hud="Shared DRAM | GPU threads | all threads | y in shared memory | dispatch and sync">
+  <h2>How does the GPU know what to run?</h2>
+  <p>A <strong>kernel</strong> is the program every GPU thread runs. The CPU records a command (“run this kernel on 4864 threads”), submits it through the driver, and waits for a <strong>fence</strong>, a signal that the GPU has finished.</p>
+  <p>On a phone the CPU and GPU share the same memory chips, so there is often no copy. The start-up, the wait and the signal still cost time.</p>
+  <p class="try">Switch between our 4 × 8 and a real 4864 × 896 matrix.</p>
+  <p class="take">A dispatch has a fixed cost. Small work cannot pay for it.</p>
+</section>
+
+<section class="step" data-scene="cpu-vs-gpu" data-hud="Same DRAM | CPU + NEON or GPU | 4 lanes or thousands of threads | y | it depends">
+  <h2>So which one is faster?</h2>
+  <p>Neither, in general. The CPU starts instantly and runs any code; the GPU has more arithmetic but must be started and waited for. The answer depends on how big the work is, how much is independent, how many bytes move, the number type, and the dispatch overhead.</p>
+  <p>For decode, both read every weight from the same DRAM, so both meet the same bandwidth limit.</p>
+  <p class="take">“Faster” is a property of a workload on a processor, not of the processor.</p>
+</section>
+
+<p class="act">Act VI · Built for neural networks: the NPU</p>
+
+<section class="step" data-scene="nested" data-hud="Weights in DRAM | — | — | — | —">
+  <h2>What is special about neural-network work?</h2>
+  <p>Zoom out: one multiply-add, a dot product of 896, a matrix of 4.4 million, a layer of 14.9 million, a model of about 494 million per token <span class="tag c">calculated</span>.</p>
+  <p>It is the same few shapes over and over, in an order fixed before the model runs. Hardware can be built around that.</p>
+  <p class="take">Neural networks are huge but predictable.</p>
+</section>
+
+<section class="step" data-scene="npu" data-hud="DRAM → on-chip memory | tensor unit | a whole 4 × 8 tile | y back to DRAM | getting graph and data in">
+  <h2>What does an NPU do with that?</h2>
+  <p>An <strong>NPU</strong> (neural processing unit) is a processor built for these shapes. In this conceptual model it has a scalar unit for control, a vector unit, a <strong>tensor unit</strong> that multiplies a whole tile of numbers in one operation, and on-chip memory the units share <span class="tag a">conceptual model</span>.</p>
+  <p>The CPU does not send it instructions one by one. An <strong>NPU runtime</strong> loads a compiled graph of <strong>operators</strong> (named steps such as MatMul, Add, Softmax) and asks the NPU to run it; data moves in planned blocks.</p>
+  <p>Qualcomm describes its Hexagon NPU as scalar, vector and tensor accelerators sharing memory. The sizes and details differ between Snapdragon generations; this picture is not a claim about this chip's internals.</p>
+  <p class="take">An NPU runs whole operators on whole tiles, with the data movement planned ahead.</p>
+</section>
+
+<section class="step" data-scene="three" data-hud="One shared memory | CPU, GPU or NPU | lanes, threads, or tiles | y | different for each">
+  <h2>Are these three different kinds of machine?</h2>
+  <p>Less than the names suggest. All three are multiply-add hardware fed from the same memory. NEON lanes and GPU waves are both “one instruction, many values”. GPUs and NPUs both take work that was planned ahead and handed over.</p>
+  <p>They differ in what they are tuned for: the CPU for any code and quick starts, the GPU for many independent threads, the NPU for fixed neural-network graphs.</p>
+  <p class="take">Not three unrelated machines: three tunings of the same idea.</p>
+</section>
+
+<p class="act">Act VII · Same answer, three routes</p>
+
+<section class="step" data-scene="same" data-hud="A and x | CPU, GPU or NPU | 4 lanes, 4 threads, or 32 at once | y = [37, 34, 22, 36] | —">
+  <h2>Does the answer depend on the processor?</h2>
+  <p>Switch between CPU, GPU and NPU. The route changes: lanes and chunks, threads and a dispatch, or one tensor operation. The result does not.</p>
+  <p>With small integers the results match exactly. With real floats, a different order of additions can change the last bits, and an NPU usually works in int8 or fp16, so results are close rather than identical. Tests compare with a tolerance for that reason.</p>
+  <p class="take">The math is fixed; the route is a choice.</p>
+</section>
+
+<p class="act">Act VIII · The real model</p>
+
+<section class="step" data-scene="llm" data-hud="Weights in DRAM, one token's vector | mostly the matmul kernels | 1 token | the next token | matrix × vector work">
+  <h2>Where does all this show up in an LLM?</h2>
+  <p>A token passes through an embedding lookup, then 24 layers (for Qwen2.5-0.5B), then the output matrix that scores every possible next token. The copper boxes are matrix multiplies; during decode each one is a matrix × vector, a <strong>GEMV</strong>, run by a quantized NEON kernel.</p>
+  <p>In Phase 2, 97.6 % of CPU cycles went to matmul <span class="tag m">measured</span>. Attention grows with the context; norms and sampling are small. Not every step suits the same processor.</p>
+  <p class="take">An LLM on a CPU is mostly the quantized GEMV from Act IV, run hundreds of times per token.</p>
+</section>
+
+<section class="step" data-scene="prefill" data-hud="Weights in DRAM | CPU cores | many tokens, or one | next-token scores | arithmetic (prefill), memory (decode)">
+  <h2>Why are prefill and decode so different?</h2>
+  <p><strong>Prefill</strong> processes the whole prompt at once: matrix × matrix. Each weight is fetched once and used for every prompt token, so the arithmetic per byte grows with the prompt.</p>
+  <p><strong>Decode</strong> makes one token per step: matrix × vector. Every weight is fetched again for every token and used once, so memory sets the pace.</p>
+  <p class="try">Slide the number of tokens processed together and read the measured speeds.</p>
+  <p class="take">Prefill is arithmetic, decode is memory. That is why the best processor can differ between them.</p>
+</section>
+
+<section class="step" data-scene="kv" data-hud="KV cache in DRAM | attention | every earlier token | the new token's attention output | cache size grows with context">
+  <h2>What is the KV cache, and how big does it get?</h2>
+  <p>Each token leaves a <strong>key</strong> and a <strong>value</strong> vector in every layer. A new token's <strong>query</strong> is compared with every earlier key to decide which values to mix in. Keeping them, instead of recomputing them, is the <strong>KV cache</strong>.</p>
+  <p>It grows by the same amount with every token, and decode reads all of it at every step, on top of the weights.</p>
+  <p class="try">Raise the context length, change the model, or add one token and watch it attend to every key.</p>
+  <p class="take">Long contexts turn the KV cache into a second stream of bytes as large as the weights.</p>
+</section>
+
+<p class="act">Act IX · The phone</p>
+
+<section class="step" data-scene="phone" data-hud="LPDDR5X DRAM, shared | CPU, GPU or NPU | — | back to the CPU | handoffs and bandwidth">
+  <h2>Where do the processors sit in the phone?</h2>
+  <p>On one chip: 8 Oryon CPU cores (6 performance, 2 prime), the Adreno GPU, the Hexagon NPU and a system-level cache, all reading the same DRAM. One prime core alone reads ~61 GB/s; all CPU cores together ~67 <span class="tag m">measured</span>.</p>
+  <p>Handing work to another processor is not free: dispatch and synchronisation each cost time, and the phone's power and heat limits cap clocks (on battery, the cores ran at ~2.4 GHz, well below their maximum <span class="tag m">measured</span>).</p>
+  <p class="try">Compare the three routes for one decode step <span class="tag a">illustration</span>.</p>
+  <p class="take">Shared memory makes handoffs cheap, not free.</p>
+</section>
+
+<section class="step" data-scene="profile" data-hud="— | — | — | — | the biggest bar">
+  <h2>Where should optimisation effort go?</h2>
+  <p>Look at where the time goes first. In this made-up profile, the quantized GEMV is 62 of 100 ms <span class="tag a">illustration</span>.</p>
+  <p class="try">Make the GEMV 2× faster: the total falls from 100 to 69 ms. Make the embedding 2× faster: 100 to 99 ms.</p>
+  <p>The same happened for real: matmul was 97.6 % of cycles, and NEON kernels took decode from 88.6 to 422 tokens per second on the same core <span class="tag m">measured</span>.</p>
+  <p class="take">Measure → find the biggest bar → improve it → measure again.</p>
+</section>
+
+<p class="act">Act X · The whole picture</p>
+
+<section class="step" data-scene="final" data-hud="Memory, registers, lanes, threads, tiles | CPU, GPU, NPU | depends on the route | the same y | bytes, then arithmetic">
+  <h2>What is the whole mental model?</h2>
+  <p>An LLM is transformer layers; a layer is matrix multiplies; a matrix multiply is dot products; a dot product is multiply-adds.</p>
+  <p>Each multiply-add can take a CPU route (NEON lanes in registers), a GPU route (a kernel on threads), or an NPU route (a tensor operation). Prefill and decode pull in different directions, and the runtime decides.</p>
+  <p class="take">The hardware is not “running AI”. It is executing enormous numbers of simple operations, moving data through memory, registers, SIMD lanes, threads and specialised accelerators.</p>
+</section>
+
+<section class="step" data-scene="code" data-hud="Memory → registers | scalar vs NEON | 1 pair vs 4 | acc → sum | loads per multiply-add">
+  <h2>What does this give you when you read kernel code?</h2>
+  <p>Read the two loops side by side, with the picture running:</p>
+  <ul>
+    <li><code>vld1q_f32</code>: four neighbouring weights, memory → one register.</li>
+    <li><code>vfmaq_f32</code>: four multiply-adds in four lanes, into four partial sums.</li>
+    <li><code>step_by(4)</code>: the next chunk.</li>
+    <li><code>vaddvq_f32</code>: add the lanes once, at the end.</li>
+  </ul>
+  <p>Where speed is lost: waiting for bytes (layout, cache misses), one long dependency chain, and overhead around tiny pieces of work.</p>
+  <p class="take">Every line of a kernel is a movement of data or a batch of lanes. Read it that way.</p>
+</section>
+
+<section class="step" data-scene="play" data-hud="A and x | your choice | your choice | y | see the time bar">
+  <h2>Try your own combination</h2>
+  <p>Pick a processor, a number type, a vector width and a number of CPU cores. The same 4 × 8 problem runs on that route, with a time bar counted in steps <span class="tag a">illustration</span>.</p>
+  <ul>
+    <li>Vector width is capped by the register: 128 bits hold 4 FP32, 8 FP16 or 16 INT8.</li>
+    <li>More cores split the rows between them.</li>
+    <li>GPU and NPU pay a fixed overhead before and after.</li>
+  </ul>
+  <p class="take">Same answer every time; the time bar is what changes.</p>
+</section>
+
+</div>
+</div>
+
+<section class="outro">
+  <h2>What you should take away</h2>
+  <p>Inference is multiply-adds plus moving bytes. NEON makes one core do several multiply-adds per instruction; caches and quantization decide how fast the bytes arrive; GPUs and NPUs add more multiply-add hardware at the cost of handing work over. Decode is limited by memory, prefill by arithmetic, and a profile shows which one you are fighting.</p>
+  <h3>Where each idea is covered in depth</h3>
+  <ul>
+    <li><a href="../phase-1/memory.html">Memory hierarchy</a> and <a href="../phase-1/bandwidth.html">bandwidth</a>, measured on this phone.</li>
+    <li><a href="../phase-3/simd.html">SIMD and NEON</a>, <a href="../phase-3/chains.html">dependency chains</a>, <a href="../phase-3/gemv.html">GEMV in three steps</a>, <a href="../phase-3/prefill.html">prefill</a>.</li>
+    <li><a href="../phase-6/blocks.html">Block quantization</a> and <a href="../phase-6/dot-products.html">integer dot products</a>.</li>
+    <li><a href="../phase-2/kv-cache.html">The KV cache</a> and <a href="../phase-1/profiling.html">profiling with simpleperf</a>.</li>
+  </ul>
+  <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. The GPU and NPU pictures are conceptual: the engine has not run on them yet.</p>
+  <nav class="pager" data-pager></nav>
+</section>
+</main>
+</div>
+
+<script src="../js/machine/engine.js"></script>
+<script src="../js/machine/scenes-cpu.js"></script>
+<script src="../js/machine/scenes-mem.js"></script>
+<script src="../js/machine/scenes-gpu.js"></script>
+<script src="../js/machine/scenes-llm.js"></script>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script>M.start();</script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attention, step by step · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 06</p>
+<h1>Attention, step by step</h1>
+<p class="lede">Attention is how a token gathers information from the tokens before it. For one head it takes four steps: score every earlier key against the query, scale the scores, turn them into weights with softmax, and add up the values using those weights. This page covers each step, a toy you can steer, and the overflow bug softmax has to avoid.</p>
+<nav class="toc">
+  <a href="#steps">What does one head do, in four steps?</a>
+  <a href="#toy">What happens when you turn the query?</a>
+  <a href="#scale">Why divide the scores by √48?</a>
+  <a href="#softmax">What is softmax, and why can it overflow?</a>
+  <a href="#causal">Why can a token only look back?</a>
+  <a href="#code">What does the code look like?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="steps">What does one head do, in four steps?</h2>
+<p>A token needs information from the tokens before it, but it cannot take all of them equally. It has to decide how much each one matters, and attention makes that decision with scores. The work happens in a <em>head</em>: one of several attention computations that run side by side in a layer.</p>
+<p>Three lists take part. The <em>query</em> <var>q</var> (48 numbers) is what the current token is looking for. Each earlier position has a <em>key</em> <var>k</var>, which the query is matched against, and a <em>value</em> <var>v</var>, which is the information that position passes on. The keys and values come from the <a href="kv-cache.html">cache</a>.</p>
+<p>For position <var>pos</var>, the four steps are:</p>
+<ol class="steps">
+  <li><strong>Score.</strong> For every earlier position <var>t</var>, take the dot product <var>q</var> · <var>k</var><sub>t</sub>: multiply the 48 pairs of numbers and add them up. For example, (1, 2) · (3, 4) = 1×3 + 2×4 = 11. A large score means the key points the same way as the query: a good match.</li>
+  <li><strong>Scale.</strong> Divide every score by √48 ≈ 6.93 (<a href="#scale">why</a>).</li>
+  <li><strong>Softmax.</strong> Turn the scores into weights that are all positive and add up to 1. Bigger scores get bigger weights, and the gaps are exaggerated (<a href="#softmax">how</a>).</li>
+  <li><strong>Mix.</strong> The output is Σ weight<sub>t</sub> × <var>v</var><sub>t</sub>: a blend of the values, mostly from the best-matching tokens.</li>
+</ol>
+<p class="formula">out = Σ<sub>t ≤ pos</sub> softmax( q · k<sub>t</sub> ÷ √48 ) × v<sub>t</sub></p>
+<p><strong>Takeaway: each earlier token gets a score, the scores become weights that add up to 1, and the output is the weighted sum of the values.</strong></p>
+
+<h2 id="toy">What happens when you turn the query?</h2>
+<p>This toy uses two-number vectors instead of 48, so it fits on a page. It has five tokens, “The cat sat on the”. Each has a key and a value <span class="tag a">illustration</span>. Turn the query and stretch it, and watch the weights change.</p>
+<div class="widget" data-attn>
+  <h3>One query against five keys</h3>
+  <div class="controls">
+    <label class="field">query direction <span data-angle-label></span><input type="range" data-angle min="-180" max="180" value="10"></label>
+    <label class="field">query length <span data-len-label></span><input type="range" data-len min="0.2" max="8" step="0.1" value="2"></label>
+    <label class="field">current token: <span data-upto-label></span><input type="range" data-upto min="0" max="4" value="4"></label>
+  </div>
+  <div data-weights></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>Three things to try:</p>
+<ul>
+  <li><strong>Direction picks the token.</strong> Point the query at about 10° and “cat” wins; at about 80°, “sat”.</li>
+  <li><strong>Length sets the sharpness.</strong> A short query spreads weight over everyone; a long one gives nearly all of it to the best match. Training sets these lengths, so a head can learn to be focused or diffuse.</li>
+  <li><strong>The future is hidden.</strong> Move the current token back to “cat”: “sat”, “on” and “the” disappear (<a href="#causal">why</a>).</li>
+</ul>
+<p><strong>Takeaway: the direction of the query picks the winning token, and its length sets how sharp the weights are.</strong></p>
+
+<h2 id="scale">Why divide the scores by √48?</h2>
+<p>A dot product adds 48 products, so a longer list gives a bigger sum. If each number is about size 1 and random in sign, the sum grows like √48. Bigger scores make softmax extreme, as in the toy with a long query, and an almost all-or-nothing softmax trains badly.</p>
+<p>Dividing by √(head size) keeps the typical score near size 1, whatever the head size. Skip the division and the typical score grows with the head size, so softmax gets more extreme. The divisor is a fixed constant.</p>
+<p><strong>Takeaway: divide by √(head size), because without it the scores grow with the head and softmax trains badly.</strong></p>
+
+<h2 id="softmax">What is softmax, and why can it overflow?</h2>
+<p>Attention needs weights that are positive and add up to 1. <em>Softmax</em> is the function that turns scores into such weights:</p>
+<p class="formula">w<sub>i</sub> = e<sup>s<sub>i</sub></sup> ÷ (e<sup>s<sub>0</sub></sup> + e<sup>s<sub>1</sub></sup> + …)</p>
+<p>The exponential <em>e<sup>x</sup></em> (e raised to the power x) makes every weight positive, and dividing by the total makes them add to 1. Because e<sup>x</sup> grows fast, a score 2 higher gets about 7.4 times the weight.</p>
+<p>Written exactly like that, it has a bug. An <code>f32</code> (a 32-bit float) cannot hold anything above about 3.4 × 10<sup>38</sup>, and e<sup>89</sup> is already bigger. A score of 89 gives infinity, and infinity ÷ infinity is <code>NaN</code> (“not a number”), which then spreads through the rest of the model.</p>
+<p>The fix: subtract the largest score, <var>m</var>, from every score first. The ratios do not change (e<sup>a−m</sup> ÷ e<sup>b−m</sup> = e<sup>a</sup> ÷ e<sup>b</sup>), but now every exponent is 0 or below, so every e<sup>x</sup> is between 0 and 1.</p>
+<div class="widget" data-smax>
+  <h3>Naive vs stable softmax, in f32</h3>
+  <p>Edit three scores. Both versions are computed in 32-bit floats, like the engine.</p>
+  <div class="controls">
+    <label class="field">s₀<input type="number" data-s value="2" step="any"></label>
+    <label class="field">s₁<input type="number" data-s value="1" step="any"></label>
+    <label class="field">s₂<input type="number" data-s value="0.1" step="any"></label>
+    <button class="btn" type="button" data-big>Big scores (95, 92, 90)</button>
+    <button class="btn ghost" type="button" data-reset>Reset</button>
+  </div>
+  <pre data-out></pre>
+</div>
+<p>With the big scores, the naive version returns <code>NaN</code> for every weight while the stable one gives sensible numbers. The engine’s <code>softmax</code> always subtracts the maximum. Real attention scores are rarely that large, but the classifier’s 32,000 logits (its raw scores, one per candidate next token) go through the same softmax when <a href="sampling.html">sampling</a>, and a bug that only appears on some inputs is the worst kind.</p>
+<p><strong>Takeaway: subtract the largest score before exponentiating, or large scores turn every weight into NaN.</strong></p>
+
+<h2 id="causal">Why can a token only look back?</h2>
+<p>A token may only attend to itself and earlier tokens, never later ones. During training this is enforced with a mask (a set of rules that hides some positions). At inference it happens by itself: the later tokens have not been generated yet, so their keys are not in the cache. The loop simply runs over positions 0 to <var>pos</var>.</p>
+<p>This is called <em>causal</em> attention, and it is what lets a model generate text one token at a time: nothing computed for earlier tokens ever changes when a new one arrives. That is also the fact the <a href="kv-cache.html">KV cache</a> relies on. Let a token see later tokens and that fact no longer holds.</p>
+<p><strong>Takeaway: a token looks only at itself and earlier tokens, so earlier work never changes and the cache can keep it.</strong></p>
+
+<h2 id="code">What does the code look like?</h2>
+<p>The four steps are all in <code>attention_head</code>, in <code>src/kernels/scalar.rs</code>. It computes one head at one position.</p>
+<h3>Step 1: score</h3>
+<pre><code>for (t, s) in scores.iter_mut().enumerate() {       // 1. score every position 0..=pos
+    let k = keys(t);
+    let mut dot = 0.0f32;
+    for (&amp;a, &amp;b) in q.iter().zip(k) { dot += a * b; }</code></pre>
+<ul>
+  <li><code>enumerate()</code> gives each score its position <var>t</var>. <code>iter_mut()</code> gives <code>s</code>, a handle that lets the loop write into that score.</li>
+  <li><code>keys(t)</code> finds position <var>t</var>’s 48 key numbers in the cache.</li>
+  <li><code>0.0f32</code> is a 32-bit float zero. <code>dot</code> starts there and collects the sum of the 48 products.</li>
+</ul>
+<h3>Step 2: scale</h3>
+<pre><code>let norm = (head_size as f32).sqrt();         // √48 ≈ 6.93
+*s = dot / norm;                              // 2. scale</code></pre>
+<ul>
+  <li><code>head_size as f32</code> turns the whole number 48 into a 32-bit float, and <code>sqrt()</code> takes its square root.</li>
+  <li><code>*s</code> is the score that the loop points at. Writing to it stores the scaled score.</li>
+</ul>
+<h3>Step 3: softmax</h3>
+<pre><code>softmax(scores);                              // 3. weights (max subtracted inside)</code></pre>
+<ul>
+  <li>One call; the subtract-the-maximum fix happens inside it.</li>
+</ul>
+<h3>Step 4: mix</h3>
+<pre><code>out.fill(0.0);
+for (t, &amp;a) in scores.iter().enumerate() {          // 4. weighted sum of values
+    for (o, &amp;v) in out.iter_mut().zip(values(t)) { *o += a * v; }
+}</code></pre>
+<ul>
+  <li><code>out.fill(0.0)</code> resets the output to zero, so the sums start from nothing.</li>
+  <li>The outer loop takes each weight <code>a</code>. The inner loop adds <code>a × v</code> into each number of <code>out</code>, so every value contributes in proportion to its weight.</li>
+</ul>
+<h3>All four together</h3>
+<pre><code>let norm = (head_size as f32).sqrt();
+for (t, s) in scores.iter_mut().enumerate() {       // 1. score every position 0..=pos
+    let k = keys(t);
+    let mut dot = 0.0f32;
+    for (&amp;a, &amp;b) in q.iter().zip(k) { dot += a * b; }
+    *s = dot / norm;                                // 2. scale
+}
+softmax(scores);                                    // 3. weights (max subtracted inside)
+out.fill(0.0);
+for (t, &amp;a) in scores.iter().enumerate() {          // 4. weighted sum of values
+    for (o, &amp;v) in out.iter_mut().zip(values(t)) { *o += a * v; }
+}</code></pre>
+<p><code>keys(t)</code> and <code>values(t)</code> are small functions that find position <var>t</var>’s 48 numbers in the cache. Passing functions instead of arrays lets the same code serve grouped-query attention (Phase 5), where several heads read the same cached keys. The forward pass calls this once per head, six times per layer.</p>
+<p><strong>Takeaway: the code runs the four steps in order, for one head at one position.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>What are the weights after softmax guaranteed to be?</summary>
+<p>All positive (or zero after underflow) and adding up to 1. So the output is a weighted average of the values.</p>
+</details>
+<details class="check"><summary>Scores [3, 1]. What are the softmax weights, roughly?</summary>
+<p>e³ ≈ 20.1, e¹ ≈ 2.72; total 22.8. Weights ≈ 0.88 and 0.12.</p>
+</details>
+<details class="check"><summary>Why subtract the maximum score before exponentiating?</summary>
+<p>So that no exponent is above 0 and e<sup>x</sup> cannot overflow to infinity. It does not change the result, because the same factor cancels between numerator and denominator.</p>
+</details>
+<details class="check"><summary>At position 0, what is the attention output?</summary>
+<p>There is only one key, so its weight is 1, and the output is just <var>v</var><sub>0</sub>, the token's own value.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Attention scores each earlier token against the query, scales the scores, turns them into weights with softmax, and blends the values with those weights.</p>
+<p>Divide by √(head size) and subtract the largest score, or softmax becomes extreme or overflows.</p>
+<p>A token looks only at itself and earlier tokens, so past work never changes.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

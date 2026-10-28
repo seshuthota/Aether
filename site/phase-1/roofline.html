@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roofline · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 5</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>The roofs on this page are assumptions. Measured since: the memory roof, ~61 GB/s for one prime core and ~67 GB/s for all cores (<a href="results.html">What Phase 1 measured</a>). The compute roof, the peak FMA rate, has not been measured.</p></div>
+
+<h1>The roofline</h1>
+<p class="lede">Every piece of code is held back by one of two things: waiting for bytes to arrive from memory, or doing the arithmetic. The roofline is one picture that tells you which. The deciding number is simple: how much math the code does for each byte it reads.</p>
+<figure class="film" id="film">
+  <video controls playsinline preload="metadata" poster="roofline.jpg">
+    <source src="roofline.mp4?v=1" type="video/mp4">
+    <track kind="subtitles" src="roofline.vtt?v=1" srclang="en" label="English">
+  </video>
+  <figcaption>The idea step by step, narrated: turn the sound on, or switch on subtitles with the CC button. Watch it first, then read the details below.</figcaption>
+</figure>
+<nav class="toc">
+  <a href="#two">1. What can hold a kernel back?</a>
+  <a href="#intensity">2. How much work does each byte carry?</a>
+  <a href="#limit">3. Which limit wins for a given kernel?</a>
+  <a href="#picture">4. How do both limits look as one chart?</a>
+  <a href="#points">5. Where do our kernels sit?</a>
+  <a href="#below">6. What if a kernel sits below the roof?</a>
+  <a href="#lab">7. What happens when the roofs move?</a>
+  <a href="#use">8. How will the chart get real numbers?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="two">1. What can hold a kernel back?</h2>
+<p>A kernel is slow for one of two reasons, and it is the one that runs out first that counts. A core needs:</p>
+<ul>
+  <li><strong>Bytes.</strong> The numbers it works on have to come from memory. How fast they can arrive is <a href="bandwidth.html">bandwidth</a>, in GB/s.</li>
+  <li><strong>Arithmetic.</strong> Once a number has arrived, the core does math on it. Each single add or multiply is one <strong>FLOP</strong> (floating-point operation). How many the core can do per second is its <strong>peak compute</strong>, in GFLOP/s: billions of FLOPs per second.</li>
+</ul>
+<div class="callout"><span class="lbl">An everyday picture</span><p>A cook gets groceries from a delivery van. The van brings a few bags per minute (bandwidth). The cook can chop a certain number of vegetables per minute (compute). If each bag only needs one quick chop, the cook spends most of the time waiting for the van. If each bag needs an hour of careful work, the bags pile up and the van waits. What decides it is not how fast the van is or how fast the cook is on their own. It is <em>how much chopping each bag needs</em>.</p></div>
+<p><strong>Takeaway: a kernel is held back by its bytes or by its arithmetic, whichever runs out first, and speeding up the other one changes nothing.</strong></p>
+
+<h2 id="intensity">2. How much work does each byte carry?</h2>
+<p>Two kernels can read the same bytes and still need very different speeds. The difference is how much math each byte gets. Three examples from this project, then the name for the ratio.</p>
+<ol class="steps">
+  <li><strong>The Phase 0 sum.</strong> Each <code>f32</code> is 4 bytes and gets one add. 1 FLOP ÷ 4 bytes = <strong>0.25 FLOP/byte</strong>. For the whole run: 4×10<sup>6</sup> adds over 16×10<sup>6</sup> bytes <span class="tag c">calculated</span>.</li>
+  <li><strong>Decode’s matrix × vector (GEMV).</strong> Each weight is 4 bytes and is used for one multiply and one add, then never again for this token. 2 FLOPs ÷ 4 bytes = <strong>0.5 FLOP/byte</strong>. The output vector is tiny next to the weights, so it barely changes this.</li>
+  <li><strong>Prefill with 32 tokens.</strong> The same weight, once read, is used for all 32 tokens of the prompt: 32 times the work for the same 4 bytes. 0.5 × 32 = <strong>16 FLOP/byte</strong>. Same weights, very different kernel.</li>
+</ol>
+<p>That “chopping per bag” has a name: <strong>arithmetic intensity</strong>, the number of FLOPs the code does for each byte it reads from memory.</p>
+<p class="formula">arithmetic intensity = FLOPs done ÷ bytes read   (in FLOP per byte)</p>
+<p>Count only the bytes that come from the level you are waiting on. If the weights stream from DRAM, the bytes that count are DRAM bytes, not the times the same line is read again from cache. Count the cache hits and the intensity is wrong, so the kernel lands in the wrong place on the chart.</p>
+<p><strong>Takeaway: the same weights have 0.5 or 16 FLOP per byte, depending on how many tokens use them in one pass.</strong></p>
+
+<h2 id="limit">3. Which limit wins for a given kernel?</h2>
+<p>Intensity alone does not give a speed. Memory delivers bytes at a fixed rate, so it can feed only so many FLOPs per second:</p>
+<p class="formula">FLOPs per second memory can feed = intensity × bandwidth</p>
+<p>The core can never go faster than its own peak either. The kernel gets whichever limit is lower:</p>
+<p class="formula">best possible speed = the smaller of (intensity × bandwidth) and (peak compute)</p>
+<p>A worked example with made-up roofs <span class="tag a">assumption</span>: bandwidth 30 GB/s, peak 28 GFLOP/s.</p>
+<p>Those made-up roofs are only for the arithmetic. On the real core, Phase 3 later calculated about 60 GFLOP/s for prefill on one core, more than twice the toy 28 (<a href="../phase-3/prefill.html">Prefill</a>), so do not read 28 as this phone’s peak.</p>
+<ul>
+  <li><strong>GEMV:</strong> 0.5 × 30 = 15 GFLOP/s from memory. The core could do 28. Memory is the lower limit, so GEMV is <strong>memory-bound</strong>: the core is idle almost half the time, waiting for weights.</li>
+  <li><strong>Prefill, 32 tokens:</strong> 16 × 30 = 480 GFLOP/s from memory. The core can only do 28. Now the core is the lower limit, so prefill is <strong>compute-bound</strong>: the bytes are waiting for the math.</li>
+</ul>
+<div class="widget" data-roofpick>
+  <h3>Which limit wins?</h3>
+  <p>Slide the work per byte, or pick a kernel. The roofs are fixed at the made-up 30 GB/s and 28 GFLOP/s <span class="tag a">assumption</span>.</p>
+  <div class="controls">
+    <label class="field">work per byte <strong data-ai-label></strong><input type="range" data-ai min="-3.3" max="6" step="0.05" value="-1"></label>
+    <span data-ai-presets></span>
+  </div>
+  <div class="bars" data-pickbars></div>
+  <p class="note" data-picknote></p>
+</div>
+
+<p><strong>Takeaway: a kernel runs at the smaller of its memory limit and the compute peak.</strong></p>
+
+<h2 id="picture">4. How do both limits look as one chart?</h2>
+<p>Plot every intensity against its best possible speed, and the two limits join into one shape. Put intensity along the bottom and the best speed up the side. You get two lines that together look like a roof:</p>
+<ul>
+  <li><strong>The bandwidth roof</strong> is the slope on the left: intensity × bandwidth. Twice the work per byte, twice the speed, because each byte brings more work with it.</li>
+  <li><strong>The compute roof</strong> is the flat line on the right, at the core’s peak. More work per byte no longer helps: the core is already doing math as fast as it can.</li>
+  <li><strong>The ridge</strong> is where they meet: peak ÷ bandwidth. With the made-up roofs, 28 ÷ 30 ≈ 0.93 FLOP/byte. Anything left of the ridge is memory-bound. Anything right of it is compute-bound.</li>
+</ul>
+<p>Rooflines are drawn with both axes on a log scale, where each gridline is ten times the one before. Without it, 0.25 and 16 cannot share one chart. The log scale also makes the slope a straight line.</p>
+<p><strong>Takeaway: left of the ridge a kernel is memory-bound, and right of it the kernel is compute-bound.</strong></p>
+
+<h2 id="points">5. Where do our kernels sit?</h2>
+<p>Place the kernels from section 2 on the chart by their intensity. Each one’s side of the ridge is the answer.</p>
+<table>
+  <thead><tr><th>Kernel</th><th>Work per byte</th><th>Which side of the ridge</th></tr></thead>
+  <tbody>
+    <tr><td>Phase 0 sum</td><td>0.25</td><td>Far left: memory side. But see the next section.</td></tr>
+    <tr><td>f32 GEMV (decode)</td><td>0.5</td><td>Left: memory-bound on any sensible phone.</td></tr>
+    <tr><td>Q4_0 GEMV (decode, 4-bit)</td><td>about 3.6</td><td>Near the ridge. Which side depends on the real compute roof.</td></tr>
+    <tr><td>Prefill, 32 tokens</td><td>16</td><td>Right: compute-bound once the ridge is below 16.</td></tr>
+  </tbody>
+</table>
+<p>The Q4_0 row is the decode ceiling drawn as a roofline. A 4-bit format does the same FLOPs from about 7× fewer bytes (32 weights in 18 bytes instead of 128), so its dot moves about 7× further right, and the slope there is about 7× higher: fewer bytes per FLOP means more FLOPs per second from the same memory. It climbs until it meets the flat roof. With the toy 28 GFLOP/s roof it already has (ridge 0.93), so 4-bit decode would be limited by arithmetic; with a roof near 110 (ridge about 3.7) it is still just on the slope. Which one is true is a measurement, not a guess. And the arithmetic matters more than this ideal dot shows: unpacking 4-bit values costs extra instructions it does not count. Phase 6 will measure them.</p>
+<p>The lesson for f32 decode: it lives on the slope, far from the flat roof. Making the arithmetic faster does not help it. Reading fewer bytes does, until the bytes are so few that the arithmetic becomes the limit.</p>
+<p><strong>Takeaway: f32 decode sits on the slope, so faster arithmetic does nothing for it and fewer bytes does.</strong></p>
+
+<h2 id="below">6. What if a kernel sits below the roof?</h2>
+<p>A roof is a limit, not a promise, so a kernel can sit anywhere under it.</p>
+<p>The Phase 0 sum is the example. Its roof at 0.25 FLOP/byte is intensity × whatever DRAM can really do. What it actually reached was 4×10<sup>6</sup> adds in ~4.9 ms <span class="tag m">measured</span>, which is 0.82 GFLOP/s <span class="tag c">calculated</span>, the same thing as the 3.3 GB/s from Phase 0. That is far below the slope. It was not waiting on memory; it was <a href="bandwidth.html">waiting on its own chain of adds</a>, each one needing the answer of the last.</p>
+<div class="callout warn"><span class="lbl">The wrong lesson</span><p>If you set the bandwidth roof to 3.3 GB/s, the sum sits exactly on it and looks “memory-bound”. That is backwards: 3.3 was never the speed of DRAM. Set the roof to what Phase 1 measures, and the sum drops well below the slope. That gap is latency, not a slow memory bus.</p></div>
+<p>A point under both roofs is not “fine”. It means something else is slowing it down: latency, a dependency, a bad memory pattern, a throttled core, a pin that did not stick. Noticing that gap, and finding its cause, is the skill.</p>
+<p><strong>Takeaway: a point under both roofs has a cause, such as latency, a dependency or a throttled core, and finding it is the work.</strong></p>
+
+<h2 id="lab">7. What happens when the roofs move?</h2>
+<p>Here is the full chart, drawn on log scales. The blue dots are kernels placed by their work per byte, sitting on whichever roof applies. The copper dot is the Phase 0 sum you measured. It does not move when you move the roofs, because it is a measurement.</p>
+<div class="widget" data-roof>
+  <h3>Assumed roofs</h3>
+  <div class="controls">
+    <label class="field">bandwidth roof <strong data-bw-label>30 GB/s</strong>
+      <input data-bw type="range" min="2" max="100" value="30">
+    </label>
+    <label class="field">compute roof <strong data-peak-label>28 GFLOP/s</strong>
+      <input data-peak type="range" min="5" max="200" value="28">
+    </label>
+  </div>
+  <svg class="fig" viewBox="0 0 640 300" role="img" aria-label="Roofline chart with four kernels"></svg>
+  <p class="formula" data-out></p>
+  <p class="note">Both sliders are assumptions. 30 GB/s is the Phase 0 exercise, not a measurement. 28 GFLOP/s is a toy: one 128-bit FMA (multiply-add) per cycle, 4 lanes × 2 FLOPs, at ~3.5 GHz. If the core can issue four per cycle, as wide cores often can, the roof is four times higher, about 110. Neither is a counted peak for this core.</p>
+</div>
+
+<p>Things to try:</p>
+<ul>
+  <li>Move the bandwidth roof anywhere a phone could plausibly reach. GEMV stays on the slope every time.</li>
+  <li>Raise the compute roof. The flat part rises and the ridge moves right, which makes GEMV <em>more</em> memory-bound, not less.</li>
+  <li>Set the bandwidth roof to 3 GB/s and watch the copper dot touch the slope: the wrong lesson from section 6.</li>
+</ul>
+<p><strong>Takeaway: moving the bandwidth roof moves the decode ceiling, and raising the compute roof only pushes the ridge right.</strong></p>
+
+<h2 id="use">8. How will the chart get real numbers?</h2>
+<p>The roofs on this chart are guesses until they are measured. Each one has a source.</p>
+<ul>
+  <li><strong>The bandwidth roof comes from the sweep.</strong> The single-core DRAM read from the <a href="bandwidth.html">bandwidth page</a> is the roof for one thread; the all-core read is the roof for a threaded GEMV.</li>
+  <li><strong>The compute roof has to be measured too.</strong> Do not write “4 FMAs per cycle at 3.53 GHz” and call it a fact: Phase 0 never read Oryon’s FMA throughput from anywhere. Measure a kernel that is obviously compute-bound, or count instructions with <code>simpleperf</code>. A made-up peak carried into a ceiling makes every ceiling built on it wrong.</li>
+  <li><strong>Report the right number.</strong> For decode, report achieved GB/s as a fraction of the bandwidth roof. GFLOP/s is the wrong headline there. It becomes the right one for prefill, once the compute roof is a measurement.</li>
+</ul>
+<p><strong>Takeaway: the bandwidth roof is measured already; the compute roof is not, so any GFLOP/s ceiling is provisional.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>A kernel reads 8 bytes and does 4 FLOPs with them. What is its work per byte?</summary>
+<p>4 ÷ 8 = 0.5 FLOP/byte, the same as f32 GEMV.</p>
+</details>
+<details class="check"><summary>GEMV does 0.5 FLOP/byte. The ridge is at 2 FLOP/byte. Which roof matters?</summary>
+<p>Bandwidth. The kernel is left of the ridge. Raising peak FLOPs moves the flat roof up and the ridge to the right, which makes GEMV more bandwidth-bound, not less.</p>
+</details>
+<details class="check"><summary>Why is the scalar sum not on the bandwidth roof?</summary>
+<p>Work per byte predicts which roof applies. It does not promise the kernel reaches it. One accumulator cannot keep enough loads in flight, so it achieves far less than the bus allows. The roofline is an upper bound, like the decode ceiling.</p>
+</details>
+<details class="check"><summary>When is GFLOP/s the right number to report?</summary>
+<p>When the kernel is at or right of the ridge: prefill, or anything whose bytes are reused enough that the arithmetic is the limit. Decode GEMV is not that kernel.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Every kernel is held back by its bytes or its arithmetic, and its intensity says which.</p>
+<p>The roof is an upper bound, and the gap below it is where the work is.</p>
+<p>Measure the compute roof before trusting any GFLOP/s ceiling.</p>
+
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

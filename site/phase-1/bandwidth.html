@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bandwidth · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 4</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>The curve on this page is the shape to look for, drawn before any run. The measured sweeps, as plots, are on <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>Bandwidth</h1>
+<p class="lede">Decode’s yardstick is how many bytes per second a core can read, not how many FLOPs it can retire. Phase 1 measures that yardstick before any matmul exists, so a later kernel has something honest to be a percentage of.</p>
+<figure class="film" id="film">
+  <video controls playsinline preload="metadata" poster="bandwidth.jpg">
+    <source src="bandwidth.mp4?v=2" type="video/mp4">
+    <track kind="subtitles" src="bandwidth.vtt?v=2" srclang="en" label="English">
+  </video>
+  <figcaption>The idea step by step, narrated: turn the sound on, or switch on subtitles with the CC button. Watch it first, then read the details below.</figcaption>
+</figure>
+<nav class="toc">
+  <a href="#kernels">Which four kernels do we time?</a>
+  <a href="#count">How many bytes did the loop really move?</a>
+  <a href="#sweep">What does a working-set sweep show?</a>
+  <a href="#read">Why is the pure read the number that matters?</a>
+  <a href="#conditions">What conditions must we write down?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="kernels">Which four kernels do we time?</h2>
+<p>Each kernel is a small loop over arrays. We copy the habits of STREAM, a standard benchmark for memory bandwidth, and add a plain read that STREAM’s copy does not isolate. Each loop streams: it walks the array once, in order. None should wait on the data it read last, or the test turns back into the Phase 0 sum.</p>
+<table>
+  <thead><tr><th>Kernel</th><th>Per element</th><th>Bytes counted (STREAM)</th><th>What it stresses</th></tr></thead>
+  <tbody>
+    <tr><td>copy</td><td><code>a[i] = b[i]</code></td><td>2 × n × 4 for f32: one read, one write. About 3 × n × 4 really crosses the memory bus (see below)</td><td>Read and write bandwidth together.</td></tr>
+    <tr><td>scale</td><td><code>a[i] = q * b[i]</code></td><td>same as copy, plus a multiply</td><td>Whether a little arithmetic slows the stream.</td></tr>
+    <tr><td>add</td><td><code>a[i] = b[i] + c[i]</code></td><td>3 × n × 4: two reads, one write. About 4 × n × 4 on the bus</td><td>More reads in flight. Closer to “can the core request enough.”</td></tr>
+    <tr><td>read / sum</td><td>a reduction into several independent accumulators</td><td>1 × n × 4, reads only</td><td>The decode case. Weights are read, not written back.</td></tr>
+  </tbody>
+</table>
+<p>An <strong>accumulator</strong> is the variable that holds a running total. With <code>s += x</code> there is one, so each add waits for the add before it. With four or eight, the adds run in separate chains and are added together at the end, so the core has independent work to overlap. Use several accumulators: one is the latency chain from Phase 0, and it reports ~3 GB/s again and teaches you nothing about DRAM. The final add of the accumulators is negligible.</p>
+<p>Wrap inputs and the reduction result in <code>black_box</code>, which tells the compiler not to optimize the value away. Time with the harness only when one iteration takes milliseconds, not tens of nanoseconds. A 4 KB buffer is too small for per-call timing. Time a batch of passes over the small buffer and divide. That is the batch timer Phase 0 deliberately did not add. This is where it earns its place.</p>
+<p><strong>Takeaway: use several accumulators and <code>black_box</code>, or the number measures the adds, not memory.</strong></p>
+
+<h2 id="count">How many bytes did the loop really move?</h2>
+<p>GB/s is bytes moved divided by seconds, so the numerator is where a number can lie. Example: a copy of 1,000 floats reads 4,000 bytes and writes 4,000 bytes, so it moves 8,000 bytes if you count both, or 4,000 if you count only the read.</p>
+<ul>
+  <li>Pick one convention, write it in the results file, and never compare a “read-only GB/s” with a “read+write GB/s” under the same name. Mixing them makes two kernels look different when only the counting differs.</li>
+  <li>Writes move more than they look. Before a core writes into a line that is not in its cache, it reads that line from DRAM first (<em>write-allocate</em>). DRAM is the phone’s main memory, behind the caches. So a copy really moves about <code>12n</code> bytes: read <var>b</var>, read <var>a</var>’s old line, write <var>a</var>. STREAM counts <code>8n</code> anyway, and so do our results. Phase 1 measured copy at 42 GB/s counted that way <span class="tag m">measured</span>; × 1.5 for the hidden reads gives about 63 GB/s of real traffic <span class="tag c">calculated</span>, the same as the pure read.</li>
+  <li>The pure read moves <code>4n</code> bytes. That is the number to put next to a later f32 GEMV, which also reads each weight once and writes a much smaller output.</li>
+  <li>Do not count a write that stayed in cache, if what you wanted was DRAM bandwidth. For a working set that fits in L1 (the fastest cache), the GB/s you compute is cache bandwidth, and that is the point of the sweep. Label the plateau. Do not call every plateau DRAM, or a cache number will pass for memory speed.</li>
+  <li>Use the harness median, not a single pass. A 256 MB read is long enough that one pass is a real sample. A 4 KB read is not, unless you repeat it, because one short pass is mostly noise.</li>
+</ul>
+<p><strong>Takeaway: count the bytes the same way every time, and say which cache level a number came from.</strong></p>
+
+<h2 id="sweep">What does a working-set sweep show?</h2>
+<p>The working set is how much memory the loop touches on each pass. A sweep runs the pure read at many working-set sizes and plots GB/s against size. Run it from about 4 KB to about 256 MB, four sizes per doubling. What you are looking for is plateaus and cliffs. A plateau means “this whole region hits in the same level.” A cliff means “the working set just stopped fitting.”</p>
+<figure>
+<svg class="fig" viewBox="0 0 720 240" role="img" aria-label="Hypothetical bandwidth versus working set">
+  <line x1="56" y1="20" x2="56" y2="190" stroke="var(--line)"/>
+  <line x1="56" y1="190" x2="690" y2="190" stroke="var(--line)"/>
+  <path d="M70 48 H180 L200 78 H340 L360 130 H520 L540 160 H670" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+  <text class="muted" x="120" y="40" text-anchor="middle" font-size="12">L1 plateau</text>
+  <text class="muted" x="270" y="70" text-anchor="middle" font-size="12">L2 plateau</text>
+  <text class="muted" x="440" y="122" text-anchor="middle" font-size="12">SLC, maybe</text>
+  <text class="muted" x="600" y="152" text-anchor="middle" font-size="12">DRAM</text>
+  <text class="muted" x="56" y="210" font-size="12">4 KB</text>
+  <text class="muted" x="640" y="210" font-size="12">256 MB</text>
+  <text class="muted" x="8" y="28" font-size="11">GB/s</text>
+</svg>
+<figcaption>The shape to expect, not a plot of this phone. Labels go on after you see where the cliffs actually are. A missing middle plateau is also a result. The measured plot is on <a href="results.html">What Phase 1 measured</a>.</figcaption>
+</figure>
+<p>How to read a cliff without a datasheet, from left to right:</p>
+<ol class="steps">
+  <li>The leftmost fast plateau is the data that fits in L1. Its right edge is near the L1 data size, often a bit past it because of associativity and because you are streaming, not randomly accessing.</li>
+  <li>The next plateau is L2, the second-level cache, if the core can use a cluster L2 alone. If launch coverage is right, look for something that stays fast into the megabytes and falls before or around 12 MB. If it falls at 2 MB, believe the phone.</li>
+  <li>A small further step, or none, is the SLC. On some chips it is visible. On some it is a slope into DRAM. Do not invent a step to match a diagram.</li>
+  <li>The right-hand flat line, from tens of megabytes out to 256 MB, is DRAM. That flat value, on one pinned core, is the single-core read bandwidth the GEMV will be judged against.</li>
+</ol>
+<p>Repeat the sweep pinned to one prime core, one performance core, and a set of cores in parallel. Pinned means the test is locked to one core. That gives three curves, not one. The parallel curve shows whether one core was leaving the bus idle.</p>
+<p>Random access, as opposed to streaming, is a different plot: it shows latency, the wait for one value to arrive, and prefetchers help less. A prefetcher is hardware that guesses the next address and loads it early. Do the stream first; it is the decode analogue. A latency plot is optional and should not be labeled bandwidth.</p>
+<p><strong>Takeaway: read the plot for cliffs, and label each plateau by the cache it fits in.</strong></p>
+
+<h2 id="read">Why is the pure read the number that matters?</h2>
+<p>A weight during decode is loaded and not stored back. Take copy, which reads and writes. A matmul reads its weights without writing them back, so copy measures traffic the matmul does not have. Writes are often slower or separately limited. If you only measure copy, you will compare a GEMV against the wrong ceiling. The kernel will look “efficient” because it matches a number that was already dragged down by stores.</p>
+<p>Add and scale are there so you can see whether a little arithmetic changes the stream. If scale matches copy, arithmetic is free at that intensity. If scale is much slower, you are no longer bandwidth-bound, which is a useful surprise before you write a kernel that assumes the opposite.</p>
+<p>The Phase 0 sum is the cautionary version of this kernel: one accumulator, 3.3 GB/s, latency-bound. If the new read benchmark, with several accumulators and a 64 MB buffer, still reports a few GB/s, the accumulators are not independent enough, or the compiler deleted them. Check the result with <code>black_box</code>. Predict that a DRAM-sized buffer should be far above 3.3 if the core can stream at all. If it is not far above, believe the measurement and find out why, rather than “fixing” the number.</p>
+<p><strong>Takeaway: compare decode against the pure read, not against copy.</strong></p>
+
+<h2 id="conditions">What conditions must we write down?</h2>
+<p>Write these next to every row. A GB/s without them cannot be compared with the row you take next week.</p>
+<ul>
+  <li>which cores, and that the pin succeeded,</li>
+  <li>screen on or off,</li>
+  <li>charging or not — charging changes thermals and, on some phones, the current sensor,</li>
+  <li>starting temperature, from <code>/sys/class/thermal/</code>,</li>
+  <li><code>scaling_cur_freq</code> during the run, not only the max,</li>
+  <li>release build, and the commit.</li>
+</ul>
+<p>The long run is separate. Run 5 minutes or more of the DRAM-sized read, logging frequency and temperature. The governor is the software that sets the clock speed. The first 10 seconds show the optimistic number. The number after the governor has pulled the clocks down is the one a chat session will actually live at. Both belong in <code>results/</code>. They are not the same result.</p>
+<p><strong>Takeaway: a GB/s without its conditions cannot be compared, and the first seconds are not the long-run number.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why is <code>s += x</code> not the read benchmark?</summary>
+<p>Each add waits for the previous add. The core cannot keep the memory system busy, and the time you measure is add latency. Several independent accumulators break that chain. The Phase 0 number is what you get when you forget.</p>
+</details>
+<details class="check"><summary>A 32 KB read reports 80 GB/s and a 128 MB read reports 18 GB/s. Which one is DRAM?</summary>
+<p>The 128 MB one, if 128 MB is past every cache. The 80 GB/s is a cache plateau. Quoting 80 as “the phone’s bandwidth” will make every DRAM-bound kernel look terrible for the wrong reason. Label the plateau by the cliff, not by the biggest number on the plot.</p>
+</details>
+<details class="check"><summary>Copy reports 12 GB/s and the pure read reports 20 GB/s on the same core and the same large size. Is the read kernel “better”?</summary>
+<p>They are not the same numerator. Copy moves reads and writes, and each write first reads its line too (write-allocate). The read kernel moves reads only. 20 GB/s of reads can coexist with a lower copy number because stores are extra traffic. Compare a future GEMV to the read, not to the copy.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Bandwidth is bytes moved per second, so count the bytes the same way every time.</p>
+<p>A sweep shows the cache plateaus and the DRAM line, and the flat DRAM value is what a decode kernel is judged against.</p>
+<p>Write down the conditions, because a number without them is not comparable.</p>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

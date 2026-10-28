@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alignment · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 2</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>Measured since: <code>CTR_EL0</code> reports 64-byte lines, and a read starting 4 bytes off a 64-byte boundary costs 3–5 % (L1 97 vs 102 GB/s, DRAM 59 vs 61). The engine’s aligned buffer is <code>src/aligned.rs</code>. See <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>Alignment and cache lines</h1>
+<p class="lede">The cache cuts memory into fixed 64-byte pieces. Our code reads data 16 bytes at a time. If an array starts exactly on the edge of a piece, every 16-byte read fits inside one piece. If it starts somewhere in the middle, some reads straddle two pieces and cost a little extra. Alignment just means choosing where the array starts.</p>
+<figure class="film" id="film">
+  <video controls playsinline preload="metadata" poster="alignment.jpg">
+    <source src="alignment.mp4?v=1" type="video/mp4">
+  </video>
+  <figcaption>The idea step by step, no sound needed. Watch it first, then read the details below.</figcaption>
+</figure>
+<nav class="toc">
+  <a href="#bytes">1. Is memory just a row of numbered bytes?</a>
+  <a href="#lines">2. Why does the cache fetch 64 bytes at a time?</a>
+  <a href="#loads">3. How much does one NEON load read?</a>
+  <a href="#start">4. Where should the array start?</a>
+  <a href="#aligned">5. What does “aligned” mean?</a>
+  <a href="#rust">6. What does Rust promise about alignment?</a>
+  <a href="#build">7. How do we get a guaranteed start?</a>
+  <a href="#false">8. Why does 64 matter for threads?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="bytes">1. Is memory just a row of numbered bytes?</h2>
+<p>Picture memory as one very long row of boxes. Each box holds one byte, and each box has a number, its <strong>address</strong>: 0, 1, 2, and so on. Code reads memory by naming a start address and how many bytes it wants.</p>
+<p>An <code>f32</code> takes 4 bytes. An array of <code>f32</code> is those 4-byte groups placed one after another, with no gaps. Example: if the array starts at address 1000, element 0 is in bytes 1000–1003 and element 1 is in bytes 1004–1007.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 120" role="img" aria-label="Bytes with addresses, grouped into f32 values">
+  <g font-size="11">
+    <rect x="20" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="60" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="100" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="140" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/>
+    <rect x="180" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="220" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="260" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="300" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/>
+    <rect x="340" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="380" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="420" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="460" y="40" width="40" height="30" fill="var(--accent-soft)" stroke="var(--accent)"/>
+    <rect x="500" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="540" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="580" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/><rect x="620" y="40" width="40" height="30" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  </g>
+  <g class="mono" text-anchor="middle">
+    <text x="40" y="30">1000</text><text x="80" y="30">1001</text><text x="120" y="30">1002</text><text x="160" y="30">1003</text><text x="200" y="30">1004</text><text x="240" y="30">1005</text><text x="280" y="30">1006</text><text x="320" y="30">1007</text><text x="360" y="30">1008</text><text x="400" y="30">1009</text><text x="440" y="30">1010</text><text x="480" y="30">1011</text><text x="520" y="30">1012</text><text x="560" y="30">1013</text><text x="600" y="30">1014</text><text x="640" y="30">1015</text>
+  </g>
+  <g text-anchor="middle"><text x="100" y="92">x[0]</text><text x="260" y="92">x[1]</text><text x="420" y="92">x[2]</text><text x="580" y="92">x[3]</text></g>
+  <text x="20" y="114" class="muted" font-size="12">Each box is one byte with its address above it. Four bytes make one f32.</text>
+</svg>
+</figure>
+<p><strong>Takeaway: an address is a byte’s number, and an array is a run of bytes that starts at one address.</strong></p>
+
+<h2 id="lines">2. Why does the cache fetch 64 bytes at a time?</h2>
+<p>The cache is a small, fast copy of memory kept close to the core. As the <a href="memory.html#cache">memory hierarchy page</a> showed, it never fetches a single byte. It fetches a whole <strong>cache line</strong>: 64 bytes, which is 16 <code>f32</code>s.</p>
+<p><strong>The line edges are fixed by the hardware.</strong> Lines always start at addresses 0, 64, 128, 192, and so on, every multiple of 64. You cannot move them. You can only choose where your array starts relative to them.</p>
+<p>Almost every ARM64 core uses 64-byte lines. The CPU reports its line size in a register called <code>CTR_EL0</code>; we will read it when we write the allocator instead of trusting this number blindly.</p>
+<p><strong>Takeaway: cache lines are 64 bytes and their edges are fixed, so you choose only where your array starts.</strong></p>
+
+<h2 id="loads">3. How much does one NEON load read?</h2>
+<p>A matrix kernel does not read one float at a time. NEON is the phone CPU’s vector unit. Its registers hold 16 bytes, which is four <code>f32</code>s. One load instruction (<code>vld1q_f32</code>) fills a register with four floats, so a loop over an array walks it in 16-byte steps.</p>
+<p>Three sizes nest neatly:</p>
+<table>
+  <thead><tr><th>Size</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td>4 bytes</td><td>one <code>f32</code></td></tr>
+    <tr><td>16 bytes</td><td>one NEON load: 4 floats</td></tr>
+    <tr><td>64 bytes</td><td>one cache line: 16 floats, or exactly 4 NEON loads</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: one load is four floats, and one cache line holds four loads.</strong></p>
+
+<h2 id="start">4. Where should the array start?</h2>
+<p>Put the two pictures together: 16-byte loads walking along, over 64-byte lines with fixed edges. The start address decides whether a load crosses an edge.</p>
+<ul>
+  <li><strong>Array starts on a line edge</strong> (address 0, 64, 128…). Four loads fill each line exactly. No load crosses an edge, so every load touches one line.</li>
+  <li><strong>Array starts 4 bytes past an edge.</strong> Everything shifts by one float. Now every fourth load sticks out over a line edge: 12 bytes in one line and 4 in the next. That is a <strong>split load</strong>. It has to touch two lines, which costs extra.</li>
+</ul>
+<pre><code>Start on an edge (2048):
+  |2048 2064 2080 2096|2112 2128 2144 2160|
+  no load crosses an edge
+
+Start 4 bytes off (2052):
+  |2052 2068 2084 *2100|2116 2132 2148 *2164|
+  * crosses an edge: 2100 covers 2100–2115, 2164 covers 2164–2179</code></pre>
+<div class="widget" data-split>
+  <h3>Slide the array’s start</h3>
+  <p>Eight 16-byte loads in a row, as a NEON loop would issue them, drawn over three cache lines.</p>
+  <div class="controls">
+    <label class="field">array starts at byte
+      <input data-offset type="range" min="0" max="60" step="4" value="4">
+    </label>
+    <strong data-offset-label>4 bytes</strong>
+  </div>
+  <svg class="fig" viewBox="0 0 658 84" role="img" aria-label="Loads laid over cache lines"></svg>
+  <p class="formula" data-out></p>
+  <p class="note">Try 0, 16, 32 and 48: no splits. Any other start splits one load in every four.</p>
+</div>
+<div class="callout"><span class="lbl">Is a split load wrong?</span><p>No. On this phone’s 64-bit ARM CPU, a split load still returns the right four floats. It does not crash. It is only slower, because the hardware has to deal with two lines. How much slower on this core is something Phase 1 will measure, and it might turn out to be small.</p></div>
+<p>You may read online that “NEON needs 16-byte alignment or it crashes.” That was true on older 32-bit ARM. On 64-bit ARM (AArch64), ordinary loads work at any address. Only special instructions like atomics still require alignment, and a matrix kernel does not use them.</p>
+<p><strong>Takeaway: a start on a line edge means no split loads; a start off the edge splits one load in four.</strong></p>
+
+<h2 id="aligned">5. What does “aligned” mean?</h2>
+<p>Start with three addresses. 1024 is 16 × 64, so it is a multiple of 64 and is 64-aligned. 1040 is 65 × 16, so it is 16-aligned but not 64-aligned. 1028 is a multiple of 4 only: fine for one <code>f32</code>, but it will cause split loads.</p>
+<p>An address is <strong>aligned to N</strong> when it is a multiple of N. In code: <code>address % N == 0</code>, where <code>%</code> is the remainder after dividing by N. A 64-aligned address is also 16-aligned and 4-aligned, because 64 is a multiple of both.</p>
+<div class="widget" data-aligncheck>
+  <h3>Is this address aligned?</h3>
+  <div class="controls">
+    <label class="field">address<input type="number" data-addr value="1028" min="0" step="4"></label>
+  </div>
+  <div class="statrow" data-chips></div>
+  <p class="note" data-alignnote></p>
+</div>
+<p>So the rule for our buffers is: <strong>start every array at a 64-aligned address.</strong> If you ignore it, some loads split, and two benchmark runs may quietly compare different starting positions. With the rule, the array starts on a line edge, every 16-byte load stays inside one line, and the array does not share its first line with other data.</p>
+<p><strong>Takeaway: aligned to N means a multiple of N, and every array should start at a multiple of 64.</strong></p>
+
+<h2 id="rust">6. What does Rust promise about alignment?</h2>
+<p>Our <code>Tensor</code> stores its numbers in a <code>Vec&lt;f32&gt;</code>. A <code>Vec</code> (Rust’s growable array) only promises the alignment its element type needs. An <code>f32</code> needs 4, so the only promise is that the start address is a multiple of 4.</p>
+<p>In practice the allocator often hands back better-aligned memory, especially for big arrays. But “often” is luck, not a promise. Two risks follow:</p>
+<ul>
+  <li>A kernel that was fast in testing can get slower on a run where the array happens to start mid-line.</li>
+  <li>Two benchmark runs might quietly compare two different starting positions, so a difference you see could come from alignment rather than your code change.</li>
+</ul>
+<p><strong>Takeaway: a <code>Vec</code> promises a multiple of 4, not a multiple of 64, so the start is luck.</strong></p>
+
+<h2 id="build">7. How do we get a guaranteed start?</h2>
+<p>We build a small aligned buffer: a block of memory whose start address is <em>guaranteed</em> to be a multiple of 64. The <a href="rust-memory.html">raw memory in Rust</a> page shows how it is done. It needs to:</p>
+<ul>
+  <li>start at a 64-aligned address, for any length;</li>
+  <li>free its memory correctly, with the same size and alignment it asked for;</li>
+  <li>give the rest of the code an ordinary slice of <code>f32</code>, so <code>Tensor</code>’s indexing does not change at all;</li>
+  <li>work for awkward lengths: 0, 1, and lengths that are not a multiple of 4 (the leftover “tail” is a classic source of bugs).</li>
+</ul>
+<p>Then a benchmark compares reading an aligned array with one deliberately shifted by 4 bytes. If the difference is lost in the noise, we say so. The buffer is still worth keeping, because it makes every later benchmark start from the same layout, and because of the next section.</p>
+<p><strong>Takeaway: the aligned buffer makes the start address a guarantee, not a habit of the allocator.</strong></p>
+
+<h2 id="false">8. Why does 64 matter for threads?</h2>
+<p>This matters later, in Phase 4, when several threads run at once. Each core keeps its own copy of a cache line. Suppose two cores keep <em>writing</em> to different variables that sit in the same 64-byte line. Each write forces the other core to throw away its copy and fetch it again, so the line bounces between the cores. The program is still correct, just slow. This is called <strong>false sharing</strong>: the cores share a line, though not any data.</p>
+<p>The fix uses the same number: give each thread’s data its own 64-byte line. Nothing to build for it in Phase 1; just remember why 64 keeps coming up.</p>
+<p><strong>Takeaway: 64 keeps coming up because threads that write nearby data slow each other down.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>An array of f32 starts at address 2048. Will any 16-byte load split across lines?</summary>
+<p>No. 2048 is 32 × 64, so it is 64-aligned. Loads start at 2048, 2064, 2080, 2096, then the next line begins at 2112. Four loads fit each line exactly.</p>
+</details>
+<details class="check"><summary>The same array starts at 2052 instead. What happens?</summary>
+<p>Everything is shifted by 4 bytes. The fourth load covers 2100–2115, which crosses the line edge at 2112. One load in every four is split.</p>
+</details>
+<details class="check"><summary>Will a split load crash on this phone?</summary>
+<p>No. On 64-bit ARM, ordinary loads work at any address. A split load just touches two cache lines and costs a bit more time.</p>
+</details>
+<details class="check"><summary>Why align to 64 instead of just 16?</summary>
+<p>Starting at a multiple of 16 is already enough to stop splits. 64 also puts the array’s start on a line edge, so it never shares its first line with other data. That is what false sharing needs later. And every multiple of 64 is a multiple of 16 anyway.</p>
+</details>
+<details class="check"><summary>A big Vec came back 16-byte aligned today. Can the kernel rely on that?</summary>
+<p>No. <code>Vec&lt;f32&gt;</code> only promises 4. Today’s result is the allocator’s habit, not a guarantee. The aligned buffer type is the guarantee.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The cache loads 64-byte lines with fixed edges, and a load that crosses an edge is split and costs extra.</p>
+<p>Starting every array at a multiple of 64 keeps each 16-byte load inside one line.</p>
+<p>A <code>Vec</code> only promises a multiple of 4, so we build a buffer that promises 64.</p>
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

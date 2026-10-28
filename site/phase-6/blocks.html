@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Block quantization · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 6 · concept 1</p>
+
+<h1>Block quantization: Q8_0 and Q4_0</h1>
+<p class="lede">An f32 weight takes 4 bytes. Quantization stores each weight in fewer bits. A block of 32 weights shares one scale number, so a few small integers still cover the right range. This page covers the two formats Aether quantizes into, and why its bytes must match llama.cpp's exactly.</p>
+<nav class="toc">
+  <a href="#why">Why store fewer bytes per weight?</a>
+  <a href="#scale">Why does each block get its own scale?</a>
+  <a href="#q8">How does Q8_0 pack 32 weights into 34 bytes?</a>
+  <a href="#q4">How does Q4_0 pack 32 weights into 18 bytes?</a>
+  <a href="#try">What happens to 32 numbers when I quantize them?</a>
+  <a href="#exact">Why must the bytes match llama.cpp's?</a>
+  <a href="#outlier">What breaks with bigger blocks or one scale per row?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="why">Why store fewer bytes per weight?</h2>
+<p>Each token of decode reads every weight once (<a href="../phase-0/decode-ceiling.html">Decode ceiling</a>). The time per token therefore follows the number of bytes in the weights. A <strong>block</strong> is a run of 32 consecutive weights in one row of a matrix; the formats below store each block as one unit. Quantization makes each weight smaller, so each block is smaller.</p>
+<table>
+  <thead><tr><th>Format</th><th>Bytes per 32 weights</th><th>Bytes per weight</th><th>SmolLM2-135M, whole model</th></tr></thead>
+  <tbody>
+    <tr><td>f32</td><td>128</td><td>4</td><td>538.1 MB <span class="tag m">measured</span></td></tr>
+    <tr><td>Q8_0</td><td>34</td><td>1.0625 <span class="tag c">calculated</span></td><td>143.0 MB <span class="tag m">measured</span></td></tr>
+    <tr><td>Q4_0</td><td>18</td><td>0.5625 <span class="tag c">calculated</span></td><td>75.8 MB <span class="tag m">measured</span></td></tr>
+  </tbody>
+</table>
+<p>The sizes are from <code>results/phase-6.md</code>. The norms stay f32, so the whole-model sizes sit a little above the per-weight ratios.</p>
+<p><strong>Takeaway: Q4_0 reads about a seventh of the f32 bytes per weight, so its decode ceiling is about seven times higher.</strong></p>
+
+<h2 id="scale">Why does each block get its own scale?</h2>
+<p>A 4-bit integer has only 16 values, 0 to 15. Something must say how large one step is. That is the <strong>scale</strong>, a number multiplied into every integer to get the real weight. One scale for a whole matrix would have to fit its largest weight, and the small weights would lose all their precision. One scale per 32 weights is the compromise. Each block fits its own range, and the scale costs only 2 bytes per 32 weights.</p>
+<div class="callout"><span class="lbl">Illustration, made-up numbers</span><p>Suppose a scale of 1.0 covers values from −8 to +7. Then the weight 3.2 is stored as 3, and comes back as 3.0. The error is 0.2. With a scale of 0.25, the same weight is stored as 13 and comes back as 3.25, an error of 0.05.</p></div>
+<p><strong>Takeaway: the scale sets the step size, so a smaller block means its own, finer step.</strong></p>
+
+<h2 id="q8">How does Q8_0 pack 32 weights into 34 bytes?</h2>
+<p>Q8_0 stores each weight as an 8-bit signed integer, from −127 to 127. The largest weight in the block sets the scale.</p>
+<ol>
+  <li>Find the largest magnitude <code>amax</code> in the 32 values.</li>
+  <li>Set the scale <code>d = amax / 127</code>, so the largest value maps to 127.</li>
+  <li>Store each weight as <code>q = round(x / d)</code>. The real value is later <code>q · d</code>.</li>
+</ol>
+<div class="callout"><span class="lbl">Illustration, made-up numbers</span><p>The block's largest weight is 1.0, so <code>d = 1 / 127 ≈ 0.00787</code>. The weight 0.4 gives <code>q = round(50.8) = 51</code>. Its value is 51 × 0.00787 ≈ 0.402, an error of about 0.002.</p></div>
+<p>The code in <code>src/quant.rs</code> (shortened):</p>
+<pre><code>pub fn quantize_q8_0(x: &amp;[f32], out: &amp;mut [BlockQ8_0]) {
+    // ...
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::&lt;QK&gt;().0) {
+        let amax = v.iter().fold(0.0f32, |m, &amp;a| m.max(a.abs()));
+        let d = amax / 127.0;
+        let id = if d != 0.0 { 1.0 / d } else { 0.0 };
+        blk.d = f32_to_f16(d);
+        for (q, &amp;a) in blk.qs.iter_mut().zip(v) {
+            *q = (a * id).round() as i8; // f32::round = C roundf (halves away from 0)
+        }
+    }
+}</code></pre>
+<ul>
+  <li><code>fold(0.0f32, ...)</code> walks the 32 values and keeps the largest <code>a.abs()</code>. <code>abs</code> is the absolute value, so the sign is ignored here.</li>
+  <li><code>id</code> is <code>1 / d</code>, computed once per block. Multiplying by it is cheaper than dividing 32 times.</li>
+  <li>If the whole block is zero, <code>d</code> is 0 and <code>id</code> is set to 0. That avoids dividing by zero, and every <code>q</code> is 0.</li>
+  <li><code>round()</code> sends halves away from zero: 2.5 becomes 3 and −2.5 becomes −3. A different rule, such as round-half-to-even, would change some values by one step.</li>
+  <li>The scale is stored as f16, a 16-bit float. <code>f32_to_f16</code> rounds it to nearest, ties to even.</li>
+</ul>
+<p>The block is 34 bytes: 2 for the scale, then 32 signed bytes, one per weight.</p>
+<pre><code>Q8_0 block, 34 bytes, #[repr(C)] so there is no padding
+
+byte:   0   1   2   3   4  ...  33
+      +---+---+---+---+---+ ... +---+
+      | d (f16)|q[0]|q[1]| ... |q[31]|
+      +---+---+---+---+---+ ... +---+
+      2 bytes  one signed byte per weight</code></pre>
+<p><strong>Takeaway: Q8_0 keeps almost all of f32's accuracy at about a quarter of the size, because the scale fits each block.</strong></p>
+
+<h2 id="q4">How does Q4_0 pack 32 weights into 18 bytes?</h2>
+<p>Four bits give 16 levels, and the weights are positive and negative. Q4_0 stores each level as an unsigned number from 0 to 15 and subtracts 8 when it reads it back. So the real value is <code>(q − 8) · d</code>, and the levels cover −8 to +7 steps. The scale is chosen so the weight with the largest magnitude lands exactly on one end. Here is the code (shortened):</p>
+<pre><code>pub fn quantize_q4_0(x: &amp;[f32], out: &amp;mut [BlockQ4_0]) {
+    // ...
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::&lt;QK&gt;().0) {
+        // The element of largest magnitude, first one on ties, sign kept.
+        let (mut amax, mut max) = (0.0f32, 0.0f32);
+        for &amp;a in v {
+            if amax &lt; a.abs() {
+                amax = a.abs();
+                max = a;
+            }
+        }
+        let d = max / -8.0;
+        let id = if d != 0.0 { 1.0 / d } else { 0.0 };
+        blk.d = f32_to_f16(d);
+        let q = |a: f32| ((a * id + 8.5) as i8).min(15) as u8;
+        for j in 0..QK / 2 {
+            blk.qs[j] = q(v[j]) | (q(v[j + QK / 2]) &lt;&lt; 4);
+        }
+    }
+}</code></pre>
+<ul>
+  <li><code>max</code> keeps the signed value with the largest magnitude. The test <code>amax &lt; a.abs()</code> is strict, so the first of two equal values wins.</li>
+  <li><code>d = max / -8</code>. Level 0 gives <code>(0 − 8) · d = −8d = max</code>, so the largest weight is stored exactly. Level 15 gives <code>7d = −7/8 · max</code>. The 16 levels therefore run from +max down to −7/8 of max. This is a consequence of the offset, not a rounding error.</li>
+  <li><code>a * id + 8.5</code> is never negative, because <code>a / d</code> stays between −8 and 8. The cast to <code>i8</code> drops the fraction. Adding 8.5 and dropping the fraction is round-to-nearest with halves going up, and the +8 offset is already included. <code>.min(15)</code> caps the top level.</li>
+  <li>Each byte holds two weights. <code>q(v[j])</code> goes in the low nibble (the lower four bits). <code>q(v[j + 16]) &lt;&lt; 4</code> shifts the other one into the high nibble (the upper four bits), and <code>|</code> joins them.</li>
+</ul>
+<p>So element <code>j</code> of the block sits in the low nibble of byte <code>j</code>, and element <code>j + 16</code> in the high nibble of the same byte. Reading back uses <code>&amp; 0x0F</code> for the low nibble and <code>&gt;&gt; 4</code> for the high one (<code>dequantize_q4_0</code>).</p>
+<pre><code>Q4_0 block, 18 bytes
+
+byte:   0   1   2   3  ...  15  16  17
+      +---+---+---+---+ ... +---+---+---+
+      |  d (f16) |  byte 0 ... byte 15  |
+      +---+---+---+---+ ... +---+---+---+
+      2 bytes      16 bytes, two weights each
+
+one byte j, bit by bit:
+   bit   7 6 5 4   3 2 1 0
+         +-------+-------+
+         |weight |weight |
+         | j + 16|   j   |
+         +-------+-------+
+         high nibble   low nibble</code></pre>
+<p><strong>Takeaway: Q4_0 spends 16 of its 18 bytes on the 4-bit values and 2 on the scale, and the scale is d = max / −8.</strong></p>
+
+<h2 id="try">What happens to 32 numbers when I quantize them?</h2>
+<p>Type in any box, or press Randomise. Choose the format. The row <code>x</code> is your numbers, <code>q</code> is the integer stored for each, <code>x̂</code> is the value the block gives back, and <code>error</code> is <code>x̂ − x</code>. Then turn on Add outlier, which sets value 0 to 8 times the largest other value, and watch the other errors grow.</p>
+<div class="widget" data-quantblock>
+  <h3>Quantize 32 numbers</h3>
+  <div class="controls">
+    <label class="field">Format<select class="pick" data-fmt><option value="q8">Q8_0 (34 bytes)</option><option value="q4">Q4_0 (18 bytes)</option></select></label>
+    <button class="btn" type="button" data-rand>Randomise</button>
+    <label class="field"><span><input type="checkbox" data-outlier> Add outlier to value 0</span></label>
+  </div>
+  <div data-table></div>
+  <p class="note" data-scale></p>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+</div>
+<p>What to notice: Q8_0's step is the largest value divided by 127. Q4_0's step is the largest value divided by 8. So a Q4_0 step is about 16 times bigger (127 ÷ 8, calculated), and its errors are correspondingly larger.</p>
+<p><strong>Takeaway: the error is set by the step, and the step is set by the largest value in the block.</strong></p>
+
+<h2 id="exact">Why must the bytes match llama.cpp's?</h2>
+<p>Two engines can use slightly different rounding rules and both look right on a few tests. The difference only shows up later, as a worse perplexity that cannot be traced. The fix is a reference that is exact.</p>
+<p><code>tools/gen_quant.py</code> uses the <code>gguf</code> Python package from llama.cpp's repository to quantize the same arrays. The test <code>quantizers_are_byte_identical_to_llama_cpp</code> in <code>src/quant.rs</code> compares our blocks with those bytes using <code>assert_eq!</code>, so any difference fails the test.</p>
+<ul>
+  <li>A GGUF file written by llama.cpp can be read with no conversion. The block layout is the same, with no padding.</li>
+  <li>llama.cpp can be the accuracy reference. Our perplexity and KL numbers are compared against its <code>llama-perplexity</code> runs in <code>results/phase-6.md</code>.</li>
+  <li>Only the quantized blocks are identical. Sums in f32 can differ in order between engines, so the final logits are close but not identical bit for bit.</li>
+</ul>
+<p><strong>Takeaway: one value rounded differently changes a byte and fails the test, so the test catches the bug before any model runs.</strong></p>
+
+<h2 id="outlier">What breaks with bigger blocks or one scale per row?</h2>
+<p>The scale is set by the largest value in its block. One large weight therefore makes the step large for every weight in that block.</p>
+<div class="callout"><span class="lbl">Illustration, made-up numbers</span><p>A Q4_0 block holds 0.10, −0.20, 0.30 and one outlier of 8.0. With the formula above, <code>d = 8.0 / −8 = −1.0</code>. Each small weight is divided by −1 and gets <code>q = trunc(x / d + 8.5) = 8</code>, which is zero. So 0.10, −0.20 and 0.30 all come back as 0. The outlier comes back exactly. A block of 32 with one outlier loses most of its other 31 weights in the same way.</p></div>
+<p>Bigger blocks make this worse. One scale for 4,096 weights means one outlier can wipe out 4,095 others. Smaller blocks fix it but cost more scales: at 16 weights per block, the scale overhead doubles from 0.0625 to 0.125 bytes per weight (calculated). Blocks of 32 are the llama.cpp choice, so Aether matches it and the files are compatible.</p>
+<p><strong>Takeaway: the block size trades precision against scale overhead, and 32 is the size the GGUF format uses.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>A Q4_0 block has 18 bytes. What are the 2 bytes for, and why do the 16 others hold 32 weights?</summary>
+<p>The first 2 bytes hold the f16 scale <code>d</code>. The other 16 bytes hold 32 nibbles, one 4-bit value per weight, two per byte.</p>
+</details>
+<details class="check"><summary>In a Q4_0 block, which nibble and which byte hold element 20?</summary>
+<p>Element 20 is <code>j + 16</code> with <code>j = 4</code>, so it is in byte 4, in the high nibble.</p>
+</details>
+<details class="check"><summary>The largest-magnitude value in a Q4_0 block is −3.0. What is <code>d</code>, and what level does −3.0 get?</summary>
+<p><code>d = max / −8 = −3.0 / −8 = 0.375</code>. The level is <code>q = trunc(−3.0 / 0.375 + 8.5) = trunc(0.5) = 0</code>, and the value is <code>(0 − 8) · 0.375 = −3.0</code>, exact.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Each block of 32 weights has one scale, and the scale fits the block's largest value.</p>
+<p>Q8_0 is 34 bytes per block and Q4_0 is 18. The bytes are laid out the way GGUF and llama.cpp lay them out.</p>
+<p>A single large weight sets the step for its whole block, so block size is a precision choice.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 6 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>

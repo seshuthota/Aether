@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cores and pinning · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 1 · concept 3</p>
+<div class="callout banner"><span class="lbl">Written before measuring</span><p>The core map was measured in Phase 0. Since then, pinning is <code>src/sys/affinity.rs</code>, and per-core bandwidth is measured: from DRAM, ~61 GB/s on a prime core and ~43 GB/s on a performance core. See <a href="results.html">What Phase 1 measured</a>.</p></div>
+
+<h1>Cores and pinning</h1>
+<p class="lede">The scheduler decides where your thread runs, and it can move the thread at any time. A bandwidth number from an unpinned run is a blend of cores, and the next run blends them differently. Pinning lets a measurement name the core it used.</p>
+<figure class="film" id="film">
+  <video controls playsinline preload="metadata" poster="topology.jpg">
+    <source src="topology.mp4?v=1" type="video/mp4">
+  </video>
+  <figcaption>The idea step by step, no sound needed. Watch it first, then read the details below.</figcaption>
+</figure>
+<nav class="toc">
+  <a href="#map">Which cores are which?</a>
+  <a href="#same">Are the prime cores a different design?</a>
+  <a href="#pin">What does pinning actually do?</a>
+  <a href="#which">Which core sets should you measure?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="map">Which cores are which?</h2>
+<p>Linux gives each core a number, and the number does not say how fast the core is. The map has to come from the chip. Phase 0 read it from <code>cpuinfo_max_freq</code> and <code>/proc/cpuinfo</code> <span class="tag m">measured</span>. It is repeated here because every Phase 1 run should say which of these it used.</p>
+<figure>
+<svg class="fig" viewBox="0 0 720 150" role="img" aria-label="Core map">
+  <rect x="16" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="80" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="144" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="208" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="272" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="336" y="28" width="58" height="56" rx="5" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="430" y="28" width="110" height="56" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="548" y="28" width="110" height="56" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text class="mono" x="45" y="60" text-anchor="middle" font-size="12">0</text>
+  <text class="mono" x="109" y="60" text-anchor="middle" font-size="12">1</text>
+  <text class="mono" x="173" y="60" text-anchor="middle" font-size="12">2</text>
+  <text class="mono" x="237" y="60" text-anchor="middle" font-size="12">3</text>
+  <text class="mono" x="301" y="60" text-anchor="middle" font-size="12">4</text>
+  <text class="mono" x="365" y="60" text-anchor="middle" font-size="12">5</text>
+  <text class="mono" x="485" y="60" text-anchor="middle" font-size="12">6</text>
+  <text class="mono" x="603" y="60" text-anchor="middle" font-size="12">7</text>
+  <text x="190" y="112" text-anchor="middle">3.53 GHz max · performance</text>
+  <text x="544" y="112" text-anchor="middle">4.32 GHz max · prime</text>
+  <text class="muted" x="360" y="140" text-anchor="middle" font-size="12">all eight: CPU part 0x001 · no efficiency core</text>
+</svg>
+<figcaption>Linux numbers the cores. The prime cores are 6 and 7 on this phone, not 0 and 1. Do not assume the fast cores are the low numbers.</figcaption>
+</figure>
+<p>Current frequency is <code>scaling_cur_freq</code>, not the max. A core listed at 4.32 GHz may run much slower when the benchmark starts, and the governor may pull it down again once the phone is hot. Skip the current reading and a 4.32 GHz label describes a clock you never had. Record both: the max tells you the core class, and the current frequency during the run tells you what the core actually did.</p>
+<p><strong>Takeaway: read the core map from the chip, and record the clock each run actually used.</strong></p>
+
+<h2 id="same">Are the prime cores a different design?</h2>
+<p>On many phones the fast and slow cores are different designs: a wide core and a narrow one, with different caches and different NEON throughput. This phone’s <code>cpuinfo</code> does not say that. Every core reports the same part number. The split we measured is the maximum frequency.</p>
+<p>That still matters, for two reasons. You have to measure both rather than deduce them:</p>
+<ul>
+  <li>A higher clock can finish a <strong>dependency chain</strong> sooner. That is a run of operations where each step waits for the one before. The Phase 0 sum was that kind of kernel, so a prime core might finish it quicker. A streaming read that is already waiting on DRAM might not, because the core is not the limit.</li>
+  <li>A higher clock usually costs more energy per second. It does not automatically cost more energy per byte. If the prime core finishes a GB sooner, joules can go either way. Phase 1’s energy comparison is this question. The plan’s “efficiency core is more efficient” sentence does not apply until you have shown that 3.53 GHz is the efficient choice on this chip, or that it is not.</li>
+</ul>
+<div class="callout"><span class="lbl">Design habit</span><p>Keep core numbers in one config, not scattered through kernels. The engine should ask for “the prime set” and get <code>{6, 7}</code> on this phone. Another phone will number them differently. Phase 1 can hard-code the set in the benchmark binary. The habit is to write it down in one place and in the results log.</p></div>
+<p><strong>Takeaway: on this phone the prime and performance cores differ in clock, so measure whether that clock helps each kernel.</strong></p>
+
+<h2 id="pin">What does pinning actually do?</h2>
+<p>An unpinned thread can move between cores while it runs, so one timing mixes several cores. Pinning stops that. <code>sched_setaffinity</code>, called through <code>libc</code> (the C library Rust uses on Android), takes a thread and a set of CPUs it may run on. A set of one CPU is a pin. The kernel will not migrate that thread to another core for load balance.</p>
+<p>Pinning does not do everything you might hope:</p>
+<ul>
+  <li>It does not set the clock. The governor still ramps and throttles. Pinning to cpu6 does not mean you are at 4.32 GHz.</li>
+  <li>It does not reserve the core. Another process can still be scheduled there if you only set affinity and do not isolate the CPU. On a phone you usually cannot isolate. Run with the screen in a known state, and treat a noisy max as the scheduler, the way Phase 0 did.</li>
+  <li>It does not pin memory. DRAM is shared. Pinning a thread does not give it a private memory controller.</li>
+</ul>
+<p>Call it at the start of the benchmark thread, and check the return value. A failed pin that you ignore is an unpinned run wearing a comment that says otherwise.</p>
+<figure>
+<svg class="fig" viewBox="0 0 680 120" role="img" aria-label="Unpinned thread versus pinned thread">
+  <text x="16" y="22" font-size="13">unpinned: the scheduler may move the thread mid-run</text>
+  <rect x="16" y="32" width="40" height="22" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <rect x="60" y="32" width="40" height="22" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="104" y="32" width="40" height="22" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <text class="muted" x="160" y="48" font-size="12">cpu2 → cpu6 → cpu4, one number, three cores</text>
+  <text x="16" y="82" font-size="13">pinned to cpu6: the whole sample is that core</text>
+  <rect x="16" y="92" width="128" height="22" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text class="mono" x="80" y="108" text-anchor="middle" font-size="12">cpu6 only</text>
+</svg>
+<figcaption>An unpinned median is not “the phone.” It is whoever the scheduler felt like using.</figcaption>
+</figure>
+<p><strong>Takeaway: pinning fixes which core runs the thread, but not the clock or the shared memory.</strong></p>
+
+<h2 id="which">Which core sets should you measure?</h2>
+<p>A result only means something for the cores it ran on, so pick each set on purpose. The plan’s sweep, applied to this phone rather than to a phone with efficiency cores:</p>
+<ol class="steps">
+  <li>One prime core, cpu6 or cpu7. Single-thread DRAM read, and the working-set curve.</li>
+  <li>One performance core, any of cpu0–cpu5. Same kernels. The comparison is the point: does the clock gap show up in GB/s, or only in latency-bound code?</li>
+  <li>All six performance cores. Then, separately, performance plus prime. “All cores” is not one configuration when the cores are not equal. Write down the set.</li>
+</ol>
+<p>Do not include a fictional efficiency core. There isn’t one. If a later phone has one, the config struct grows a third set. This phone’s table should not have an empty row pretending to be little-core data.</p>
+<p>Thread count and core set are different knobs. Six threads pinned to six performance cores is not the same as six threads free to land on the two prime cores as well. Record both.</p>
+<p><strong>Takeaway: name the core set in every result, because the same thread count on different cores is a different run.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>Why are the fast cores 6 and 7, not 0 and 1?</summary>
+<p>Because that is what <code>cpuinfo_max_freq</code> said on this phone. Linux CPU numbers are not a performance ranking. Read the file. Do not copy a diagram from another SoC.</p>
+</details>
+<details class="check"><summary>Does pinning to a prime core mean the benchmark ran at 4.32 GHz?</summary>
+<p>No. 4.32 GHz is the maximum. <code>scaling_cur_freq</code> during the run is the clock you actually got. Thermals and the governor move it. A results line that says “prime” without a frequency trace is incomplete.</p>
+</details>
+<details class="check"><summary>Why might a streaming read look the same on cpu0 and cpu6, while the Phase 0 sum does not?</summary>
+<p>The sum waits on add latency, which scales with clock. A streaming read waits on the memory system, which may not. If they differ, the memory path from the two clusters is not the same. If they match, the clock is not the limit. Both answers are useful. Neither is known yet.</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The core map comes from the chip, so read it and write the core set down with every number.</p>
+<p>Pinning fixes the core, but not the clock, the shared memory or the thermal state.</p>
+<p>Measure the prime and performance cores separately, and say which clock each one ran at.</p>
+
+<nav class="pager" data-pager></nav>
+
+</main>
+</div>
+<p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

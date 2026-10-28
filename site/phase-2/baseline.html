@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First speed: 88.6 tok/s · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 2 · 12</p>
+<h1>First speed: 88.6 tok/s</h1>
+<p class="lede">With the model correct, here is the first speed measurement: 88.6 tokens per second (tok/s) on one prime core, slightly ahead of llama2.c on the same phone. This page asks what that number means. The profile says 97.6 % of the time goes to matrix-vector products (one dot product per row of the weight matrix), and arithmetic on the measurements shows they are not waiting for memory. They are waiting for themselves.</p>
+<nav class="toc">
+  <a href="#numbers">How fast is it, and can you trust the number?</a>
+  <a href="#profile">Where does the time go?</a>
+  <a href="#not-memory">Is memory the limit?</a>
+  <a href="#chain">Why does one multiply-add take 1.77 cycles?</a>
+  <a href="#prime">Why is the prime core faster than the performance core?</a>
+  <a href="#next">What does Phase 3 do about it?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="numbers">How fast is it, and can you trust the number?</h2>
+<p>Speed numbers are easy to misread, so start with how this one was taken. The run used <code>aether stories15M.bin -t 0 -n 256 -i "Once upon a time" -c CORE</code>, greedy (<code>-t 0</code>, which always picks the most likely next token), three runs per core, on battery, on 2026-10-21 <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Core</th><th>Aether (scalar, 1 thread)</th><th>llama2.c <code>run</code>, NDK clang -O3</th></tr></thead>
+  <tbody>
+    <tr><td>7 (prime)</td><td class="num"><strong>88.3 / 88.8 / 88.6</strong> tok/s</td><td class="num">84.9 / 84.7 / 84.6 tok/s</td></tr>
+    <tr><td>0 (performance)</td><td class="num"><strong>58.6 / 58.4 / 58.3</strong> tok/s</td><td class="num">58.1 / 58.1 / 57.4 tok/s</td></tr>
+  </tbody>
+</table>
+<p>Run-to-run spread is under 1 %. The two engines are within 5 % of each other, which is what you would expect: they do the same arithmetic in the same order, in the same plain loops.</p>
+<div class="callout warn"><span class="lbl">Conditions matter</span><p>A <em>cap</em> is a limit the phone sets on clock speed. On battery, the phone capped the prime cores at 2.44 GHz under load, far below their 4.32 GHz maximum (and the performance cores at 2.40 of 3.53 GHz). <code>simpleperf</code> counted an average of 2.38 GHz, confirming the cap. Every number on this site was taken under such caps; <a href="../phase-1/power.html">Phase 1</a> explains why they move. Compare numbers taken under different caps and you compare clocks, not code.</p></div>
+<p><strong>Takeaway: 88.6 tok/s is a real measurement, but only under the battery caps, so compare it only with numbers taken under the same caps.</strong></p>
+
+<h2 id="profile">Where does the time go?</h2>
+<p><code>simpleperf</code> is Android’s profiler. <code>simpleperf record</code> samples which function the CPU is running, thousands of times a second (<a href="../phase-1/profiling.html">Phase 1</a>). On core 7 <span class="tag m">measured</span>:</p>
+<div class="bars">
+  <div class="bar"><span>scalar::matmul</span><i style="--w:97.6%"></i><b>97.6 %</b></div>
+  <div class="bar alt"><span>scalar::attention_head</span><i style="--w:1.1%"></i><b>1.1 %</b></div>
+  <div class="bar alt"><span>sampler, exp, rmsnorm, …</span><i style="--w:0.4%"></i><b>&lt; 0.4 % each</b></div>
+</div>
+<p>This is exactly what the <a href="forward.html#budget">work budget</a> predicted: the matrix-vector products are the program. Everything else could be ten times slower and nobody would notice. So the question becomes: how fast is <code>matmul</code>, and what limits it? Optimise the 1.1 % first and you gain almost nothing.</p>
+<p><strong>Takeaway: <code>matmul</code> takes 97.6 % of the time, so only its speed moves the total much.</strong></p>
+
+<h2 id="not-memory">Is memory the limit?</h2>
+<p>A slow loop could be waiting for DRAM, the main memory. To rule that out, compare the bytes per second the loop needs with what memory can supply. Every token reads all 60.8 MB of weights. At 88.6 tokens per second:</p>
+<p class="formula">60.8 MB × 88.6 per second = 5.4 GB/s <span class="tag c">calculated</span></p>
+<p>Phase 1 measured that one prime core can read from DRAM at about 61 GB/s. The scalar loop uses under a tenth of that. If memory were the limit, the core would be waiting on loads; it is not. The counters agree: of 2.34 billion L1 data loads, only 5.4 million missed <span class="tag m">measured</span>. (L1 is the small, fast cache closest to the core; a miss means the data came from further away.) The hardware prefetcher, which fetches memory ahead of need, sees the loop walking straight through each row and fetches the next lines long before they are needed. The slow loop gives it all the time in the world.</p>
+<p><strong>Takeaway: the loop uses about 5.4 GB/s of the roughly 61 GB/s a core can read, so memory is not the limit.</strong></p>
+
+<h2 id="chain">Why does one multiply-add take 1.77 cycles?</h2>
+<p>A cycle is one tick of the CPU clock. A modern core can start several floating-point operations per cycle, so this count is slow. Here it is, from the same counters: 6.10 billion cycles for the run, 97.6 % of them in <code>matmul</code>, which did 222 tokens × 15.19 million multiply-adds:</p>
+<p class="formula">6.10 G × 0.976 ÷ (222 × 15.19 M) ≈ 1.77 cycles per multiply-add <span class="tag c">calculated</span></p>
+<p>The reason is in the loop, built in steps.</p>
+<h3>Step 1: the running sum</h3>
+<pre><code>let mut acc = 0.0f32;</code></pre>
+<ul>
+  <li><code>acc</code> is the accumulator: the running sum of the products. <code>mut</code> lets it change.</li>
+  <li><code>0.0f32</code> starts it at zero as a 32-bit float.</li>
+</ul>
+<h3>Step 2: add each product</h3>
+<pre><code>for (&amp;wi, &amp;xi) in row.iter().zip(x) {
+    acc += wi * xi;          // needs the previous acc
+}</code></pre>
+<ul>
+  <li><code>zip</code> pairs each weight <code>wi</code> in the row with the matching input <code>xi</code>.</li>
+  <li><code>acc += wi * xi</code> multiplies the pair and adds the product into <code>acc</code>.</li>
+  <li>The comment is the point: each new <code>acc</code> needs the old one, so the additions form a chain.</li>
+</ul>
+<h3>All together</h3>
+<pre><code>let mut acc = 0.0f32;
+for (&amp;wi, &amp;xi) in row.iter().zip(x) {
+    acc += wi * xi;          // needs the previous acc
+}</code></pre>
+<p>Each <code>acc += …</code> needs the result of the previous one. The compiled loop (disassembled from this source) loads and multiplies four pairs at a time with NEON, the ARM vector instructions, then adds the four products into <code>acc</code> one by one with plain <code>fadd</code> instructions (floating-point add), keeping the source’s order. The multiplications are independent and run ahead, but every addition sits in one long chain. Each waits for the one before it to produce its result: that wait is its <em>latency</em>. This is the same kind of chain that held the <a href="../phase-1/roofline.html">Phase 0 sum</a> to 3.3 GB/s.</p>
+<div class="callout"><span class="lbl">1.77 is less than one add’s latency</span><p>The chain here is plain adds, not the fused multiply-adds (one instruction that multiplies and adds) of <a href="../phase-3/chains.html">Phase 3’s chains page</a>, which takes their latency as about 4 cycles. A plain add is quicker: take about 2 cycles on this core <span class="tag a">assumption</span>. But one chain of 2-cycle adds cannot do better than 2 cycles per add, and 1.77 is below that. The likely reason: each output row has its own <code>acc</code>, so the next row’s chain does not depend on this one, and the out-of-order core starts it before the current row has finished. For part of the time, two chains overlap. Not checked yet: timing one very long row, where there is no next row to overlap with, would test it.</p></div>
+<p>Why doesn’t the compiler fix it, by using several accumulators or vector instructions? Because that changes the order of the additions, and with floats that changes the result (<a href="correctness.html#order">page 11</a>). The compiler is not allowed to change your answer, so it keeps the chain. To break it, you have to write the different order yourself and accept the different last bits. That is Phase 3.</p>
+<p><strong>Takeaway: each addition waits for the one before it, and the compiler will not reorder them, so the chain stays.</strong></p>
+
+<h2 id="prime">Why is the prime core faster than the performance core?</h2>
+<p>The prime core was 1.52 times faster than the performance core, although their caps were nearly equal (2.44 vs 2.40 GHz). A latency-bound loop should run at about the same speed on two cores of the same design at the same clock. This is <strong>not explained yet</strong>. The next things to check are Phase 1’s per-core sweeps and a <code>simpleperf stat</code> on core 0, to see whether its real clock under load was lower than the cap or its cycles per multiply-add are higher.</p>
+<p><strong>Takeaway: the prime core is 1.52 times faster at nearly the same cap, and the reason is not known yet.</strong></p>
+
+<h2 id="next">What does Phase 3 do about it?</h2>
+<ul>
+  <li><strong>Several accumulators</strong> break the one chain into four or eight independent running sums, so several additions are in flight at once.</li>
+  <li><strong>NEON</strong> does four multiply-adds per instruction.</li>
+  <li>Together they take the same matrix from 5.3 to 53 GB/s on one core, and stories15M from 88.6 to 422 tokens per second <span class="tag m">measured</span>. At that point the loop finally is close to memory’s limit.</li>
+</ul>
+<p>Read on: <a href="../phase-3/index.html">Phase 3 · NEON kernels</a>.</p>
+<p><strong>Takeaway: Phase 3 breaks the chain into several sums and uses NEON, the two things this page points at.</strong></p>
+
+<h2 id="check">Check yourself</h2>
+<details class="check"><summary>How do you know the scalar loop is not limited by memory bandwidth?</summary>
+<p>It moves 5.4 GB/s while one core can read about 61 GB/s, and almost every load hits in L1 because the prefetcher has run ahead. The core is not waiting on memory.</p>
+</details>
+<details class="check"><summary>Why can't the compiler just vectorize <code>acc += w * x</code>?</summary>
+<p>Vectorizing means summing in a different order, and float addition is not associative, so the result would change. The compiler must keep your order unless you allow otherwise.</p>
+</details>
+<details class="check"><summary>The profile shows 97.6 % in <code>matmul</code>. What is the most anything else could ever save?</summary>
+<p>2.4 % of the time. Speeding up the rest, even to zero, cannot make the program more than about 2.5 % faster. Optimise <code>matmul</code> first.</p>
+</details>
+<details class="check"><summary>Aether and llama2.c differ by 5 % but do identical arithmetic. Where might the 5 % come from?</summary>
+<p>Different code around the arithmetic: how loops are compiled, bounds checks, the allocator, how the matrix rows are walked. Small differences in instruction count per multiply-add move a latency-bound loop's speed by a few percent. (Not measured in detail.)</p>
+</details>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>The first speed is 88.6 tok/s, and matrix-vector products do almost all of the work.</p>
+<p>The loop is not limited by memory; it is limited by a chain of additions that must wait in order.</p>
+<p>Phase 3 breaks that chain and uses NEON, and the prime-versus-performance gap is still open.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<script src="../js/pages.js?v=31"></script>
+<script src="../js/glossary.js?v=30"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/widgets.js?v=30"></script>
+</body>
+</html>
