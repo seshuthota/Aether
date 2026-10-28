@@ -753,3 +753,25 @@ Every llama.cpp Q4_K_M run and one of each other pair were capped (prime
 1.02 GHz) and are left out: e.g. our Q8_0 pp512 469 at the cap vs 768
 without, llama.cpp's Q4_0 pp512 239 vs 540. With equal clocks our prefill
 is 10–40 % ahead of llama.cpp for Q4_0 and Q8_0.
+
+## K-quant prefill: rows unpacked with NEON (2026-10-29; `raw/unpack-k4/`, `raw/q4km-pp64/`)
+
+At pp64, Q4_K_M ran slower than at pp256 (461 vs 578 tok/s). The pp64
+profile (`q4km-pp64/profile-pp64.txt`) had `quant_rows_mmla` itself at 28 %:
+the inlined `unpack_k4`, which unpacks each group of four K-quant rows once
+per matmul (its cost does not shrink with fewer tokens, so at pp64 it
+weighs 8× more than at pp512). It decoded value by value (`q4_k_values`,
+`q6_k_values`) and scattered bytes one at a time.
+
+**Change**: each 32-value sub-block is built as two int8 vectors with the
+same loads as the decode kernels (`q4_k_sub`, `q6_k_sub`), the scales of a
+super-block once (`q4_k_scales_mins`), and each 8-value chunk is stored
+with one `vst1_s8`. Same values: PPL 16.7330 (`ppl.txt`), unchanged; 92/92
+tests.
+
+**Result** (cycles, `cycles.txt`, two rounds, reps 5):
+
+| | pp64 | pp512 | timed pp64 tok/s |
+| --- | --- | --- | --- |
+| before (`66aed73`) | 15.3 / 15.4 G | 77.5 / 75.6 G | 457 / 418 |
+| after | 11.1 / 10.9 G (−28 %) | 73.3 / 72.3 G (−5 %) | 651 / 541 |

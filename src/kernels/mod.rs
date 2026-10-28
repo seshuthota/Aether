@@ -260,37 +260,43 @@ fn is_k_quant(w: &Weight) -> bool {
 /// rows, then used for every token.
 #[cfg(target_arch = "aarch64")]
 fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4> {
-    use crate::quant::{QK_K, f16_to_f32, q4_k_scale_min, q4_k_values, q6_k_values};
+    use crate::quant::{QK_K, f16_to_f32, q4_k_scales_mins};
+    use std::arch::aarch64::{int8x16_t, vget_high_s8, vget_low_s8, vst1_s8};
+    // One super-block of row r into its 8 blocks: `sub(j)` gives block j's
+    // values and its two half scales and bias.
+    #[inline(always)]
+    fn fill(o: &mut [neon_quant::KBlock4], r: usize, sub: impl Fn(usize) -> ([int8x16_t; 2], (f32, f32, f32))) {
+        for (j, o) in o.iter_mut().enumerate() {
+            let v;
+            (v, (o.sa[r], o.sb[r], o.bias[r])) = sub(j);
+            // Chunk c (8 values) of row r goes to bytes 32c + 8r.
+            // SAFETY: 3 · 32 + 8r + 8 <= 128 bytes of qs (r < 4).
+            unsafe {
+                let q = o.qs.as_mut_ptr();
+                vst1_s8(q.add(8 * r), vget_low_s8(v[0]));
+                vst1_s8(q.add(32 + 8 * r), vget_high_s8(v[0]));
+                vst1_s8(q.add(64 + 8 * r), vget_low_s8(v[1]));
+                vst1_s8(q.add(96 + 8 * r), vget_high_s8(v[1]));
+            }
+        }
+    }
     let nk = nb / (QK_K / QK);
     let mut out = vec![neon_quant::KBlock4 { qs: [0; 4 * QK], sa: [0.0; 4], sb: [0.0; 4], bias: [0.0; 4] }; nb];
     for (r, &row) in rows.iter().enumerate() {
-        for k in 0..nk {
-            // This super-block's 256 values, and per 32-value block j its
-            // two half scales and bias.
-            let (vals, sab): ([i8; QK_K], [(f32, f32, f32); 8]) = match w {
+        for (k, o) in out.as_chunks_mut::<{ QK_K / QK }>().0.iter_mut().enumerate() {
+            match w {
                 Weight::Q4_K(b) => {
                     let blk = &b[row * nk + k];
                     let (d, dmin) = (f16_to_f32(blk.d), f16_to_f32(blk.dmin));
-                    (q4_k_values(blk).map(|q| q as i8), std::array::from_fn(|j| {
-                        let (sc, m) = q4_k_scale_min(&blk.scales, j);
-                        (d * sc as f32, d * sc as f32, -(dmin * m as f32))
-                    }))
+                    let (sc, m) = q4_k_scales_mins(&blk.scales);
+                    fill(o, r, |j| (neon_quant::q4_k_sub(blk, j), (d * sc[j] as f32, d * sc[j] as f32, -(dmin * m[j] as f32))));
                 }
                 Weight::Q6_K(b) => {
                     let blk = &b[row * nk + k];
                     let d = f16_to_f32(blk.d);
-                    (q6_k_values(blk), std::array::from_fn(|j| (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)))
+                    fill(o, r, |j| (neon_quant::q6_k_sub(blk, j), (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)));
                 }
                 _ => unreachable!("unpack_k4 is for K-quants"),
-            };
-            for j in 0..QK_K / QK {
-                let o = &mut out[k * (QK_K / QK) + j];
-                for c in 0..QK / 8 {
-                    for v in 0..8 {
-                        o.qs[32 * c + 8 * r + v] = vals[32 * j + 8 * c + v];
-                    }
-                }
-                (o.sa[r], o.sb[r], o.bias[r]) = sab[j];
             }
         }
     }

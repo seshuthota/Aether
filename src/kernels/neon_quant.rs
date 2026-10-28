@@ -843,6 +843,36 @@ pub unsafe fn mmla4_q5_0x4(group: &[BlockQ5_0x4], x: [&[PairQ8]; NP]) -> Tiles {
     unsafe { mmla4::<3>(x[0].len(), x, |b| load_q5_0x4(group.get_unchecked(b))) }
 }
 
+/// Sub-block `j` (values 32j..32j + 32) of a Q4_K super-block as int8
+/// (0..15), in two vectors of 16.
+#[inline(always)]
+pub fn q4_k_sub(b: &BlockQ4_K, j: usize) -> [int8x16_t; 2] {
+    // SAFETY: 128 bytes of nibbles; j < 8 keeps 32·(j / 2) + 32 <= 128.
+    unsafe {
+        let q = b.qs.as_ptr().add(32 * (j / 2));
+        let f = |v: uint8x16_t| vreinterpretq_s8_u8(if j.is_multiple_of(2) { vandq_u8(v, vdupq_n_u8(0x0F)) } else { vshrq_n_u8::<4>(v) });
+        [f(vld1q_u8(q)), f(vld1q_u8(q.add(16)))]
+    }
+}
+
+/// Sub-block `j` of a Q6_K super-block as int8 q − 32, in two vectors of 16.
+#[inline(always)]
+pub fn q6_k_sub(b: &BlockQ6_K, j: usize) -> [int8x16_t; 2] {
+    let (n, k) = (j / 4, j % 4);
+    // SAFETY: ql holds 128 bytes and qh 64; j < 8 keeps every 16-byte load
+    // inside them (as in `q6_k_block`).
+    unsafe {
+        let (ql, qh) = (b.ql.as_ptr().add(64 * n + 32 * (k % 2)), b.qh.as_ptr().add(32 * n));
+        let f = |i: usize| {
+            let v = vld1q_u8(ql.add(16 * i));
+            let lo = if k < 2 { vandq_u8(v, vdupq_n_u8(0x0F)) } else { vshrq_n_u8::<4>(v) };
+            let hi = vshlq_n_u8::<4>(vandq_u8(vshlq_u8(vld1q_u8(qh.add(16 * i)), vdupq_n_s8(-2 * k as i8)), vdupq_n_u8(3)));
+            vsubq_s8(vreinterpretq_s8_u8(vorrq_u8(lo, hi)), vdupq_n_s8(32))
+        };
+        [f(0), f(1)]
+    }
+}
+
 /// One 32-value block of four rows of a K-quant matrix, unpacked once per
 /// matmul for [`mmla4_k`]: the values as int8 in [`BlockQ8_0x4`]'s layout
 /// (Q4_K: q in 0..=15; Q6_K: q − 32), each row's f32 scale for values

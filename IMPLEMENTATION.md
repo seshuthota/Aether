@@ -252,7 +252,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       llama-perplexity for SmolLM2-135M Q4_K_M and Q5_0 and Qwen2.5-0.5B Q4_K_M; `smmla` for the
       K-quants on rows unpacked once per matmul (pp512 cycles −41 %); Q4_K decode scales as vectors
       (decode cycles −4 %); Q5_0 unpack with `sri` (Q4_K_M decode +8–11 %); Q6_K with `sri`
-      (its cycles −8 %).
+      (its cycles −8 %); K-quant rows unpacked with NEON (pp64 cycles −28 %).
 - [x] **Measurement: bimodal timed runs** (2026-10-29): explained — the prime cores' clock cap
       drops 1.69 → 1.02 GHz partway through some runs (results/phase-6.md, "Night of").
       `prefill-ab.sh` now records the lowest caps seen during each run ("# lowest clock caps").

@@ -1,0 +1,27 @@
+pp64,406.5,157.4
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o /data/local/tmp/p.data ./bs-new testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf -c 2-7 --pp 64 --tg 1 --depth 0 --reps 20 --warmup 1
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 90796
+Event count: 45187971058
+
+Overhead  Symbol
+28.35%    aether::kernels::quant_rows_mmla
+28.25%    aether::kernels::neon_quant::mmla4_q5_0x4
+14.30%    aether::kernels::neon_quant::mmla4_k
+7.91%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+3.55%     aether::kernels::neon_quant::gemv4_q8_0x4
+2.33%     <aether::pool::ThreadPool>::run
+2.32%     expf
+1.65%     aether::kernels::neon_quant::gemv4_q5_0x4
+1.36%     aether::kernels::neon_quant::quantize_q8_0
+0.95%     aether::kernels::neon::attention_group::<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>
+0.80%     aether::kernels::neon_quant::dot4_q6_k_q8_0
+0.77%     aether::kernels::neon_quant::interleave_pairs::{closure#0}
+0.70%     aether::kernels::scalar::swiglu
+0.70%     powf
+0.59%     aether::kernels::scalar::rmsnorm
+0.58%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.58%     aether::kernels::scalar::rope_halves
+0.53%     sincosf
+0.48%     @plt
