@@ -404,6 +404,42 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     if t == 1 { matmul_on(pool, out, x, f) } else { matmul_batch_on(pool, out, x, f, t) }
 }
 
+/// `outs[k] = ws[k] · x` for one token and several matrices that read the
+/// same `x` (q, k, v; gate, up), as one job for the pool: `x` is quantized
+/// once and the threads take blocks of rows from all the matrices, so the
+/// small ones (k and v have a few hundred rows) cost no hand-off of their
+/// own. Each row is computed exactly as [`linear_on`] computes it.
+pub fn linear_many_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], x: &[f32], ws: &[&Weight]) {
+    assert_eq!(outs.len(), ws.len(), "one output per matrix");
+    let p = pool.filter(|p| p.threads() > 1);
+    if p.is_none() || ws.iter().any(|w| matches!(w, Weight::F32(_))) {
+        for (o, w) in outs.iter_mut().zip(ws) {
+            linear_on(pool, o, x, w);
+        }
+        return;
+    }
+    let p = p.unwrap();
+    let xq = quantize_activations(pool, x, 1);
+    let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+    let total: usize = outs.iter().map(|o| o.len()).sum();
+    let block = crate::pool::block_size(total, p.threads(), ROW_BLOCK);
+    // (matrix, rows) pieces, each at most `block` rows, aligned within its
+    // own matrix.
+    let pieces: Vec<(usize, std::ops::Range<usize>)> = outs
+        .iter()
+        .enumerate()
+        .flat_map(|(k, o)| (0..o.len()).step_by(block).map(move |s| (k, s..(s + block).min(o.len()))))
+        .collect();
+    let os: Vec<(SharedOut, usize)> = outs.iter_mut().map(|o| (SharedOut(o.as_mut_ptr()), o.len())).collect();
+    p.for_blocks(pieces.len(), 1, &|r| {
+        for (k, rows) in pieces[r].iter().cloned() {
+            // SAFETY: each piece's rows belong to one output and every
+            // piece is handed to exactly one thread.
+            unsafe { quant_rows(os[k].0, os[k].1, rows, ws[k], &xq, &xd, 1) }
+        }
+    });
+}
+
 /// `out = W · x` for any storage format of W.
 pub fn linear_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &Weight) {
     linear_batch_on(pool, out, x, w, 1)

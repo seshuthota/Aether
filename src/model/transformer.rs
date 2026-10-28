@@ -323,9 +323,8 @@ impl Transformer {
             // This position's k and v go straight into the cache.
             let layer_off = l * c.seq_len * kv_dim;
             let at = layer_off + pos * kv_dim;
-            k::linear_on(pool, &mut s.q, &s.xb, &lw.wq);
-            k::linear_on(pool, &mut s.key_cache[at..at + kv_dim], &s.xb, &lw.wk);
-            k::linear_on(pool, &mut s.value_cache[at..at + kv_dim], &s.xb, &lw.wv);
+            let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut s.key_cache[at..at + kv_dim], &mut s.value_cache[at..at + kv_dim]];
+            k::linear_many_on(pool, qkv, &s.xb, &[&lw.wq, &lw.wk, &lw.wv]);
             add_bias(&mut s.q, lw.bq.as_ref());
             add_bias(&mut s.key_cache[at..at + kv_dim], lw.bk.as_ref());
             add_bias(&mut s.value_cache[at..at + kv_dim], lw.bv.as_ref());
@@ -356,8 +355,7 @@ impl Transformer {
             // --- MLP ---
             k::rmsnorm(&mut s.xb, &s.x, &lw.ffn_norm, c.norm_eps);
             obs.tap("ffn_norm", Some(l), pos, &s.xb);
-            k::linear_on(pool, &mut s.hb, &s.xb, &lw.w_gate);
-            k::linear_on(pool, &mut s.hb2, &s.xb, &lw.w_up);
+            k::linear_many_on(pool, &mut [&mut s.hb, &mut s.hb2], &s.xb, &[&lw.w_gate, &lw.w_up]);
             k::swiglu(&mut s.hb, &s.hb2);
             obs.tap("swiglu", Some(l), pos, &s.hb);
             k::linear_on(pool, &mut s.xb, &s.hb, &lw.w_down);

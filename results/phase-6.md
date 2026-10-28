@@ -628,3 +628,25 @@ An earlier 3-round run (`decode-spin/timed.txt`) had Q4_0 @ d512 at 72–98
 vs 121–136 tok/s. `SPIN` is now 200 000 (2.8 ms). The cost: after the last
 job of a request, the workers spin 2.8 ms instead of 0.28 ms before they
 sleep, a few milliseconds of five busy cores per request.
+
+## Decode: q, k, v (and gate, up) as one pool job (2026-10-29; `raw/decode-fused/`)
+
+**Change**: `linear_many_on` multiplies several matrices that read the same
+input as one job: the activation is quantized once, and the threads take
+blocks of rows from all the matrices (each block inside one matrix, aligned
+as before). Decode uses it for q/k/v and for gate/up, so a Qwen2.5-0.5B
+token is 121 pool jobs instead of 193; k and v (128 rows each) no longer
+pay a hand-off of their own. Every row is computed as before: greedy
+output is byte-identical for Q4_0, Q8_0, Q4_K_M; 92/92 tests on the phone.
+
+**Result** (cores 2–7, 4 rounds with the order alternated, phone 46–63 °C;
+`timed.txt`):
+
+| tg128 tok/s, median of rounds | before (`392f9c8`) | after |
+| --- | --- | --- |
+| Q4_0 @ d0 / d512 | 133.1 / 113.0 | 133.9 / 114.5 |
+| Q8_0 @ d0 / d512 | 95.8 / 70.1 | 97.9 / 69.9 |
+| Q4_K_M @ d0 / d512 | 78.2 / 63.9 | 80.2 / 66.5 |
+
+Cycles of the whole run fall 1–2 %. Small, as expected: the hand-off is
+~1 µs and only 72 of them go per token (~0.1 ms of 8–15 ms).
