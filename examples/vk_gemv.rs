@@ -48,6 +48,23 @@ fn main() {
             gpu_cols += &format!("{:.1},{:.1},", t[2] * 1e6, bytes / t[2] / 1e9);
         }
 
+        // The same, one dispatch per submit (as a model's step submits one
+        // dispatch of each matrix), with the CPU idle in between.
+        let k1 = &ks[rs.iter().position(|&r| r == if d < 4096 { 4 } else if d < 65536 { 8 } else { 16 }).unwrap()];
+        let mut single: Vec<f64> = (0..50).map(|_| gpu.q4_0_gemv(k1, &m, &xb, &out, 1).unwrap()).collect();
+        single.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        eprintln!("# {what}: one dispatch per submit {:.1} us (median of 50)", single[25] * 1e6);
+        for gap_ms in [1u64, 5, 20] {
+            let mut v: Vec<f64> = (0..20)
+                .map(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(gap_ms));
+                    gpu.q4_0_gemv(k1, &m, &xb, &out, 1).unwrap()
+                })
+                .collect();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            eprintln!("#   after {gap_ms} ms idle: {:.1} us (median of 20)", v[10] * 1e6);
+        }
+
         let r = Weight::from(w.clone_buf()).convert(n, Format::Q4_0).repack(n);
         let mut o = vec![0.0f32; d];
         let iters = ((2e9 / bytes) as usize).clamp(20, 5000);

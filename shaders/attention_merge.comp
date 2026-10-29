@@ -1,0 +1,24 @@
+#version 450
+// Attention part 2 of 2: for query head h (workgroup h), combines the
+// chunks of attention.comp: with M the largest chunk max,
+//   out[d] = Σ_c e^(m_c − M) out_c[d] / Σ_c e^(m_c − M) l_c.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Pt { float parts[]; };
+layout(std430, binding = 1) writeonly buffer O { float o[]; };
+layout(std430, binding = 2) readonly buffer Pm { uint pos; };
+layout(push_constant) uniform P { uint hs; uint chunks; };
+
+void main() {
+    uint h = gl_WorkGroupID.x, d = gl_LocalInvocationID.x;
+    if (d >= hs) return;
+    uint n = pos / 64 + 1, stride = hs + 2, base = h * chunks * stride;
+    float mx = -1.0 / 0.0;
+    for (uint c = 0; c < n; c++) mx = max(mx, parts[base + c * stride]);
+    float num = 0.0, den = 0.0;
+    for (uint c = 0; c < n; c++) {
+        float w = exp(parts[base + c * stride] - mx);
+        num += w * parts[base + c * stride + 2 + d];
+        den += w * parts[base + c * stride + 1];
+    }
+    o[h * hs + d] = num / den;
+}

@@ -13,7 +13,7 @@
 
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
-use crate::kernels::vulkan::{Buffer, Commands, Gpu, Kernel, MatQ4_0, Result, groups_for};
+use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ4_0, Recorder, Result, groups_for};
 use crate::quant::BlockQ4_0;
 use crate::weight::Weight;
 
@@ -62,6 +62,12 @@ pub struct GpuModel {
     logits: Buffer,
     params: Buffer,
     step: Commands,
+    /// With profiling: the stage each timestamp ends ([`GpuModel::profile`]).
+    stages: Vec<&'static str>,
+    /// Poll the fence instead of sleeping on it ([`Gpu::submit`]). Off by
+    /// default: in a sustained run polling was slower (86 vs 103 tok/s) and
+    /// cost more power (results/phase-l3.md step 5).
+    pub spin: bool,
     // Everything the recorded commands use must outlive them; held here.
     _keep: Vec<Buffer>,
     _mats: Vec<MatQ4_0>,
@@ -70,11 +76,15 @@ pub struct GpuModel {
 }
 
 impl GpuModel {
-    /// Uploads the matrices and records the decode step.
-    pub fn new(gpu: &Gpu, config: Config, weights: Weights) -> Result<GpuModel> {
+    /// Uploads the matrices and records the decode step. With `profile`,
+    /// the step writes a GPU timestamp after every stage
+    /// ([`GpuModel::profile`]).
+    pub fn new(gpu: &Gpu, config: Config, weights: Weights, profile: bool) -> Result<GpuModel> {
         let c = &config;
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
-        assert!(256 % hs == 0, "the attention shader needs head_size dividing 256");
+        assert!(hs <= 64, "the attention shaders need head_size <= 64");
+        // Attention works in chunks of 64 positions (shaders/attention.comp).
+        let chunks = c.seq_len.div_ceil(64);
         let f32buf = |v: &[f32]| -> Result<Buffer> {
             let mut b = gpu.buffer(v.len().max(1) * 4)?;
             b.as_mut_slice::<f32>()[..v.len()].copy_from_slice(v);
@@ -113,13 +123,14 @@ impl GpuModel {
         let logits = zeros(c.vocab_size)?;
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
-        let scores = zeros(c.n_heads * c.seq_len)?;
+        let parts = zeros(c.n_heads * chunks * (hs + 2))?;
         // pos, 3 × padding, then (sin, cos) per rotation pair.
         let params = zeros(4 + hs)?;
 
         let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 8)?;
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 20)?;
-        let attn = Kernel::new(gpu, crate::spirv!("attention"), 6, 20)?;
+        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 20)?;
+        let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
         let add = Kernel::new(gpu, crate::spirv!("add"), 2, 4)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
         let gemvs = [4, 8, 16].map(|r| gpu.q4_0_gemv_kernel(r));
@@ -136,20 +147,21 @@ impl GpuModel {
         let elems = |n: usize| [n.div_ceil(256) as u32, 1, 1];
         // Bind everything first (binding can fail; recording cannot).
         struct Bl {
-            norm1: crate::kernels::vulkan::Bound,
-            q: crate::kernels::vulkan::Bound,
-            k: crate::kernels::vulkan::Bound,
-            v: crate::kernels::vulkan::Bound,
-            post: crate::kernels::vulkan::Bound,
-            attn: crate::kernels::vulkan::Bound,
-            o: crate::kernels::vulkan::Bound,
-            add1: crate::kernels::vulkan::Bound,
-            norm2: crate::kernels::vulkan::Bound,
-            gate: crate::kernels::vulkan::Bound,
-            up: crate::kernels::vulkan::Bound,
-            swiglu: crate::kernels::vulkan::Bound,
-            down: crate::kernels::vulkan::Bound,
-            add2: crate::kernels::vulkan::Bound,
+            norm1: Bound,
+            q: Bound,
+            k: Bound,
+            v: Bound,
+            post: Bound,
+            attn: Bound,
+            merge: Bound,
+            o: Bound,
+            add1: Bound,
+            norm2: Bound,
+            gate: Bound,
+            up: Bound,
+            swiglu: Bound,
+            down: Bound,
+            add2: Bound,
         }
         let gemv_bind = |m: &MatQ4_0, input: &Buffer, out: &Buffer| gemv_k(m.rows).bind(gpu, &[&m.qs, &m.d, input, out]);
         let mut bound = Vec::new();
@@ -160,7 +172,8 @@ impl GpuModel {
                 k: gemv_bind(&ly.wk, &xb, &k)?,
                 v: gemv_bind(&ly.wv, &xb, &v)?,
                 post: post.bind(gpu, &[&q, &k, &v, &ly.bq, &ly.bk, &ly.bv, &kc, &vc, &params])?,
-                attn: attn.bind(gpu, &[&q, &kc, &vc, &scores, &xb2, &params])?,
+                attn: attn.bind(gpu, &[&q, &kc, &vc, &parts, &params])?,
+                merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
                 o: gemv_bind(&ly.wo, &xb2, &xb)?,
                 add1: add.bind(gpu, &[&x, &xb])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
@@ -176,45 +189,59 @@ impl GpuModel {
         let gemv_push = |m: &MatQ4_0| push(&[m.rows as u32, m.nb as u32]);
         let gemv_groups = |m: &MatQ4_0| groups_for(m.rows, 4 * gemv_r(m.rows) as usize);
 
-        let step = gpu.record(|r| {
+        // Each stage ends with a barrier, and with `profile` a timestamp.
+        let mut stages = Vec::new();
+        let rec = |r: &mut Recorder, stages: &mut Vec<&'static str>| {
+            let mut end = |r: &mut Recorder, name: &'static str| {
+                r.barrier();
+                r.stamp();
+                stages.push(name);
+            };
             for (l, (b, ly)) in bound.iter().zip(&layers).enumerate() {
                 let layer_off = (l * c.seq_len * kv_dim) as u32;
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps]), one);
-                r.barrier();
+                end(r, "rmsnorm");
                 for (bd, m) in [(&b.q, &ly.wq), (&b.k, &ly.wk), (&b.v, &ly.wv)] {
                     r.dispatch(bd, &gemv_push(m), gemv_groups(m));
                 }
-                r.barrier();
+                end(r, "q/k/v");
                 r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off]), one);
-                r.barrier();
-                r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, c.seq_len as u32, layer_off]), [c.n_heads as u32, 1, 1]);
-                r.barrier();
+                end(r, "bias + RoPE + cache");
+                r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks as u32, layer_off]), [c.n_heads as u32, chunks as u32, 1]);
+                end(r, "attention");
+                r.dispatch(&b.merge, &push(&[hs as u32, chunks as u32]), [c.n_heads as u32, 1, 1]);
+                end(r, "attention merge");
                 r.dispatch(&b.o, &gemv_push(&ly.wo), gemv_groups(&ly.wo));
-                r.barrier();
+                end(r, "wo");
                 r.dispatch(&b.add1, &push(&[dim as u32]), elems(dim));
-                r.barrier();
+                end(r, "add");
                 r.dispatch(&b.norm2, &push(&[dim as u32, eps]), one);
-                r.barrier();
+                end(r, "rmsnorm");
                 r.dispatch(&b.gate, &gemv_push(&ly.w_gate), gemv_groups(&ly.w_gate));
                 r.dispatch(&b.up, &gemv_push(&ly.w_up), gemv_groups(&ly.w_up));
-                r.barrier();
+                end(r, "gate/up");
                 r.dispatch(&b.swiglu, &push(&[hid as u32]), elems(hid));
-                r.barrier();
+                end(r, "swiglu");
                 r.dispatch(&b.down, &gemv_push(&ly.w_down), gemv_groups(&ly.w_down));
-                r.barrier();
+                end(r, "down");
                 r.dispatch(&b.add2, &push(&[dim as u32]), elems(dim));
-                r.barrier();
+                end(r, "add");
             }
             r.dispatch(&fnorm, &push(&[dim as u32, eps]), one);
-            r.barrier();
+            end(r, "rmsnorm");
             r.dispatch(&fcls, &gemv_push(&cls), gemv_groups(&cls));
-        })?;
+            end(r, "classifier");
+        };
+        let step = if profile { gpu.record_timed(|r| rec(r, &mut stages))? } else { gpu.record(|r| rec(r, &mut stages))? };
+        if !profile {
+            stages.clear();
+        }
 
-        let mut keep = vec![xb, xb2, q, k, v, hb, hb2, kc, vc, scores, final_norm];
+        let mut keep = vec![xb, xb2, q, k, v, hb, hb2, kc, vc, parts, final_norm];
         keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, add, swiglu];
+        let mut kernels = vec![rms, post, attn, merge, add, swiglu];
         kernels.extend(gemvs);
-        Ok(GpuModel { config, weights, x, logits, params, step, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
+        Ok(GpuModel { config, weights, x, logits, params, step, stages, spin: false, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
@@ -229,7 +256,23 @@ impl GpuModel {
             p[4 + 2 * i] = sin.to_bits();
             p[5 + 2 * i] = cos.to_bits();
         }
-        gpu.submit(&self.step)?;
+        gpu.submit(&self.step, self.spin)?;
         Ok(&self.logits.as_slice::<f32>()[..c.vocab_size])
+    }
+
+    /// GPU seconds of the last [`GpuModel::forward`] per kind of stage
+    /// (summed over layers), in order of first appearance; empty unless
+    /// the model was made with `profile`.
+    pub fn profile(&self, gpu: &Gpu) -> Result<Vec<(&'static str, f64)>> {
+        let t = gpu.stamps(&self.step)?;
+        let mut out: Vec<(&'static str, f64)> = Vec::new();
+        for (i, name) in self.stages.iter().enumerate() {
+            let dt = t[i + 1] - t[i];
+            match out.iter_mut().find(|(n, _)| n == name) {
+                Some(e) => e.1 += dt,
+                None => out.push((name, dt)),
+            }
+        }
+        Ok(out)
     }
 }

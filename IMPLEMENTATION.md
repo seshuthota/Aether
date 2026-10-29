@@ -290,7 +290,11 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
   - [x] A whole decode step on the GPU (`model::gpu::GpuModel`, one recorded command buffer
         per token): PPL matches llama.cpp (SmolLM2-135M 27.6910 vs 27.7412 ± 1.177, Qwen2.5-0.5B
         19.7193 vs 19.7283 ± 0.836; `vk_ppl`).
-  - [ ] Decode speed (now 98 tok/s Qwen at d0, 52 average over 512; CPU ~180) and energy per token.
+  - [x] Decode speed and energy (`vk_decode`): per-stage GPU timestamps; attention split in
+        64-position chunks + merge (d1024 5.6 → 2.0 ms). Sustained 120 s: GPU 103 tok/s at
+        ~2.3 W = 0.021–0.024 J/token, 68 °C; CPU 158 tok/s at 4.5 W = 0.029 J/token, 89 °C.
+        Limit: GPU/bus clocks drop between bursts (no Vulkan control; sysfs needs root).
+  - [ ] Prefill on the GPU (the GEMM of step 3 in a batched forward pass); a CLI/app switch.
 - [ ] **L.5** NPU: not started.
 
 ---

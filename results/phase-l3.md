@@ -174,7 +174,66 @@ of France is Paris. It is the largest city in the world…" (Qwen).
 
 **Speed** (first, before any tuning): 98 tok/s for Qwen at short context,
 52 tok/s averaged over positions 0–510; SmolLM2-135M 106–122 tok/s. The
-CPU does ~180 and ~400. Matrices alone would take ~6 ms per Qwen token
-(step 2), so the rest must be in the other shaders, which still run
-one workgroup (rmsnorm, qkv_post) or one per head (attention), and in
-submit/wait. Profiling that comes next.
+CPU does ~180 and ~400. Step 5 looks at why.
+
+## Step 5: where the GPU's decode time goes, and energy per token (2026-10-29; `raw/energy-gpu-vs-cpu.txt`)
+
+`examples/vk_decode.rs` records the step with a GPU timestamp after every
+stage (`Gpu::record_timed`, `GpuModel::profile`). Qwen2.5-0.5B Q4_0, ms
+per token summed over the 24 layers:
+
+| stage | depth 0 | depth 256 | depth 1024 |
+| --- | --- | --- | --- |
+| gate/up | 4.20 | 3.62 | 5.10 |
+| down | 2.30 | 1.99 | 2.71 |
+| classifier | 2.46 | 2.10 | 3.09 |
+| q/k/v + wo | 1.41 | 1.25 | 1.60 |
+| attention (one workgroup per head) | 0.51 | 1.58 | **5.59** |
+| rmsnorm, add, swiglu, bias + RoPE | 1.07 | 0.98 | 1.08 |
+| total on the GPU | 11.95 | 11.52 | 19.16 |
+
+Two findings:
+
+1. **The matrices run at about half their stand-alone speed.** The
+   classifier takes 2.46 ms here and 1.23 ms in `vk_gemv`. The reason is
+   the clocks. With the GPU idle for a few milliseconds before a single
+   dispatch, the same GEMV is 1.5–2.7× slower (`vk_gemv`; classifier
+   1.23 → 1.66 / 2.70 / 3.34 ms after 1 / 5 / 20 ms idle; gate/up 60 →
+   95 µs). The GPU's (and memory bus's) frequency governors scale with
+   recent load, and decode is bursty: one token's dispatches, then the
+   CPU's turn. Vulkan has no way to ask for clocks, and the sysfs
+   controls (`/sys/class/kgsl/kgsl-3d0/*`) are not readable without
+   root. Run to run, the same decode measurement varies from 50 to 105
+   tok/s.
+2. **Attention with one workgroup per head leaves the GPU mostly idle.**
+   It is now split like the CPU's flash-decoding: workgroups (head,
+   64-position chunk) write (max, sum, partial output), and a merge
+   shader combines them (`attention.comp`, `attention_merge.comp`). The
+   dispatch is recorded once for every chunk the cache can hold, and
+   chunks past the position return at once. Depth 1024: 5.59 → 1.95 ms.
+   PPL is unchanged (19.7193, 27.6910), and the average speed over the
+   PPL runs went from 52.5 to 80.5 tok/s (Qwen) and from 87.6 to
+   122.4 (SmolLM2-135M).
+
+The GPU timestamps themselves cost ~2–3 ms per token, so speeds are
+measured without them.
+
+**Sustained decode and energy** (Qwen2.5-0.5B Q4_0, 120 s each, 64-token
+bursts from position 0, on battery, each run starting below 42 °C,
+`raw/energy.sh`):
+
+| | tok/s | power (charge counter / sampler) | energy per token | max temp |
+| --- | --- | --- | --- | --- |
+| CPU, cores 2–7 | **157.6** | 4.55 / 4.28 W | 0.029 J | 88.8 °C |
+| GPU, CPU polls the fence | 86.4 | 2.37 / 1.93 W | 0.027 J | 64.6 °C |
+| GPU, CPU sleeps on the fence | 102.7 | 2.17 / 2.48 W | **0.021–0.024 J** | 67.6 °C |
+
+- **The GPU path uses about half the power and stays 20 °C cooler.** At
+  0.65× the CPU's speed it spends less energy per token. On a phone that
+  is a real choice: the CPU when speed matters, the GPU for long
+  generations or to leave the CPU to the app.
+- Polling the fence made the GPU path slower as well as costlier. The
+  polling core probably competes with the GPU for the shared power and
+  thermal budget. `GpuModel` now sleeps on the fence by default.
+- The charge-counter windows are short (42–89 s, the counter moves in
+  steps), so the energy figures are ±15 %.

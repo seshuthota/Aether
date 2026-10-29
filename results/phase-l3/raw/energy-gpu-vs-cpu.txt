@@ -1,0 +1,52 @@
+>>> GPU start 41100
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | sustain
+sustain_t_s,tok_per_s
+11,101.9
+21,57.5
+31,89.0
+41,106.1
+51,63.7
+61,82.1
+72,93.0
+82,102.8
+93,79.0
+103,106.3
+114,71.7
+# sustained: 10432 tokens in 121 s = 86.4 tok/s average
+# monitor: 243 samples over 120.72 s, max temp 64.6 °C, energy 233.34 J, avg power 1.93 W, charge counter: 211.7 J over a 89 s window = 2.37 W
+# energy per token: 0.027 J (2.37 W from charge counter)
+>>> CPU start 41900
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 305 ms
+# tg64@d0 per token: median 7.11 ms, p95 7.21 ms (64 samples)
+sustain_t_s,tok_per_s
+10,124.8
+20,172.0
+30,176.9
+40,172.6
+51,169.1
+61,166.7
+71,152.0
+81,161.7
+92,151.5
+102,148.8
+112,147.6
+# sustained: 18944 tokens in 120 s = 157.6 tok/s average
+# monitor: 242 samples over 120.20 s, max temp 88.8 °C, energy 514.68 J, avg power 4.28 W, charge counter: 261.8 J over a 57 s window = 4.55 W
+# energy per token: 0.029 J (4.55 W from charge counter)
+>>> GPU (fence slept on) start 41900
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | sustain | fence: slept on
+sustain_t_s,tok_per_s
+11,97.3
+21,109.3
+32,110.1
+42,104.1
+52,98.2
+63,100.3
+73,102.6
+84,104.8
+94,100.4
+104,93.8
+115,109.4
+# sustained: 12352 tokens in 120 s = 102.7 tok/s average
+# monitor: 242 samples over 120.30 s, max temp 67.6 °C, energy 298.24 J, avg power 2.48 W, charge counter: 92.1 J over a 42 s window = 2.17 W
+# energy per token: 0.021 J (2.17 W from charge counter)

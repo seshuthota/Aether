@@ -26,7 +26,7 @@ fn main() {
     let (config, weights, _) = aether::model::gguf::load(&path, ctx).unwrap();
     let gpu = Gpu::new().unwrap();
     let t0 = Instant::now();
-    let mut m = GpuModel::new(&gpu, config, weights).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::new(&gpu, config, weights, false).unwrap_or_else(|e| panic!("{e}"));
     println!("# {} on {} | upload + record {:.0} ms", path.display(), gpu.info.name, t0.elapsed().as_secs_f64() * 1e3);
 
     // Greedy continuation (eyeball check) and decode speed.

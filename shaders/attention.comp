@@ -1,77 +1,60 @@
 #version 450
-// Attention of one token (decode) over positions 0..pos, one workgroup per
-// query head h, reading K/V head h / (n_heads / n_kv) (grouped-query):
-//   1. scores s_t = q·k_t / sqrt(hs), each thread every 256th position,
-//      kept in `scores` (global scratch, one row of seq_len per head);
-//   2. softmax: max and sum by shared-memory reductions;
-//   3. out = Σ_t p_t v_t: 256 / hs groups of hs threads, group g summing
-//      positions t ≡ g (mod 256 / hs), then the groups are added.
-// hs must divide 256.
-layout(local_size_x = 256) in;
+// Attention of one token (decode), part 1 of 2: workgroup (h, c) handles
+// query head h (reading K/V head h / (n_heads / n_kv), grouped-query) over
+// the 64 positions of chunk c, like the CPU's flash-decoding: thread i
+// scores position 64c + i, the chunk's max m and sum l of e^(s − m) come
+// from shared-memory reductions, and thread d sums Σ e^(s_t − m) v_t[d].
+// Written to `parts[h][c]` as (m, l, out[0..hs]); attention_merge.comp
+// combines the chunks. The dispatch covers every chunk the cache can hold
+// (it is recorded once); chunks past the current position return at once.
+// hs must be at most 64.
+layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer Qv { float q[]; };
 layout(std430, binding = 1) readonly buffer Kc { float kc[]; };
 layout(std430, binding = 2) readonly buffer Vc { float vc[]; };
-layout(std430, binding = 3) buffer S { float scores[]; };
-layout(std430, binding = 4) writeonly buffer O { float o[]; };
-layout(std430, binding = 5) readonly buffer Pm { uint pos; };
-layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint seq_len; uint layer_off; };
+layout(std430, binding = 3) writeonly buffer Pt { float parts[]; };
+layout(std430, binding = 4) readonly buffer Pm { uint pos; };
+layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; };
 
-shared float red[256];
+shared float red[64];
+shared float p[64];
 
-float reduce_max(uint id, float v) {
-    red[id] = v;
+void main() {
+    uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, id = gl_LocalInvocationID.x;
+    uint t0 = 64 * c;
+    if (t0 > pos) return;
+    uint n = min(64, pos + 1 - t0);
+    uint kv_dim = n_kv * hs, kvo = layer_off + (h / (n_heads / n_kv)) * hs;
+    float s = -1.0 / 0.0;
+    if (id < n) {
+        s = 0.0;
+        for (uint d = 0; d < hs; d++) s += q[h * hs + d] * kc[kvo + (t0 + id) * kv_dim + d];
+        s /= sqrt(float(hs));
+    }
+    red[id] = s;
     barrier();
-    for (uint m = 128; m > 0; m >>= 1) {
+    for (uint m = 32; m > 0; m >>= 1) {
         if (id < m) red[id] = max(red[id], red[id + m]);
         barrier();
     }
-    float r = red[0];
+    float mx = red[0];
     barrier();
-    return r;
-}
-
-float reduce_sum(uint id, float v) {
-    red[id] = v;
+    float e = id < n ? exp(s - mx) : 0.0;
+    p[id] = e;
+    red[id] = e;
     barrier();
-    for (uint m = 128; m > 0; m >>= 1) {
+    for (uint m = 32; m > 0; m >>= 1) {
         if (id < m) red[id] += red[id + m];
         barrier();
     }
-    float r = red[0];
-    barrier();
-    return r;
-}
-
-void main() {
-    uint h = gl_WorkGroupID.x, id = gl_LocalInvocationID.x;
-    uint kv_dim = n_kv * hs, kvo = layer_off + (h / (n_heads / n_kv)) * hs, sb = h * seq_len;
-    float scale = 1.0 / sqrt(float(hs));
-    float mx = -1.0 / 0.0;
-    for (uint t = id; t <= pos; t += 256) {
-        float s = 0.0;
-        for (uint d = 0; d < hs; d++) s += q[h * hs + d] * kc[kvo + t * kv_dim + d];
-        s *= scale;
-        scores[sb + t] = s;
-        mx = max(mx, s);
-    }
-    float m = reduce_max(id, mx);
-    float sum = 0.0;
-    for (uint t = id; t <= pos; t += 256) {
-        float e = exp(scores[sb + t] - m);
-        scores[sb + t] = e;
-        sum += e;
-    }
-    float total = reduce_sum(id, sum);
-    memoryBarrierBuffer();
-    barrier();
-    uint groups = 256 / hs, g = id / hs, d = id % hs;
-    float acc = 0.0;
-    for (uint t = g; t <= pos; t += groups) acc += scores[sb + t] * vc[kvo + t * kv_dim + d];
-    red[id] = acc;
-    barrier();
+    uint base = (h * chunks + c) * (hs + 2);
     if (id < hs) {
-        float a = 0.0;
-        for (uint j = 0; j < groups; j++) a += red[j * hs + id];
-        o[h * hs + id] = a / total;
+        float acc = 0.0;
+        for (uint t = 0; t < n; t++) acc += p[t] * vc[kvo + (t0 + t) * kv_dim + id];
+        parts[base + 2 + id] = acc;
+    }
+    if (id == 0) {
+        parts[base] = mx;
+        parts[base + 1] = red[0];
     }
 }

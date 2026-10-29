@@ -383,6 +383,8 @@ pub struct Bound {
 pub struct Recorder<'a> {
     device: &'a ash::Device,
     cb: vk::CommandBuffer,
+    /// With [`Gpu::record_timed`]: the query pool and how many stamps.
+    queries: Option<(vk::QueryPool, u32)>,
 }
 
 impl Recorder<'_> {
@@ -401,6 +403,18 @@ impl Recorder<'_> {
         }
     }
 
+    /// A GPU timestamp once everything before it has finished (only in
+    /// [`Gpu::record_timed`] commands; otherwise nothing). Returns its index.
+    pub fn stamp(&mut self) -> usize {
+        let Some((qp, n)) = &mut self.queries else { return 0 };
+        assert!(*n < MAX_STAMPS, "more than {MAX_STAMPS} stamps");
+        // SAFETY: recording into a live command buffer; the query is reset
+        // at the start of the buffer.
+        unsafe { self.device.cmd_write_timestamp(self.cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, *qp, *n) };
+        *n += 1;
+        *n as usize - 1
+    }
+
     /// Everything dispatched so far finishes, and its writes are visible,
     /// before anything dispatched later starts.
     pub fn barrier(&mut self) {
@@ -417,12 +431,19 @@ pub struct Commands {
     pool: vk::CommandPool,
     cb: vk::CommandBuffer,
     fence: vk::Fence,
+    queries: Option<(vk::QueryPool, u32)>,
 }
+
+/// Timestamps one [`Gpu::record_timed`] command buffer may hold.
+const MAX_STAMPS: u32 = 1024;
 
 impl Drop for Commands {
     fn drop(&mut self) {
         // SAFETY: every submit waited for its fence, so nothing is running.
         unsafe {
+            if let Some((qp, _)) = self.queries {
+                self.device.destroy_query_pool(qp, None);
+            }
             self.device.destroy_fence(self.fence, None);
             self.device.free_command_buffers(self.pool, &[self.cb]);
         }
@@ -435,6 +456,27 @@ impl Gpu {
     /// the commands, and the commands' writes are visible to the host after
     /// the submit returns.
     pub fn record(&self, f: impl FnOnce(&mut Recorder)) -> Result<Commands> {
+        self.record_with(false, f)
+    }
+
+    /// [`Gpu::record`] where [`Recorder::stamp`] writes GPU timestamps, read
+    /// after a submit with [`Gpu::stamps`]. A stamp is written at the start
+    /// too, so stamp i's time since the start is `stamps()[i + 1]`.
+    pub fn record_timed(&self, f: impl FnOnce(&mut Recorder)) -> Result<Commands> {
+        self.record_with(true, f)
+    }
+
+    /// Seconds from the start of the last submit of `c` to each stamp
+    /// (the first entry is the start itself, 0).
+    pub fn stamps(&self, c: &Commands) -> Result<Vec<f64>> {
+        let Some((qp, n)) = c.queries else { return Ok(Vec::new()) };
+        let mut ts = vec![0u64; n as usize];
+        // SAFETY: the last submit was waited for, so all n queries are written.
+        unsafe { self.device.get_query_pool_results(qp, 0, &mut ts, vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT) }.map_err(vkr("timestamps"))?;
+        Ok(ts.iter().map(|&t| t.wrapping_sub(ts[0]) as f64 * self.info.timestamp_period as f64 * 1e-9).collect())
+    }
+
+    fn record_with(&self, timed: bool, f: impl FnOnce(&mut Recorder)) -> Result<Commands> {
         let d = &self.device;
         // SAFETY: live device and pool; the buffer is recorded completely
         // before it is returned.
@@ -443,11 +485,18 @@ impl Gpu {
                 .allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(self.pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1))
                 .map_err(vkr("allocate command buffer"))?[0];
             let fence = d.create_fence(&vk::FenceCreateInfo::default(), None).map_err(vkr("create fence"))?;
-            let cmds = Commands { device: d.clone(), pool: self.pool, cb, fence };
+            let qp = if timed { Some(d.create_query_pool(&vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(MAX_STAMPS), None).map_err(vkr("create query pool"))?) } else { None };
+            let mut cmds = Commands { device: d.clone(), pool: self.pool, cb, fence, queries: qp.map(|q| (q, 0)) };
             d.begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default()).map_err(vkr("begin"))?;
+            if let Some(q) = qp {
+                d.cmd_reset_query_pool(cb, q, 0, MAX_STAMPS);
+            }
             let host_in = [vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::HOST_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ)];
             d.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::HOST, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &host_in, &[], &[]);
-            f(&mut Recorder { device: d, cb });
+            let mut rec = Recorder { device: d, cb, queries: qp.map(|q| (q, 0)) };
+            rec.stamp();
+            f(&mut rec);
+            cmds.queries = rec.queries;
             let host_out = [vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
             d.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::HOST, vk::DependencyFlags::empty(), &host_out, &[], &[]);
             d.end_command_buffer(cb).map_err(vkr("end"))?;
@@ -455,14 +504,20 @@ impl Gpu {
         }
     }
 
-    /// Runs recorded commands and waits until they are done.
-    pub fn submit(&self, c: &Commands) -> Result<()> {
+    /// Runs recorded commands and waits until they are done. With `spin`,
+    /// the CPU polls the fence (for up to 100 ms, then sleeps on it) instead
+    /// of sleeping until the driver wakes it: the next step starts sooner.
+    pub fn submit(&self, c: &Commands, spin: bool) -> Result<()> {
         let d = &self.device;
         let cbs = [c.cb];
         // SAFETY: the command buffer is fully recorded and not running (the
         // previous submit waited); the fence is reset before reuse.
         unsafe {
             d.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], c.fence).map_err(vkr("submit"))?;
+            let t = std::time::Instant::now();
+            while spin && t.elapsed().as_millis() < 100 && !d.get_fence_status(c.fence).map_err(vkr("fence status"))? {
+                std::hint::spin_loop();
+            }
             d.wait_for_fences(&[c.fence], true, u64::MAX).map_err(vkr("wait"))?;
             d.reset_fences(&[c.fence]).map_err(vkr("reset fence"))
         }

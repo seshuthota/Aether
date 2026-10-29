@@ -41,3 +41,7 @@ required-features = ["vulkan"]
 [[example]]
 name = "vk_ppl"
 required-features = ["vulkan"]
+
+[[example]]
+name = "vk_decode"
+required-features = ["vulkan"]
