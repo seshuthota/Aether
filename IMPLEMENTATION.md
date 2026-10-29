@@ -275,6 +275,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       (`--draft PATH`, `Drafter`; results/phase-6.md "Speculative decoding with a draft
       model"): SmolLM2-135M for 360M, 0 to +29 % at 81–95 % acceptance, because the 135M
       model decodes only 2× faster, and a K = 3 pass costs ~2.9 target steps.
+- [x] **Lookup in the C ABI and the app** (2026-10-29): `aether_set_lookup(session, k, ngram)`
+      (include/aether.h), `Aether.setLookup` in Kotlin, a "lookup" checkbox in the app (K = 3).
+      `c_abi_round_trip` checks the greedy text with lookup on. Not yet tried in the app's UI
+      (the phone was locked); the APK builds and installs.
 - [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
 
 ---

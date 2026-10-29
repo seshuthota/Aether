@@ -26,8 +26,13 @@ pub const AETHER_ERR_ARGUMENT: c_int = 1;
 pub const AETHER_ERR_LOAD: c_int = 2;
 pub const AETHER_ERR_PANIC: c_int = 3;
 
-/// What C holds: a loaded model.
-pub struct AetherSession(Session);
+/// What C holds: a loaded model, and the prompt lookup settings
+/// (`aether_set_lookup`; draft length 0 = off).
+pub struct AetherSession {
+    session: Session,
+    lookup_k: usize,
+    lookup_ngram: usize,
+}
 
 /// Timings of one `aether_generate` call (milliseconds).
 #[repr(C)]
@@ -125,7 +130,7 @@ pub unsafe extern "C" fn aether_open(path: *const c_char, cores: *const c_char, 
         match Session::open(Path::new(path), None, max_seq as usize, Format::F32, cores.as_deref()) {
             Ok(s) => {
                 // SAFETY: `out` is non-null and writable (caller's contract).
-                unsafe { *out = Box::into_raw(Box::new(AetherSession(s))) };
+                unsafe { *out = Box::into_raw(Box::new(AetherSession { session: s, lookup_k: 0, lookup_ngram: 2 })) };
                 AETHER_OK
             }
             Err(e) => {
@@ -167,7 +172,7 @@ pub unsafe extern "C" fn aether_generate(
         }
         // SAFETY: a live handle from aether_open (caller's contract); the
         // caller does not use it from another thread during this call.
-        let s = unsafe { &mut (*session).0 };
+        let AetherSession { session: s, lookup_k, lookup_ngram } = unsafe { &mut *session };
         // SAFETY: caller's contract.
         let prompt = match unsafe { str_arg(prompt, "prompt") } {
             Ok(p) => p,
@@ -181,7 +186,8 @@ pub unsafe extern "C" fn aether_generate(
             return AETHER_ERR_ARGUMENT;
         }
         let mut sampler = Sampler::new(temperature, top_p, 0, seed.max(1));
-        let st = s.generate(&text, &mut sampler, steps, false, |piece| on_text(piece.as_ptr(), piece.len(), user) != 0);
+        let emit = |piece: &[u8]| on_text(piece.as_ptr(), piece.len(), user) != 0;
+        let st = if *lookup_k > 0 { s.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0 } else { s.generate(&text, &mut sampler, steps, false, emit) };
         if !stats.is_null() {
             // SAFETY: non-null and writable (caller's contract).
             unsafe {
@@ -193,6 +199,29 @@ pub unsafe extern "C" fn aether_generate(
                 }
             };
         }
+        AETHER_OK
+    })
+}
+
+/// Turns prompt lookup decoding on for later `aether_generate` calls:
+/// after each token, up to `k` draft tokens are copied from the last
+/// earlier place where the last `ngram` tokens occurred, and checked in one
+/// batched pass (`Session::generate_lookup`). Faster when the reply repeats
+/// the prompt (code edits, quoting); the output keeps the sampler's
+/// distribution. `k` = 0 turns it off; `ngram` must be at least 1.
+///
+/// # Safety
+/// `session` must come from `aether_open` and not be closed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_set_lookup(session: *mut AetherSession, k: u32, ngram: u32) -> c_int {
+    guard(|| {
+        if session.is_null() || ngram == 0 {
+            set_error(if session.is_null() { "session is null" } else { "ngram must be at least 1" });
+            return AETHER_ERR_ARGUMENT;
+        }
+        // SAFETY: a live handle from aether_open (caller's contract).
+        let s = unsafe { &mut *session };
+        (s.lookup_k, s.lookup_ngram) = (k as usize, ngram as usize);
         AETHER_OK
     })
 }
@@ -242,6 +271,12 @@ mod tests {
             let want = std::fs::read_to_string(golden("stories15M/greedy.txt").unwrap()).unwrap();
             assert_eq!(String::from_utf8(out).unwrap(), want.trim_end().trim_start_matches("Once upon a time"));
             assert_eq!(stats.prefill_tokens, 5);
+            // Prompt lookup decoding gives the same greedy text.
+            assert_eq!(aether_set_lookup(s, 4, 1), AETHER_OK);
+            let mut out = Vec::<u8>::new();
+            assert_eq!(aether_generate(s, prompt.as_ptr(), 0, 0.0, 0.9, 59, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
+            assert_eq!(String::from_utf8(out).unwrap(), want.trim_end().trim_start_matches("Once upon a time"));
+            assert_eq!(aether_set_lookup(s, 4, 0), AETHER_ERR_ARGUMENT);
             // Errors come back as codes plus a message, never as a panic.
             let bad = CString::new("/nonexistent/model.gguf").unwrap();
             let mut s2: *mut AetherSession = std::ptr::null_mut();

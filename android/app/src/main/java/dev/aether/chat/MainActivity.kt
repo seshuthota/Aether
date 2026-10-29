@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var models: Spinner
     private lateinit var cores: EditText
     private lateinit var chat: CheckBox
+    private lateinit var lookup: CheckBox
     private lateinit var prompt: EditText
     private lateinit var go: Button
     private lateinit var output: TextView
@@ -57,6 +58,8 @@ class MainActivity : Activity() {
             text = "chat"
             isChecked = true
         }
+        // Prompt lookup decoding: pays when the reply repeats the prompt.
+        lookup = CheckBox(this).apply { text = "lookup" }
         prompt = EditText(this).apply {
             hint = "Ask something"
             setText("Why is the sky blue?")
@@ -77,6 +80,7 @@ class MainActivity : Activity() {
             addView(models, LinearLayout.LayoutParams(0, -2, 1f))
             addView(cores)
             addView(chat)
+            addView(lookup)
         }
         val ask = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -122,6 +126,7 @@ class MainActivity : Activity() {
         val coreList = cores.text.toString().trim()
         val text = prompt.text.toString()
         val asChat = chat.isChecked
+        val draft = if (lookup.isChecked) 3 else 0
         running = true
         stop.set(false)
         go.text = "Stop"
@@ -140,6 +145,7 @@ class MainActivity : Activity() {
                     val ms = (System.nanoTime() - t0) / 1e6
                     ui { status.text = "Loaded in %.0f ms".format(ms) }
                 }
+                session!!.setLookup(draft)
                 val utf8 = Utf8Stream()
                 val st = session!!.generate(text, asChat, 0.7f, 0.9f, MAX_TOKENS, System.nanoTime()) { bytes ->
                     val piece = utf8.feed(bytes)

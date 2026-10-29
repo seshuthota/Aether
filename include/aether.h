@@ -45,6 +45,12 @@ int aether_generate(AetherSession *session, const char *prompt, int chat,
                     float temperature, float top_p, uint32_t max_tokens, uint64_t seed,
                     AetherTokenCallback on_text, void *user, AetherStats *stats);
 
+/* Prompt lookup decoding for later aether_generate calls: up to k draft
+ * tokens copied from the last earlier match of the last `ngram` tokens,
+ * checked in one batched pass. Faster when the reply repeats the prompt
+ * (code edits, quoting). k = 0 turns it off; ngram >= 1 (2 is a good default). */
+int aether_set_lookup(AetherSession *session, uint32_t k, uint32_t ngram);
+
 /* Message for the last error on this thread; valid until the next call. */
 const char *aether_last_error(void);
 

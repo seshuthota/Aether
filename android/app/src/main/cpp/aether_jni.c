@@ -83,6 +83,12 @@ Java_dev_aether_chat_Aether_nativeGenerate(JNIEnv *env, jclass cls, jlong handle
 }
 
 JNIEXPORT void JNICALL
+Java_dev_aether_chat_Aether_nativeSetLookup(JNIEnv *env, jclass cls, jlong handle, jint k, jint ngram) {
+    (void)cls;
+    if (aether_set_lookup((AetherSession *)(intptr_t)handle, (uint32_t)k, (uint32_t)ngram) != AETHER_OK) throw_error(env);
+}
+
+JNIEXPORT void JNICALL
 Java_dev_aether_chat_Aether_nativeClose(JNIEnv *env, jclass cls, jlong handle) {
     (void)env;
     (void)cls;

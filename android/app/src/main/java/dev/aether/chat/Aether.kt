@@ -25,6 +25,16 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         return Stats(s[0].toInt(), s[1], s[2].toInt(), s[3])
     }
 
+    /**
+     * Prompt lookup decoding for later [generate] calls: up to [k] draft
+     * tokens copied from earlier text, checked in one batched pass. Faster
+     * when the reply repeats the prompt; [k] = 0 turns it off.
+     */
+    fun setLookup(k: Int, ngram: Int = 2) {
+        check(handle != 0L) { "session is closed" }
+        nativeSetLookup(handle, k, ngram)
+    }
+
     override fun close() {
         nativeClose(handle)
         handle = 0
@@ -44,6 +54,8 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
             handle: Long, prompt: ByteArray, chat: Boolean, temperature: Float, topP: Float,
             maxTokens: Int, seed: Long, onText: OnText,
         ): DoubleArray
+
+        @JvmStatic private external fun nativeSetLookup(handle: Long, k: Int, ngram: Int)
 
         @JvmStatic private external fun nativeClose(handle: Long)
     }
