@@ -279,7 +279,13 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       (include/aether.h), `Aether.setLookup` in Kotlin, a "lookup" checkbox in the app (K = 3).
       `c_abi_round_trip` checks the greedy text with lookup on. Not yet tried in the app's UI
       (the phone was locked); the APK builds and installs.
-- [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
+- [~] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
+  - [x] Device, buffers, compute kernels (`kernels::vulkan`, shaders/ via `build.rs` + NDK
+        `glslc`, `ash` for the C API), `vk_bandwidth`: GPU reads DRAM at ~66 GB/s (CPU: ~67),
+        an empty dispatch + barrier costs 1.7 µs. Test `copy_shader_copies`.
+  - [ ] Q4_0 GEMV shader against the llama.cpp goldens (`testdata/quant`); speed vs CPU.
+  - [ ] Q4_0 GEMM (prefill), then a whole forward pass on the GPU, checked like the CPU one.
+- [ ] **L.5** NPU: not started.
 
 ---
 

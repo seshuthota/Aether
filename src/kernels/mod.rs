@@ -10,6 +10,8 @@ pub mod neon;
 #[cfg(target_arch = "aarch64")]
 pub mod neon_quant;
 pub mod scalar;
+#[cfg(feature = "vulkan")]
+pub mod vulkan;
 
 use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};

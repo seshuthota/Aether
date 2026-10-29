@@ -1,0 +1,27 @@
+# Adreno (TM) 830 | Vulkan 1.3.284 | driver 0x8032004e
+# subgroup 64 | max workgroup 1024 | max storage buffer 2047 MB | timestamp 52.083332 ns
+# heap 0: 15110 MB DEVICE_LOCAL
+# heap 1: 4096 MB DEVICE_LOCAL
+# memory type 0: heap 0 DEVICE_LOCAL
+# memory type 1: heap 0 DEVICE_LOCAL
+# memory type 2: heap 0 DEVICE_LOCAL
+# memory type 3: heap 0 DEVICE_LOCAL | HOST_VISIBLE | HOST_CACHED
+# memory type 4: heap 0 DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
+# memory type 5: heap 0 DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
+# memory type 6: heap 0 DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT | HOST_CACHED
+# memory type 7: heap 1 DEVICE_LOCAL | PROTECTED
+# memory type 8: heap 0 DEVICE_LOCAL | LAZILY_ALLOCATED
+# 2048 workgroups of 256; storage buffers may use memory types 0b1000001
+# empty dispatch + barrier, 1 workgroups: 1.8 us
+# empty dispatch + barrier, 2048 workgroups: 39.9 us
+test,memory_type,MB,median_GB_per_s,best_GB_per_s
+read,6,1,16.5,16.6
+copy,6,1,29.3,29.5
+read,6,4,48.2,48.5
+copy,6,4,62.6,62.6
+read,6,16,68.5,68.6
+copy,6,16,67.4,67.6
+read,6,64,66.2,66.4
+copy,6,64,63.0,65.7
+read,6,256,62.5,64.8
+copy,6,256,62.9,63.1

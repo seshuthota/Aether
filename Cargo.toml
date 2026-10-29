@@ -15,3 +15,17 @@ libc = "0.2.191"
 debug = true        # keep symbols so simpleperf can show function names
 lto = "fat"         # optimize across the whole program
 codegen-units = 1   # one unit: slower build, better optimization
+
+# The Vulkan compute path (Adreno GPU, IMPLEMENTATION.md L.3) is optional:
+# `--features vulkan`. `ash` is only Vulkan's C API as Rust declarations
+# (it loads libvulkan.so at run time); the kernels are ours, in shaders/.
+[features]
+vulkan = ["dep:ash"]
+
+[dependencies.ash]
+version = "0.38"
+optional = true
+
+[[example]]
+name = "vk_bandwidth"
+required-features = ["vulkan"]
