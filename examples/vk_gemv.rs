@@ -22,7 +22,7 @@ fn main() {
     let pool = ThreadPool::new(&[2, 3, 4, 5, 6, 7]).unwrap();
     println!("# {} | CPU: cores 2-7", gpu.info.name);
     println!("shape,rows,cols,q4_0_bytes,{}cpu_us,cpu_gbps", rs.map(|r| format!("gpu_R{r}_us,gpu_R{r}_gbps,")).concat());
-    for (d, n, what) in [(896, 896, "wq/wo"), (128, 896, "wk/wv"), (4864, 896, "gate/up"), (896, 4864, "down"), (151936, 896, "classifier")] {
+    for (d, n, what) in [(896, 896, "wq/wo"), (128, 896, "wk/wv"), (1152, 896, "q+k+v"), (4864, 896, "gate/up"), (9728, 896, "gate+up"), (896, 4864, "down"), (151936, 896, "classifier")] {
         let mut w = AlignedBuf::zeros(d * n);
         for (i, v) in w.iter_mut().enumerate() {
             *v = ((i * 7 % 13) as f32 - 6.0) * 0.01;

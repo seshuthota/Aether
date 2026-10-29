@@ -1,0 +1,72 @@
+# 2026-10-29, on battery, 37-41 C. vk_decode before (old) and after (new) stacking wq/wk/wv and w_gate/w_up, alternating, 15 s pauses.
+## plain (wall per token)
+>>> old r1 37300
+depth 0: 11.40 ms per token wall (87.7 tok/s)
+depth 256: 10.16 ms per token wall (98.4 tok/s)
+depth 1024: 11.83 ms per token wall (84.5 tok/s)
+>>> new r1 39200
+depth 0: 9.65 ms per token wall (103.6 tok/s)
+depth 256: 9.79 ms per token wall (102.1 tok/s)
+depth 1024: 11.50 ms per token wall (86.9 tok/s)
+>>> old r2 40700
+depth 0: 10.71 ms per token wall (93.3 tok/s)
+depth 256: 10.04 ms per token wall (99.6 tok/s)
+depth 1024: 12.52 ms per token wall (79.9 tok/s)
+>>> new r2 39600
+depth 0: 10.47 ms per token wall (95.5 tok/s)
+depth 256: 10.21 ms per token wall (97.9 tok/s)
+depth 1024: 14.05 ms per token wall (71.2 tok/s)
+>>> old r3 38800
+depth 0: 11.08 ms per token wall (90.3 tok/s)
+depth 256: 11.52 ms per token wall (86.8 tok/s)
+depth 1024: 12.11 ms per token wall (82.6 tok/s)
+>>> new r3 38800
+depth 0: 19.25 ms per token wall (51.9 tok/s)
+depth 256: 10.01 ms per token wall (99.9 tok/s)
+depth 1024: 16.59 ms per token wall (60.3 tok/s)
+## profiled, depth 256 (GPU ms per stage)
+>>> old r1 37600
+depth 256: 9.70 ms per token wall (103.1 tok/s), 8.13 ms on the GPU
+  q/k/v                  0.619 ms    7.6 %
+  gate/up                2.624 ms   32.3 %
+  down                   1.482 ms   18.2 %
+  classifier             1.405 ms   17.3 %
+depth 1024: 11.92 ms per token wall (83.9 tok/s), 10.86 ms on the GPU
+>>> new r1 39200
+depth 256: 10.50 ms per token wall (95.2 tok/s), 9.37 ms on the GPU
+  q/k/v                  0.556 ms    5.9 %
+  gate/up                2.998 ms   32.0 %
+  down                   1.796 ms   19.2 %
+  classifier             1.806 ms   19.3 %
+depth 1024: 11.62 ms per token wall (86.1 tok/s), 10.57 ms on the GPU
+>>> old r2 39900
+depth 256: 11.09 ms per token wall (90.1 tok/s), 9.96 ms on the GPU
+  q/k/v                  0.665 ms    6.7 %
+  gate/up                3.284 ms   33.0 %
+  down                   1.859 ms   18.7 %
+  classifier             1.902 ms   19.1 %
+depth 1024: 12.16 ms per token wall (82.2 tok/s), 10.97 ms on the GPU
+>>> new r2 39600
+depth 256: 9.99 ms per token wall (100.1 tok/s), 8.95 ms on the GPU
+  q/k/v                  0.533 ms    6.0 %
+  gate/up                2.819 ms   31.5 %
+  down                   1.728 ms   19.3 %
+  classifier             1.684 ms   18.8 %
+depth 1024: 11.78 ms per token wall (84.9 tok/s), 10.74 ms on the GPU
+>>> old r3 39600
+depth 256: 10.73 ms per token wall (93.2 tok/s), 9.62 ms on the GPU
+  q/k/v                  0.665 ms    6.9 %
+  gate/up                3.141 ms   32.6 %
+  down                   1.793 ms   18.6 %
+  classifier             1.806 ms   18.8 %
+depth 1024: 12.07 ms per token wall (82.8 tok/s), 10.99 ms on the GPU
+>>> new r3 39600
+depth 256: 10.70 ms per token wall (93.5 tok/s), 9.56 ms on the GPU
+  q/k/v                  0.562 ms    5.9 %
+  gate/up                3.084 ms   32.3 %
+  down                   1.828 ms   19.1 %
+  classifier             1.858 ms   19.4 %
+depth 1024: 11.49 ms per token wall (87.0 tok/s), 10.34 ms on the GPU
+## vk_ppl after stacking
+[1]14.0453,[2]21.0550,[3]20.2511,[4]20.8704,[5]21.2137,[6]21.4448,[7]22.2876,[8]23.1708,[9]24.9501,[10]25.3819,[11]25.4432,[12]25.9039,[13]26.1313,[14]27.2611,[15]27.9363,[16]28.4138,[17]26.7056,[18]27.0401,[19]27.4931,Final estimate: PPL = 27.6910 +/- 1.17439  (5100 tokens scored, 82.2 s, 124.4 tok/s through the GPU)
+[1]10.6968,[2]14.7309,[3]15.4634,[4]15.8394,[5]16.2022,[6]16.8899,[7]17.1732,[8]18.5415,[9]19.8104,[10]20.5333,[11]21.0375,[12]21.0138,[13]21.9172,[14]21.2875,[15]21.0981,[16]21.6908,[17]20.0535,[18]20.0239,[19]19.7845,[Final estimate: PPL = 19.7193 +/- 0.83521  (5100 tokens scored, 134.6 s, 75.9 tok/s through the GPU)

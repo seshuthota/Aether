@@ -39,12 +39,14 @@ fn push(v: &[u32]) -> Vec<u8> {
 }
 
 struct Layer {
-    wq: MatQ4_0,
-    wk: MatQ4_0,
-    wv: MatQ4_0,
+    /// wq, wk and wv stacked (dim + 2·kv_dim rows), and w_gate over w_up
+    /// (2·hidden_dim rows): one dispatch each instead of three and two.
+    /// Each dispatch costs ~10 µs beyond its bytes, and the stacked
+    /// matrices reach 58 against 51 GB/s (gate, up) and more for the small
+    /// q/k/v (results/phase-l3.md).
+    wqkv: MatQ4_0,
     wo: MatQ4_0,
-    w_gate: MatQ4_0,
-    w_up: MatQ4_0,
+    w_gate_up: MatQ4_0,
     w_down: MatQ4_0,
     attn_norm: Buffer,
     ffn_norm: Buffer,
@@ -82,6 +84,13 @@ impl GpuModel {
     /// the step writes a GPU timestamp after every stage
     /// ([`GpuModel::profile`]).
     pub fn new(gpu: &Gpu, config: Config, weights: Weights, profile: bool) -> Result<GpuModel> {
+        GpuModel::with_repeat(gpu, config, weights, profile, 1)
+    }
+
+    /// [`GpuModel::new`] whose step runs the whole forward pass `repeat`
+    /// times in one submit (at the same position, so only the timing is
+    /// meaningful): the GPU then runs without the CPU's gap between tokens.
+    pub fn with_repeat(gpu: &Gpu, config: Config, weights: Weights, profile: bool, repeat: usize) -> Result<GpuModel> {
         let c = &config;
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
@@ -94,6 +103,14 @@ impl GpuModel {
         };
         let zeros = |n: usize| f32buf(&vec![0.0; n]);
         let mat = |w: &Weight, rows: usize, what: &str| MatQ4_0::new(gpu, q4_0(w, what)?, rows);
+        // Matrices of the same width, one under the other.
+        let stacked = |ws: &[(&Weight, usize)], what: &str| -> Result<MatQ4_0> {
+            let mut blocks = Vec::new();
+            for (w, _) in ws {
+                blocks.extend_from_slice(q4_0(w, what)?);
+            }
+            MatQ4_0::new(gpu, &blocks, ws.iter().map(|w| w.1).sum())
+        };
 
         let mut layers = Vec::new();
         for (l, lw) in weights.layers.iter().enumerate() {
@@ -102,12 +119,9 @@ impl GpuModel {
                 None => zeros(n),
             };
             layers.push(Layer {
-                wq: mat(&lw.wq, dim, &format!("layer {l} wq"))?,
-                wk: mat(&lw.wk, kv_dim, "wk")?,
-                wv: mat(&lw.wv, kv_dim, "wv")?,
+                wqkv: stacked(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"))?,
                 wo: mat(&lw.wo, dim, "wo")?,
-                w_gate: mat(&lw.w_gate, hid, "w_gate")?,
-                w_up: mat(&lw.w_up, hid, "w_up")?,
+                w_gate_up: stacked(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up")?,
                 w_down: mat(&lw.w_down, dim, "w_down")?,
                 attn_norm: f32buf(&lw.attn_norm)?,
                 ffn_norm: f32buf(&lw.ffn_norm)?,
@@ -120,8 +134,10 @@ impl GpuModel {
         let final_norm = f32buf(&weights.final_norm)?;
 
         let x = zeros(dim)?;
-        let (xb, xb2, q, k, v) = (zeros(dim)?, zeros(dim)?, zeros(dim)?, zeros(kv_dim)?, zeros(kv_dim)?);
-        let (hb, hb2) = (zeros(hid)?, zeros(hid)?);
+        // q, k, v: one buffer, the output of wqkv; hb (gate) then hb2 (up)
+        // likewise. The kernels after them bind views into it.
+        let (xb, xb2, qkv, hb12) = (zeros(dim)?, zeros(dim)?, zeros(dim + 2 * kv_dim)?, zeros(2 * hid)?);
+        let (k_at, v_at, up_at) = (4 * dim, 4 * (dim + kv_dim), 4 * hid);
         let logits = zeros(c.vocab_size)?;
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
@@ -150,17 +166,14 @@ impl GpuModel {
         // Bind everything first (binding can fail; recording cannot).
         struct Bl {
             norm1: Bound,
-            q: Bound,
-            k: Bound,
-            v: Bound,
+            qkv: Bound,
             post: Bound,
             attn: Bound,
             merge: Bound,
             o: Bound,
             add1: Bound,
             norm2: Bound,
-            gate: Bound,
-            up: Bound,
+            gate_up: Bound,
             swiglu: Bound,
             down: Bound,
             add2: Bound,
@@ -170,19 +183,16 @@ impl GpuModel {
         for ly in &layers {
             bound.push(Bl {
                 norm1: rms.bind(gpu, &[&x, &ly.attn_norm, &xb])?,
-                q: gemv_bind(&ly.wq, &xb, &q)?,
-                k: gemv_bind(&ly.wk, &xb, &k)?,
-                v: gemv_bind(&ly.wv, &xb, &v)?,
-                post: post.bind(gpu, &[&q, &k, &v, &ly.bq, &ly.bk, &ly.bv, &kc, &vc, &params])?,
-                attn: attn.bind(gpu, &[&q, &kc, &vc, &parts, &params])?,
+                qkv: gemv_bind(&ly.wqkv, &xb, &qkv)?,
+                post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
+                attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
                 o: gemv_bind(&ly.wo, &xb2, &xb)?,
                 add1: add.bind(gpu, &[&x, &xb])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
-                gate: gemv_bind(&ly.w_gate, &xb, &hb)?,
-                up: gemv_bind(&ly.w_up, &xb, &hb2)?,
-                swiglu: swiglu.bind(gpu, &[&hb, &hb2])?,
-                down: gemv_bind(&ly.w_down, &hb, &xb)?,
+                gate_up: gemv_bind(&ly.w_gate_up, &xb, &hb12)?,
+                swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, up_at)])?,
+                down: gemv_bind(&ly.w_down, &hb12, &xb)?,
                 add2: add.bind(gpu, &[&x, &xb])?,
             });
         }
@@ -203,9 +213,7 @@ impl GpuModel {
                 let layer_off = (l * c.seq_len * kv_dim) as u32;
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps]), one);
                 end(r, "rmsnorm");
-                for (bd, m) in [(&b.q, &ly.wq), (&b.k, &ly.wk), (&b.v, &ly.wv)] {
-                    r.dispatch(bd, &gemv_push(m), gemv_groups(m));
-                }
+                r.dispatch(&b.qkv, &gemv_push(&ly.wqkv), gemv_groups(&ly.wqkv));
                 end(r, "q/k/v");
                 r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off]), one);
                 end(r, "bias + RoPE + cache");
@@ -219,8 +227,7 @@ impl GpuModel {
                 end(r, "add");
                 r.dispatch(&b.norm2, &push(&[dim as u32, eps]), one);
                 end(r, "rmsnorm");
-                r.dispatch(&b.gate, &gemv_push(&ly.w_gate), gemv_groups(&ly.w_gate));
-                r.dispatch(&b.up, &gemv_push(&ly.w_up), gemv_groups(&ly.w_up));
+                r.dispatch(&b.gate_up, &gemv_push(&ly.w_gate_up), gemv_groups(&ly.w_gate_up));
                 end(r, "gate/up");
                 r.dispatch(&b.swiglu, &push(&[hid as u32]), elems(hid));
                 end(r, "swiglu");
@@ -234,12 +241,13 @@ impl GpuModel {
             r.dispatch(&fcls, &gemv_push(&cls), gemv_groups(&cls));
             end(r, "classifier");
         };
-        let step = if profile { gpu.record_timed(|r| rec(r, &mut stages))? } else { gpu.record(|r| rec(r, &mut stages))? };
+        let rec_all = |r: &mut Recorder, stages: &mut Vec<&'static str>| (0..repeat).for_each(|_| rec(r, stages));
+        let step = if profile { gpu.record_timed(|r| rec_all(r, &mut stages))? } else { gpu.record(|r| rec_all(r, &mut stages))? };
         if !profile {
             stages.clear();
         }
 
-        let mut keep = vec![xb, xb2, q, k, v, hb, hb2, parts, final_norm];
+        let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm];
         keep.shrink_to_fit();
         let mut kernels = vec![rms, post, attn, merge, add, swiglu];
         kernels.extend(gemvs);

@@ -1,0 +1,7 @@
+# 2026-10-29, on battery, 37-39 C. vk_gemv GB/s with split-K (G groups of 32 lanes share R rows) and no unroll; a first try also unrolled the R-row loop (with constant R) and was slower everywhere (e.g. classifier R16G1 38, gate/up R8G1 25 GB/s): register pressure.
+wq/wo       R4G1:33 R4G2:24 R4G4:16 R8G1:29 R8G2:22 R8G4:15 R16G1:22 R16G2:18 R16G4:14 | cpu 49.0
+wk/wv       R4G1:10 R4G2:9 R4G4:8 R8G1:6 R8G2:6 R8G4:5 R16G1:4 R16G2:4 R16G4:4 | cpu 13.9
+gate/up     R4G1:46 R4G2:30 R4G4:20 R8G1:51 R8G2:31 R8G4:21 R16G1:42 R16G2:31 R16G4:20 | cpu 59.9
+gate+up     R4G1:48 R4G2:31 R4G4:21 R8G1:58 R8G2:32 R8G4:21 R16G1:56 R16G2:33 R16G4:22 | cpu 51.9
+down        R4G1:50 R4G2:48 R4G4:45 R8G1:46 R8G2:40 R8G4:41 R16G1:35 R16G2:40 R16G4:33 | cpu 69.8
+classifier  R4G1:52 R4G2:31 R4G4:21 R8G1:64 R8G2:34 R8G4:22 R16G1:64 R16G2:36 R16G4:20 | cpu 65.7

@@ -310,6 +310,11 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         (`GpuSession::open_hybrid`, `GpuModel::load_kv`, `Transformer::kv_cache`). 345-token
         prompt 3.9–4.5 s → 0.55–0.61 s (same as CPU-only); same greedy text as GPU-only.
         Not in the app yet. A batched GPU prefill (the step-3 GEMM) is still open.
+  - [x] Step 6, GPU decode efficiency: the CPU's gap between tokens is not the cost (8 steps
+        per submit: 7.6–8.6 ms per token, same as one); the matrix products are ~75 % of GPU
+        time at 30–40 GB/s. Stacked wq/wk/wv and w_gate/w_up (`Kernel::bind_at` views):
+        q/k/v −20 %, gate/up −6 % of GPU time, PPL identical. Tried and dropped: an unrolled
+        row loop (slower everywhere), split-K across lane groups (never faster).
 - [ ] **L.5** NPU: not started.
 
 ---

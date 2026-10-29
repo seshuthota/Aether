@@ -303,3 +303,56 @@ two runs each (raw: `raw/hybrid-prefill.txt`):
   GPU prefill. So there is no slow start-up phase to fix. The earlier gap
   came from the phone's state (warm, charging). On a cool phone, the GPU
   decodes faster when it has not just been busy with the prompt.
+
+## Step 6: what limits GPU decode (2026-10-29, on battery, 34–41 °C)
+
+GPU decode of Qwen2.5-0.5B Q4_0 takes ~9–11 ms per token. Streaming its
+278 MB of weights at the GPU's measured 66 GB/s would take ~4.2 ms. Where
+does the rest go?
+
+**The CPU's part is small.** `vk_decode split` times the step (submit and
+wait) apart from the CPU's work after it. Copying the 152k logits out of
+uncached GPU memory and taking the argmax costs 0.3–1.1 ms per token.
+`vk_decode queued` records the whole step 8 times in one submit, so the
+GPU runs 8 forward passes with no CPU between them
+(`GpuModel::with_repeat`, timing only). That gives 7.6–8.6 ms per token,
+the same as one step per submit (6.8–10.6 ms in plain runs). So the gap
+between tokens is not what makes the GPU slow. The work inside the step
+is. (Wall times swing ±20 % between runs: the GPU's clock state, which
+an unrooted phone cannot fix.)
+
+**The matrix products are ~75 % of the step,** and run at 30–40 GB/s
+there (profile at depth 256: gate/up 2.6–3.3 ms, down 1.5–1.9, classifier
+1.4–1.9 ms). On its own (`vk_gemv`, a barrier between dispatches as in
+the model), the same kernel moves 41–47 GB/s on the 2.4 MB matrices and
+62 GB/s on the 77 MB classifier. A dispatch costs ~10 µs beyond its bytes
+(a 2.4 MB matrix at 66 GB/s would take 37 µs and takes ~50). That is a
+large share for small matrices: wq reaches 28 GB/s, wk and wv 8.
+
+Three changes tried on the GEMV (raw: `raw/vk-gemv-splitk.txt`,
+`raw/vk-gemv-stacked.txt`, `raw/stacked-ab.txt`):
+
+| change | stand-alone | kept? |
+| --- | --- | --- |
+| unroll the R-row loop (all R loads issued first) | slower everywhere (classifier 62 → 38 GB/s), probably register pressure | no |
+| split-K: G groups of 32 lanes share rows (more workgroups for `down`) | never faster (down 50 → 48 / 45 GB/s at G = 2 / 4) | no |
+| stack matrices of the same width: wq/wk/wv (1152 rows), w_gate/w_up (9728 rows) | q+k+v 32.2 → 20.4 µs, gate+up 104.6 → 93.3 µs | **yes** |
+
+The stacked matrices are uploaded one under the other. Their outputs
+share one buffer, and the shaders after them bind views at offsets into
+it (`Kernel::bind_at`, offsets aligned to the device's
+`minStorageBufferOffsetAlignment`). So `qkv_post`, `attention` and
+`swiglu` are unchanged. Each row's arithmetic is unchanged as well, and
+the GPU perplexities are identical to the last digit (Qwen2.5-0.5B
+19.7193, SmolLM2-135M 27.6910; llama.cpp 19.7283 and 27.7412).
+
+In the model, the gain is smaller than on its own. Measured against the
+stages that did not change (down + classifier, as a clock reference),
+over three alternating runs: q/k/v 0.192 → 0.154 (−20 %), gate/up 0.885
+→ 0.832 (−6 %). That is ~0.3 ms of a ~9.5 ms token, about 3–4 %, which
+the clock swings hide in plain wall times.
+
+What is left: the matrix products run at about 60 % of the bandwidth
+the GPU can reach, and each of the ~240 remaining dispatches costs a
+fixed ~10 µs. Fusing the small stages (rmsnorm into the next product,
+the residual add into wo and down) would remove ~100 dispatches.

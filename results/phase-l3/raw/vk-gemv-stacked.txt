@@ -1,0 +1,16 @@
+# Adreno (TM) 830 | CPU: cores 2-7
+shape,rows,cols,q4_0_bytes,gpu_R4_us,gpu_R4_gbps,gpu_R8_us,gpu_R8_gbps,gpu_R12_us,gpu_R12_gbps,gpu_R16_us,gpu_R16_gbps,cpu_us,cpu_gbps
+# wq/wo: one dispatch per submit 17.4 us (median of 50)
+wq/wo,896,896,451584,15.8,28.6,18.4,24.6,19.1,23.7,22.9,19.7,8.8,51.6
+# wk/wv: one dispatch per submit 9.9 us (median of 50)
+wk/wv,128,896,64512,8.2,7.9,11.6,5.6,15.0,4.3,18.7,3.5,5.7,11.3
+# q+k+v: one dispatch per submit 22.1 us (median of 50)
+q+k+v,1152,896,580608,20.4,28.4,20.7,28.1,21.5,27.0,23.8,24.4,10.1,57.8
+# gate/up: one dispatch per submit 56.6 us (median of 50)
+gate/up,4864,896,2451456,60.2,40.7,52.3,46.9,55.0,44.6,62.6,39.2,34.2,71.6
+# gate+up: one dispatch per submit 94.3 us (median of 50)
+gate+up,9728,896,4902912,112.1,43.7,93.3,52.5,95.7,51.2,98.1,50.0,84.0,58.4
+# down: one dispatch per submit 66.0 us (median of 50)
+down,896,4864,2451456,54.0,45.4,58.6,41.9,65.2,37.6,76.7,32.0,52.2,47.0
+# classifier: one dispatch per submit 1229.6 us (median of 50)
+classifier,151936,896,76575744,1655.6,46.3,1311.9,58.4,1251.7,61.2,1229.0,62.3,1173.7,65.2

@@ -53,6 +53,8 @@ pub struct Info {
     pub max_workgroup_invocations: u32,
     pub max_storage_buffer_range: u32,
     pub max_shared_memory: u32,
+    /// Byte offsets of buffer views ([`Kernel::bind_at`]) are multiples of this.
+    pub storage_offset_align: u64,
     /// The device's extensions (e.g. VK_KHR_shader_float16_int8,
     /// VK_KHR_cooperative_matrix).
     pub extensions: Vec<String>,
@@ -111,6 +113,7 @@ impl Gpu {
                 max_workgroup_invocations: props.limits.max_compute_work_group_invocations,
                 max_storage_buffer_range: props.limits.max_storage_buffer_range,
                 max_shared_memory: props.limits.max_compute_shared_memory_size,
+                storage_offset_align: props.limits.min_storage_buffer_offset_alignment,
                 extensions: instance
                     .enumerate_device_extension_properties(phys)
                     .map_err(vkr("device extensions"))?
@@ -352,14 +355,24 @@ impl Kernel {
     /// kernel, to use in recorded commands ([`Gpu::record`]). Sets come from
     /// the GPU's pool and live as long as the [`Gpu`].
     pub fn bind(&self, gpu: &Gpu, buffers: &[&Buffer]) -> Result<Bound> {
-        assert_eq!(buffers.len(), self.bindings, "one buffer per binding");
+        let at: Vec<(&Buffer, usize)> = buffers.iter().map(|&b| (b, 0)).collect();
+        self.bind_at(gpu, &at)
+    }
+
+    /// [`Kernel::bind`] where binding i starts `at[i].1` bytes into its
+    /// buffer (a multiple of `Info::storage_offset_align`): one buffer can
+    /// hold several outputs, e.g. q, k and v of one fused matrix product.
+    pub fn bind_at(&self, gpu: &Gpu, at: &[(&Buffer, usize)]) -> Result<Bound> {
+        assert_eq!(at.len(), self.bindings, "one buffer per binding");
+        let align = gpu.info.storage_offset_align as usize;
+        assert!(at.iter().all(|&(b, o)| o.is_multiple_of(align) && o < b.size), "view offsets must be aligned to {align} and inside the buffer");
         let d = &gpu.device;
         let layouts = [self.set_layout];
         // SAFETY: live device, pool and layout; the set is written before
         // any command buffer uses it.
         unsafe {
             let set = d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(gpu.sets).set_layouts(&layouts)).map_err(vkr("descriptor set"))?[0];
-            let infos: Vec<[vk::DescriptorBufferInfo; 1]> = buffers.iter().map(|b| [vk::DescriptorBufferInfo { buffer: b.buf, offset: 0, range: vk::WHOLE_SIZE }]).collect();
+            let infos: Vec<[vk::DescriptorBufferInfo; 1]> = at.iter().map(|&(b, o)| [vk::DescriptorBufferInfo { buffer: b.buf, offset: o as u64, range: vk::WHOLE_SIZE }]).collect();
             let writes: Vec<vk::WriteDescriptorSet> = infos
                 .iter()
                 .enumerate()
