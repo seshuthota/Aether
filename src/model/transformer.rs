@@ -368,6 +368,13 @@ impl Transformer {
         std::mem::swap(&mut self.pool, &mut other.pool);
     }
 
+    /// The KV cache, keys and values, each `[layer, pos, kv_dim]` (with
+    /// `seq_len` positions per layer), e.g. to hand a prefilled prompt to
+    /// the GPU decode path.
+    pub fn kv_cache(&self) -> (&[f32], &[f32]) {
+        (&self.state.key_cache, &self.state.value_cache)
+    }
+
     /// Runs `token` at position `pos` and returns the logits for the next
     /// token. Positions must be fed in order 0, 1, 2, … (each call reads the
     /// cache entries of all earlier positions).

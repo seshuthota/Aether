@@ -60,6 +60,8 @@ pub struct GpuModel {
     weights: Weights,
     x: Buffer,
     logits: Buffer,
+    kc: Buffer,
+    vc: Buffer,
     params: Buffer,
     step: Commands,
     /// With profiling: the stage each timestamp ends ([`GpuModel::profile`]).
@@ -237,11 +239,11 @@ impl GpuModel {
             stages.clear();
         }
 
-        let mut keep = vec![xb, xb2, q, k, v, hb, hb2, kc, vc, parts, final_norm];
+        let mut keep = vec![xb, xb2, q, k, v, hb, hb2, parts, final_norm];
         keep.shrink_to_fit();
         let mut kernels = vec![rms, post, attn, merge, add, swiglu];
         kernels.extend(gemvs);
-        Ok(GpuModel { config, weights, x, logits, params, step, stages, spin: false, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
+        Ok(GpuModel { config, weights, x, logits, kc, vc, params, step, stages, spin: false, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
@@ -258,6 +260,23 @@ impl GpuModel {
         }
         gpu.submit(&self.step, self.spin)?;
         Ok(&self.logits.as_slice::<f32>()[..c.vocab_size])
+    }
+
+    /// Copies positions `0..n` of a CPU [`super::Transformer`]'s KV cache
+    /// (same layout: `[layer, pos, kv_dim]`, `seq_len` positions per layer)
+    /// into the GPU's, so decoding can continue on the GPU at position `n`
+    /// after a prefill on the CPU.
+    pub fn load_kv(&mut self, keys: &[f32], values: &[f32], seq_len: usize, n: usize) {
+        let c = &self.config;
+        let kv = c.kv_dim();
+        assert!(n <= seq_len.min(c.seq_len) && keys.len() == c.n_layers * seq_len * kv && values.len() == keys.len());
+        for (src, dst) in [(keys, &mut self.kc), (values, &mut self.vc)] {
+            let dst = dst.as_mut_slice::<f32>();
+            for l in 0..c.n_layers {
+                let (s0, d0) = (l * seq_len * kv, l * c.seq_len * kv);
+                dst[d0..d0 + n * kv].copy_from_slice(&src[s0..s0 + n * kv]);
+            }
+        }
     }
 
     /// GPU seconds of the last [`GpuModel::forward`] per kind of stage

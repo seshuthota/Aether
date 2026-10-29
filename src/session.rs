@@ -371,6 +371,9 @@ pub struct GpuSession {
     pub model: crate::model::gpu::GpuModel,
     pub gpu: crate::kernels::vulkan::Gpu,
     pub text: Text,
+    /// With [`GpuSession::open_hybrid`]: the CPU model that runs the
+    /// prompt (batched), whose KV cache is then copied to the GPU.
+    pub cpu: Option<Transformer>,
 }
 
 #[cfg(feature = "vulkan")]
@@ -380,12 +383,26 @@ impl GpuSession {
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
         let model = crate::model::gpu::GpuModel::new(&gpu, config, weights, false).map_err(io::Error::other)?;
-        Ok(GpuSession { model, gpu, text })
+        Ok(GpuSession { model, gpu, text, cpu: None })
     }
 
-    /// As [`Session::generate`] without echoing the prompt. The prompt is
-    /// fed token by token (there is no batched GPU pass yet), so "prefill"
-    /// here is that loop.
+    /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
+    /// prompt: the CPU's batched prefill is several times faster than
+    /// feeding the prompt through the GPU step token by token, and its KV
+    /// cache is copied over (~24 KB per token for Qwen2.5-0.5B). Costs a
+    /// second copy of the weights in memory.
+    pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
+        let mut s = GpuSession::open(path, max_seq)?;
+        let (config, weights, _) = gguf::load(path, max_seq)?;
+        let mut cpu = Transformer::new(config, weights);
+        cpu.set_pool(ThreadPool::new(cores)?);
+        s.cpu = Some(cpu);
+        Ok(s)
+    }
+
+    /// As [`Session::generate`] without echoing the prompt. The prompt runs
+    /// on the CPU model if there is one (batched, then its KV cache is
+    /// copied to the GPU), otherwise token by token through the GPU step.
     pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
         let steps = steps.min(self.model.config.seq_len);
         let tokens = self.text.encode(prompt);
@@ -393,8 +410,14 @@ impl GpuSession {
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
         let t0 = Instant::now();
         let mut logits = Vec::new();
-        for (p, &t) in tokens[..np].iter().enumerate() {
-            logits = self.model.forward(&self.gpu, t, p).expect("GPU step").to_vec();
+        if let Some(cpu) = &mut self.cpu {
+            logits = cpu.forward_batch(&tokens[..np], 0).to_vec();
+            let (k, v) = cpu.kv_cache();
+            self.model.load_kv(k, v, cpu.config.seq_len, np);
+        } else {
+            for (p, &t) in tokens[..np].iter().enumerate() {
+                logits = self.model.forward(&self.gpu, t, p).expect("GPU step").to_vec();
+            }
         }
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);

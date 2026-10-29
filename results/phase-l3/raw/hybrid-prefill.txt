@@ -1,0 +1,15 @@
+# 2026-10-29, phone charging (AC), SoC 44-50 C at start of each run. Qwen2.5-0.5B Q4_0 (--pure), greedy.
+# aether testdata/gguf/qwen2.5-0.5b-q4_0.gguf MODE -t 0 -n N -i PROMPT --features vulkan; 30 s pause between runs.
+# Short prompt "Why is the sky blue?" (6 tokens), -n 120: all three texts printed; --gpu and --gpu -c 2-7 identical.
+--gpu          prefill (token by token): 6 tokens in 92.2 ms (65.1 tok/s) | decode: 114 tokens in 1696.5 ms (67.2 tok/s)
+--gpu -c 2-7   prefill (on the CPU): 6 tokens in 57.6 ms (104.1 tok/s) | decode: 114 tokens in 1434.2 ms (79.5 tok/s)
+-c 2-7         prefill: 6 tokens in 19.0 ms (316.1 tok/s) | decode: 114 tokens in 674.0 ms (169.1 tok/s)
+# Long prompt: first 1400 bytes of wiki.test.raw + " Summary:" (345 tokens), -n 400.
+r1 --gpu         prefill (token by token): 345 tokens in 3873.2 ms (89.1 tok/s) | decode: 55 tokens in 682.6 ms (80.6 tok/s)
+r1 --gpu -c 2-7  prefill (on the CPU): 345 tokens in 605.9 ms (569.4 tok/s) | decode: 55 tokens in 868.5 ms (63.3 tok/s)
+r1 -c 2-7        prefill: 345 tokens in 602.2 ms (572.9 tok/s) | decode: 55 tokens in 348.5 ms (157.8 tok/s)
+r2 --gpu         prefill (token by token): 345 tokens in 4474.0 ms (77.1 tok/s) | decode: 55 tokens in 670.9 ms (82.0 tok/s)
+r2 --gpu -c 2-7  prefill (on the CPU): 345 tokens in 547.9 ms (629.7 tok/s) | decode: 55 tokens in 854.1 ms (64.4 tok/s)
+r2 -c 2-7        prefill: 345 tokens in 542.8 ms (635.6 tok/s) | decode: 55 tokens in 348.4 ms (157.9 tok/s)
+--gpu -c 7       prefill (on the CPU): 345 tokens in 1994.8 ms (173.0 tok/s) | decode: 55 tokens in 819.1 ms (67.1 tok/s)
+--gpu -c 2-7     prefill (on the CPU): 345 tokens in 544.8 ms (633.3 tok/s) | decode: 55 tokens in 736.6 ms (74.7 tok/s)

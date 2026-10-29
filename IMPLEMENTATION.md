@@ -306,8 +306,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
   - [x] CLI switch `aether MODEL.gguf --gpu` (prompt token by token; `Text::from_gguf`).
   - [x] The app: `aether_open_gpu` (C ABI), `GpuSession`, a "GPU" checkbox; tried on the phone
         (decode 90–92 tok/s vs 155 on the CPU). The "lookup" checkbox tried too (works).
-  - [ ] Prefill: on the GPU (the GEMM of step 3 in a batched pass), or on the CPU with the KV
-        cache handed to the GPU for decode.
+  - [x] Prefill on the CPU, KV cache handed to the GPU: `aether --gpu -c CORES`
+        (`GpuSession::open_hybrid`, `GpuModel::load_kv`, `Transformer::kv_cache`). 345-token
+        prompt 3.9–4.5 s → 0.55–0.61 s (same as CPU-only); same greedy text as GPU-only.
+        Not in the app yet. A batched GPU prefill (the step-3 GEMM) is still open.
 - [ ] **L.5** NPU: not started.
 
 ---
