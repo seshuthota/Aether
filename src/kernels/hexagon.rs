@@ -58,6 +58,9 @@ const READ_BW: u32 = 5;
 const HVX_UNITS: u32 = 6;
 const REFRESH: u32 = 7;
 const Q4_0_GEMV: u32 = 8;
+const MODEL_LOAD: u32 = 9;
+const MODEL_DECODE: u32 = 10;
+const MATH_TEST: u32 = 11;
 
 /// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
 struct Rpc {
@@ -226,24 +229,7 @@ impl Dsp {
         let nb = blocks.len() / rows;
         let groups = rows.div_ceil(32);
         let mut buf = self.shared(groups * nb * 640)?;
-        let out = buf.as_mut_slice::<u8>();
-        for g in 0..groups {
-            for b in 0..nb {
-                let at = (g * nb + b) * 640;
-                for j in 0..32.min(rows - 32 * g) {
-                    let blk = &blocks[(32 * g + j) * nb + b];
-                    for k in 0..4 {
-                        out[at + 128 * k + 4 * j..][..4].copy_from_slice(&blk.qs[4 * k..4 * k + 4]);
-                    }
-                    out[at + 512 + 4 * j..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
-                }
-                for j in 32.min(rows - 32 * g)..32 {
-                    for k in 0..5 {
-                        out[at + 128 * k + 4 * j..][..4].fill(0);
-                    }
-                }
-            }
-        }
+        repack_q4_0(blocks, rows, buf.as_mut_slice::<u8>());
         self.call(REFRESH, &[&words(&[buf.fd as u32, (groups * nb * 640) as u32])], &mut [])?;
         Ok(DspMatQ4_0 { buf, rows, nb })
     }
@@ -275,12 +261,67 @@ impl Dsp {
         Ok(u64::from_le_bytes(t))
     }
 
+    /// Hands the DSP a model (dsp/model.c's `desc` layout; built by
+    /// `model::dsp::DspModel`).
+    pub fn model_load(&self, desc: &[u32]) -> Result<()> {
+        self.call(MODEL_LOAD, &[&(desc.len() as u32).to_le_bytes(), &words(desc)], &mut [])
+    }
+
+    /// One decode step of the loaded model at `pos` on `threads` DSP
+    /// threads: the greedy next token and the DSP's time in microseconds.
+    pub fn model_decode(&self, pos: u32, threads: u32) -> Result<(u32, u64)> {
+        let mut out = [0u8; 16];
+        self.call(MODEL_DECODE, &[&words(&[pos, threads])], &mut [&mut out])?;
+        Ok((u32::from_le_bytes(out[..4].try_into().unwrap()), u64::from_le_bytes(out[8..].try_into().unwrap())))
+    }
+
+    /// The decode step's vector math on the DSP (dsp/model.c), for tests:
+    /// e^a (op 0) or silu(a)·b (op 1), lengths a multiple of 32.
+    pub fn math_test(&self, op: u32, a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
+        assert!(a.len() == b.len() && a.len().is_multiple_of(32));
+        let n = a.len() as u32;
+        let mut y = vec![0f32; a.len()];
+        let bytes = |x: &[f32]| unsafe { std::slice::from_raw_parts(x.as_ptr().cast::<u8>(), 4 * x.len()) };
+        // SAFETY: y's bytes, borrowed mutably for the call.
+        let yb = unsafe { std::slice::from_raw_parts_mut(y.as_mut_ptr().cast::<u8>(), 4 * y.len()) };
+        self.call(MATH_TEST, &[&words(&[op, n, n, n]), bytes(a), bytes(b)], &mut [yb])?;
+        Ok(y)
+    }
+
     /// The number of 128-byte HVX contexts on the DSP.
     pub fn hvx_units(&self) -> Result<u32> {
         let mut out = [0u8; 4];
         self.call(HVX_UNITS, &[], &mut [&mut out])?;
         Ok(u32::from_le_bytes(out))
     }
+}
+
+/// Writes `rows` rows of Q4_0 `blocks` in the DSP kernel's layout
+/// ([`Dsp::q4_0_matrix`]) into `out` (at least [`q4_0_bytes`] long).
+pub fn repack_q4_0(blocks: &[BlockQ4_0], rows: usize, out: &mut [u8]) {
+    let nb = blocks.len() / rows;
+    for g in 0..rows.div_ceil(32) {
+        for b in 0..nb {
+            let at = (g * nb + b) * 640;
+            for j in 0..32.min(rows - 32 * g) {
+                let blk = &blocks[(32 * g + j) * nb + b];
+                for k in 0..4 {
+                    out[at + 128 * k + 4 * j..][..4].copy_from_slice(&blk.qs[4 * k..4 * k + 4]);
+                }
+                out[at + 512 + 4 * j..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
+            }
+            for j in 32.min(rows - 32 * g)..32 {
+                for k in 0..5 {
+                    out[at + 128 * k + 4 * j..][..4].fill(0);
+                }
+            }
+        }
+    }
+}
+
+/// Bytes of a Q4_0 matrix in the DSP kernel's layout.
+pub fn q4_0_bytes(rows: usize, nb: usize) -> usize {
+    rows.div_ceil(32) * nb * 640
 }
 
 /// u32 scalars as the bytes of one argument buffer.
@@ -311,6 +352,13 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// The buffer's file descriptor: how the DSP finds it.
+    pub fn fd(&self) -> u32 {
+        self.fd as u32
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
     pub fn as_slice<T: Copy>(&self) -> &[T] {
         // SAFETY: `len` bytes, page-aligned; T is plain data.
         unsafe { std::slice::from_raw_parts(self.ptr.cast(), self.len / size_of::<T>()) }
@@ -396,6 +444,28 @@ mod tests {
                 assert_eq!(check, sum.wrapping_mul(3), "{threads} threads, prefetch {prefetch}");
             }
         }
+    }
+
+    /// The decode step's vector e^x and SwiGLU (dsp/model.c: a series
+    /// and Newton steps of our own) against the standard library's exp in
+    /// f64, over the range the model uses them in.
+    #[test]
+    fn dsp_vector_exp_and_swiglu_match_libm() {
+        let Some(d) = dsp() else { return };
+        let n = 32 * 1024;
+        let x: Vec<f32> = (0..n).map(|i| -80.0 + 90.0 * i as f32 / n as f32).collect();
+        let u: Vec<f32> = (0..n).map(|i| ((i * 7919) % 2001) as f32 / 1000.0 - 1.0).collect();
+        let worst = |got: &[f32], want: &dyn Fn(usize) -> f64| {
+            (0..n).map(|i| ((got[i] as f64 - want(i)).abs() / want(i).abs().max(1e-30), i)).fold((0.0, 0), |a, b| if b.0 > a.0 { b } else { a })
+        };
+        let e = d.math_test(0, &x, &u).unwrap();
+        let (err, i) = worst(&e, &|i| (x[i] as f64).exp());
+        assert!(err < 1e-6, "e^{}: {} against {} (relative error {err:.2e})", x[i], e[i], (x[i] as f64).exp());
+        let g: Vec<f32> = x.iter().map(|&v| v * 0.9 + 9.0).collect(); // -63 .. 18
+        let y = d.math_test(1, &g, &u).unwrap();
+        let silu = |i: usize| g[i] as f64 / (1.0 + (-g[i] as f64).exp()) * u[i] as f64;
+        let (err, i) = worst(&y, &silu);
+        assert!(err < 2e-6 || silu(i).abs() < 1e-30, "silu({}) * {}: {} against {} (relative error {err:.2e})", g[i], u[i], y[i], silu(i));
     }
 
     /// The DSP's Q4_0 x Q8_0 product on llama.cpp's bytes (the weights

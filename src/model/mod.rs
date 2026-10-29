@@ -1,6 +1,8 @@
 //! Models: hyperparameters, weights, the forward pass, and sampling.
 
 pub mod config;
+#[cfg(feature = "hexagon")]
+pub mod dsp;
 pub mod gguf;
 #[cfg(feature = "vulkan")]
 pub mod gpu;

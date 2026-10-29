@@ -1,0 +1,5 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads | upload 46 ms
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 882.8 ms: 72.5 tok/s (12.66 ms per token on the DSP)
+[1]14.0138,[2]21.0429,[3]20.2757,[4]20.8929,[5]21.2202,[6]21.4407,[7]22.2768,[8]23.1627,[9]24.9432,[10]25.3832,[11]25.4500,[12]25.9102,[13]26.1495,[14]27.2850,[15]27.9613,[16]28.4468,[17]26.7403,[18]27.0707,[19]27.5318,Final estimate: PPL = 27.7301 +/- 1.17578  (5100 tokens scored, 313.8 s, 32.6 tok/s through the DSP)
+[20]27.7301,

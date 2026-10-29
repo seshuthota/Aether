@@ -126,3 +126,94 @@ median of 15; per token = 24 layers × 4 products + the classifier):
   threads.
 - For comparison: a whole token takes ~5.2 ms on our CPU and 13.5 ms on
   llama.cpp's NPU backend (step 8 of phase-l3).
+
+## Step 4: the whole decode step on the DSP (2026-10-29; `raw/dsp-ppl-v*.txt`, `raw/dsp-decode-threads.txt`)
+
+`dsp/model.c`, `src/model/dsp.rs`, `examples/dsp_ppl.rs`. One FastRPC
+call per token (`model_decode`) runs every layer, the classifier and the
+argmax on the DSP. The CPU uploads the model once (`model_load`) into one
+shared buffer: the matrices in step 3's layout (q/k/v and gate/up stacked,
+as on the GPU), norms and biases in f32. A second shared buffer holds the
+state: activations, KV cache, logits, and a table of time per stage.
+Per token the CPU writes only the token's embedding and the RoPE table
+(sin, cos per pair, computed as on the CPU path).
+
+**How the threads share a step**: 6 DSP threads (one per HVX context) run
+the whole step together and wait at a barrier (`qurt_barrier`) wherever
+the next stage needs every thread's results. Each thread takes a run of
+row groups of each matrix product. Activations are f32 and are quantized
+to Q8_0 before every product, as on our CPU path and llama.cpp's.
+
+**Correct** (wikitext-2, 20 chunks of 512, the second half of each scored,
+as `llama-perplexity`; `--pure` Q4_0 GGUFs):
+
+| | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| llama.cpp (CPU) | 27.7412 | 19.7283 |
+| ours, CPU | — | 19.7438 |
+| ours, GPU (phase-l3) | 27.6910 | 19.7193 |
+| ours, DSP v1 (scalar `expf`) | 27.7301 | 19.7237 |
+| ours, DSP v3 (vector exp) | **27.7429** | **19.7584** |
+
+The error bars are ±1.18 and ±0.84. Greedy text equals the GPU's for
+SmolLM2 and the CPU's for Qwen ("The capital of France is Paris. It is
+the largest city in the world…").
+`dsp_vector_exp_and_swiglu_match_libm` checks the vector e^x and SwiGLU
+against the standard library's f64 exp: relative error below 1e-6 and 2e-6.
+Changing v2's scalar `expf` for the vector exp moved Qwen's chunk 1 from
+10.61 to 10.72 and the final value by +0.035. That is the size of the
+spread between our CPU, our GPU and llama.cpp, which compute the same
+thing in different orders; Q8_0 rounding of the activations turns tiny
+differences into whole steps.
+
+**Speed** (Qwen2.5-0.5B, DSP time per token at positions 0–63, from
+`take_profile`):
+
+| stage | v1 | v2 | v3 |
+| --- | --- | --- | --- |
+| attn norm + quantize | 1548 µs | 218 | 208 |
+| q/k/v | 522 | 476 | 445 |
+| bias + RoPE + KV store | 597 | 171 | 176 |
+| attention (+ quantize from v2) | 2419 + 1324 | 2069 | 564 |
+| wo | 393 | 367 | 331 |
+| ffn norm + quantize | 1489 | 185 | 183 |
+| gate/up | 3935 | 3889 | 3606 |
+| SwiGLU (+ quantize from v2) | 1388 + 7001 | 1814 | 605 |
+| down | 2048 | 2009 | 1835 |
+| classifier | 2460 | 2456 | 2284 |
+| argmax, rest | 893 | 217 | 214 |
+| **per token** | **25.97 ms** | **13.88** | **10.46** |
+| tok/s, with the CPU's part | 36.0 | 64.7 | 81.3 |
+
+- v1: every norm and quantize ran on thread 0 while the others waited.
+  `roundf` and the f16 conversion are library calls on the DSP, once per
+  value: 7 ms a token in the quantize before `down` alone (4864 values per
+  layer).
+- v2: rounding inline (truncate, then step away from zero when the exact
+  fraction is at least ½, which is `roundf`). Every thread quantizes its
+  own blocks: the norms sum all of x in each thread, and attention and
+  SwiGLU quantize their own outputs. That removed four of the eleven
+  barriers per layer. The argmax is split across threads.
+- v3: SwiGLU and the softmax on HVX, with an e^x of our own (x = n·ln2 +
+  r, Taylor series to r⁸, 2ⁿ into the exponent bits) and 1/x by three
+  Newton steps. The attention's dot products and its sum over V are
+  vectors too (one vector op per 32 floats; one reduction per position).
+- SmolLM2-135M: 3.96 ms a token (207 tok/s).
+- Against the others on Qwen: llama.cpp's NPU backend 13.5 ms (74 tok/s),
+  our GPU ~10 ms, our CPU ~5.2 ms.
+- Wall time per token is ~1.8 ms more than the DSP's (12.3 ms on Qwen):
+  the call (~150 µs), the embedding and RoPE table, and `dsp_ppl`
+  reading all 151936 logits for its own argmax check. Greedy decoding
+  could take just the DSP's `next` and not read the logits.
+
+**What limits it now**: the matrix products, 8.5 of the 10.5 ms. All
+matrices are ~306 MB per token, so that is ~36 GB/s, against the 46–47
+GB/s that HVX reads reach (step 2). Thread count barely matters
+(`raw/dsp-decode-threads.txt`): 2 threads 12.8 ms, 4 11.2, 5 10.6,
+6 10.5, 8 (more than the 6 HVX contexts) 11.1. With `l2fetch` off, the
+products are latency-bound: 27.0 / 15.3 / 11.4 ms on 2 / 4 / 6 threads.
+Next: DMA into VTCM (step 2's open item), or prefetch spread over the
+threads so they do not compete.
+
+Attention grows with position: over the perplexity run (positions 0–510)
+the DSP does 63 tok/s on Qwen, against 81 at positions 0–63.

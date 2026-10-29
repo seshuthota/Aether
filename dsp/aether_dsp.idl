@@ -32,4 +32,14 @@ interface aether_dsp : remote_handle64 {
     // With `prefetch`, each thread fetches its next two groups into the L2
     // (l2fetch) while it computes the current two.
     long q4_0_gemv(in long w_fd, in long x_fd, in long out_fd, in uint32 rows, in uint32 nb, in uint32 threads, in uint32 prefetch, rout uint64 us);
+    // A whole model on the DSP (dsp/model.c): `desc` gives the shapes and
+    // where the weights and the state are in two shared buffers.
+    long model_load(in sequence<uint32> desc);
+    // One decode step at `pos` (the CPU wrote the token's embedding and the
+    // RoPE table into the state): every layer, the classifier (logits in
+    // the state) and the greedy next token, on `threads` DSP threads.
+    long model_decode(in uint32 pos, in uint32 threads, rout uint32 next, rout uint64 us);
+    // The decode step's vector math on a and b (whole vectors of 32), for
+    // tests: op 0 is y = e^a, op 1 is y = silu(a) b (SwiGLU).
+    long math_test(in uint32 op, in sequence<float> a, in sequence<float> b, rout sequence<float> y);
 };

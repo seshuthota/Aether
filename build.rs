@@ -63,7 +63,10 @@ fn dsp(out: &std::path::Path) {
     let flags = ["-mcpu=hexagonv79", "-mv79", "-mhvx=v79", "-mhvx-length=128b", "-O2", "-G0", "-fpic", "-Wall", "-Werror"];
     let incs = [out.to_path_buf(), qurt.clone(), qurt.join("qurt"), qurt.join("posix"), sdk.join("incs"), sdk.join("incs/stddef"), sdk.join("ipc/fastrpc/incs")];
     let mut objs = Vec::new();
-    for src in [PathBuf::from("dsp/aether_dsp.c"), out.join("aether_dsp_skel.c")] {
+    let mut srcs: Vec<PathBuf> = std::fs::read_dir("dsp").unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "c")).collect();
+    srcs.sort();
+    srcs.push(out.join("aether_dsp_skel.c"));
+    for src in srcs {
         let obj = out.join(src.file_stem().unwrap()).with_extension("o");
         run(Command::new(&clang).args(flags).args(incs.iter().map(|p| inc(p))).arg("-c").arg(&src).arg("-o").arg(&obj));
         objs.push(obj);
