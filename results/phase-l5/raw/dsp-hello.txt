@@ -1,0 +1,6 @@
+session open + library load: 37.0 ms
+ping round trip: median 145.8 us, p10 136.4, p90 155.8 (2000 calls)
+add     1024 floats:    164.6 us per call,  0.07 GB/s moved (3 arrays)
+add    16384 floats:    292.3 us per call,  0.67 GB/s moved (3 arrays)
+add   262144 floats:   1952.8 us per call,  1.61 GB/s moved (3 arrays)
+add  1048576 floats:   4989.1 us per call,  2.52 GB/s moved (3 arrays)

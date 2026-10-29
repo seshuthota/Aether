@@ -345,15 +345,17 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
       reference for platform use (and its numbers to measure against: pp ~330, tg ~74 tok/s,
       results/phase-l3.md step 8), not code to copy. Unsigned DSP code runs on this phone (step 8).
-  - [ ] Step 1, hello: a DSP library (`dsp/`, C) with one call that adds two arrays with HVX in
+  - [x] Step 1, hello (results/phase-l5.md; ~146 µs per call, copies at 2.5 GB/s): a DSP library (`dsp/`, C) with one call that adds two arrays with HVX in
         a buffer shared with the CPU (`rpcmem` / `fastrpc_mmap`); the Rust side opens the
         unsigned `cdsp` session through `libcdsprpc.so` (dlopen, as `ash` does for Vulkan),
         checks the result, and times a round trip.
-  - [ ] Step 2, memory: how fast HVX threads read DRAM (cf. CPU and GPU ~66 GB/s), and VTCM.
-  - [ ] Step 3, decode GEMV: Q4_0 × f32 (or ×Q8_0) on HVX across the DSP's hardware threads,
+  - [x] Step 2, memory (DRAM via HVX 46–47 GB/s at 4–5 threads; DMA into VTCM still open): how fast HVX threads read DRAM (cf. CPU and GPU ~66 GB/s), and VTCM.
+  - [x] Step 3, decode GEMV (`vrmpy`, rel err ≤ 4.8e-7 vs llama.cpp bytes; ~10.5 ms of products per token): Q4_0 × f32 (or ×Q8_0) on HVX across the DSP's hardware threads,
         checked against llama.cpp's bytes / numpy as the GPU kernels were; bandwidth per shape.
-  - [ ] Step 4, a whole decode step on the DSP (a request queue per token, as `dspqueue`),
-        PPL against llama.cpp.
+  - [x] Step 4, a whole decode step on the DSP (one call per token; PPL 27.7429 / 19.7584 vs
+        llama.cpp 27.7412 / 19.7283; Qwen 10.5 ms a token, 81 tok/s, vs llama.cpp NPU 74),
+        PPL against llama.cpp. Open: the products reach ~36 of 46 GB/s (DMA into VTCM).
+        (A request queue as `dspqueue` was not needed: one FastRPC call per token is ~150 µs.)
   - [ ] Step 5, prefill on HMX (the matrix unit; fp16 tiles in VTCM), PPL again.
 
 ---

@@ -1,0 +1,45 @@
+// The calls the CPU makes into our library on the Hexagon DSP (cDSP).
+// `qaic` turns this into the DSP side's glue (aether_dsp_skel.c); the CPU
+// side packs the same arguments itself (src/kernels/hexagon.rs).
+
+#include "AEEStdDef.idl"
+#include "remote.idl"
+
+interface aether_dsp : remote_handle64 {
+    // y = x + 1: a round trip with no work, to time the call itself.
+    long ping(in uint32 x, rout uint32 y);
+    // c = a + b with HVX, every input copied in and the output out.
+    long add(in sequence<float> a, in sequence<float> b, rout sequence<float> c);
+    // The same add on buffers the CPU allocated with rpcmem and mapped into
+    // the DSP once (fastrpc_mmap): only their file descriptors travel.
+    long add_shared(in long a_fd, in long b_fd, in long c_fd, in uint32 n);
+    // Reads `bytes` of a shared buffer `reps` times with HVX loads, split
+    // over `threads` DSP threads; `us` is timed on the DSP. `check` is a
+    // sum of what was read, so the loads cannot be dropped. With
+    // `prefetch`, each thread asks the L2 for the next 16 KB (l2fetch)
+    // while it reads the current 16 KB.
+    long read_bw(in long fd, in uint32 bytes, in uint32 threads, in uint32 reps, in uint32 prefetch, rout uint64 us, rout uint32 check);
+    // How many HVX contexts the DSP has (qurt_hvx_get_units).
+    long hvx_units(rout uint32 n);
+    // Drops the DSP's cached lines of a shared buffer the CPU rewrote
+    // (after uploading weights, before the DSP reads them).
+    long refresh(in long fd, in uint32 bytes);
+    // out = W x on `threads` DSP threads: W Q4_0 in our layout of 32-row
+    // groups (`Dsp::q4_0_matrix`), x Q8_0 (quantized by the CPU: the int8
+    // values, then the f32 scales, then the i32 sums of each block's
+    // values). `out` gets one f32 per row, padded to whole groups; `us`
+    // is timed on the DSP.
+    // With `prefetch`, each thread fetches its next two groups into the L2
+    // (l2fetch) while it computes the current two.
+    long q4_0_gemv(in long w_fd, in long x_fd, in long out_fd, in uint32 rows, in uint32 nb, in uint32 threads, in uint32 prefetch, rout uint64 us);
+    // A whole model on the DSP (dsp/model.c): `desc` gives the shapes and
+    // where the weights and the state are in two shared buffers.
+    long model_load(in sequence<uint32> desc);
+    // One decode step at `pos` (the CPU wrote the token's embedding and the
+    // RoPE table into the state): every layer, the classifier (logits in
+    // the state) and the greedy next token, on `threads` DSP threads.
+    long model_decode(in uint32 pos, in uint32 threads, rout uint32 next, rout uint64 us);
+    // The decode step's vector math on a and b (whole vectors of 32), for
+    // tests: op 0 is y = e^a, op 1 is y = silu(a) b (SwiGLU).
+    long math_test(in uint32 op, in sequence<float> a, in sequence<float> b, rout sequence<float> y);
+};

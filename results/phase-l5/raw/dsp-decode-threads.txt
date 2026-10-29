@@ -1,0 +1,25 @@
+threads 2
+#   attention + quantize        991.1 us/token   7.7%
+#   gate/up                    3249.8 us/token  25.4%
+#   classifier                 2065.9 us/token  16.1%
+# 64 positions in 930.6 ms: 68.8 tok/s (12.82 ms per token on the DSP)
+threads 4
+#   attention + quantize        673.1 us/token   6.0%
+#   gate/up                    3526.6 us/token  31.6%
+#   classifier                 2242.9 us/token  20.1%
+# 64 positions in 830.0 ms: 77.1 tok/s (11.19 ms per token on the DSP)
+threads 5
+#   attention + quantize        572.3 us/token   5.4%
+#   gate/up                    3593.5 us/token  34.0%
+#   classifier                 2282.3 us/token  21.6%
+# 64 positions in 773.1 ms: 82.8 tok/s (10.59 ms per token on the DSP)
+threads 6
+#   attention + quantize        566.0 us/token   5.4%
+#   gate/up                    3614.7 us/token  34.5%
+#   classifier                 2281.5 us/token  21.8%
+# 64 positions in 767.7 ms: 83.4 tok/s (10.48 ms per token on the DSP)
+threads 8
+#   attention + quantize        679.0 us/token   6.1%
+#   gate/up                    3575.5 us/token  32.3%
+#   classifier                 2230.3 us/token  20.1%
+# 64 positions in 821.1 ms: 77.9 tok/s (11.07 ms per token on the DSP)
