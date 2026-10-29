@@ -30,6 +30,7 @@
 //!             vulkan; a --pure Q4_0 GGUF). With -c, the prompt runs on the
 //!             CPU (batched) and its KV cache goes to the GPU; without, the
 //!             prompt goes through the GPU token by token
+//!   --times   with --gpu: print the time of every decode token
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -64,13 +65,14 @@ fn main() {
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram) = (0usize, 2usize);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
-    let mut gpu = false;
+    let (mut gpu, mut times) = (false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" {
             match flag.as_str() {
                 "--kl" => kl = true,
                 "--chat" => chat = true,
+                "--times" => times = true,
                 _ => gpu = true,
             }
             continue;
@@ -110,7 +112,7 @@ fn main() {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref());
+        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times);
     }
     let mut session = Session::open(&model_path, Some(&tok_path), steps, format, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -188,7 +190,7 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: u
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>) {
+fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
@@ -201,15 +203,27 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     for p in 0..t.len() - 1 {
         let _ = out.write_all(&s.text.piece(t[p], t[p + 1]));
     }
-    let st = s.generate(prompt, &mut sampler, steps, |piece| out.write_all(piece).and_then(|_| out.flush()).is_ok());
+    // --times: the time between emitted tokens (one GPU step plus
+    // sampling), to see whether decode starts slow and speeds up.
+    let mut stamps = times.then(Vec::new);
+    let st = s.generate(prompt, &mut sampler, steps, |piece| {
+        if let Some(v) = &mut stamps {
+            v.push(std::time::Instant::now());
+        }
+        out.write_all(piece).and_then(|_| out.flush()).is_ok()
+    });
     writeln!(out).unwrap();
+    if let Some(v) = stamps {
+        let ms: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
+        eprintln!("token ms: {}", ms.iter().map(|m| format!("{m:.1}")).collect::<Vec<_>>().join(" "));
+    }
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
     let how = if s.cpu.is_some() { "on the CPU" } else { "token by token" };
     eprintln!("prefill ({how}): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
 }
 
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>) {
+fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

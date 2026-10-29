@@ -294,3 +294,12 @@ two runs each (raw: `raw/hybrid-prefill.txt`):
   the CPU prefill. The gap shrank from ~20 % to 3–11 %. Most of it came
   from the warm, charging phone; what is left is within the run-to-run
   spread and still to be explained.
+- Per-token times (`aether --gpu --times`; raw:
+  `raw/hybrid-token-times.txt`), cooler still (34–35 °C, battery): decode
+  83.7 / 89.1 tok/s GPU-only against 101.6 / 103.0 with the CPU prefill.
+  The CPU-prefill runs hold 8–10 ms per token from the first token on,
+  with one 23–27 ms token (the first token in one run, mid-way in the
+  other). GPU-only runs sit at 11–12 ms per token after their 3.5 s of
+  GPU prefill. So there is no slow start-up phase to fix. The earlier gap
+  came from the phone's state (warm, charging). On a cool phone, the GPU
+  decodes faster when it has not just been busy with the prompt.
