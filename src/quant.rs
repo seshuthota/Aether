@@ -341,6 +341,409 @@ pub fn dequantize_q6_k(blocks: &[BlockQ6_K], out: &mut [f32]) {
     }
 }
 
+// --- Quantizers that search for the scale (L.2) ------------------------
+//
+// Q4_0 / Q5_0 above take the scale straight from the largest element.
+// llama.cpp's other quantizers search: they try several scales and keep
+// the one with the smallest weighted squared error. The weights are either
+// derived from the values themselves or come from an *importance matrix*
+// (imatrix): for each input column of a matrix, the mean of x² over the
+// activations that column met on calibration text. A column that sees large
+// activations matters more to the output, so its weights are rounded more
+// carefully.
+//
+// The functions below follow ggml-quants.c (`make_qx_quants`,
+// `make_qkx2_quants`, `make_qkx3_quants`, `make_qp_quants`,
+// `quantize_row_q4_K_ref`, `quantize_row_*_impl`) operation for operation,
+// in C's evaluation order: `w*x[i]*l` is `(w·x)·l`, and so on. ggml-base is
+// built without FMA contraction, so the bytes match llama.cpp's exactly
+// (`tools/gen_quant_imatrix.py`).
+
+/// ggml's `GROUP_MAX_EPS`: below this a group counts as all zero.
+const GROUP_MAX_EPS: f32 = 1e-15;
+
+/// Round to nearest, ties to even, for |x| ≤ 4194303 (ggml's
+/// `nearest_int`: adding 1.5·2²³ leaves the integer in the low mantissa).
+#[inline(always)]
+fn nearest_int(x: f32) -> i32 {
+    debug_assert!(x.abs() <= 4194303.0);
+    ((x + 12582912.0).to_bits() as i32 & 0x007f_ffff) - 0x0040_0000
+}
+
+/// Symmetric levels −nmax..nmax−1 (stored as l + nmax in `l_out`) with the
+/// scale that minimises Σ w·(x − scale·l)², trying 19 scales around
+/// −nmax / max. `qw` gives the weights; without it, w = x² (rmse_type 1,
+/// the only type the quantizers here use).
+fn make_qx_quants(nmax: i32, x: &[f32], l_out: &mut [i8], qw: Option<&[f32]>) -> f32 {
+    let (mut max, mut amax) = (0.0f32, 0.0f32);
+    for &v in x {
+        if v.abs() > amax {
+            amax = v.abs();
+            max = v;
+        }
+    }
+    if amax < GROUP_MAX_EPS {
+        l_out.fill(0);
+        return 0.0;
+    }
+    let w = |i: usize| qw.map_or(x[i] * x[i], |q| q[i]);
+    let level = |iscale: f32, v: f32| nearest_int(iscale * v).clamp(-nmax, nmax - 1);
+    let mut iscale = -nmax as f32 / max;
+    let (mut sumlx, mut suml2) = (0.0f32, 0.0f32);
+    for (i, &v) in x.iter().enumerate() {
+        let l = level(iscale, v);
+        l_out[i] = (l + nmax) as i8;
+        sumlx += w(i) * v * l as f32;
+        suml2 += w(i) * l as f32 * l as f32;
+    }
+    let mut scale = if suml2 != 0.0 { sumlx / suml2 } else { 0.0 };
+    let mut best = scale * sumlx;
+    for is in (-9..=9).filter(|&is| is != 0) {
+        iscale = -(nmax as f32 + 0.1 * is as f32) / max;
+        (sumlx, suml2) = (0.0, 0.0);
+        for (i, &v) in x.iter().enumerate() {
+            let l = level(iscale, v);
+            sumlx += w(i) * v * l as f32;
+            suml2 += w(i) * l as f32 * l as f32;
+        }
+        if suml2 > 0.0 && sumlx * sumlx > best * suml2 {
+            for (i, &v) in x.iter().enumerate() {
+                l_out[i] = (level(iscale, v) + nmax) as i8;
+            }
+            scale = sumlx / suml2;
+            best = scale * sumlx;
+        }
+    }
+    scale
+}
+
+/// Levels 0..=nmax with a scale and a min (value = scale·l − min, min ≥ 0
+/// returned in `the_min`) minimising Σ w·(scale·l + m − x)², trying nstep+1
+/// scales by least squares. `x3` selects `make_qkx3_quants` (an empty range
+/// test of `max <= min`); the two are otherwise the same search.
+#[allow(clippy::too_many_arguments)]
+fn make_qkx_quants(nmax: i32, x: &[f32], weights: &[f32], l_out: &mut [u8], the_min: &mut f32, rmin: f32, rdelta: f32, nstep: i32, x3: bool) -> f32 {
+    let n = x.len();
+    let (mut min, mut max) = (x[0], x[0]);
+    let mut sum_w = weights[0];
+    let mut sum_x = sum_w * x[0];
+    for i in 1..n {
+        min = min.min(x[i]);
+        max = max.max(x[i]);
+        sum_w += weights[i];
+        sum_x += weights[i] * x[i];
+    }
+    if min > 0.0 {
+        min = 0.0;
+    }
+    if if x3 { max <= min } else { max == min } {
+        l_out.fill(0);
+        *the_min = -min;
+        return 0.0;
+    }
+    let mut iscale = nmax as f32 / (max - min);
+    let mut scale = 1.0 / iscale;
+    let mut best = 0.0f32;
+    for i in 0..n {
+        l_out[i] = nearest_int(iscale * (x[i] - min)).clamp(0, nmax) as u8;
+        let diff = scale * l_out[i] as f32 + min - x[i];
+        best += weights[i] * (diff * diff);
+    }
+    let mut aux = [0u8; 32];
+    for is in 0..=nstep {
+        iscale = (rmin + rdelta * is as f32 + nmax as f32) / (max - min);
+        let (mut sum_l, mut sum_l2, mut sum_xl) = (0.0f32, 0.0f32, 0.0f32);
+        for i in 0..n {
+            let l = nearest_int(iscale * (x[i] - min)).clamp(0, nmax);
+            aux[i] = l as u8;
+            let w = weights[i];
+            sum_l += w * l as f32;
+            sum_l2 += w * l as f32 * l as f32;
+            sum_xl += w * l as f32 * x[i];
+        }
+        let det = sum_w * sum_l2 - sum_l * sum_l;
+        if det > 0.0 {
+            let mut this_scale = (sum_w * sum_xl - sum_x * sum_l) / det;
+            let mut this_min = (sum_l2 * sum_x - sum_l * sum_xl) / det;
+            if this_min > 0.0 {
+                this_min = 0.0;
+                this_scale = sum_xl / sum_l2;
+            }
+            let mut err = 0.0f32;
+            for i in 0..n {
+                let diff = this_scale * aux[i] as f32 + this_min - x[i];
+                err += weights[i] * (diff * diff);
+            }
+            if err < best {
+                l_out.copy_from_slice(&aux[..n]);
+                best = err;
+                scale = this_scale;
+                min = this_min;
+            }
+        }
+    }
+    *the_min = -min;
+    scale
+}
+
+/// Levels 0..=nmax for non-negative `x` (the 8 sub-block scales or mins of
+/// a Q4_K block) with one scale, weighted by `qw`: 9 trial scales, then up
+/// to 5 rounds of moving single levels while the fit improves.
+fn make_qp_quants(nmax: i32, x: &[f32], l_out: &mut [u8], qw: &[f32]) -> f32 {
+    let max = x.iter().fold(0.0f32, |m, &v| m.max(v));
+    if max < GROUP_MAX_EPS {
+        l_out.fill(0);
+        return 0.0;
+    }
+    let mut iscale = nmax as f32 / max;
+    for (l, &v) in l_out.iter_mut().zip(x) {
+        *l = nearest_int(iscale * v) as u8;
+    }
+    let scale = 1.0 / iscale;
+    let mut best = 0.0f32;
+    for (i, &v) in x.iter().enumerate() {
+        let diff = v - scale * l_out[i] as f32;
+        best += qw[i] * diff * diff;
+    }
+    for is in (-4..=4).filter(|&is| is != 0) {
+        let iscale_is = (0.1 * is as f32 + nmax as f32) / max;
+        let scale_is = 1.0 / iscale_is;
+        let mut mse = 0.0f32;
+        for (i, &v) in x.iter().enumerate() {
+            let l = nearest_int(iscale_is * v).min(nmax);
+            let diff = v - scale_is * l as f32;
+            mse += qw[i] * diff * diff;
+        }
+        if mse < best {
+            best = mse;
+            iscale = iscale_is;
+        }
+    }
+    let (mut sumlx, mut suml2) = (0.0f32, 0.0f32);
+    for (i, &v) in x.iter().enumerate() {
+        let l = nearest_int(iscale * v).min(nmax);
+        l_out[i] = l as u8;
+        sumlx += qw[i] * v * l as f32;
+        suml2 += qw[i] * l as f32 * l as f32;
+    }
+    for _ in 0..5 {
+        let mut changed = false;
+        for (i, &v) in x.iter().enumerate() {
+            let (w, l) = (qw[i], l_out[i] as f32);
+            let mut slx = sumlx - w * v * l;
+            let mut sl2 = suml2 - w * l * l;
+            if slx > 0.0 && sl2 > 0.0 {
+                let new_l = nearest_int(v * sl2 / slx).min(nmax);
+                if new_l != l_out[i] as i32 {
+                    slx += w * v * new_l as f32;
+                    sl2 += w * new_l as f32 * new_l as f32;
+                    if slx * slx * suml2 > sumlx * sumlx * sl2 {
+                        l_out[i] = new_l as u8;
+                        (sumlx, suml2) = (slx, sl2);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if suml2 > 0.0 { sumlx / suml2 } else { 0.0 }
+}
+
+/// llama.cpp's per-weight importance for the 32-weight formats: the column's
+/// imatrix entry times √(σ² + x²), with σ² the row's mean square.
+fn row_weights(row: &[f32], qw: &[f32]) -> impl Fn(usize, &mut [f32; QK]) {
+    let sigma2 = row.iter().fold(0.0f32, |s, &v| s + v * v) / row.len() as f32;
+    move |b, w| {
+        for j in 0..QK {
+            let v = row[QK * b + j];
+            w[j] = qw[QK * b + j] * (sigma2 + v * v).sqrt();
+        }
+    }
+}
+
+/// One row into Q4_0. Without an importance matrix this is
+/// [`quantize_q4_0`]; with one (`qw`, one entry per column) the scale is
+/// searched as llama.cpp's `quantize_q4_0` does.
+pub fn quantize_q4_0_row(row: &[f32], qw: Option<&[f32]>, out: &mut [BlockQ4_0]) {
+    let Some(qw) = qw else { return quantize_q4_0(row, out) };
+    assert_eq!(row.len(), out.len() * QK);
+    let weights = row_weights(row, qw);
+    let (mut w, mut l) = ([0.0f32; QK], [0i8; QK]);
+    for (b, blk) in out.iter_mut().enumerate() {
+        weights(b, &mut w);
+        blk.d = f32_to_f16(make_qx_quants(8, &row[QK * b..QK * (b + 1)], &mut l, Some(&w)));
+        for j in 0..QK / 2 {
+            blk.qs[j] = l[j] as u8 | (l[j + QK / 2] as u8) << 4;
+        }
+    }
+}
+
+/// One row into Q5_0, as [`quantize_q4_0_row`].
+pub fn quantize_q5_0_row(row: &[f32], qw: Option<&[f32]>, out: &mut [BlockQ5_0]) {
+    let Some(qw) = qw else { return quantize_q5_0(row, out) };
+    assert_eq!(row.len(), out.len() * QK);
+    let weights = row_weights(row, qw);
+    let (mut w, mut l) = ([0.0f32; QK], [0i8; QK]);
+    for (b, blk) in out.iter_mut().enumerate() {
+        weights(b, &mut w);
+        blk.d = f32_to_f16(make_qx_quants(16, &row[QK * b..QK * (b + 1)], &mut l, Some(&w)));
+        let mut qh = 0u32;
+        for j in 0..QK / 2 {
+            let (lo, hi) = (l[j] as u8, l[j + QK / 2] as u8);
+            blk.qs[j] = (lo & 0x0F) | ((hi & 0x0F) << 4);
+            qh |= ((lo >> 4) as u32) << j | ((hi >> 4) as u32) << (j + QK / 2);
+        }
+        blk.qh = qh.to_le_bytes();
+    }
+}
+
+/// Packs 8 six-bit scales and mins into Q4_K's 12 bytes (the inverse of
+/// [`q4_k_scale_min`]).
+fn pack_q4_k_scales(ls: &[u8; 8], lm: &[u8; 8]) -> [u8; 12] {
+    let mut s = [0u8; 12];
+    for j in 0..8 {
+        if j < 4 {
+            s[j] = ls[j];
+            s[j + 4] = lm[j];
+        } else {
+            s[j + 4] = (ls[j] & 0x0F) | ((lm[j] & 0x0F) << 4);
+            s[j - 4] |= (ls[j] >> 4) << 6;
+            s[j] |= (lm[j] >> 4) << 6;
+        }
+    }
+    s
+}
+
+/// One row (a multiple of 256 long) into Q4_K, with or without an
+/// importance matrix, as llama.cpp's `quantize_q4_K`.
+pub fn quantize_q4_k_row(row: &[f32], qw: Option<&[f32]>, out: &mut [BlockQ4_K]) {
+    assert_eq!(row.len(), out.len() * QK_K);
+    for (i, blk) in out.iter_mut().enumerate() {
+        let x = &row[QK_K * i..QK_K * (i + 1)];
+        let mut l = [0u8; QK_K];
+        let (mut scales, mut mins) = ([0.0f32; 8], [0.0f32; 8]);
+        let mut w = [0.0f32; 32];
+        let (ls, lm) = match qw {
+            None => {
+                let (mut max_scale, mut max_min) = (0.0f32, 0.0f32);
+                for j in 0..8 {
+                    let xs = &x[32 * j..32 * j + 32];
+                    let sum_x2 = xs.iter().fold(0.0f32, |s, &v| s + v * v);
+                    let av_x = (sum_x2 / 32.0).sqrt();
+                    for (wl, &v) in w.iter_mut().zip(xs) {
+                        *wl = av_x + v.abs();
+                    }
+                    let lj = &mut l[32 * j..32 * j + 32];
+                    scales[j] = make_qkx_quants(15, xs, &w, lj, &mut mins[j], -1.0, 0.1, 20, false);
+                    // C's `if (a > max)`: f32::max may pick −0.0 over 0.0.
+                    if scales[j] > max_scale {
+                        max_scale = scales[j];
+                    }
+                    if mins[j] > max_min {
+                        max_min = mins[j];
+                    }
+                }
+                let inv_scale = if max_scale > 0.0 { 63.0 / max_scale } else { 0.0 };
+                let inv_min = if max_min > 0.0 { 63.0 / max_min } else { 0.0 };
+                blk.d = f32_to_f16(max_scale / 63.0);
+                blk.dmin = f32_to_f16(max_min / 63.0);
+                let q6 = |inv: f32| move |v: f32| (nearest_int(inv * v) as u8).min(63);
+                (scales.map(q6(inv_scale)), mins.map(q6(inv_min)))
+            }
+            Some(qw) => {
+                let qw = &qw[QK_K * i..QK_K * (i + 1)];
+                let sum_x2 = x.iter().fold(0.0f32, |s, &v| s + v * v);
+                let sigma2 = 2.0 * sum_x2 / QK_K as f32;
+                let mut sw = [0.0f32; 8];
+                for j in 0..8 {
+                    let xs = &x[32 * j..32 * j + 32];
+                    for (k, wl) in w.iter_mut().enumerate() {
+                        *wl = qw[32 * j + k] * (sigma2 + xs[k] * xs[k]).sqrt();
+                    }
+                    sw[j] = w.iter().fold(0.0f32, |s, &v| s + v);
+                    let lj = &mut l[32 * j..32 * j + 32];
+                    scales[j] = make_qkx_quants(15, xs, &w, lj, &mut mins[j], -0.9, 0.05, 36, true);
+                }
+                let (mut ls, mut lm) = ([0u8; 8], [0u8; 8]);
+                blk.d = f32_to_f16(make_qp_quants(63, &scales, &mut ls, &sw));
+                blk.dmin = f32_to_f16(make_qp_quants(63, &mins, &mut lm, &sw));
+                (ls, lm)
+            }
+        };
+        blk.scales = pack_q4_k_scales(&ls, &lm);
+        // The final levels against the stored (rounded) scales and mins.
+        for j in 0..8 {
+            let (sc, m) = q4_k_scale_min(&blk.scales, j);
+            let d = f16_to_f32(blk.d) * sc as f32;
+            if d == 0.0 {
+                continue;
+            }
+            let dm = f16_to_f32(blk.dmin) * m as f32;
+            for k in 32 * j..32 * j + 32 {
+                l[k] = nearest_int((x[k] + dm) / d).clamp(0, 15) as u8;
+            }
+        }
+        for c in 0..QK_K / 64 {
+            for k in 0..32 {
+                blk.qs[32 * c + k] = l[64 * c + k] | (l[64 * c + k + 32] << 4);
+            }
+        }
+    }
+}
+
+/// One row (a multiple of 256 long) into Q6_K, with or without an
+/// importance matrix, as llama.cpp's `quantize_q6_K`.
+pub fn quantize_q6_k_row(row: &[f32], qw: Option<&[f32]>, out: &mut [BlockQ6_K]) {
+    assert_eq!(row.len(), out.len() * QK_K);
+    for (i, blk) in out.iter_mut().enumerate() {
+        let x = &row[QK_K * i..QK_K * (i + 1)];
+        let mut l = [0i8; QK_K];
+        let mut scales = [0.0f32; QK_K / 16];
+        let (mut max_scale, mut max_abs_scale) = (0.0f32, 0.0f32);
+        for ib in 0..QK_K / 16 {
+            let (a, b) = (16 * ib, 16 * ib + 16);
+            let qw = qw.map(|q| &q[QK_K * i + a..QK_K * i + b]);
+            scales[ib] = make_qx_quants(32, &x[a..b], &mut l[a..b], qw);
+            if scales[ib].abs() > max_abs_scale {
+                max_abs_scale = scales[ib].abs();
+                max_scale = scales[ib];
+            }
+        }
+        if max_abs_scale < GROUP_MAX_EPS {
+            *blk = BlockQ6_K { ql: [0; QK_K / 2], qh: [0; QK_K / 4], scales: [0; QK_K / 16], d: 0 };
+            continue;
+        }
+        let iscale = -128.0 / max_scale;
+        blk.d = f32_to_f16(1.0 / iscale);
+        for ib in 0..QK_K / 16 {
+            blk.scales[ib] = nearest_int(iscale * scales[ib]).min(127) as i8;
+        }
+        // The final levels against the stored (rounded) scales.
+        for j in 0..QK_K / 16 {
+            let d = f16_to_f32(blk.d) * blk.scales[j] as f32;
+            if d == 0.0 {
+                continue;
+            }
+            for k in 16 * j..16 * j + 16 {
+                l[k] = (nearest_int(x[k] / d).clamp(-32, 31) + 32) as i8;
+            }
+        }
+        let l = l.map(|v| v as u8);
+        for h in 0..QK_K / 128 {
+            let lv = &l[128 * h..128 * h + 128];
+            let (ql, qh) = (&mut blk.ql[64 * h..64 * h + 64], &mut blk.qh[32 * h..32 * h + 32]);
+            for k in 0..32 {
+                ql[k] = (lv[k] & 0x0F) | ((lv[k + 64] & 0x0F) << 4);
+                ql[k + 32] = (lv[k + 32] & 0x0F) | ((lv[k + 96] & 0x0F) << 4);
+                qh[k] = (lv[k] >> 4) | ((lv[k + 32] >> 4) << 2) | ((lv[k + 64] >> 4) << 4) | ((lv[k + 96] >> 4) << 6);
+            }
+        }
+    }
+}
+
 // --- Repacked layouts: four rows interleaved ---------------------------
 //
 // For `smmla` (and the matching `sdot` GEMV), four rows' blocks at the same
@@ -691,6 +1094,41 @@ mod tests {
                 let mut q = vec![BlockQ8_0 { d: 0, qs: [0; QK] }; v.len() / QK];
                 crate::kernels::neon_quant::quantize_q8_0(v, &mut q);
                 assert_eq!(q, blocks_from_bytes::<BlockQ8_0>(&std::fs::read(dir.join(file)).unwrap()), "{} neon {file}", dir.display());
+            }
+        }
+    }
+
+    /// The searching quantizers, with and without an importance matrix,
+    /// give exactly the bytes of llama.cpp's `quantize_q4_0` / `q5_0` /
+    /// `q4_K` / `q6_K` (called from ggml-base by tools/gen_quant_imatrix.py).
+    #[test]
+    fn imatrix_quantizers_are_byte_identical_to_llama_cpp() {
+        let Some(root) = golden("quant_imatrix") else { return };
+        let mut dirs: Vec<_> = std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).collect();
+        dirs.sort();
+        fn check<B: Copy + PartialEq + std::fmt::Debug>(dir: &Path, name: &str, rows: &[f32], n: usize, qw: &[f32], per_row: usize, f: impl Fn(&[f32], Option<&[f32]>, &mut [B])) {
+            for (suffix, qw) in [("", None), ("_im", Some(qw))] {
+                let want = blocks_from_bytes::<B>(&std::fs::read(dir.join(format!("w_{name}{suffix}.bin"))).unwrap());
+                for (r, row) in rows.chunks_exact(n).enumerate() {
+                    let mut got = want[r * per_row..(r + 1) * per_row].to_vec();
+                    // Scribble over the blocks first: every byte must be written.
+                    // SAFETY: B is a plain #[repr(C)] struct of integers.
+                    unsafe { std::ptr::write_bytes(got.as_mut_ptr() as *mut u8, 0xA5, got.len() * std::mem::size_of::<B>()) };
+                    f(row, qw, &mut got);
+                    assert_eq!(got, want[r * per_row..(r + 1) * per_row], "{} {name}{suffix} row {r}", dir.display());
+                }
+            }
+        }
+        assert!(!dirs.is_empty());
+        for dir in &dirs {
+            let (shape, w) = read_npy(&dir.join("w.npy"));
+            let qw = read_npy(&dir.join("qw.npy")).1;
+            let n = shape[1];
+            check::<BlockQ4_0>(dir, "q4_0", &w, n, &qw, n / QK, quantize_q4_0_row);
+            check::<BlockQ5_0>(dir, "q5_0", &w, n, &qw, n / QK, quantize_q5_0_row);
+            if n % QK_K == 0 {
+                check::<BlockQ4_K>(dir, "q4_k", &w, n, &qw, n / QK_K, quantize_q4_k_row);
+                check::<BlockQ6_K>(dir, "q6_k", &w, n, &qw, n / QK_K, quantize_q6_k_row);
             }
         }
     }
