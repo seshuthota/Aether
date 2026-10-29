@@ -257,3 +257,35 @@ Q4_0 chat, "Why is the sky blue?", t 0.7 (driven over adb):
 | CPU, cores 2–7 | 56 ms | 155.5 tok/s |
 | CPU + lookup | 53 ms | 159.6 tok/s (prose: about neutral, as measured before) |
 | GPU | 319–442 ms (token by token) | 90–92 tok/s |
+
+**Prefill on the CPU, decode on the GPU** (2026-10-29, phone charging,
+44–50 °C). Feeding the prompt through the GPU's decode step one token at a
+time is slow, so `aether --gpu -c CORES` now also loads a CPU copy of the
+model. That copy runs the prompt as one batch (`forward_batch`), and its KV
+cache rows `0..n` are copied into the GPU's cache. Both caches use the same
+`[layer, pos, kv_dim]` layout, about 24 KB per token for Qwen2.5-0.5B.
+Decoding then continues on the GPU at position `n`. The weights are in
+memory twice (+278 MB for Qwen2.5-0.5B Q4_0), so this is an option, not
+the default.
+
+Qwen2.5-0.5B Q4_0, greedy, a 345-token prompt (the start of wiki.test.raw),
+two runs each (raw: `raw/hybrid-prefill.txt`):
+
+| mode | prefill, 345 tokens | decode, 55 tokens |
+| --- | --- | --- |
+| `--gpu` (prompt token by token on the GPU) | 3873 / 4474 ms | 80.6 / 82.0 tok/s |
+| `--gpu -c 2-7` (prompt on the CPU) | 606 / 548 ms | 63.3 / 64.4 tok/s |
+| `-c 2-7` (all on the CPU) | 602 / 543 ms | 157.8 / 157.9 tok/s |
+
+- The handoff is correct: on the short prompt ("Why is the sky blue?", 114
+  tokens), `--gpu` and `--gpu -c 2-7` print the same greedy text, token for
+  token. A wrong cache row would change the text within a few tokens.
+- Prefill is 7× faster and equals CPU-only, as expected: it is the same
+  code. The copy itself is ~8 MB and takes a negligible share of the time.
+- Decode after the CPU prefill was 63–75 tok/s against 81–82 for GPU-only.
+  The CPU threads are not the cause: they spin for ~2.8 ms and then park,
+  and one prefill core (`-c 7`, 67 tok/s) did no better than six. More
+  likely the GPU clocks dropped during the ~0.5 s it sat idle (as in step
+  5). In GPU-only mode, the long token-by-token prefill keeps the GPU busy
+  and its clocks up. A 55-token decode is short, so this start-up loss
+  weighs heavily.
