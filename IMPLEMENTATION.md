@@ -39,8 +39,19 @@ format (Q4_0 tg64 158–180 vs 138–143, Q4_K_M 104–111 vs 86); prefill 10–
 Q8_0, 3–7× for Q4_K_M. 92 tests on the phone. Timed runs need the clock caps recorded
 (`prefill-ab.sh` does): a thermal cap on the prime cores (1.69 → 1.02 GHz) moves them by 20 %.
 
+Day of 2026-10-29 (later phases, plan section 13): flash-decoding by K/V head (decode −11 / −18 %
+at d512 / d1024); speculative decoding, both prompt lookup (`--lookup K`, +60–75 % when the reply
+copies the prompt) and a draft model (`--draft PATH`, 0 to +29 %: SmolLM2-135M decodes only 2× faster
+than 360M); prompt lookup in the C ABI and the app; prefill tail tiles (−6 % cycles on odd lengths).
+**Vulkan on the Adreno 830** (results/phase-l3.md, `--features vulkan`): Q4_0 GEMV / GEMM shaders and
+a whole decode step on the GPU (`aether --gpu`), PPL matching llama.cpp on SmolLM2-135M and
+Qwen2.5-0.5B. The GPU reads DRAM as fast as the CPU (~66 GB/s), so decode is not faster (103 vs 158
+tok/s sustained), but it takes ~2.3 W instead of 4.5 W: 0.021–0.024 J/token vs 0.029, 68 vs 89 °C.
+99 tests on the phone with `--features vulkan` (96 without).
+
 Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), the other later phases (Vulkan, speculative decoding).
+screen off or kept awake by keyevents), trying the app's new "lookup" checkbox (built and installed,
+but the phone was locked), GPU prefill and the GPU in the app, L.5 (NPU).
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
