@@ -430,13 +430,21 @@ impl GpuSession {
         }
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+        // Greedy decoding takes the GPU's argmax instead of reading the
+        // logits (~1.1 ms per token on the phone for Qwen2.5's 151,936).
+        let mut gpu_next = None;
         while np == tokens.len() {
-            let next = sampler.sample(&mut logits);
+            let next = gpu_next.unwrap_or_else(|| sampler.sample(&mut logits));
             if self.text.is_stop(next) || !emit(&self.text.piece(token, next)) || pos >= steps {
                 break;
             }
             token = next;
-            logits.copy_from_slice(self.model.forward(&self.gpu, token, pos).expect("GPU step"));
+            let l = self.model.forward(&self.gpu, token, pos).expect("GPU step");
+            if sampler.temperature == 0.0 {
+                gpu_next = Some(self.model.greedy());
+            } else {
+                logits.copy_from_slice(l);
+            }
             pos += 1;
         }
         stats.decode = t1.elapsed();
@@ -511,5 +519,24 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
         assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
         assert!(look.accepted > 0 && look.accepted < look.drafted, "{look:?}");
+    }
+
+    /// The GPU's argmax (greedy decoding) is the index the CPU's argmax
+    /// finds in the same logits, after a prompt batch and after each step.
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn gpu_argmax_matches_the_logits() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let Ok(mut s) = GpuSession::open(&model, 64) else {
+            assert!(!cfg!(target_os = "android"), "no GPU");
+            return;
+        };
+        let tokens = s.text.encode("The capital of France is");
+        let mut next = argmax(s.model.forward_batch(&s.gpu, &tokens, 0).unwrap());
+        assert_eq!(s.model.greedy(), next);
+        for pos in tokens.len()..tokens.len() + 16 {
+            next = argmax(s.model.forward(&s.gpu, next, pos).unwrap());
+            assert_eq!(s.model.greedy(), next, "at {pos}");
+        }
     }
 }

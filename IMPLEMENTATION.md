@@ -283,7 +283,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       the same bytes; our own imatrix (`Imatrix::collect`) within 1.7e-3 of llama-imatrix's.
       PPL / KLD match llama-perplexity; the imatrix cuts KLD 11–33 % at the same size.
       Not done: writing imatrix files, and choosing a Q4_K_M mix ourselves (`-q` stays
-      `--pure`). Phone test run pending with the rest of gpu-pending.
+      `--pure`). Lib tests pass on the phone too (2026-10-29).
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
@@ -324,19 +324,22 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         time at 30–40 GB/s. Stacked wq/wk/wv and w_gate/w_up (`Kernel::bind_at` views):
         q/k/v −20 %, gate/up −6 % of GPU time, PPL identical. Tried and dropped: an unrolled
         row loop (slower everywhere), split-K across lane groups (never faster).
-  - [~] Branch `gpu-pending` (2026-10-29, built while the phone was away; correctness verified
-        on the PC's Intel GPU, phone speed and the app still to check):
+  - [x] Branch `gpu-pending` (2026-10-29, built while the phone was away, then verified on the
+        phone: 106/106 lib tests, the same PPL, the app; results/phase-l3.md step 7):
         - Vulkan asks for 32-lane subgroups where a device may pick fewer (Intel), so every GPU
           test and `vk_ppl` runs on the PC. GPU PPL on Intel equals the Adreno's to 4 decimals.
-        - Fused into the GEMVs: the residual add (wo, down), the SwiGLU (down's input), the RMS
-          norm (q/k/v, gate/up, classifier). Decode: ~169 dispatches per token (from ~290).
-          `add.comp` and `swiglu.comp` removed. Logits in host-cached memory.
+        - Fused into the GEMVs: the residual add (wo, down), the RMS norm (q/k/v, classifier).
+          Also fusing the norm into gate/up and the SwiGLU into down made decode 8 % slower on
+          the phone (every workgroup redoes them), so those two run as their own kernels again.
+          `add.comp` removed. Logits in host-cached memory.
         - Batched prompt pass on the GPU: `GpuModel::forward_batch` (up to 128 tokens; the
           step-3 GEMM with ACCUM/GLU; shaders take a token index). PPL through it equals the
           token-by-token path (SmolLM2 27.6910, Qwen2.5 19.7193). `vk_ppl … batch`, `vk_prefill`.
         - `aether_open_gpu(path, cores, max_seq, out)`: with cores, the CPU runs the prompt; the
           app's GPU mode uses that. `GpuSession` without cores runs the prompt batched on the GPU.
-        - Open: greedy argmax on the GPU (only if the phone shows the logits read still costs).
+        - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
+          152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
+          after a CPU prompt 63–66 → 96–101 (no gap left).
 - [ ] **L.5** NPU: not started.
 
 ---

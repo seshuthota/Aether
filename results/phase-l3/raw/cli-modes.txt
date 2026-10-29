@@ -1,0 +1,12 @@
+>>> cli r1 --gpu 40700
+prefill (on the GPU): 345 tokens in 1555.2 ms (221.8 tok/s) | decode: 55 tokens in 715.5 ms (76.9 tok/s)
+>>> cli r1 --gpu -c 2-7 39600
+prefill (on the CPU): 345 tokens in 491.0 ms (702.7 tok/s) | decode: 55 tokens in 868.1 ms (63.4 tok/s)
+>>> cli r1 -c 2-7 41500
+prefill: 345 tokens in 460.0 ms (750.0 tok/s) | decode: 55 tokens in 325.7 ms (168.9 tok/s) | peak RSS 370264 kB
+>>> cli r2 --gpu 39200
+prefill (on the GPU): 345 tokens in 1477.4 ms (233.5 tok/s) | decode: 55 tokens in 684.9 ms (80.3 tok/s)
+>>> cli r2 --gpu -c 2-7 38000
+prefill (on the CPU): 345 tokens in 429.7 ms (802.8 tok/s) | decode: 55 tokens in 827.0 ms (66.5 tok/s)
+>>> cli r2 -c 2-7 37600
+prefill: 345 tokens in 446.1 ms (773.3 tok/s) | decode: 55 tokens in 330.9 ms (166.2 tok/s) | peak RSS 369392 kB

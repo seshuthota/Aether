@@ -76,6 +76,7 @@ struct Bl {
     o: Bound,
     norm2: Bound,
     gate_up: Bound,
+    swiglu: Bound,
     down: Bound,
     qkv_mm: Bound,
     o_mm: Bound,
@@ -129,6 +130,9 @@ pub struct GpuModel {
     fcls: Bound,
     fcls_b: Bound,
     fcls_mm: Option<Bound>,
+    /// The two passes of the argmax of `logits` into `best`.
+    amax: Bound,
+    best: Buffer,
     // Everything the recorded commands use must outlive them; held here.
     _keep: Vec<Buffer>,
     cls: MatQ4_0,
@@ -199,7 +203,7 @@ impl GpuModel {
         // One row per token of a batch; decoding uses row 0.
         let x = zeros(batch * dim)?;
         // q, k, v: one buffer, the output of wqkv, which the kernels after
-        // it bind views into; gate then up likewise, read whole by down.
+        // it bind views into; gate then up likewise.
         let qkv_dim = dim + 2 * kv_dim;
         let (xb, xb2, qkv, hb12) = (zeros(batch * dim)?, zeros(batch * dim)?, zeros(batch * qkv_dim)?, zeros(batch * 2 * hid)?);
         let (k_at, v_at) = (4 * dim, 4 * (dim + kv_dim));
@@ -225,12 +229,15 @@ impl GpuModel {
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
         let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
-        // In decode, wo adds its product to the residual stream x; down does
-        // too, and reads gate and up, applying the SwiGLU as it loads them;
-        // q/k/v, gate/up and the classifier apply the RMS norm before them
-        // as they load x.
+        let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
+        let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
+        // In decode, wo and down add their products to the residual stream
+        // x; q/k/v and the classifier apply the RMS norm before them as they
+        // load x. gate/up and down do not fuse theirs: every workgroup
+        // would redo the norm's sum (9,728 gate/up rows) or the SwiGLU's
+        // exponentials (4,864 per subgroup), and on the phone both fused
+        // stages were slower than the separate kernels.
         let wo_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, false, false)?;
-        let down_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, true, false)?;
         let rs = [4, 8, 16];
         let by_r = |r: u32| rs.iter().position(|&x| x == r).unwrap();
         let gemvs: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel(r)).into_iter().collect::<Result<_>>()?;
@@ -251,8 +258,9 @@ impl GpuModel {
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
                 o: wo_k.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x, &x])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
-                gate_up: normed_bind(&ly.w_gate_up, &hb12, &ly.ffn_norm)?,
-                down: down_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x, &x])?,
+                gate_up: gemvs[by_r(gemv_r(ly.w_gate_up.rows))].bind(gpu, &[&ly.w_gate_up.qs, &ly.w_gate_up.d, &xb, &hb12, &xb])?,
+                swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, 4 * hid)])?,
+                down: wo_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x, &x])?,
                 qkv_mm: mm.bind(gpu, &[&ly.wqkv.qs, &ly.wqkv.d, &xb, &qkv])?,
                 o_mm: mm_acc.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x])?,
                 gate_up_mm: mm.bind(gpu, &[&ly.w_gate_up.qs, &ly.w_gate_up.d, &xb, &hb12])?,
@@ -267,9 +275,13 @@ impl GpuModel {
             None => None,
         };
 
-        let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm];
+        // (value, index) per argmax workgroup; the index read by the CPU.
+        let (amax_parts, best) = (zeros(2 * AMAX_GROUPS)?, cached(1)?);
+        let amax = argmax.bind(gpu, &[&logits, &amax_parts, &best])?;
+
+        let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm, amax_parts];
         keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, merge, wo_k, down_k, mm, mm_acc, mm_glu];
+        let mut kernels = vec![rms, post, attn, merge, swiglu, argmax, wo_k, mm, mm_acc, mm_glu];
         kernels.extend(gemvs);
         kernels.extend(normed);
         let mut m = GpuModel {
@@ -293,6 +305,8 @@ impl GpuModel {
             fcls,
             fcls_b,
             fcls_mm,
+            amax,
+            best,
             _keep: keep,
             cls,
             layers,
@@ -341,7 +355,7 @@ impl GpuModel {
         };
         for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
             let layer_off = (l * c.seq_len * kv_dim) as u32;
-            // In decode the norms are part of the products after them.
+            // In decode the first norm is part of q/k/v.
             if n > 1 {
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
@@ -356,14 +370,20 @@ impl GpuModel {
             end(r, "attention merge");
             product(r, &b.o, &b.o_mm, &ly.wo);
             end(r, "wo + add");
-            if n > 1 {
-                r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
-                end(r, "rmsnorm");
-            }
+            r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+            end(r, "rmsnorm");
             product(r, &b.gate_up, &b.gate_up_mm, &ly.w_gate_up);
             end(r, "gate/up");
-            product(r, &b.down, &b.down_mm, &ly.w_down);
-            end(r, "swiglu + down + add");
+            // The GEMM applies the SwiGLU as it loads gate and up.
+            if n == 1 {
+                r.dispatch(&b.swiglu, &push(&[c.hidden_dim as u32]), [c.hidden_dim.div_ceil(256) as u32, 1, 1]);
+                end(r, "swiglu");
+                product(r, &b.down, &b.down_mm, &ly.w_down);
+                end(r, "down + add");
+            } else {
+                product(r, &b.down, &b.down_mm, &ly.w_down);
+                end(r, "swiglu + down + add");
+            }
         }
         match all {
             Some(cls_mm) => {
@@ -381,6 +401,13 @@ impl GpuModel {
             }
         }
         end(r, "classifier");
+        if all.is_none() {
+            let v = c.vocab_size as u32;
+            r.dispatch(&self.amax, &push(&[v, 0]), [AMAX_GROUPS as u32, 1, 1]);
+            r.barrier();
+            r.dispatch(&self.amax, &push(&[AMAX_GROUPS as u32, 1]), [1, 1, 1]);
+            end(r, "argmax");
+        }
     }
 
     /// Writes token `t`'s embedding into row `row` of x and its position's
@@ -405,6 +432,13 @@ impl GpuModel {
         self.params.as_mut_slice::<u32>()[0] = pos as u32;
         gpu.submit(&self.step, self.spin)?;
         Ok(&self.logits.as_slice::<f32>()[..self.config.vocab_size])
+    }
+
+    /// The most likely next token after the last [`GpuModel::forward`] or
+    /// [`GpuModel::forward_batch`] (without [`Options::all_logits`]),
+    /// found on the GPU: greedy decoding need not read the logits.
+    pub fn greedy(&self) -> usize {
+        self.best.as_slice::<u32>()[0] as usize
     }
 
     /// Runs `tokens` (at most [`GpuModel::batch`]) at positions `pos ..`
@@ -457,6 +491,9 @@ impl GpuModel {
         Ok(per_stage(&self.stages, &gpu.stamps(&self.step)?))
     }
 }
+
+/// Workgroups of the argmax's first pass.
+const AMAX_GROUPS: usize = 64;
 
 /// Seconds per kind of stage from the timestamps `t` taken after each of
 /// `stages`, in order of first appearance.
