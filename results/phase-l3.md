@@ -143,6 +143,38 @@ accuracy), int8 dot products (`VK_KHR_shader_integer_dot_product`, like
 the CPU), and smaller per-thread tiles with more threads. There is no
 cooperative-matrix extension on this driver.
 
-Next: a whole decode step on the GPU (norms, RoPE, attention and SwiGLU
-shaders around the GEMV), checked against the CPU path's goldens, with
-energy per token compared to the CPU.
+## Step 4: a whole decode step on the GPU (2026-10-29; `raw/vk-ppl-*.txt`)
+
+`model::gpu::GpuModel` runs [`Transformer::forward`]'s decode step as
+shaders, for `--pure` Q4_0 GGUFs. The new shaders are `rmsnorm`, `qkv_post`
+(biases, RoPE, KV-cache store), `attention` (one workgroup per query
+head, grouped-query), `add` and `swiglu`, around the Q4_0 GEMV. All
+buffers are shared memory. One token is ~14 dispatches per layer with a
+barrier after each step, recorded **once** into a command buffer that is
+resubmitted for every token (`Gpu::record` / `Gpu::submit`; descriptor
+sets are bound up front with `Kernel::bind`). What changes per token lives
+in a `params` buffer: the position, and the RoPE (sin, cos) table,
+computed on the CPU by the same function the CPU path uses, so the GPU's
+own `sin`/`cos` at large angles never matter. The token's embedding row
+is dequantized by the CPU straight into the input buffer.
+
+**Correctness** against llama.cpp (`llama-perplexity`, same GGUF files,
+wikitext-2, 20 × 512, `examples/vk_ppl.rs` feeding every token through
+the GPU decode step):
+
+| model (`--pure` Q4_0) | GPU | llama.cpp | ours, CPU |
+| --- | --- | --- | --- |
+| SmolLM2-135M | **27.6910 ± 1.174** | 27.7412 ± 1.177 | 27.7150 |
+| Qwen2.5-0.5B (biases, 7:1 grouped-query attention, halves RoPE) | **19.7193 ± 0.835** | 19.7283 ± 0.836 | 19.7438 |
+
+Both agree within llama.cpp's error bar. The GPU's activations stay f32
+(no int8 rounding before each matrix product), which may be why both
+GPU numbers are a little lower than the CPU's. Greedy text: "The capital
+of France is Paris. It is the largest city in the world…" (Qwen).
+
+**Speed** (first, before any tuning): 98 tok/s for Qwen at short context,
+52 tok/s averaged over positions 0–510; SmolLM2-135M 106–122 tok/s. The
+CPU does ~180 and ~400. Matrices alone would take ~6 ms per Qwen token
+(step 2), so the rest must be in the other shaders, which still run
+one workgroup (rmsnorm, qkv_post) or one per head (attention), and in
+submit/wait. Profiling that comes next.

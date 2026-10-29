@@ -112,7 +112,7 @@ pub fn rope_adjacent(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
 
 /// (sin, cos) of pair i's angle `pos · θ^(−2i/head_size)`, for every pair:
 /// the same for every head, so computed once per call.
-fn rotations(pos: usize, head_size: usize, theta: f32) -> Vec<(f32, f32)> {
+pub(crate) fn rotations(pos: usize, head_size: usize, theta: f32) -> Vec<(f32, f32)> {
     (0..head_size / 2)
         .map(|i| {
             let freq = 1.0 / theta.powf((2 * i) as f32 / head_size as f32);

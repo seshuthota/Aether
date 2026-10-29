@@ -287,7 +287,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         62 GB/s on the classifier (CPU 50), level with the CPU on layer matrices.
   - [x] Q4_0 GEMM (prefill) against the batch goldens (`q4_0_gemm_matches_reference`):
         ~260 GFLOP/s in f32, a third to a half of the CPU's int8 `smmla` path.
-  - [ ] A whole decode step on the GPU, checked like the CPU one; speed and energy per token.
+  - [x] A whole decode step on the GPU (`model::gpu::GpuModel`, one recorded command buffer
+        per token): PPL matches llama.cpp (SmolLM2-135M 27.6910 vs 27.7412 ± 1.177, Qwen2.5-0.5B
+        19.7193 vs 19.7283 ± 0.836; `vk_ppl`).
+  - [ ] Decode speed (now 98 tok/s Qwen at d0, 52 average over 512; CPU ~180) and energy per token.
 - [ ] **L.5** NPU: not started.
 
 ---

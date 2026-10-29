@@ -32,6 +32,10 @@ macro_rules! spirv {
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Descriptor sets the pool behind [`Kernel::bind`] holds (and eight times as
+/// many buffer descriptors).
+const MAX_SETS: u32 = 2048;
+
 fn vkr(what: &str) -> impl FnOnce(vk::Result) -> String + '_ {
     move |e| format!("{what}: {e}")
 }
@@ -66,6 +70,8 @@ pub struct Gpu {
     pub device: ash::Device,
     queue: vk::Queue,
     pool: vk::CommandPool,
+    /// Descriptor sets for [`Kernel::bind`] (a model binds a few hundred).
+    sets: vk::DescriptorPool,
     pub info: Info,
 }
 
@@ -122,7 +128,9 @@ impl Gpu {
             let pool = device
                 .create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family).flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None)
                 .map_err(vkr("create command pool"))?;
-            Ok(Gpu { _entry: entry, instance, phys, device, queue, pool, info })
+            let sizes = [vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: 8 * MAX_SETS }];
+            let sets = device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(MAX_SETS).pool_sizes(&sizes), None).map_err(vkr("descriptor pool"))?;
+            Ok(Gpu { _entry: entry, instance, phys, device, queue, pool, sets, info })
         }
     }
 
@@ -238,6 +246,7 @@ impl Drop for Gpu {
         // its fence); buffers and kernels hold clones of `device` and must
         // be dropped first, which owning them after the Gpu ensures.
         unsafe {
+            self.device.destroy_descriptor_pool(self.sets, None);
             self.device.destroy_command_pool(self.pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
@@ -338,6 +347,128 @@ impl Kernel {
     }
 }
 
+impl Kernel {
+    /// A descriptor set binding `buffers` (binding i = buffers[i]) for this
+    /// kernel, to use in recorded commands ([`Gpu::record`]). Sets come from
+    /// the GPU's pool and live as long as the [`Gpu`].
+    pub fn bind(&self, gpu: &Gpu, buffers: &[&Buffer]) -> Result<Bound> {
+        assert_eq!(buffers.len(), self.bindings, "one buffer per binding");
+        let d = &gpu.device;
+        let layouts = [self.set_layout];
+        // SAFETY: live device, pool and layout; the set is written before
+        // any command buffer uses it.
+        unsafe {
+            let set = d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(gpu.sets).set_layouts(&layouts)).map_err(vkr("descriptor set"))?[0];
+            let infos: Vec<[vk::DescriptorBufferInfo; 1]> = buffers.iter().map(|b| [vk::DescriptorBufferInfo { buffer: b.buf, offset: 0, range: vk::WHOLE_SIZE }]).collect();
+            let writes: Vec<vk::WriteDescriptorSet> = infos
+                .iter()
+                .enumerate()
+                .map(|(i, info)| vk::WriteDescriptorSet::default().dst_set(set).dst_binding(i as u32).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(info))
+                .collect();
+            d.update_descriptor_sets(&writes, &[]);
+            Ok(Bound { pipeline: self.pipeline, layout: self.layout, set })
+        }
+    }
+}
+
+/// A kernel with its buffers bound ([`Kernel::bind`]).
+#[derive(Clone, Copy)]
+pub struct Bound {
+    pipeline: vk::Pipeline,
+    layout: vk::PipelineLayout,
+    set: vk::DescriptorSet,
+}
+
+/// Commands being recorded by [`Gpu::record`].
+pub struct Recorder<'a> {
+    device: &'a ash::Device,
+    cb: vk::CommandBuffer,
+}
+
+impl Recorder<'_> {
+    /// One dispatch of `k` as `groups` workgroups, with push constants.
+    pub fn dispatch(&mut self, k: &Bound, push: &[u8], groups: [u32; 3]) {
+        // SAFETY: recording into a live command buffer; the handles in `k`
+        // live as long as the Gpu and its kernels.
+        unsafe {
+            let d = self.device;
+            d.cmd_bind_pipeline(self.cb, vk::PipelineBindPoint::COMPUTE, k.pipeline);
+            d.cmd_bind_descriptor_sets(self.cb, vk::PipelineBindPoint::COMPUTE, k.layout, 0, &[k.set], &[]);
+            if !push.is_empty() {
+                d.cmd_push_constants(self.cb, k.layout, vk::ShaderStageFlags::COMPUTE, 0, push);
+            }
+            d.cmd_dispatch(self.cb, groups[0], groups[1], groups[2]);
+        }
+    }
+
+    /// Everything dispatched so far finishes, and its writes are visible,
+    /// before anything dispatched later starts.
+    pub fn barrier(&mut self) {
+        let b = [vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)];
+        // SAFETY: recording into a live command buffer.
+        unsafe { self.device.cmd_pipeline_barrier(self.cb, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &b, &[], &[]) };
+    }
+}
+
+/// A recorded command buffer that can be submitted any number of times
+/// ([`Gpu::submit`]): a model's whole decode step, recorded once.
+pub struct Commands {
+    device: ash::Device,
+    pool: vk::CommandPool,
+    cb: vk::CommandBuffer,
+    fence: vk::Fence,
+}
+
+impl Drop for Commands {
+    fn drop(&mut self) {
+        // SAFETY: every submit waited for its fence, so nothing is running.
+        unsafe {
+            self.device.destroy_fence(self.fence, None);
+            self.device.free_command_buffers(self.pool, &[self.cb]);
+        }
+    }
+}
+
+impl Gpu {
+    /// Records commands with `f` into a command buffer to submit later.
+    /// The host's writes to mapped buffers before a submit are visible to
+    /// the commands, and the commands' writes are visible to the host after
+    /// the submit returns.
+    pub fn record(&self, f: impl FnOnce(&mut Recorder)) -> Result<Commands> {
+        let d = &self.device;
+        // SAFETY: live device and pool; the buffer is recorded completely
+        // before it is returned.
+        unsafe {
+            let cb = d
+                .allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(self.pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1))
+                .map_err(vkr("allocate command buffer"))?[0];
+            let fence = d.create_fence(&vk::FenceCreateInfo::default(), None).map_err(vkr("create fence"))?;
+            let cmds = Commands { device: d.clone(), pool: self.pool, cb, fence };
+            d.begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default()).map_err(vkr("begin"))?;
+            let host_in = [vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::HOST_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ)];
+            d.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::HOST, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &host_in, &[], &[]);
+            f(&mut Recorder { device: d, cb });
+            let host_out = [vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
+            d.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::HOST, vk::DependencyFlags::empty(), &host_out, &[], &[]);
+            d.end_command_buffer(cb).map_err(vkr("end"))?;
+            Ok(cmds)
+        }
+    }
+
+    /// Runs recorded commands and waits until they are done.
+    pub fn submit(&self, c: &Commands) -> Result<()> {
+        let d = &self.device;
+        let cbs = [c.cb];
+        // SAFETY: the command buffer is fully recorded and not running (the
+        // previous submit waited); the fence is reset before reuse.
+        unsafe {
+            d.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], c.fence).map_err(vkr("submit"))?;
+            d.wait_for_fences(&[c.fence], true, u64::MAX).map_err(vkr("wait"))?;
+            d.reset_fences(&[c.fence]).map_err(vkr("reset fence"))
+        }
+    }
+}
+
 impl Drop for Kernel {
     fn drop(&mut self) {
         // SAFETY: no run uses the kernel once it is dropped.
@@ -355,8 +486,8 @@ impl Drop for Kernel {
 /// A Q4_0 matrix in GPU memory, in the layout `shaders/q4_0_gemv.comp`
 /// reads: the nibble bytes of all blocks, then the f16 scales.
 pub struct MatQ4_0 {
-    qs: Buffer,
-    d: Buffer,
+    pub qs: Buffer,
+    pub d: Buffer,
     pub rows: usize,
     /// Blocks per row (columns / 32).
     pub nb: usize,
@@ -433,6 +564,13 @@ impl Gpu {
 mod tests {
     use super::*;
 
+    /// llama.cpp's Q4_0 blocks as written by tools/gen_quant.py: 18 bytes
+    /// each, f16 scale first.
+    fn read_q4_0(path: &std::path::Path) -> Vec<BlockQ4_0> {
+        let bytes = std::fs::read(path).unwrap();
+        bytes.as_chunks::<18>().0.iter().map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect()
+    }
+
     /// The copy shader copies (a buffer round trip through the GPU: setup,
     /// mapping, bindings, push constants and barriers all have to work).
     /// Skipped where there is no Vulkan GPU (e.g. a PC without drivers).
@@ -464,8 +602,7 @@ mod tests {
             let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
             let (_, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
             let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
-            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
-            let blocks: Vec<BlockQ4_0> = bytes.chunks_exact(18).map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let blocks = read_q4_0(&dir.join("w_q4_0.bin"));
             let w = MatQ4_0::new(&gpu, &blocks, ws[0]).unwrap();
             let mut x = gpu.buffer(xv.len() * 4).unwrap();
             x.as_mut_slice::<f32>().copy_from_slice(&xv);
@@ -494,8 +631,7 @@ mod tests {
             let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
             let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
             let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
-            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
-            let blocks: Vec<BlockQ4_0> = bytes.chunks_exact(18).map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let blocks = read_q4_0(&dir.join("w_q4_0.bin"));
             let w = MatQ4_0::new(&gpu, &blocks, ws[0]).unwrap();
             let mut x = gpu.buffer(xv.len() * 4).unwrap();
             x.as_mut_slice::<f32>().copy_from_slice(&xv);

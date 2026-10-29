@@ -1,0 +1,25 @@
+#version 450
+// o = w ⊙ x / sqrt(mean(x²) + eps), one workgroup for the whole vector:
+// each thread sums the squares of every 256th element, shared memory adds
+// the 256 partial sums.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer X { float x[]; };
+layout(std430, binding = 1) readonly buffer W { float w[]; };
+layout(std430, binding = 2) writeonly buffer O { float o[]; };
+layout(push_constant) uniform P { uint n; float eps; };
+
+shared float part[256];
+
+void main() {
+    uint id = gl_LocalInvocationID.x;
+    float s = 0.0;
+    for (uint i = id; i < n; i += 256) s += x[i] * x[i];
+    part[id] = s;
+    barrier();
+    for (uint m = 128; m > 0; m >>= 1) {
+        if (id < m) part[id] += part[id + m];
+        barrier();
+    }
+    float inv = 1.0 / sqrt(part[0] / float(n) + eps);
+    for (uint i = id; i < n; i += 256) o[i] = w[i] * (x[i] * inv);
+}

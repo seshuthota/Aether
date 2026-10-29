@@ -2,6 +2,8 @@
 
 pub mod config;
 pub mod gguf;
+#[cfg(feature = "vulkan")]
+pub mod gpu;
 pub mod hf;
 pub mod llama2c;
 #[cfg(test)]
