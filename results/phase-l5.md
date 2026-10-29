@@ -80,3 +80,49 @@ flight per thread, split over DSP threads, timed on the DSP; GB/s):
   timings that do not scale with the bytes moved (four 1 MB descriptors:
   30 ms; 16,384 of 16 KB: 4.4 ms). That is not understood, so no DMA
   number is reported; it is open for step 3 or later.
+
+## Step 3: a Q4_0 matrix-vector product on HVX (2026-10-29; `raw/dsp-gemv-v*.txt`)
+
+**Layout** (`Dsp::q4_0_matrix`, repacked once by the CPU into shared
+memory): rows in groups of 32; per group and 32-column block, four
+128-byte vectors whose 32-bit lane j holds 4 quant bytes of row j, then
+one vector of the 32 rows' f32 scales (640 bytes per 32 × 32 weights,
+against Q4_0's 576: the scales are f32).
+
+**Arithmetic**: x is quantized to Q8_0 by the CPU (as on our CPU path and
+llama.cpp's). `vrmpy` multiplies each lane's 4 unsigned bytes by 4 signed
+bytes held in a scalar register, so eight of them give each of the 32
+rows its integer dot product over a block, one row per lane: no
+reduction across lanes. Q4_0 stores q + 8, so each lane starts at
+−8 × (the block's sum of x) and the nibbles go in unsigned. Then
+sum × row scale × x scale, accumulated in float.
+
+**Correct**: `dsp_q4_0_gemv_matches_reference` runs llama.cpp's own Q4_0
+weight bytes and Q8_0 activation bytes (12 shapes, 1 × 32 to
+896 × 4864) against dequant(x) · dequant(W) in float64: relative error
+≤ 4.8e-7 on 1 and 5 threads, with and without prefetch.
+
+**Speed** (Qwen2.5-0.5B's shapes, random weights, DSP time per product,
+median of 15; per token = 24 layers × 4 products + the classifier):
+
+| version | 1 thread | 2 | 4 | 6 | best GB/s (classifier) |
+| --- | --- | --- | --- | --- | --- |
+| v1: one accumulator | 48.6 ms | 25.7 | 14.3 | 10.8 | 31.9 |
+| v2: two groups at once, nibbles in separate sums | 43.9 | 23.3 | 12.8 | 10.0–10.3 | 32–35 |
+| v3: v2 + `l2fetch` of the next two groups | **10.9** | 11.1 | 10.8–10.9 | 10.5–10.6 | 40–41 |
+
+- v1's loop took ~16 packets per block: all eight `vrmpy` added into one
+  register, each waiting for the last. v2 has four independent chains
+  (23 packets for two blocks, 16 of them `vrmpy`), close to the floor of
+  one `vrmpy` per packet.
+- Without prefetch every thread waits on memory: time halves as threads
+  double. With it, one thread reads the classifier at 40 GB/s and more
+  threads add nothing, as in step 2 (their prefetches compete). Either
+  way the products take ~10.5 ms per token: ~306 MB at ~29 GB/s on
+  average, against 46–47 GB/s that the DSP can read.
+- The small matrices (q/k/v 0.6 MB, wo 0.5 MB) take 20–30 µs whatever the
+  thread count: mostly starting and joining threads in every call. Over
+  48 such products a token, that is ~1.2 ms. Step 4 needs persistent
+  threads.
+- For comparison: a whole token takes ~5.2 ms on our CPU and 13.5 ms on
+  llama.cpp's NPU backend (step 8 of phase-l3).

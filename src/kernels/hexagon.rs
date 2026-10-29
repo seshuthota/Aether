@@ -20,6 +20,8 @@ use std::ffi::{CString, c_char, c_int, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::quant::{BlockQ4_0, BlockQ8_0, QK, f16_to_f32};
+
 pub type Result<T> = std::result::Result<T, String>;
 
 /// Our DSP library, built for Hexagon v79 by build.rs.
@@ -54,6 +56,8 @@ const ADD: u32 = 3;
 const ADD_SHARED: u32 = 4;
 const READ_BW: u32 = 5;
 const HVX_UNITS: u32 = 6;
+const REFRESH: u32 = 7;
+const Q4_0_GEMV: u32 = 8;
 
 /// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
 struct Rpc {
@@ -212,6 +216,65 @@ impl Dsp {
         Ok((u64::from_le_bytes(out[..8].try_into().unwrap()), u32::from_le_bytes(out[8..12].try_into().unwrap())))
     }
 
+    /// A Q4_0 matrix (`rows` rows of `blocks.len() / rows` blocks) in
+    /// shared memory, in the DSP kernel's layout: groups of 32 rows (the
+    /// last padded with zeros); per group and block, four 128-byte vectors
+    /// whose 32-bit lane j holds 4 quant bytes of row j (vector k: bytes
+    /// 4k..4k+3 of the block), then a vector of the 32 rows' f32 scales.
+    pub fn q4_0_matrix(&self, blocks: &[BlockQ4_0], rows: usize) -> Result<DspMatQ4_0> {
+        assert!(rows > 0 && blocks.len().is_multiple_of(rows));
+        let nb = blocks.len() / rows;
+        let groups = rows.div_ceil(32);
+        let mut buf = self.shared(groups * nb * 640)?;
+        let out = buf.as_mut_slice::<u8>();
+        for g in 0..groups {
+            for b in 0..nb {
+                let at = (g * nb + b) * 640;
+                for j in 0..32.min(rows - 32 * g) {
+                    let blk = &blocks[(32 * g + j) * nb + b];
+                    for k in 0..4 {
+                        out[at + 128 * k + 4 * j..][..4].copy_from_slice(&blk.qs[4 * k..4 * k + 4]);
+                    }
+                    out[at + 512 + 4 * j..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
+                }
+                for j in 32.min(rows - 32 * g)..32 {
+                    for k in 0..5 {
+                        out[at + 128 * k + 4 * j..][..4].fill(0);
+                    }
+                }
+            }
+        }
+        self.call(REFRESH, &[&words(&[buf.fd as u32, (groups * nb * 640) as u32])], &mut [])?;
+        Ok(DspMatQ4_0 { buf, rows, nb })
+    }
+
+    /// Room for an activation of `nb` Q8_0 blocks ([`Dsp::q4_0_gemv`]).
+    pub fn q8_0_vector(&self, nb: usize) -> Result<Shared> {
+        self.shared(40 * nb)
+    }
+
+    /// out = W x on `threads` DSP threads, x already quantized to Q8_0;
+    /// `xbuf` from [`Dsp::q8_0_vector`], `out` at least `rows` rounded up
+    /// to 32 floats. With `prefetch`, each DSP thread prefetches its next
+    /// rows into the L2. Returns the DSP's own time in microseconds.
+    pub fn q4_0_gemv(&self, w: &DspMatQ4_0, x: &[BlockQ8_0], xbuf: &mut Shared, out: &mut Shared, threads: u32, prefetch: bool) -> Result<u64> {
+        let nb = w.nb;
+        assert!(x.len() == nb && xbuf.len >= 40 * nb && out.len >= 4 * w.rows.div_ceil(32) * 32);
+        // The int8 values, then the scales, then each block's sum.
+        let xb = xbuf.as_mut_slice::<u8>();
+        for (i, blk) in x.iter().enumerate() {
+            for (k, &q) in blk.qs.iter().enumerate() {
+                xb[QK * i + k] = q as u8;
+            }
+            xb[32 * nb + 4 * i..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
+            let sum: i32 = blk.qs.iter().map(|&q| q as i32).sum();
+            xb[36 * nb + 4 * i..][..4].copy_from_slice(&sum.to_le_bytes());
+        }
+        let mut t = [0u8; 8];
+        self.call(Q4_0_GEMV, &[&words(&[w.buf.fd as u32, xbuf.fd as u32, out.fd as u32, w.rows as u32, nb as u32, threads, prefetch as u32])], &mut [&mut t])?;
+        Ok(u64::from_le_bytes(t))
+    }
+
     /// The number of 128-byte HVX contexts on the DSP.
     pub fn hvx_units(&self) -> Result<u32> {
         let mut out = [0u8; 4];
@@ -223,6 +286,20 @@ impl Dsp {
 /// u32 scalars as the bytes of one argument buffer.
 fn words(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// A Q4_0 matrix in the DSP's layout ([`Dsp::q4_0_matrix`]).
+pub struct DspMatQ4_0 {
+    buf: Shared,
+    pub rows: usize,
+    pub nb: usize,
+}
+
+impl DspMatQ4_0 {
+    /// Bytes the kernel reads per product.
+    pub fn bytes(&self) -> usize {
+        self.rows.div_ceil(32) * self.nb * 640
+    }
 }
 
 /// A buffer the CPU and the DSP share ([`Dsp::shared`]).
@@ -319,6 +396,35 @@ mod tests {
                 assert_eq!(check, sum.wrapping_mul(3), "{threads} threads, prefetch {prefetch}");
             }
         }
+    }
+
+    /// The DSP's Q4_0 x Q8_0 product on llama.cpp's bytes (the weights
+    /// and x as llama.cpp quantizes them) against dequant(x) . dequant(W)
+    /// in float64 (`out_q4_0_b`, tools/gen_quant.py), on 1 and 5 threads.
+    #[test]
+    fn dsp_q4_0_gemv_matches_reference() {
+        let Some(d) = dsp() else { return };
+        let Some(root) = crate::testutil::golden("quant") else { return };
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_b.npy"));
+            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
+            let blocks: Vec<BlockQ4_0> = bytes.as_chunks::<18>().0.iter().map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let bytes = std::fs::read(dir.join("x_q8_0.bin")).unwrap();
+            let x: Vec<BlockQ8_0> = bytes.as_chunks::<34>().0.iter().map(|c| BlockQ8_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].iter().map(|&b| b as i8).collect::<Vec<_>>().try_into().unwrap() }).collect();
+            let w = d.q4_0_matrix(&blocks, ws[0]).unwrap();
+            let mut xbuf = d.q8_0_vector(w.nb).unwrap();
+            let mut out = d.shared(4 * ws[0].div_ceil(32) * 32).unwrap();
+            for (threads, prefetch) in [(1, false), (5, false), (5, true)] {
+                out.as_mut_slice::<f32>().fill(f32::NAN);
+                d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, threads, prefetch).unwrap();
+                let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..ws[0]], &want);
+                assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} on {threads} threads (prefetch {prefetch}): rel {rel:.2e}", dir.display());
+            }
+        }
+        assert!(cases >= 12, "only {cases} golden cases");
     }
 
     /// HVX float adds are IEEE single precision: exactly a + b, for lengths

@@ -1,0 +1,7 @@
+    matrix           MB     1 thr us     2 thr us     3 thr us     4 thr us     5 thr us     6 thr us   best GB/s
+     q/k/v          0.6           75           41           32           28           29           32       23.0
+        wo          0.5           35           22           21           22           23           27       23.9
+   gate/up          5.4          799          443          301          232          195          173       31.5
+      down          2.7          405          198          134          112           89           86       31.7
+classifier         85.1        12397         6368         4381         3385         2793         2401       35.4
+ per token           ms        43.93        23.26        16.09        12.84        10.86        10.03

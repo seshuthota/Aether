@@ -21,4 +21,15 @@ interface aether_dsp : remote_handle64 {
     long read_bw(in long fd, in uint32 bytes, in uint32 threads, in uint32 reps, in uint32 prefetch, rout uint64 us, rout uint32 check);
     // How many HVX contexts the DSP has (qurt_hvx_get_units).
     long hvx_units(rout uint32 n);
+    // Drops the DSP's cached lines of a shared buffer the CPU rewrote
+    // (after uploading weights, before the DSP reads them).
+    long refresh(in long fd, in uint32 bytes);
+    // out = W x on `threads` DSP threads: W Q4_0 in our layout of 32-row
+    // groups (`Dsp::q4_0_matrix`), x Q8_0 (quantized by the CPU: the int8
+    // values, then the f32 scales, then the i32 sums of each block's
+    // values). `out` gets one f32 per row, padded to whole groups; `us`
+    // is timed on the DSP.
+    // With `prefetch`, each thread fetches its next two groups into the L2
+    // (l2fetch) while it computes the current two.
+    long q4_0_gemv(in long w_fd, in long x_fd, in long out_fd, in uint32 rows, in uint32 nb, in uint32 threads, in uint32 prefetch, rout uint64 us);
 };
