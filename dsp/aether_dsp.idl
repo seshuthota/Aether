@@ -10,4 +10,15 @@ interface aether_dsp : remote_handle64 {
     long ping(in uint32 x, rout uint32 y);
     // c = a + b with HVX, every input copied in and the output out.
     long add(in sequence<float> a, in sequence<float> b, rout sequence<float> c);
+    // The same add on buffers the CPU allocated with rpcmem and mapped into
+    // the DSP once (fastrpc_mmap): only their file descriptors travel.
+    long add_shared(in long a_fd, in long b_fd, in long c_fd, in uint32 n);
+    // Reads `bytes` of a shared buffer `reps` times with HVX loads, split
+    // over `threads` DSP threads; `us` is timed on the DSP. `check` is a
+    // sum of what was read, so the loads cannot be dropped. With
+    // `prefetch`, each thread asks the L2 for the next 16 KB (l2fetch)
+    // while it reads the current 16 KB.
+    long read_bw(in long fd, in uint32 bytes, in uint32 threads, in uint32 reps, in uint32 prefetch, rout uint64 us, rout uint32 check);
+    // How many HVX contexts the DSP has (qurt_hvx_get_units).
+    long hvx_units(rout uint32 n);
 };

@@ -18,6 +18,7 @@
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::path::Path;
+use std::sync::OnceLock;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -27,6 +28,11 @@ pub static DSP_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libaether_
 /// From the SDK's remote.h.
 const CDSP_DOMAIN_ID: c_int = 3;
 const DSPRPC_CONTROL_UNSIGNED_MODULE: u32 = 2;
+const FASTRPC_MAP_FD: c_int = 2;
+// rpcmem.h: the system heap, CPU-cached, not registered with FastRPC by
+// rpcmem itself (we map it with fastrpc_mmap).
+const RPCMEM_HEAP_ID_SYSTEM: c_int = 25;
+const RPCMEM_FLAGS: u32 = 1 | 0x4000_0000;
 const URI: &str = "file:///libaether_dsp.so?aether_dsp_skel_handle_invoke&_modver=1.0&_dom=cdsp";
 
 /// remote.h's `remote_arg` as a buffer (the union's other members are not
@@ -45,30 +51,33 @@ const fn scalars(method: u32, n_in: u32, n_out: u32) -> u32 {
 /// Method numbers: 0 and 1 are open and close, then the IDL's order.
 const PING: u32 = 2;
 const ADD: u32 = 3;
+const ADD_SHARED: u32 = 4;
+const READ_BW: u32 = 5;
+const HVX_UNITS: u32 = 6;
 
-type SessionControl = unsafe extern "C" fn(u32, *mut c_void, u32) -> c_int;
-type Open = unsafe extern "C" fn(*const c_char, *mut u64) -> c_int;
-type Invoke = unsafe extern "C" fn(u64, u32, *mut Arg) -> c_int;
-type Close = unsafe extern "C" fn(u64) -> c_int;
-
-/// An open session on the cDSP with our library loaded.
-pub struct Dsp {
-    handle: u64,
-    invoke: Invoke,
-    close: Close,
+/// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
+struct Rpc {
+    control: unsafe extern "C" fn(u32, *mut c_void, u32) -> c_int,
+    open: unsafe extern "C" fn(*const c_char, *mut u64) -> c_int,
+    invoke: unsafe extern "C" fn(u64, u32, *mut Arg) -> c_int,
+    close: unsafe extern "C" fn(u64) -> c_int,
+    alloc: unsafe extern "C" fn(c_int, u32, usize) -> *mut c_void,
+    to_fd: unsafe extern "C" fn(*mut c_void) -> c_int,
+    free: unsafe extern "C" fn(*mut c_void),
+    mmap: unsafe extern "C" fn(c_int, c_int, *mut c_void, c_int, usize, c_int) -> c_int,
+    munmap: unsafe extern "C" fn(c_int, c_int, *mut c_void, usize) -> c_int,
 }
 
-impl Dsp {
-    /// Writes our library into `dir` (which must be on a file system the
-    /// FastRPC loader can read, e.g. /data/local/tmp/… or an app's files
-    /// directory), puts `dir` first in `ADSP_LIBRARY_PATH`, and opens it on
-    /// the cDSP as an unsigned module.
-    pub fn open(dir: &Path) -> Result<Dsp> {
-        std::fs::write(dir.join("libaether_dsp.so"), DSP_LIB).map_err(|e| format!("write the DSP library to {}: {e}", dir.display()))?;
+/// Loads `libcdsprpc.so` once, with our library's directory first in
+/// `ADSP_LIBRARY_PATH` (read when the library loads).
+fn rpc(dir: &Path) -> Result<&'static Rpc> {
+    static RPC: OnceLock<Result<Rpc>> = OnceLock::new();
+    RPC.get_or_init(|| {
         // The loader's search path; entries are separated by ';'.
         let old = std::env::var("ADSP_LIBRARY_PATH").unwrap_or_else(|_| "/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp".into());
-        // SAFETY: set before libcdsprpc.so is loaded, which is the only
-        // reader; callers open the DSP before starting other threads.
+        // SAFETY: set once, before libcdsprpc.so (the only reader) loads;
+        // callers open the DSP before starting threads that read the
+        // environment.
         unsafe { std::env::set_var("ADSP_LIBRARY_PATH", format!("{};{old}", dir.display())) };
         // SAFETY: loading the system's FastRPC library; its initialisers
         // only set up its own state. It is never unloaded: its threads
@@ -83,27 +92,55 @@ impl Dsp {
             let p = unsafe { libc::dlsym(lib, name.as_ptr()) };
             if p.is_null() { Err(format!("libcdsprpc.so has no {name:?}")) } else { Ok(p) }
         };
-        // SAFETY (all four): the symbols have these C signatures (remote.h).
-        let control: SessionControl = unsafe { std::mem::transmute(sym(c"remote_session_control")?) };
-        let open: Open = unsafe { std::mem::transmute(sym(c"remote_handle64_open")?) };
-        let invoke: Invoke = unsafe { std::mem::transmute(sym(c"remote_handle64_invoke")?) };
-        let close: Close = unsafe { std::mem::transmute(sym(c"remote_handle64_close")?) };
+        // SAFETY (all): the symbols have these C signatures (remote.h,
+        // rpcmem.h).
+        unsafe {
+            Ok(Rpc {
+                control: std::mem::transmute(sym(c"remote_session_control")?),
+                open: std::mem::transmute(sym(c"remote_handle64_open")?),
+                invoke: std::mem::transmute(sym(c"remote_handle64_invoke")?),
+                close: std::mem::transmute(sym(c"remote_handle64_close")?),
+                alloc: std::mem::transmute(sym(c"rpcmem_alloc2")?),
+                to_fd: std::mem::transmute(sym(c"rpcmem_to_fd")?),
+                free: std::mem::transmute(sym(c"rpcmem_free")?),
+                mmap: std::mem::transmute(sym(c"fastrpc_mmap")?),
+                munmap: std::mem::transmute(sym(c"fastrpc_munmap")?),
+            })
+        }
+    })
+    .as_ref()
+    .map_err(Clone::clone)
+}
 
+/// An open session on the cDSP with our library loaded.
+pub struct Dsp {
+    rpc: &'static Rpc,
+    handle: u64,
+}
+
+impl Dsp {
+    /// Writes our library into `dir` (which must be on a file system the
+    /// FastRPC loader can read, e.g. /data/local/tmp/… or an app's files
+    /// directory), puts `dir` first in `ADSP_LIBRARY_PATH`, and opens it on
+    /// the cDSP as an unsigned module.
+    pub fn open(dir: &Path) -> Result<Dsp> {
+        std::fs::write(dir.join("libaether_dsp.so"), DSP_LIB).map_err(|e| format!("write the DSP library to {}: {e}", dir.display()))?;
+        let rpc = rpc(dir)?;
         // remote.h's `struct remote_rpc_control_unsigned_module`.
         let mut unsigned = [CDSP_DOMAIN_ID, 1];
         // SAFETY: the request and its 8-byte struct match remote.h.
-        let err = unsafe { control(DSPRPC_CONTROL_UNSIGNED_MODULE, unsigned.as_mut_ptr().cast(), 8) };
+        let err = unsafe { (rpc.control)(DSPRPC_CONTROL_UNSIGNED_MODULE, unsigned.as_mut_ptr().cast(), 8) };
         if err != 0 {
             return Err(format!("remote_session_control(unsigned module): 0x{err:x}"));
         }
         let uri = CString::new(URI).unwrap();
         let mut handle = 0u64;
         // SAFETY: a NUL-terminated URI and a place for the handle.
-        let err = unsafe { open(uri.as_ptr(), &mut handle) };
+        let err = unsafe { (rpc.open)(uri.as_ptr(), &mut handle) };
         if err != 0 {
             return Err(format!("remote_handle64_open({URI}): 0x{err:x}"));
         }
-        Ok(Dsp { handle, invoke, close })
+        Ok(Dsp { rpc, handle })
     }
 
     /// One call: `ins` are copied to the DSP, `outs` back from it.
@@ -112,7 +149,7 @@ impl Dsp {
         args.extend(outs.iter_mut().map(|b| Arg { pv: b.as_mut_ptr().cast(), len: b.len() }));
         // SAFETY: every Arg points to a live buffer of its length; the DSP
         // writes only into the output ones, which we borrow mutably.
-        let err = unsafe { (self.invoke)(self.handle, scalars(method, ins.len() as u32, outs.len() as u32), args.as_mut_ptr()) };
+        let err = unsafe { (self.rpc.invoke)(self.handle, scalars(method, ins.len() as u32, outs.len() as u32), args.as_mut_ptr()) };
         if err != 0 { Err(format!("DSP method {method}: 0x{err:x}")) } else { Ok(()) }
     }
 
@@ -134,12 +171,93 @@ impl Dsp {
         let cb = unsafe { std::slice::from_raw_parts_mut(c.as_mut_ptr().cast::<u8>(), 4 * c.len()) };
         self.call(ADD, &[&lens, bytes(a), bytes(b)], &mut [cb])
     }
+
+    /// Memory the CPU and the DSP both see: `bytes` (rounded up to 4 KB)
+    /// from rpcmem, mapped into the DSP once.
+    pub fn shared(&self, bytes: usize) -> Result<Shared> {
+        let len = bytes.div_ceil(4096) * 4096;
+        // SAFETY: rpcmem_alloc2 returns a fresh mapping of `len` bytes or
+        // null.
+        let ptr = unsafe { (self.rpc.alloc)(RPCMEM_HEAP_ID_SYSTEM, RPCMEM_FLAGS, len) };
+        if ptr.is_null() {
+            return Err(format!("rpcmem_alloc2({len}) failed"));
+        }
+        // SAFETY: ptr came from rpcmem_alloc2.
+        let fd = unsafe { (self.rpc.to_fd)(ptr) };
+        // SAFETY: the buffer and its fd are live and `len` long.
+        let err = unsafe { (self.rpc.mmap)(CDSP_DOMAIN_ID, fd, ptr, 0, len, FASTRPC_MAP_FD) };
+        if fd < 0 || err != 0 {
+            // SAFETY: not mapped, not used again.
+            unsafe { (self.rpc.free)(ptr) };
+            return Err(format!("fastrpc_mmap(fd {fd}, {len}): 0x{err:x}"));
+        }
+        Ok(Shared { rpc: self.rpc, ptr: ptr.cast(), len, fd })
+    }
+
+    /// c = a + b on the DSP, in shared buffers (n floats each): only the
+    /// three file descriptors and n travel with the call.
+    pub fn add_shared(&self, a: &Shared, b: &Shared, c: &mut Shared, n: usize) -> Result<()> {
+        assert!(4 * n <= a.len.min(b.len).min(c.len));
+        self.call(ADD_SHARED, &[&words(&[a.fd as u32, b.fd as u32, c.fd as u32, n as u32])], &mut [])
+    }
+
+    /// Reads `bytes` of `buf` `reps` times on `threads` DSP threads with
+    /// HVX loads; returns the DSP's own time for it in microseconds and a
+    /// checksum (wrapping sum of the 32-bit words read, every rep). With
+    /// `prefetch`, the threads prefetch 16 KB ahead into the L2.
+    pub fn read_bw(&self, buf: &Shared, bytes: usize, threads: u32, reps: u32, prefetch: bool) -> Result<(u64, u32)> {
+        assert!(bytes <= buf.len);
+        let mut out = [0u8; 16];
+        self.call(READ_BW, &[&words(&[buf.fd as u32, bytes as u32, threads, reps, prefetch as u32])], &mut [&mut out])?;
+        Ok((u64::from_le_bytes(out[..8].try_into().unwrap()), u32::from_le_bytes(out[8..12].try_into().unwrap())))
+    }
+
+    /// The number of 128-byte HVX contexts on the DSP.
+    pub fn hvx_units(&self) -> Result<u32> {
+        let mut out = [0u8; 4];
+        self.call(HVX_UNITS, &[], &mut [&mut out])?;
+        Ok(u32::from_le_bytes(out))
+    }
+}
+
+/// u32 scalars as the bytes of one argument buffer.
+fn words(w: &[u32]) -> Vec<u8> {
+    w.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// A buffer the CPU and the DSP share ([`Dsp::shared`]).
+pub struct Shared {
+    rpc: &'static Rpc,
+    ptr: *mut u8,
+    len: usize,
+    fd: c_int,
+}
+
+impl Shared {
+    pub fn as_slice<T: Copy>(&self) -> &[T] {
+        // SAFETY: `len` bytes, page-aligned; T is plain data.
+        unsafe { std::slice::from_raw_parts(self.ptr.cast(), self.len / size_of::<T>()) }
+    }
+    pub fn as_mut_slice<T: Copy>(&mut self) -> &mut [T] {
+        // SAFETY: as above, borrowed mutably.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.cast(), self.len / size_of::<T>()) }
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        // SAFETY: mapped by us, not used after this.
+        unsafe {
+            (self.rpc.munmap)(CDSP_DOMAIN_ID, self.fd, self.ptr.cast(), self.len);
+            (self.rpc.free)(self.ptr.cast());
+        }
+    }
 }
 
 impl Drop for Dsp {
     fn drop(&mut self) {
         // SAFETY: the handle is ours and not used after this.
-        unsafe { (self.close)(self.handle) };
+        unsafe { (self.rpc.close)(self.handle) };
     }
 }
 
@@ -163,6 +281,44 @@ mod tests {
     fn dsp_answers_a_ping() {
         let Some(d) = dsp() else { return };
         assert_eq!(d.ping(41).unwrap(), 42);
+    }
+
+    /// Buffers in shared memory: the DSP reads what the CPU wrote, and the
+    /// CPU reads what the DSP wrote, with no copies or cache flushes.
+    #[test]
+    fn dsp_adds_shared_buffers() {
+        let Some(d) = dsp() else { return };
+        let n = 100_000;
+        let (mut a, mut b, mut c) = (d.shared(4 * n).unwrap(), d.shared(4 * n).unwrap(), d.shared(4 * n).unwrap());
+        for round in 0..3 {
+            for i in 0..n {
+                a.as_mut_slice::<f32>()[i] = (i * (round + 1)) as f32;
+                b.as_mut_slice::<f32>()[i] = 0.25;
+            }
+            d.add_shared(&a, &b, &mut c, n).unwrap();
+            let c = &c.as_slice::<f32>()[..n];
+            let bad = c.iter().enumerate().position(|(i, &v)| v != (i * (round + 1)) as f32 + 0.25);
+            assert!(bad.is_none(), "round {round}: c[{0}] = {1}", bad.unwrap(), c[bad.unwrap()]);
+        }
+    }
+
+    /// The DSP's read loop reads every word: its checksum equals the sum of
+    /// the words, once per rep.
+    #[test]
+    fn dsp_reads_every_word() {
+        let Some(d) = dsp() else { return };
+        let bytes = 1 << 20;
+        let mut buf = d.shared(bytes).unwrap();
+        for (i, w) in buf.as_mut_slice::<u32>().iter_mut().enumerate() {
+            *w = (i as u32).wrapping_mul(2_654_435_761);
+        }
+        let sum = buf.as_slice::<u32>().iter().fold(0u32, |s, &w| s.wrapping_add(w));
+        for threads in [1, 2, 4] {
+            for prefetch in [false, true] {
+                let (_, check) = d.read_bw(&buf, bytes, threads, 3, prefetch).unwrap();
+                assert_eq!(check, sum.wrapping_mul(3), "{threads} threads, prefetch {prefetch}");
+            }
+        }
     }
 
     /// HVX float adds are IEEE single precision: exactly a + b, for lengths

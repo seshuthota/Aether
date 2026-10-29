@@ -33,6 +33,10 @@ name = "dsp_hello"
 required-features = ["hexagon"]
 
 [[example]]
+name = "dsp_bandwidth"
+required-features = ["hexagon"]
+
+[[example]]
 name = "vk_bandwidth"
 required-features = ["vulkan"]
 
