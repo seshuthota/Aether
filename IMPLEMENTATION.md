@@ -315,6 +315,19 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         time at 30–40 GB/s. Stacked wq/wk/wv and w_gate/w_up (`Kernel::bind_at` views):
         q/k/v −20 %, gate/up −6 % of GPU time, PPL identical. Tried and dropped: an unrolled
         row loop (slower everywhere), split-K across lane groups (never faster).
+  - [~] Branch `gpu-pending` (2026-10-29, built while the phone was away; correctness verified
+        on the PC's Intel GPU, phone speed and the app still to check):
+        - Vulkan asks for 32-lane subgroups where a device may pick fewer (Intel), so every GPU
+          test and `vk_ppl` runs on the PC. GPU PPL on Intel equals the Adreno's to 4 decimals.
+        - Fused into the GEMVs: the residual add (wo, down), the SwiGLU (down's input), the RMS
+          norm (q/k/v, gate/up, classifier). Decode: ~169 dispatches per token (from ~290).
+          `add.comp` and `swiglu.comp` removed. Logits in host-cached memory.
+        - Batched prompt pass on the GPU: `GpuModel::forward_batch` (up to 128 tokens; the
+          step-3 GEMM with ACCUM/GLU; shaders take a token index). PPL through it equals the
+          token-by-token path (SmolLM2 27.6910, Qwen2.5 19.7193). `vk_ppl … batch`, `vk_prefill`.
+        - `aether_open_gpu(path, cores, max_seq, out)`: with cores, the CPU runs the prompt; the
+          app's GPU mode uses that. `GpuSession` without cores runs the prompt batched on the GPU.
+        - Open: greedy argmax on the GPU (only if the phone shows the logits read still costs).
 - [ ] **L.5** NPU: not started.
 
 ---
