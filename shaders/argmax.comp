@@ -1,0 +1,46 @@
+#version 450
+// The index of the largest of n logits, the lowest on a tie (as the CPU's
+// argmax). Pass 0: workgroup g reduces every (G·256)-th logit from
+// g·256 on to (value, index) in part[g]. Pass 1: one workgroup reduces the
+// G pairs and writes the index to o[0].
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer L { float l[]; };
+struct Best { float v; uint i; };
+layout(std430, binding = 1) buffer Part { Best part[]; };
+layout(std430, binding = 2) writeonly buffer O { uint o[]; };
+layout(push_constant) uniform P { uint n; uint pass; };
+
+shared float bv[256];
+shared uint bi[256];
+
+bool better(float v, uint i, float w, uint j) { return v > w || (v == w && i < j); }
+
+void main() {
+    uint id = gl_LocalInvocationID.x;
+    float v = -1.0 / 0.0;
+    uint i = 0xffffffffu;
+    if (pass == 0) {
+        for (uint k = gl_WorkGroupID.x * 256 + id; k < n; k += gl_NumWorkGroups.x * 256) {
+            if (better(l[k], k, v, i)) { v = l[k]; i = k; }
+        }
+    } else {
+        for (uint k = id; k < n; k += 256) {
+            Best p = part[k];
+            if (better(p.v, p.i, v, i)) { v = p.v; i = p.i; }
+        }
+    }
+    bv[id] = v;
+    bi[id] = i;
+    barrier();
+    for (uint m = 128; m > 0; m >>= 1) {
+        if (id < m && better(bv[id + m], bi[id + m], bv[id], bi[id])) {
+            bv[id] = bv[id + m];
+            bi[id] = bi[id + m];
+        }
+        barrier();
+    }
+    if (id == 0) {
+        if (pass == 0) part[gl_WorkGroupID.x] = Best(bv[0], bi[0]);
+        else o[0] = bi[0];
+    }
+}

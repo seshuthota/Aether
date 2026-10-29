@@ -48,12 +48,16 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         /** Loads a .gguf file; [cores] like "2-7" (one thread per core). */
         fun open(path: String, cores: String, maxSeq: Int) = Aether(nativeOpen(path.toByteArray(), cores.toByteArray(), maxSeq))
 
-        /** Loads a --pure Q4_0 .gguf to decode on the GPU (Vulkan). */
-        fun openGpu(path: String, maxSeq: Int) = Aether(nativeOpenGpu(path.toByteArray(), maxSeq))
+        /**
+         * Loads a --pure Q4_0 .gguf to decode on the GPU (Vulkan). With [cores] (like "2-7"),
+         * a CPU copy of the model runs each prompt in one batch; with "" the GPU runs the
+         * prompt, batched as well.
+         */
+        fun openGpu(path: String, cores: String, maxSeq: Int) = Aether(nativeOpenGpu(path.toByteArray(), cores.toByteArray(), maxSeq))
 
         @JvmStatic private external fun nativeOpen(path: ByteArray, cores: ByteArray, maxSeq: Int): Long
 
-        @JvmStatic private external fun nativeOpenGpu(path: ByteArray, maxSeq: Int): Long
+        @JvmStatic private external fun nativeOpenGpu(path: ByteArray, cores: ByteArray, maxSeq: Int): Long
 
         @JvmStatic private external fun nativeGenerate(
             handle: Long, prompt: ByteArray, chat: Boolean, temperature: Float, topP: Float,

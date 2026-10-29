@@ -3,6 +3,7 @@
 //! the C ABI (`ffi`) the Android app calls.
 
 use crate::format::gguf::Value;
+use crate::format::imatrix::Imatrix;
 use crate::format::json::Json;
 use crate::kernels::argmax;
 use crate::model::sampler::Sampler;
@@ -135,6 +136,12 @@ impl Session {
     /// (with its `tokenizer.bin` at `l2c_tokenizer`, default next to it),
     /// converts the matrices to `format`, and spreads work over `cores`.
     pub fn open(path: &Path, l2c_tokenizer: Option<&Path>, max_seq: usize, format: Format, cores: Option<&[usize]>) -> io::Result<Session> {
+        Session::open_imatrix(path, l2c_tokenizer, max_seq, format, None, cores)
+    }
+
+    /// [`Session::open`], quantizing with an importance matrix (see
+    /// [`Weights::convert`](crate::model::transformer::Weights::convert)).
+    pub fn open_imatrix(path: &Path, l2c_tokenizer: Option<&Path>, max_seq: usize, format: Format, imatrix: Option<&Imatrix>, cores: Option<&[usize]>) -> io::Result<Session> {
         let (config, weights, text) = if path.extension().is_some_and(|e| e == "gguf") {
             let (config, weights, g) = gguf::load(path, max_seq)?;
             (config, weights, Text::from_gguf(&g)?)
@@ -154,7 +161,7 @@ impl Session {
             let tok = l2c_tok::Tokenizer::load(&tok_path, config.vocab_size)?;
             (config, weights, Text::Llama2c(tok))
         };
-        let weights = weights.convert(&config, format);
+        let weights = weights.convert(&config, format, imatrix)?;
         let mut model = Transformer::new(config, weights);
         if let Some(cores) = cores {
             // One thread per core; the calling thread becomes the first.
@@ -387,10 +394,10 @@ impl GpuSession {
     }
 
     /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
-    /// prompt: the CPU's batched prefill is several times faster than
-    /// feeding the prompt through the GPU step token by token, and its KV
-    /// cache is copied over (~24 KB per token for Qwen2.5-0.5B). Costs a
-    /// second copy of the weights in memory.
+    /// prompt, whose KV cache is then copied over (~24 KB per token for
+    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is the
+    /// fastest (~630 tok/s against ~90 for the GPU token by token,
+    /// results/phase-l3.md). Costs a second copy of the weights in memory.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
         let mut s = GpuSession::open(path, max_seq)?;
         let (config, weights, _) = gguf::load(path, max_seq)?;
@@ -402,7 +409,8 @@ impl GpuSession {
 
     /// As [`Session::generate`] without echoing the prompt. The prompt runs
     /// on the CPU model if there is one (batched, then its KV cache is
-    /// copied to the GPU), otherwise token by token through the GPU step.
+    /// copied to the GPU), otherwise batched on the GPU
+    /// ([`crate::model::gpu::GpuModel::forward_batch`]).
     pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
         let steps = steps.min(self.model.config.seq_len);
         let tokens = self.text.encode(prompt);
@@ -415,19 +423,28 @@ impl GpuSession {
             let (k, v) = cpu.kv_cache();
             self.model.load_kv(k, v, cpu.config.seq_len, np);
         } else {
-            for (p, &t) in tokens[..np].iter().enumerate() {
-                logits = self.model.forward(&self.gpu, t, p).expect("GPU step").to_vec();
+            let b = self.model.batch;
+            for (i, part) in tokens[..np].chunks(b).enumerate() {
+                logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
             }
         }
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+        // Greedy decoding takes the GPU's argmax instead of reading the
+        // logits (~1.1 ms per token on the phone for Qwen2.5's 151,936).
+        let mut gpu_next = None;
         while np == tokens.len() {
-            let next = sampler.sample(&mut logits);
+            let next = gpu_next.unwrap_or_else(|| sampler.sample(&mut logits));
             if self.text.is_stop(next) || !emit(&self.text.piece(token, next)) || pos >= steps {
                 break;
             }
             token = next;
-            logits.copy_from_slice(self.model.forward(&self.gpu, token, pos).expect("GPU step"));
+            let l = self.model.forward(&self.gpu, token, pos).expect("GPU step");
+            if sampler.temperature == 0.0 {
+                gpu_next = Some(self.model.greedy());
+            } else {
+                logits.copy_from_slice(l);
+            }
             pos += 1;
         }
         stats.decode = t1.elapsed();
@@ -502,5 +519,24 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
         assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
         assert!(look.accepted > 0 && look.accepted < look.drafted, "{look:?}");
+    }
+
+    /// The GPU's argmax (greedy decoding) is the index the CPU's argmax
+    /// finds in the same logits, after a prompt batch and after each step.
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn gpu_argmax_matches_the_logits() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let Ok(mut s) = GpuSession::open(&model, 64) else {
+            assert!(!cfg!(target_os = "android"), "no GPU");
+            return;
+        };
+        let tokens = s.text.encode("The capital of France is");
+        let mut next = argmax(s.model.forward_batch(&s.gpu, &tokens, 0).unwrap());
+        assert_eq!(s.model.greedy(), next);
+        for pos in tokens.len()..tokens.len() + 16 {
+            next = argmax(s.model.forward(&s.gpu, next, pos).unwrap());
+            assert_eq!(s.model.greedy(), next, "at {pos}");
+        }
     }
 }

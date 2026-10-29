@@ -40,12 +40,13 @@ Java_dev_aether_chat_Aether_nativeOpen(JNIEnv *env, jclass cls, jbyteArray path,
 }
 
 JNIEXPORT jlong JNICALL
-Java_dev_aether_chat_Aether_nativeOpenGpu(JNIEnv *env, jclass cls, jbyteArray path, jint max_seq) {
+Java_dev_aether_chat_Aether_nativeOpenGpu(JNIEnv *env, jclass cls, jbyteArray path, jbyteArray cores, jint max_seq) {
     (void)cls;
-    char *p = cstr(env, path);
+    char *p = cstr(env, path), *c = cstr(env, cores);
     AetherSession *s = NULL;
-    int code = aether_open_gpu(p, (uint32_t)max_seq, &s);
+    int code = aether_open_gpu(p, c, (uint32_t)max_seq, &s);
     free(p);
+    free(c);
     if (code != AETHER_OK) {
         throw_error(env);
         return 0;

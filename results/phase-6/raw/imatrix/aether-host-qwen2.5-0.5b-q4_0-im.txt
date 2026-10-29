@@ -1,0 +1,6 @@
+imatrix: 168 matrices, 100 chunks of ["hostdata/imatrix/calib.txt"]
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 299078 tokens (tokenized in 135 ms), weights q4_0 278.0 MB
+[1]9.9793,[2]14.4996,[3]15.1326,[4]15.3107,[5]15.7099,[6]16.3349,[7]16.6782,[8]17.9917,[9]19.2242,[10]19.9207,[11]20.4351,[12]20.5014,[13]21.3520,[14]20.7006,[15]20.5034,[16]21.1166,[17]19.5729,[18]19.6056,[19]19.3577,[20]19.3080,
+Final estimate: PPL = 19.3080 +/- 0.81097  (5100 tokens scored in 2148.3 s)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.186399
+Mean KLD: 0.160706   Same top p: 77.863 %

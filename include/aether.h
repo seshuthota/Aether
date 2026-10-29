@@ -39,11 +39,14 @@ typedef int (*AetherTokenCallback)(const uint8_t *bytes, size_t len, void *user)
  * thread. max_seq: longest prompt + reply in tokens. */
 int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
-/* Loads a --pure Q4_0 .gguf for decoding on the GPU (Vulkan). Every
- * aether_generate on it runs on the GPU, the prompt token by token. Fails
- * with AETHER_ERR_LOAD if the library was built without the vulkan feature,
- * there is no usable GPU, or a matrix is not Q4_0. */
-int aether_open_gpu(const char *path, uint32_t max_seq, AetherSession **out);
+/* Loads a --pure Q4_0 .gguf for decoding on the GPU (Vulkan). cores as in
+ * aether_open: if given, a second copy of the model on those CPU cores runs
+ * each prompt as one batch and hands its KV cache to the GPU (the CPU runs
+ * prompts faster than the GPU on the phone; twice the memory); NULL / ""
+ * runs the prompt on the GPU, batched as well. Fails with AETHER_ERR_LOAD if the library was built
+ * without the vulkan feature, there is no usable GPU, or a matrix is not
+ * Q4_0. */
+int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
 /* Generates a reply. chat != 0 wraps the prompt in the ChatML template.
  * temperature 0 = greedy. stats may be NULL. */

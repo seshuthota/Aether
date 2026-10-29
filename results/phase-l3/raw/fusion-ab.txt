@@ -1,0 +1,110 @@
+>>> profile stacked r1 41500
+depth 256: 11.13 ms per token wall (89.8 tok/s), 10.01 ms on the GPU
+  rmsnorm                0.447 ms    4.5 %
+  q/k/v                  0.591 ms    5.9 %
+  bias + RoPE + cache    0.186 ms    1.9 %
+  attention              0.823 ms    8.2 %
+  attention merge        0.175 ms    1.7 %
+  wo                     0.481 ms    4.8 %
+  add                    0.163 ms    1.6 %
+  gate/up                3.199 ms   32.0 %
+  swiglu                 0.105 ms    1.0 %
+  down                   1.926 ms   19.2 %
+  classifier             1.915 ms   19.1 %
+>>> profile head r1 56100
+depth 256: 12.57 ms per token wall (79.6 tok/s), 10.75 ms on the GPU
+  q/k/v                  0.906 ms    8.4 %
+  bias + RoPE + cache    0.188 ms    1.8 %
+  attention              0.820 ms    7.6 %
+  attention merge        0.168 ms    1.6 %
+  wo + add               0.499 ms    4.6 %
+  gate/up                3.719 ms   34.6 %
+  swiglu + down + add    2.691 ms   25.0 %
+  classifier             1.757 ms   16.3 %
+  q/k/v                  0.904 ms    7.5 %
+  bias + RoPE + cache    0.193 ms    1.6 %
+  attention              1.768 ms   14.8 %
+>>> profile stacked r2 48000
+depth 256: 15.30 ms per token wall (65.4 tok/s), 10.01 ms on the GPU
+  rmsnorm                0.452 ms    4.5 %
+  q/k/v                  0.594 ms    5.9 %
+  bias + RoPE + cache    0.187 ms    1.9 %
+  attention              0.831 ms    8.3 %
+  attention merge        0.176 ms    1.8 %
+  wo                     0.482 ms    4.8 %
+  add                    0.166 ms    1.7 %
+  gate/up                3.186 ms   31.8 %
+  swiglu                 0.106 ms    1.1 %
+  down                   1.919 ms   19.2 %
+  classifier             1.911 ms   19.1 %
+>>> profile head r2 44600
+depth 256: 11.74 ms per token wall (85.2 tok/s), 10.85 ms on the GPU
+  q/k/v                  0.840 ms    7.7 %
+  bias + RoPE + cache    0.181 ms    1.7 %
+  attention              0.814 ms    7.5 %
+  attention merge        0.171 ms    1.6 %
+  wo + add               0.511 ms    4.7 %
+  gate/up                3.805 ms   35.1 %
+  swiglu + down + add    2.766 ms   25.5 %
+  classifier             1.766 ms   16.3 %
+  q/k/v                  0.820 ms    6.9 %
+  bias + RoPE + cache    0.186 ms    1.6 %
+  attention              1.774 ms   14.9 %
+>>> profile stacked r3 45700
+depth 256: 9.99 ms per token wall (100.1 tok/s), 8.98 ms on the GPU
+  rmsnorm                0.438 ms    4.9 %
+  q/k/v                  0.559 ms    6.2 %
+  bias + RoPE + cache    0.179 ms    2.0 %
+  attention              0.805 ms    9.0 %
+  attention merge        0.172 ms    1.9 %
+  wo                     0.447 ms    5.0 %
+  add                    0.159 ms    1.8 %
+  gate/up                2.790 ms   31.1 %
+  swiglu                 0.103 ms    1.1 %
+  down                   1.700 ms   18.9 %
+  classifier             1.624 ms   18.1 %
+>>> profile head r3 46900
+depth 256: 11.79 ms per token wall (84.8 tok/s), 10.76 ms on the GPU
+  q/k/v                  0.823 ms    7.7 %
+  bias + RoPE + cache    0.187 ms    1.7 %
+  attention              0.805 ms    7.5 %
+  attention merge        0.174 ms    1.6 %
+  wo + add               0.504 ms    4.7 %
+  gate/up                3.712 ms   34.5 %
+  swiglu + down + add    2.650 ms   24.6 %
+  classifier             1.906 ms   17.7 %
+  q/k/v                  0.823 ms    6.9 %
+  bias + RoPE + cache    0.186 ms    1.6 %
+  attention              1.772 ms   14.9 %
+>>> plain stacked r1 46900
+depth 0: 17.34 ms per token wall (57.7 tok/s)
+depth 256: 14.15 ms per token wall (70.7 tok/s)
+depth 1024: 14.53 ms per token wall (68.8 tok/s)
+>>> plain head r1 43000
+depth 0: 30.71 ms per token wall (32.6 tok/s)
+depth 256: 27.94 ms per token wall (35.8 tok/s)
+depth 1024: 28.02 ms per token wall (35.7 tok/s)
+>>> plain stacked r2 42300
+depth 0: 23.89 ms per token wall (41.9 tok/s)
+depth 256: 22.74 ms per token wall (44.0 tok/s)
+depth 1024: 22.08 ms per token wall (45.3 tok/s)
+>>> plain head r2 41900
+depth 0: 23.66 ms per token wall (42.3 tok/s)
+depth 256: 21.98 ms per token wall (45.5 tok/s)
+depth 1024: 11.31 ms per token wall (88.4 tok/s)
+>>> plain stacked r3 43000
+depth 0: 9.42 ms per token wall (106.2 tok/s)
+depth 256: 9.73 ms per token wall (102.8 tok/s)
+depth 1024: 10.74 ms per token wall (93.1 tok/s)
+>>> plain head r3 43400
+depth 0: 13.79 ms per token wall (72.5 tok/s)
+depth 256: 13.99 ms per token wall (71.5 tok/s)
+depth 1024: 12.92 ms per token wall (77.4 tok/s)
+>>> split stacked 43000
+depth 0: step (submit + wait) 10.55 ms, logits copy + argmax 1.14 ms per token
+depth 256: step (submit + wait) 10.89 ms, logits copy + argmax 1.12 ms per token
+depth 1024: step (submit + wait) 11.87 ms, logits copy + argmax 1.07 ms per token
+>>> split head 43000
+depth 0: step (submit + wait) 13.40 ms, logits copy + argmax 1.13 ms per token
+depth 256: step (submit + wait) 13.44 ms, logits copy + argmax 1.19 ms per token
+depth 1024: step (submit + wait) 12.67 ms, logits copy + argmax 0.91 ms per token

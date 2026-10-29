@@ -356,3 +356,93 @@ What is left: the matrix products run at about 60 % of the bandwidth
 the GPU can reach, and each of the ~240 remaining dispatches costs a
 fixed ~10 µs. Fusing the small stages (rmsnorm into the next product,
 the residual add into wo and down) would remove ~100 dispatches.
+
+## Step 7: the gpu-pending branch on the phone (2026-10-29, on battery, 33–42 °C)
+
+The branch `gpu-pending` was built while the phone was away: fusions into
+the GEMV, a batched GPU prompt pass, CPU prompt in the app. Correctness
+had been checked on the PC's Intel GPU only. Raw:
+`raw/gpu-pending-verify.txt`, `raw/vk-prefill.txt`, `raw/fusion-ab.txt`,
+`raw/cli-modes.txt`, `raw/unfuse-ab.txt`, `raw/unfuse-ppl.txt`,
+`raw/cli-hybrid-ab.txt`.
+
+**Correctness on the Adreno.** 105/105 lib tests pass (`--features
+vulkan`). GPU perplexity through the decode step and through the batched
+pass is identical to the PC's and to step 4: SmolLM2-135M 27.6910,
+Qwen2.5-0.5B 19.7193.
+
+**Batched GPU prefill** (`vk_prefill`, Qwen2.5-0.5B Q4_0): 16 tokens
+66 tok/s, 64 tokens 241, 128 tokens 251. The GEMM's tiles are 64 tokens
+wide, so 16 tokens cost nearly as much as 64 (241 vs 263 ms). The matrix
+products are nearly all of it: gate/up ~45 %, SwiGLU + down + add ~39 %.
+At 64 tokens that is ~63 GFLOP in 0.26 s, about 240 GFLOP/s, a small
+fraction of what the GPU can compute. The CPU's batched prefill does
+750–800 tok/s, so the CPU keeps the prompt.
+
+**Two fusions made decode slower.** Profile at depth 256, three runs
+each, against the build before the fusions (`stacked`):
+
+| stage | before (ms) | all fused (ms) | change |
+| --- | --- | --- | --- |
+| rmsnorm + q/k/v | ~0.14 + 0.55–0.57 | 0.77–0.78 | −0.1 |
+| wo + add | 0.45–0.46 + 0.15 | 0.49 | −0.1 |
+| rmsnorm + gate/up | ~0.14 + 2.98–3.10 | 3.57–3.58 | **+0.5** |
+| SwiGLU + down + add | 0.10 + 1.78–1.85 + 0.15 | 2.46–2.47 | **+0.4** |
+| GPU time per token | 9.31–9.63 | 10.37–10.38 | +8 % |
+
+A fused GEMV loads its input in every subgroup. With the RMS norm fused,
+each of the gate/up workgroups sums the 896 squares again before it
+starts. With the SwiGLU fused, every subgroup of `down` computes all
+4,864 `exp`s again. For q/k/v (1,152 rows) the redundant norm costs less
+than the dispatch it saves; for gate/up (9,728 rows) it costs more.
+
+**Un-fused again** (gate/up after a separate `rmsnorm`; `down` after a
+separate `swiglu`, still adding into x; the norm stays fused into q/k/v
+and the classifier, the add into wo and down). Same three-run profile:
+
+| | GPU ms per token | step (submit + wait), depth 0 / 256 |
+| --- | --- | --- |
+| before the fusions | 9.31 / 9.63 / 9.60 | 10.47–10.57 / 10.50–10.66 |
+| all fused | 10.38 / 10.37 / 10.37 | 11.72–13.38 / 11.50–11.55 |
+| un-fused gate/up and down | **9.69 / 9.57 / 9.12** | 10.36–10.43 / 10.73–10.74 |
+
+So the build is back where it was before the fusions. The two fusions
+that are kept save ~0.2 ms, which is smaller than the run-to-run spread.
+PPL is unchanged (27.6910, 19.7193).
+
+**Greedy argmax on the GPU.** Copying Qwen's 151,936 logits to the CPU
+and taking their argmax cost 0.9–1.2 ms per token (`vk_decode split`).
+That is ~10 % of a token. Now two small dispatches after the classifier
+(`argmax.comp`: 64 workgroups, then one) leave the index in a 4-byte
+buffer (`GpuModel::greedy`), and `GpuSession::generate` reads only that
+when the temperature is 0. Ties go to the lowest index, as on the CPU;
+`gpu_argmax_matches_the_logits` checks it against the CPU's argmax of
+the same logits after a batch and 16 steps. 106/106 lib tests pass on the
+phone.
+
+**The CLI** (`aether --gpu --times -t 0`, 345-token prompt, 55 tokens,
+three alternating rounds, cooled below 40 °C before each run):
+
+| mode | prefill tok/s | decode tok/s | before this step |
+| --- | --- | --- | --- |
+| `--gpu` (batched GPU prompt) | 240 | 97.4–97.7 | 77–80 |
+| `--gpu -c 2-7` (CPU prompt, six cores) | 761–820 | 95.9–101.0 | 63–66 |
+| `--gpu -c 7` (CPU prompt, one core) | 218–220 | 66.5–86.3 | — |
+| `-c 2-7` (CPU only) | 750–773 | 166–169 | |
+
+GPU decode got ~25 % faster (un-fusing plus the argmax). The gap after a
+CPU prompt that `raw/cli-modes.txt` showed earlier today (63–66 against
+77–80) is gone: the six-core CPU prompt is followed by 12–15 ms for its
+first ~5 tokens, then ~9.6 ms per token. After a one-core prompt (1.6 s
+of one prime core at full load) decode holds ~15 ms per token for 15–40
+tokens, then drops to ~10 ms in one step. A step like that looks like a
+clock governor changing level, not our code: per token the work is the
+same. An unrooted phone does not show which clock it was.
+
+**The app** (rebuilt from this branch; the GPU mode runs the prompt on
+the CPU): 41-token prompt in 46–52 ms, GPU decode 89.3 / 92.2 tok/s with
+sensible text; CPU mode 172.1 / 172.8 tok/s. That was measured before the
+un-fusing and the argmax.
+
+What is left for GPU decode: the CPU still decodes ~1.7× faster. The
+matrix products run at 30–40 GB/s of the GPU's 66.

@@ -10,6 +10,12 @@
 //! rotation table, computed on the CPU exactly as the CPU path does. A
 //! step is then: dequantize the token's embedding row on the CPU straight
 //! into the input buffer, write `params`, submit, wait, read the logits.
+//!
+//! A prompt goes through [`GpuModel::forward_batch`]: the same stages for
+//! up to [`GpuModel::batch`] tokens at once, the matrix products as tiled
+//! matrix-matrix products (`q4_0_gemm.comp`) that read each weight once
+//! per 64 tokens. The activation buffers hold `batch` rows; decoding uses
+//! the first.
 
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
@@ -38,6 +44,10 @@ fn push(v: &[u32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
+/// Bytes the batched attention's partial results may take: the batch is
+/// as many tokens as fit (at most 128).
+const PARTS_BUDGET: usize = 32 << 20;
+
 struct Layer {
     /// wq, wk and wv stacked (dim + 2·kv_dim rows), and w_gate over w_up
     /// (2·hidden_dim rows): one dispatch each instead of three and two.
@@ -55,27 +65,78 @@ struct Layer {
     bv: Buffer,
 }
 
+/// One layer's kernels with their buffers bound: the matrix products both
+/// as GEMV (decode) and GEMM (prompt).
+struct Bl {
+    norm1: Bound,
+    qkv: Bound,
+    post: Bound,
+    attn: Bound,
+    merge: Bound,
+    o: Bound,
+    norm2: Bound,
+    gate_up: Bound,
+    swiglu: Bound,
+    down: Bound,
+    qkv_mm: Bound,
+    o_mm: Bound,
+    gate_up_mm: Bound,
+    down_mm: Bound,
+}
+
+/// What [`GpuModel::with`] builds.
+#[derive(Clone, Copy, Default)]
+pub struct Options {
+    /// A GPU timestamp after every stage of the decode step
+    /// ([`GpuModel::profile`]).
+    pub profile: bool,
+    /// Record the decode step this many times in one submit (timing only;
+    /// 0 counts as 1).
+    pub repeat: usize,
+    /// [`GpuModel::forward_batch`] returns the logits of every token, not
+    /// only the last (perplexity), at `batch × vocab` floats of memory.
+    pub all_logits: bool,
+}
+
 pub struct GpuModel {
     pub config: Config,
+    /// Tokens per [`GpuModel::forward_batch`].
+    pub batch: usize,
     /// The embedding stays on the CPU side too: one row is dequantized per
     /// token.
     weights: Weights,
     x: Buffer,
     logits: Buffer,
+    /// `batch × vocab` logits with [`Options::all_logits`].
+    logits_all: Option<Buffer>,
     kc: Buffer,
     vc: Buffer,
     params: Buffer,
     step: Commands,
     /// With profiling: the stage each timestamp ends ([`GpuModel::profile`]).
     stages: Vec<&'static str>,
+    profile: bool,
+    /// With profiling: GPU seconds per stage of the last
+    /// [`GpuModel::forward_batch`].
+    pub batch_profile: Vec<(&'static str, f64)>,
     /// Poll the fence instead of sleeping on it ([`Gpu::submit`]). Off by
     /// default: in a sustained run polling was slower (86 vs 103 tok/s) and
     /// cost more power (results/phase-l3.md step 5).
     pub spin: bool,
+    bound: Vec<Bl>,
+    fnorm: Bound,
+    /// The classifier in decode (the final norm fused in), and after a
+    /// batch (reading the last token's row, normalized by `fnorm`).
+    fcls: Bound,
+    fcls_b: Bound,
+    fcls_mm: Option<Bound>,
+    /// The two passes of the argmax of `logits` into `best`.
+    amax: Bound,
+    best: Buffer,
     // Everything the recorded commands use must outlive them; held here.
     _keep: Vec<Buffer>,
-    _mats: Vec<MatQ4_0>,
-    _layers: Vec<Layer>,
+    cls: MatQ4_0,
+    layers: Vec<Layer>,
     _kernels: Vec<Kernel>,
 }
 
@@ -84,18 +145,24 @@ impl GpuModel {
     /// the step writes a GPU timestamp after every stage
     /// ([`GpuModel::profile`]).
     pub fn new(gpu: &Gpu, config: Config, weights: Weights, profile: bool) -> Result<GpuModel> {
-        GpuModel::with_repeat(gpu, config, weights, profile, 1)
+        GpuModel::with(gpu, config, weights, Options { profile, ..Options::default() })
     }
 
     /// [`GpuModel::new`] whose step runs the whole forward pass `repeat`
     /// times in one submit (at the same position, so only the timing is
     /// meaningful): the GPU then runs without the CPU's gap between tokens.
     pub fn with_repeat(gpu: &Gpu, config: Config, weights: Weights, profile: bool, repeat: usize) -> Result<GpuModel> {
+        GpuModel::with(gpu, config, weights, Options { profile, repeat, ..Options::default() })
+    }
+
+    pub fn with(gpu: &Gpu, config: Config, weights: Weights, opt: Options) -> Result<GpuModel> {
         let c = &config;
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Attention works in chunks of 64 positions (shaders/attention.comp).
         let chunks = c.seq_len.div_ceil(64);
+        let parts_per_token = c.n_heads * chunks * (hs + 2);
+        let batch = (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128);
         let f32buf = |v: &[f32]| -> Result<Buffer> {
             let mut b = gpu.buffer(v.len().max(1) * 4)?;
             b.as_mut_slice::<f32>()[..v.len()].copy_from_slice(v);
@@ -133,141 +200,271 @@ impl GpuModel {
         let cls = mat(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size, "classifier")?;
         let final_norm = f32buf(&weights.final_norm)?;
 
-        let x = zeros(dim)?;
-        // q, k, v: one buffer, the output of wqkv; hb (gate) then hb2 (up)
-        // likewise. The kernels after them bind views into it.
-        let (xb, xb2, qkv, hb12) = (zeros(dim)?, zeros(dim)?, zeros(dim + 2 * kv_dim)?, zeros(2 * hid)?);
-        let (k_at, v_at, up_at) = (4 * dim, 4 * (dim + kv_dim), 4 * hid);
-        let logits = zeros(c.vocab_size)?;
+        // One row per token of a batch; decoding uses row 0.
+        let x = zeros(batch * dim)?;
+        // q, k, v: one buffer, the output of wqkv, which the kernels after
+        // it bind views into; gate then up likewise.
+        let qkv_dim = dim + 2 * kv_dim;
+        let (xb, xb2, qkv, hb12) = (zeros(batch * dim)?, zeros(batch * dim)?, zeros(batch * qkv_dim)?, zeros(batch * 2 * hid)?);
+        let (k_at, v_at) = (4 * dim, 4 * (dim + kv_dim));
+        // The CPU reads all the logits after every step: from memory it
+        // caches (coherent, so no invalidation), not uncached memory, when
+        // the device offers that for storage buffers (Adreno: type 6).
+        let cached = |n: usize| {
+            use ash::vk::MemoryPropertyFlags as M;
+            match gpu.buffer_with(n * 4, M::DEVICE_LOCAL | M::HOST_VISIBLE | M::HOST_COHERENT | M::HOST_CACHED) {
+                Ok(b) => Ok(b),
+                Err(_) => zeros(n),
+            }
+        };
+        let logits = cached(c.vocab_size)?;
+        let logits_all = if opt.all_logits { Some(cached(batch * c.vocab_size)?) } else { None };
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
-        let parts = zeros(c.n_heads * chunks * (hs + 2))?;
-        // pos, 3 × padding, then (sin, cos) per rotation pair.
-        let params = zeros(4 + hs)?;
+        let parts = zeros(batch * parts_per_token)?;
+        // pos, 3 × padding, then (sin, cos) per rotation pair, per token.
+        let params = zeros(4 + batch * hs)?;
 
-        let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 8)?;
-        let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 20)?;
-        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 20)?;
+        let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 12)?;
+        let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
+        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
-        let add = Kernel::new(gpu, crate::spirv!("add"), 2, 4)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
-        let gemvs = [4, 8, 16].map(|r| gpu.q4_0_gemv_kernel(r));
-        let gemvs: Vec<Kernel> = gemvs.into_iter().collect::<Result<_>>()?;
-        let gemv_k = |rows: usize| &gemvs[match gemv_r(rows) {
-            4 => 0,
-            8 => 1,
-            _ => 2,
-        }];
+        let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
+        // In decode, wo and down add their products to the residual stream
+        // x; q/k/v and the classifier apply the RMS norm before them as they
+        // load x. gate/up and down do not fuse theirs: every workgroup
+        // would redo the norm's sum (9,728 gate/up rows) or the SwiGLU's
+        // exponentials (4,864 per subgroup), and on the phone both fused
+        // stages were slower than the separate kernels.
+        let wo_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, false, false)?;
+        let rs = [4, 8, 16];
+        let by_r = |r: u32| rs.iter().position(|&x| x == r).unwrap();
+        let gemvs: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel(r)).into_iter().collect::<Result<_>>()?;
+        let normed: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel_fused(r, false, false, true)).into_iter().collect::<Result<_>>()?;
+        let (mm, mm_acc, mm_glu) = (gpu.q4_0_gemm_kernel()?, gpu.q4_0_gemm_kernel_fused(true, false)?, gpu.q4_0_gemm_kernel_fused(true, true)?);
 
-        let eps = c.norm_eps.to_bits();
-        let halves = u32::from(c.rope_layout == RopeLayout::Halves);
-        let one = [1, 1, 1];
-        let elems = |n: usize| [n.div_ceil(256) as u32, 1, 1];
         // Bind everything first (binding can fail; recording cannot).
-        struct Bl {
-            norm1: Bound,
-            qkv: Bound,
-            post: Bound,
-            attn: Bound,
-            merge: Bound,
-            o: Bound,
-            add1: Bound,
-            norm2: Bound,
-            gate_up: Bound,
-            swiglu: Bound,
-            down: Bound,
-            add2: Bound,
-        }
-        let gemv_bind = |m: &MatQ4_0, input: &Buffer, out: &Buffer| gemv_k(m.rows).bind(gpu, &[&m.qs, &m.d, input, out]);
+        // The GEMV's binding 4 is the norm's weights, unused (any buffer)
+        // without the norm.
+        let normed_bind = |m: &MatQ4_0, out: &Buffer, w: &Buffer| normed[by_r(gemv_r(m.rows))].bind(gpu, &[&m.qs, &m.d, &x, out, w]);
         let mut bound = Vec::new();
         for ly in &layers {
             bound.push(Bl {
                 norm1: rms.bind(gpu, &[&x, &ly.attn_norm, &xb])?,
-                qkv: gemv_bind(&ly.wqkv, &xb, &qkv)?,
+                qkv: normed_bind(&ly.wqkv, &qkv, &ly.attn_norm)?,
                 post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
                 attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
-                o: gemv_bind(&ly.wo, &xb2, &xb)?,
-                add1: add.bind(gpu, &[&x, &xb])?,
+                o: wo_k.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x, &x])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
-                gate_up: gemv_bind(&ly.w_gate_up, &xb, &hb12)?,
-                swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, up_at)])?,
-                down: gemv_bind(&ly.w_down, &hb12, &xb)?,
-                add2: add.bind(gpu, &[&x, &xb])?,
+                gate_up: gemvs[by_r(gemv_r(ly.w_gate_up.rows))].bind(gpu, &[&ly.w_gate_up.qs, &ly.w_gate_up.d, &xb, &hb12, &xb])?,
+                swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, 4 * hid)])?,
+                down: wo_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x, &x])?,
+                qkv_mm: mm.bind(gpu, &[&ly.wqkv.qs, &ly.wqkv.d, &xb, &qkv])?,
+                o_mm: mm_acc.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x])?,
+                gate_up_mm: mm.bind(gpu, &[&ly.w_gate_up.qs, &ly.w_gate_up.d, &xb, &hb12])?,
+                down_mm: mm_glu.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x])?,
             });
         }
         let fnorm = rms.bind(gpu, &[&x, &final_norm, &xb])?;
-        let fcls = gemv_bind(&cls, &xb, &logits)?;
-        let gemv_push = |m: &MatQ4_0| push(&[m.rows as u32, m.nb as u32]);
-        let gemv_groups = |m: &MatQ4_0| groups_for(m.rows, 4 * gemv_r(m.rows) as usize);
-
-        // Each stage ends with a barrier, and with `profile` a timestamp.
-        let mut stages = Vec::new();
-        let rec = |r: &mut Recorder, stages: &mut Vec<&'static str>| {
-            let mut end = |r: &mut Recorder, name: &'static str| {
-                r.barrier();
-                r.stamp();
-                stages.push(name);
-            };
-            for (l, (b, ly)) in bound.iter().zip(&layers).enumerate() {
-                let layer_off = (l * c.seq_len * kv_dim) as u32;
-                r.dispatch(&b.norm1, &push(&[dim as u32, eps]), one);
-                end(r, "rmsnorm");
-                r.dispatch(&b.qkv, &gemv_push(&ly.wqkv), gemv_groups(&ly.wqkv));
-                end(r, "q/k/v");
-                r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off]), one);
-                end(r, "bias + RoPE + cache");
-                r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks as u32, layer_off]), [c.n_heads as u32, chunks as u32, 1]);
-                end(r, "attention");
-                r.dispatch(&b.merge, &push(&[hs as u32, chunks as u32]), [c.n_heads as u32, 1, 1]);
-                end(r, "attention merge");
-                r.dispatch(&b.o, &gemv_push(&ly.wo), gemv_groups(&ly.wo));
-                end(r, "wo");
-                r.dispatch(&b.add1, &push(&[dim as u32]), elems(dim));
-                end(r, "add");
-                r.dispatch(&b.norm2, &push(&[dim as u32, eps]), one);
-                end(r, "rmsnorm");
-                r.dispatch(&b.gate_up, &gemv_push(&ly.w_gate_up), gemv_groups(&ly.w_gate_up));
-                end(r, "gate/up");
-                r.dispatch(&b.swiglu, &push(&[hid as u32]), elems(hid));
-                end(r, "swiglu");
-                r.dispatch(&b.down, &gemv_push(&ly.w_down), gemv_groups(&ly.w_down));
-                end(r, "down");
-                r.dispatch(&b.add2, &push(&[dim as u32]), elems(dim));
-                end(r, "add");
-            }
-            r.dispatch(&fnorm, &push(&[dim as u32, eps]), one);
-            end(r, "rmsnorm");
-            r.dispatch(&fcls, &gemv_push(&cls), gemv_groups(&cls));
-            end(r, "classifier");
+        let fcls = normed_bind(&cls, &logits, &final_norm)?;
+        let fcls_b = gemvs[by_r(gemv_r(cls.rows))].bind(gpu, &[&cls.qs, &cls.d, &xb, &logits, &xb])?;
+        let fcls_mm = match &logits_all {
+            Some(l) => Some(mm.bind(gpu, &[&cls.qs, &cls.d, &xb, l])?),
+            None => None,
         };
-        let rec_all = |r: &mut Recorder, stages: &mut Vec<&'static str>| (0..repeat).for_each(|_| rec(r, stages));
-        let step = if profile { gpu.record_timed(|r| rec_all(r, &mut stages))? } else { gpu.record(|r| rec_all(r, &mut stages))? };
-        if !profile {
+
+        // (value, index) per argmax workgroup; the index read by the CPU.
+        let (amax_parts, best) = (zeros(2 * AMAX_GROUPS)?, cached(1)?);
+        let amax = argmax.bind(gpu, &[&logits, &amax_parts, &best])?;
+
+        let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm, amax_parts];
+        keep.shrink_to_fit();
+        let mut kernels = vec![rms, post, attn, merge, swiglu, argmax, wo_k, mm, mm_acc, mm_glu];
+        kernels.extend(gemvs);
+        kernels.extend(normed);
+        let mut m = GpuModel {
+            config,
+            batch,
+            weights,
+            x,
+            logits,
+            logits_all,
+            kc,
+            vc,
+            params,
+            // Replaced just below: recording needs the bound kernels in place.
+            step: gpu.record(|_| {})?,
+            stages: Vec::new(),
+            profile: opt.profile,
+            batch_profile: Vec::new(),
+            spin: false,
+            bound,
+            fnorm,
+            fcls,
+            fcls_b,
+            fcls_mm,
+            amax,
+            best,
+            _keep: keep,
+            cls,
+            layers,
+            _kernels: kernels,
+        };
+        let mut stages = Vec::new();
+        let rec_all = |r: &mut Recorder, stages: &mut Vec<&'static str>| (0..opt.repeat.max(1)).for_each(|_| m.record_pass(r, 1, 0, None, stages));
+        let step = if opt.profile { gpu.record_timed(|r| rec_all(r, &mut stages))? } else { gpu.record(|r| rec_all(r, &mut stages))? };
+        if !opt.profile {
             stages.clear();
         }
+        m.step = step;
+        m.stages = stages;
+        Ok(m)
+    }
 
-        let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm];
-        keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, merge, add, swiglu];
-        kernels.extend(gemvs);
-        Ok(GpuModel { config, weights, x, logits, kc, vc, params, step, stages, spin: false, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
+    /// Records one forward pass over `n` tokens, the first at position
+    /// `pos0` (with `n` = 1: the decode step; the position comes from
+    /// `params` either way, `pos0` only sizes the attention). The last
+    /// token's logits go to `logits`, or with `all` every token's to that
+    /// buffer's binding. Each stage ends with a barrier and a timestamp
+    /// (which only a timed recording writes).
+    fn record_pass(&self, r: &mut Recorder, n: usize, pos0: usize, all: Option<&Bound>, stages: &mut Vec<&'static str>) {
+        let c = &self.config;
+        let (dim, kv_dim, hs) = (c.dim, c.kv_dim(), c.head_size());
+        let eps = c.norm_eps.to_bits();
+        let halves = u32::from(c.rope_layout == RopeLayout::Halves);
+        let qkv_dim = (dim + 2 * kv_dim) as u32;
+        let nt = n as u32;
+        // Decode covers every chunk the cache can hold (it is recorded
+        // once); a batch only those its last token reaches.
+        let chunks = if n == 1 { c.seq_len.div_ceil(64) } else { (pos0 + n).div_ceil(64) } as u32;
+        let mut end = |r: &mut Recorder, name: &'static str| {
+            r.barrier();
+            r.stamp();
+            stages.push(name);
+        };
+        // A matrix product: GEMV for one token, GEMM for several.
+        let gemv = |r: &mut Recorder, k: &Bound, m: &MatQ4_0| r.dispatch(k, &push(&[m.rows as u32, m.nb as u32, eps]), groups_for(m.rows, 4 * gemv_r(m.rows) as usize));
+        let product = |r: &mut Recorder, gemv_b: &Bound, gemm: &Bound, m: &MatQ4_0| {
+            if n == 1 {
+                gemv(r, gemv_b, m);
+            } else {
+                r.dispatch(gemm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
+            }
+        };
+        for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
+            let layer_off = (l * c.seq_len * kv_dim) as u32;
+            // In decode the first norm is part of q/k/v.
+            if n > 1 {
+                r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+                end(r, "rmsnorm");
+            }
+            product(r, &b.qkv, &b.qkv_mm, &ly.wqkv);
+            end(r, "q/k/v");
+            r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
+            end(r, "bias + RoPE + cache");
+            r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+            end(r, "attention");
+            r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
+            end(r, "attention merge");
+            product(r, &b.o, &b.o_mm, &ly.wo);
+            end(r, "wo + add");
+            r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+            end(r, "rmsnorm");
+            product(r, &b.gate_up, &b.gate_up_mm, &ly.w_gate_up);
+            end(r, "gate/up");
+            // The GEMM applies the SwiGLU as it loads gate and up.
+            if n == 1 {
+                r.dispatch(&b.swiglu, &push(&[c.hidden_dim as u32]), [c.hidden_dim.div_ceil(256) as u32, 1, 1]);
+                end(r, "swiglu");
+                product(r, &b.down, &b.down_mm, &ly.w_down);
+                end(r, "down + add");
+            } else {
+                product(r, &b.down, &b.down_mm, &ly.w_down);
+                end(r, "swiglu + down + add");
+            }
+        }
+        match all {
+            Some(cls_mm) => {
+                r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+                end(r, "rmsnorm");
+                let m = &self.cls;
+                r.dispatch(cls_mm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
+            }
+            None if n == 1 => gemv(r, &self.fcls, &self.cls),
+            None => {
+                // Only the last token: its row of x, normalized into row 0.
+                r.dispatch(&self.fnorm, &push(&[dim as u32, eps, nt - 1]), [1, 1, 1]);
+                end(r, "rmsnorm");
+                gemv(r, &self.fcls_b, &self.cls);
+            }
+        }
+        end(r, "classifier");
+        if all.is_none() {
+            let v = c.vocab_size as u32;
+            r.dispatch(&self.amax, &push(&[v, 0]), [AMAX_GROUPS as u32, 1, 1]);
+            r.barrier();
+            r.dispatch(&self.amax, &push(&[AMAX_GROUPS as u32, 1]), [1, 1, 1]);
+            end(r, "argmax");
+        }
+    }
+
+    /// Writes token `t`'s embedding into row `row` of x and its position's
+    /// rotation table into `params`.
+    fn set_token(&mut self, row: usize, token: usize, pos: usize) {
+        let c = &self.config;
+        assert!(pos < c.seq_len && token < c.vocab_size);
+        let dim = c.dim;
+        self.weights.token_embedding.row_f32(token, &mut self.x.as_mut_slice::<f32>()[row * dim..(row + 1) * dim]);
+        let hs = c.head_size();
+        let p = self.params.as_mut_slice::<u32>();
+        for (i, (sin, cos)) in crate::kernels::scalar::rotations(pos, hs, c.rope_theta).into_iter().enumerate() {
+            p[4 + row * hs + 2 * i] = sin.to_bits();
+            p[5 + row * hs + 2 * i] = cos.to_bits();
+        }
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
     /// token. As for the CPU path, positions must be fed in order.
     pub fn forward(&mut self, gpu: &Gpu, token: usize, pos: usize) -> Result<&[f32]> {
-        let c = &self.config;
-        assert!(pos < c.seq_len && token < c.vocab_size);
-        self.weights.token_embedding.row_f32(token, &mut self.x.as_mut_slice::<f32>()[..c.dim]);
-        let p = self.params.as_mut_slice::<u32>();
-        p[0] = pos as u32;
-        for (i, (sin, cos)) in crate::kernels::scalar::rotations(pos, c.head_size(), c.rope_theta).into_iter().enumerate() {
-            p[4 + 2 * i] = sin.to_bits();
-            p[5 + 2 * i] = cos.to_bits();
-        }
+        self.set_token(0, token, pos);
+        self.params.as_mut_slice::<u32>()[0] = pos as u32;
         gpu.submit(&self.step, self.spin)?;
-        Ok(&self.logits.as_slice::<f32>()[..c.vocab_size])
+        Ok(&self.logits.as_slice::<f32>()[..self.config.vocab_size])
+    }
+
+    /// The most likely next token after the last [`GpuModel::forward`] or
+    /// [`GpuModel::forward_batch`] (without [`Options::all_logits`]),
+    /// found on the GPU: greedy decoding need not read the logits.
+    pub fn greedy(&self) -> usize {
+        self.best.as_slice::<u32>()[0] as usize
+    }
+
+    /// Runs `tokens` (at most [`GpuModel::batch`]) at positions `pos ..`
+    /// in one pass, as the CPU's `forward_batch` does, and returns the
+    /// last token's logits, or with [`Options::all_logits`] every token's
+    /// (`tokens.len() × vocab`). The pass is recorded for this call: its
+    /// size depends on the number of tokens and the position.
+    pub fn forward_batch(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        let n = tokens.len();
+        assert!(n > 0 && n <= self.batch && pos + n <= self.config.seq_len, "{n} tokens at {pos}: batch {}, seq_len {}", self.batch, self.config.seq_len);
+        for (i, &t) in tokens.iter().enumerate() {
+            self.set_token(i, t, pos + i);
+        }
+        self.params.as_mut_slice::<u32>()[0] = pos as u32;
+        let mut stages = Vec::new();
+        let rec = |r: &mut Recorder| self.record_pass(r, n, pos, self.fcls_mm.as_ref(), &mut stages);
+        let cmds = if self.profile { gpu.record_timed(rec)? } else { gpu.record(rec)? };
+        gpu.submit(&cmds, self.spin)?;
+        if self.profile {
+            self.batch_profile = per_stage(&stages, &gpu.stamps(&cmds)?);
+        }
+        let v = self.config.vocab_size;
+        Ok(match &self.logits_all {
+            Some(l) => &l.as_slice::<f32>()[..n * v],
+            None => &self.logits.as_slice::<f32>()[..v],
+        })
     }
 
     /// Copies positions `0..n` of a CPU [`super::Transformer`]'s KV cache
@@ -291,15 +488,23 @@ impl GpuModel {
     /// (summed over layers), in order of first appearance; empty unless
     /// the model was made with `profile`.
     pub fn profile(&self, gpu: &Gpu) -> Result<Vec<(&'static str, f64)>> {
-        let t = gpu.stamps(&self.step)?;
-        let mut out: Vec<(&'static str, f64)> = Vec::new();
-        for (i, name) in self.stages.iter().enumerate() {
-            let dt = t[i + 1] - t[i];
-            match out.iter_mut().find(|(n, _)| n == name) {
-                Some(e) => e.1 += dt,
-                None => out.push((name, dt)),
-            }
-        }
-        Ok(out)
+        Ok(per_stage(&self.stages, &gpu.stamps(&self.step)?))
     }
+}
+
+/// Workgroups of the argmax's first pass.
+const AMAX_GROUPS: usize = 64;
+
+/// Seconds per kind of stage from the timestamps `t` taken after each of
+/// `stages`, in order of first appearance.
+fn per_stage(stages: &[&'static str], t: &[f64]) -> Vec<(&'static str, f64)> {
+    let mut out: Vec<(&'static str, f64)> = Vec::new();
+    for (i, name) in stages.iter().enumerate() {
+        let dt = t[i + 1] - t[i];
+        match out.iter_mut().find(|(n, _)| n == name) {
+            Some(e) => e.1 += dt,
+            None => out.push((name, dt)),
+        }
+    }
+    out
 }

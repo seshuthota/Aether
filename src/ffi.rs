@@ -103,6 +103,24 @@ pub extern "C" fn aether_last_error() -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
 }
 
+/// `cores` of `aether_open`/`aether_open_gpu`: null or "" is None.
+///
+/// # Safety
+/// `cores`, if non-null, is a NUL-terminated string.
+unsafe fn cores_arg(cores: *const c_char) -> Result<Option<Vec<usize>>, c_int> {
+    if cores.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: caller's contract.
+    match unsafe { str_arg(cores, "cores") }? {
+        "" => Ok(None),
+        c => crate::sys::affinity::parse_cpu_list(c).map(Some).map_err(|e| {
+            set_error(e);
+            AETHER_ERR_ARGUMENT
+        }),
+    }
+}
+
 /// Loads a model (`.gguf`, Hugging Face directory, or llama2.c `.bin`).
 /// `cores`: CPU list such as "2-7" (one thread per core), or null/"" for one
 /// unpinned thread. `max_seq`: longest conversation in tokens (sizes the KV
@@ -123,21 +141,10 @@ pub unsafe extern "C" fn aether_open(path: *const c_char, cores: *const c_char, 
             Ok(p) => p,
             Err(code) => return code,
         };
-        let cores = if cores.is_null() {
-            None
-        } else {
-            // SAFETY: caller's contract.
-            match unsafe { str_arg(cores, "cores") } {
-                Ok("") => None,
-                Ok(c) => match crate::sys::affinity::parse_cpu_list(c) {
-                    Ok(list) => Some(list),
-                    Err(e) => {
-                        set_error(e);
-                        return AETHER_ERR_ARGUMENT;
-                    }
-                },
-                Err(code) => return code,
-            }
+        // SAFETY: caller's contract.
+        let cores = match unsafe { cores_arg(cores) } {
+            Ok(c) => c,
+            Err(code) => return code,
         };
         match Session::open(Path::new(path), None, max_seq as usize, Format::F32, cores.as_deref()) {
             Ok(s) => {
@@ -225,8 +232,10 @@ pub unsafe extern "C" fn aether_generate(
     })
 }
 
-/// Loads a `--pure` Q4_0 `.gguf` for decoding on the GPU (Vulkan): every
-/// later `aether_generate` runs on it, prompt included, token by token.
+/// Loads a `--pure` Q4_0 `.gguf` for decoding on the GPU (Vulkan). With
+/// `cores` (as in `aether_open`), a second copy of the model on those CPU
+/// cores runs each prompt as one batch and hands its KV cache to the GPU;
+/// with null or "", the prompt runs on the GPU, batched as well.
 /// `max_seq` as in `aether_open`. Fails with `AETHER_ERR_LOAD` when the
 /// library was built without the `vulkan` feature, there is no usable GPU,
 /// or a matrix is not Q4_0.
@@ -234,7 +243,7 @@ pub unsafe extern "C" fn aether_generate(
 /// # Safety
 /// As for `aether_open`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, max_seq: u32, out: *mut *mut AetherSession) -> c_int {
+pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, cores: *const c_char, max_seq: u32, out: *mut *mut AetherSession) -> c_int {
     guard(|| {
         if out.is_null() {
             set_error("out is null");
@@ -245,8 +254,18 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, max_seq: u32, out:
             Ok(p) => p,
             Err(code) => return code,
         };
+        // SAFETY: caller's contract.
+        let cores = match unsafe { cores_arg(cores) } {
+            Ok(c) => c,
+            Err(code) => return code,
+        };
         #[cfg(feature = "vulkan")]
-        match crate::session::GpuSession::open(Path::new(path), max_seq as usize) {
+        let opened = match &cores {
+            Some(c) => crate::session::GpuSession::open_hybrid(Path::new(path), max_seq as usize, c),
+            None => crate::session::GpuSession::open(Path::new(path), max_seq as usize),
+        };
+        #[cfg(feature = "vulkan")]
+        match opened {
             Ok(g) => {
                 // SAFETY: `out` is non-null and writable (caller's contract).
                 unsafe { *out = AetherSession::new(Engine::Gpu(Box::new(g))) };
@@ -259,7 +278,7 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, max_seq: u32, out:
         }
         #[cfg(not(feature = "vulkan"))]
         {
-            let _ = max_seq;
+            let _ = (max_seq, cores);
             set_error(format!("{path}: this library was built without the GPU (vulkan) feature"));
             AETHER_ERR_LOAD
         }
@@ -352,24 +371,30 @@ mod tests {
     }
 
     /// A GPU session through the C ABI (skipped without a Vulkan GPU or
-    /// the feature): greedy output on SmolLM2-135M Q4_0 is real text, and
-    /// generation stops at max_tokens.
+    /// the feature), with the prompt on the GPU and on two CPU cores:
+    /// greedy output on SmolLM2-135M Q4_0 is real text, the same both ways,
+    /// and generation stops at max_tokens.
     #[test]
     fn c_abi_gpu_session() {
         let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
         let path = CString::new(model.to_str().unwrap()).unwrap();
-        let mut s: *mut AetherSession = std::ptr::null_mut();
-        unsafe {
-            if aether_open_gpu(path.as_ptr(), 128, &mut s) != AETHER_OK {
-                assert!(!cfg!(all(feature = "vulkan", target_os = "android")), "{:?}", CStr::from_ptr(aether_last_error()));
-                return;
+        let mut texts = Vec::new();
+        for cores in [std::ptr::null(), c"0-1".as_ptr()] {
+            let mut s: *mut AetherSession = std::ptr::null_mut();
+            unsafe {
+                if aether_open_gpu(path.as_ptr(), cores, 128, &mut s) != AETHER_OK {
+                    assert!(!cfg!(all(feature = "vulkan", target_os = "android")), "{:?}", CStr::from_ptr(aether_last_error()));
+                    return;
+                }
+                let (mut out, mut stats) = (Vec::<u8>::new(), AetherStats::default());
+                let prompt = CString::new("The capital of France is").unwrap();
+                assert_eq!(aether_generate(s, prompt.as_ptr(), 0, 0.0, 0.9, 16, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
+                assert_eq!(stats.decode_tokens, 16);
+                aether_close(s);
+                texts.push(String::from_utf8(out).unwrap());
             }
-            let (mut out, mut stats) = (Vec::<u8>::new(), AetherStats::default());
-            let prompt = CString::new("The capital of France is").unwrap();
-            assert_eq!(aether_generate(s, prompt.as_ptr(), 0, 0.0, 0.9, 16, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
-            assert_eq!(stats.decode_tokens, 16);
-            assert!(String::from_utf8(out).unwrap().contains("capital"));
-            aether_close(s);
         }
+        assert!(texts[0].contains("capital"), "{}", texts[0]);
+        assert_eq!(texts[0], texts[1]);
     }
 }

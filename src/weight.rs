@@ -129,6 +129,26 @@ impl From<AlignedBuf> for Weight {
     }
 }
 
+/// Quantizes the rows of `f` (each `cols` long) into `out` with `q(row,
+/// blocks)`, rows spread over the machine's cores: the searching quantizers
+/// cost far more than the plain ones, and a whole model goes through them
+/// at load time. Each row's bytes do not depend on how rows are split.
+fn by_rows<B: Send>(f: &[f32], cols: usize, out: &mut [B], q: impl Fn(&[f32], &mut [B]) + Sync) {
+    let per_row = out.len() / (f.len() / cols);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let rows_each = (f.len() / cols).div_ceil(threads).max(1);
+    std::thread::scope(|s| {
+        for (rows, blocks) in f.chunks(rows_each * cols).zip(out.chunks_mut(rows_each * per_row)) {
+            let q = &q;
+            s.spawn(move || {
+                for (row, b) in rows.chunks_exact(cols).zip(blocks.chunks_exact_mut(per_row)) {
+                    q(row, b);
+                }
+            });
+        }
+    });
+}
+
 /// Storage formats a model can be converted to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -201,9 +221,20 @@ impl Weight {
     /// Rows must be a whole number of 32-weight blocks to be quantized; any
     /// other matrix stays f32.
     pub fn convert(self, cols: usize, format: Format) -> Weight {
+        self.convert_weighted(cols, format, None)
+    }
+
+    /// [`Weight::convert`] with an importance per column (`qw`, from an
+    /// importance matrix): Q4_0 and Q5_0 then search each block's scale for
+    /// the smallest weighted error, as `llama-quantize --imatrix` does.
+    /// Q8_0 ignores it, as llama.cpp's does.
+    pub fn convert_weighted(self, cols: usize, format: Format, qw: Option<&[f32]>) -> Weight {
         let Weight::F32(f) = self else { return self };
         if format == Format::F32 || !cols.is_multiple_of(QK) {
             return Weight::F32(f);
+        }
+        if let Some(qw) = qw {
+            assert_eq!(qw.len(), cols, "one importance per column");
         }
         match format {
             Format::Q8_0 => {
@@ -213,12 +244,12 @@ impl Weight {
             }
             Format::Q4_0 => {
                 let mut b = vec![BlockQ4_0 { d: 0, qs: [0; QK / 2] }; f.len() / QK];
-                quant::quantize_q4_0(&f, &mut b);
+                by_rows(&f, cols, &mut b, |row, out| quant::quantize_q4_0_row(row, qw, out));
                 Weight::Q4_0(Store::Owned(b))
             }
             Format::Q5_0 => {
                 let mut b = vec![BlockQ5_0 { d: 0, qh: [0; 4], qs: [0; QK / 2] }; f.len() / QK];
-                quant::quantize_q5_0(&f, &mut b);
+                by_rows(&f, cols, &mut b, |row, out| quant::quantize_q5_0_row(row, qw, out));
                 Weight::Q5_0(Store::Owned(b))
             }
             Format::F32 => unreachable!(),

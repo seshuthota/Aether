@@ -48,6 +48,12 @@ pub struct Info {
     pub driver_version: u32,
     /// Invocations that run in lockstep (a "wave"); 64 or 128 on Adreno.
     pub subgroup_size: u32,
+    /// The subgroup size every pipeline asks for, on devices that may
+    /// otherwise pick fewer than 32 lanes for a shader (Intel compiles
+    /// compute shaders for 8, 16 or 32 lanes as it sees fit). The shaders
+    /// assume 32-lane groups stay inside one subgroup. None elsewhere
+    /// (Adreno: 64 or 128, never fewer than 32).
+    pub required_subgroup_size: Option<u32>,
     /// Which subgroup operations shaders may use (arithmetic, clustered, …).
     pub subgroup_ops: vk::SubgroupFeatureFlags,
     pub max_workgroup_invocations: u32,
@@ -97,9 +103,25 @@ impl Gpu {
                 })
                 .ok_or("no GPU with a compute queue")?;
             let props = instance.get_physical_device_properties(phys);
+            let extensions: Vec<String> = instance
+                .enumerate_device_extension_properties(phys)
+                .map_err(vkr("device extensions"))?
+                .iter()
+                .map(|e| CStr::from_ptr(e.extension_name.as_ptr()).to_string_lossy().into_owned())
+                .collect();
+            let size_control = extensions.iter().any(|e| e == "VK_EXT_subgroup_size_control");
             let mut sub = vk::PhysicalDeviceSubgroupProperties::default();
+            let mut sizes = vk::PhysicalDeviceSubgroupSizeControlPropertiesEXT::default();
             let mut p2 = vk::PhysicalDeviceProperties2::default().push_next(&mut sub);
+            if size_control {
+                p2 = p2.push_next(&mut sizes);
+            }
             instance.get_physical_device_properties2(phys, &mut p2);
+            let required_subgroup_size = (size_control
+                && sizes.min_subgroup_size < 32
+                && sizes.max_subgroup_size >= 32
+                && sizes.required_subgroup_size_stages.contains(vk::ShaderStageFlags::COMPUTE))
+            .then_some(32);
             let mem = instance.get_physical_device_memory_properties(phys);
             let heaps: Vec<_> = mem.memory_heaps[..mem.memory_heap_count as usize].iter().map(|h| (h.size, h.flags)).collect();
             let types: Vec<_> = mem.memory_types[..mem.memory_type_count as usize].iter().map(|t| (t.heap_index, t.property_flags)).collect();
@@ -108,25 +130,27 @@ impl Gpu {
                 name: CStr::from_ptr(props.device_name.as_ptr()).to_string_lossy().into_owned(),
                 api_version: (vk::api_version_major(v), vk::api_version_minor(v), vk::api_version_patch(v)),
                 driver_version: props.driver_version,
-                subgroup_size: sub.subgroup_size,
+                subgroup_size: required_subgroup_size.unwrap_or(sub.subgroup_size),
+                required_subgroup_size,
                 subgroup_ops: sub.supported_operations,
                 max_workgroup_invocations: props.limits.max_compute_work_group_invocations,
                 max_storage_buffer_range: props.limits.max_storage_buffer_range,
                 max_shared_memory: props.limits.max_compute_shared_memory_size,
                 storage_offset_align: props.limits.min_storage_buffer_offset_alignment,
-                extensions: instance
-                    .enumerate_device_extension_properties(phys)
-                    .map_err(vkr("device extensions"))?
-                    .iter()
-                    .map(|e| CStr::from_ptr(e.extension_name.as_ptr()).to_string_lossy().into_owned())
-                    .collect(),
+                extensions,
                 timestamp_period: props.limits.timestamp_period,
                 heaps,
                 types,
             };
             let prio = [1.0f32];
             let qinfo = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&prio)];
-            let device = instance.create_device(phys, &vk::DeviceCreateInfo::default().queue_create_infos(&qinfo), None).map_err(vkr("create device"))?;
+            let ext_names = [c"VK_EXT_subgroup_size_control".as_ptr()];
+            let mut size_feature = vk::PhysicalDeviceSubgroupSizeControlFeaturesEXT::default().subgroup_size_control(true);
+            let mut dinfo = vk::DeviceCreateInfo::default().queue_create_infos(&qinfo);
+            if required_subgroup_size.is_some() {
+                dinfo = dinfo.enabled_extension_names(&ext_names).push_next(&mut size_feature);
+            }
+            let device = instance.create_device(phys, &dinfo, None).map_err(vkr("create device"))?;
             let queue = device.get_device_queue(family, 0);
             let pool = device
                 .create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family).flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None)
@@ -338,7 +362,11 @@ impl Kernel {
             let entries: Vec<vk::SpecializationMapEntry> = (0..spec.len() as u32).map(|i| vk::SpecializationMapEntry { constant_id: i, offset: 4 * i, size: 4 }).collect();
             let data: Vec<u8> = spec.iter().flat_map(|v| v.to_le_bytes()).collect();
             let si = vk::SpecializationInfo::default().map_entries(&entries).data(&data);
-            let stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(c"main").specialization_info(&si);
+            let mut stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(c"main").specialization_info(&si);
+            let mut required = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT::default().required_subgroup_size(gpu.info.required_subgroup_size.unwrap_or(0));
+            if gpu.info.required_subgroup_size.is_some() {
+                stage = stage.push_next(&mut required);
+            }
             let pipeline = d
                 .create_compute_pipelines(vk::PipelineCache::null(), &[vk::ComputePipelineCreateInfo::default().stage(stage).layout(layout)], None)
                 .map_err(|(_, e)| format!("create pipeline: {e}"))?[0];
@@ -594,18 +622,30 @@ impl Gpu {
         assert!(x.size >= w.nb * 32 * 4 && out.size >= w.rows * 4);
         let push: Vec<u8> = [w.rows as u32, w.nb as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
         // 128 lanes = 4 groups of 32, each R = 4 · spec[0] rows.
-        self.run(kernel, &[&w.qs, &w.d, x, out], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
+        // Binding 4 (the norm's weights) is unused without NORM.
+        self.run(kernel, &[&w.qs, &w.d, x, out, x], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
     }
 
     /// The shader for `rows_per_32` rows per 32 lanes, a multiple of 4 (see
     /// the shader; 8 is fastest for big matrices, 4 for small ones). It
     /// adds partial sums across 32 subgroup lanes by shuffles.
     pub fn q4_0_gemv_kernel(&self, rows_per_32: u32) -> Result<Kernel> {
+        self.q4_0_gemv_kernel_fused(rows_per_32, false, false, false)
+    }
+
+    /// [`Gpu::q4_0_gemv_kernel`] that, with `accum`, adds the product to
+    /// `out` (`out += W x`: the residual add fused in) and, with `glu`,
+    /// reads x as gate then up (twice the columns) and multiplies by
+    /// silu(gate) · up (the SwiGLU fused in), and with `norm`, RMS-normalizes
+    /// x first with the weights in binding 4 and the epsilon pushed after
+    /// rows and nb (the RMS norm fused in).
+    pub fn q4_0_gemv_kernel_fused(&self, rows_per_32: u32, accum: bool, glu: bool, norm: bool) -> Result<Kernel> {
+        assert!(!(glu && norm), "a GLU input is not normalized");
         assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
         if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
             return Err(format!("q4_0_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
         }
-        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 4, 8, &[rows_per_32 / 4])
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 5, 12, &[rows_per_32 / 4, accum.into(), glu.into(), norm.into()])
     }
 }
 
@@ -624,7 +664,14 @@ impl Gpu {
 
     /// The prefill shader (tiles in shared memory; see the shader).
     pub fn q4_0_gemm_kernel(&self) -> Result<Kernel> {
-        Kernel::new(self, crate::spirv!("q4_0_gemm"), 4, 12)
+        self.q4_0_gemm_kernel_fused(false, false)
+    }
+
+    /// [`Gpu::q4_0_gemm_kernel`] with `accum` (`out += X Wᵀ`) and `glu`
+    /// (X's rows are gate then up, multiplied as silu(gate) · up), as for
+    /// [`Gpu::q4_0_gemv_kernel_fused`].
+    pub fn q4_0_gemm_kernel_fused(&self, accum: bool, glu: bool) -> Result<Kernel> {
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemm"), 4, 12, &[accum.into(), glu.into()])
     }
 }
 

@@ -1,0 +1,234 @@
+common_init_result: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on
+llama_params_fit_impl: no devices with dedicated memory found
+llama_params_fit: successfully fit params to free device memory
+llama_params_fit: fitting params to free memory took 0.17 seconds
+llama_model_loader: loaded meta data with 29 key-value pairs and 290 tensors from testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+llama_model_loader: - kv   1:                               general.type str              = model
+llama_model_loader: - kv   2:                     general.sampling.top_k i32              = 20
+llama_model_loader: - kv   3:                     general.sampling.top_p f32              = 0.800000
+llama_model_loader: - kv   4:                      general.sampling.temp f32              = 0.700000
+llama_model_loader: - kv   5:                               general.name str              = Qwen2.5 0.5B Instruct
+llama_model_loader: - kv   6:                           general.finetune str              = Instruct
+llama_model_loader: - kv   7:                           general.basename str              = Qwen2.5
+llama_model_loader: - kv   8:                         general.size_label str              = 0.5B
+llama_model_loader: - kv   9:                          qwen2.block_count u32              = 24
+llama_model_loader: - kv  10:                       qwen2.context_length u32              = 32768
+llama_model_loader: - kv  11:                     qwen2.embedding_length u32              = 896
+llama_model_loader: - kv  12:                  qwen2.feed_forward_length u32              = 4864
+llama_model_loader: - kv  13:                 qwen2.attention.head_count u32              = 14
+llama_model_loader: - kv  14:              qwen2.attention.head_count_kv u32              = 2
+llama_model_loader: - kv  15:                       qwen2.rope.freq_base f32              = 1000000.000000
+llama_model_loader: - kv  16:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+llama_model_loader: - kv  17:                       tokenizer.ggml.model str              = gpt2
+llama_model_loader: - kv  18:                         tokenizer.ggml.pre str              = qwen2
+llama_model_loader: - kv  19:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+llama_model_loader: - kv  20:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+llama_model_loader: - kv  21:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+llama_model_loader: - kv  22:                tokenizer.ggml.eos_token_id u32              = 151645
+llama_model_loader: - kv  23:            tokenizer.ggml.padding_token_id u32              = 151643
+llama_model_loader: - kv  24:                tokenizer.ggml.bos_token_id u32              = 151643
+llama_model_loader: - kv  25:               tokenizer.ggml.add_bos_token bool             = false
+llama_model_loader: - kv  26:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+llama_model_loader: - kv  27:               general.quantization_version u32              = 2
+llama_model_loader: - kv  28:                          general.file_type u32              = 15
+llama_model_loader: - type  f32:  121 tensors
+llama_model_loader: - type q5_0:  132 tensors
+llama_model_loader: - type q8_0:   13 tensors
+llama_model_loader: - type q4_K:   12 tensors
+llama_model_loader: - type q6_K:   12 tensors
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = Q4_K - Medium
+print_info: file size   = 373.71 MiB (6.35 BPW) 
+load: 0 unused tokens
+load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+load: printing all EOG tokens:
+load:   - 128247 ('</s>')
+load:   - 151643 ('<|endoftext|>')
+load:   - 151645 ('<|im_end|>')
+load:   - 151662 ('<|fim_pad|>')
+load:   - 151663 ('<|repo_name|>')
+load:   - 151664 ('<|file_sep|>')
+load: special tokens cache size = 23
+load: token to piece cache size = 0.9310 MB
+print_info: arch                  = qwen2
+print_info: vocab_only            = 0
+print_info: no_alloc              = 0
+print_info: n_ctx_train           = 32768
+print_info: n_embd                = 896
+print_info: n_embd_inp            = 896
+print_info: n_layer               = 24
+print_info: n_head                = 14
+print_info: n_head_kv             = 2
+print_info: n_rot                 = 64
+print_info: n_swa                 = 0
+print_info: is_swa_any            = 0
+print_info: n_embd_head_k         = 64
+print_info: n_embd_head_v         = 64
+print_info: n_gqa                 = 7
+print_info: n_embd_k_gqa          = 128
+print_info: n_embd_v_gqa          = 128
+print_info: f_norm_eps            = 0.0e+00
+print_info: f_norm_rms_eps        = 1.0e-06
+print_info: f_clamp_kqv           = 0.0e+00
+print_info: f_max_alibi_bias      = 0.0e+00
+print_info: f_logit_scale         = 0.0e+00
+print_info: f_attn_scale          = 0.0e+00
+print_info: n_ff                  = 4864
+print_info: n_expert              = 0
+print_info: n_expert_used         = 0
+print_info: n_expert_groups       = 0
+print_info: n_group_used          = 0
+print_info: causal attn           = 1
+print_info: pooling type          = -1
+print_info: rope type             = 2
+print_info: rope scaling          = linear
+print_info: freq_base_train       = 1000000.0
+print_info: freq_scale_train      = 1
+print_info: n_ctx_orig_yarn       = 32768
+print_info: rope_yarn_log_mul     = 0.0000
+print_info: rope_finetuned        = unknown
+print_info: model type            = 1B
+print_info: model params          = 494.03 M
+print_info: general.name          = Qwen2.5 0.5B Instruct
+print_info: vocab type            = BPE
+print_info: n_vocab               = 151936
+print_info: n_merges              = 151387
+print_info: BOS token             = 151643 '<|endoftext|>'
+print_info: EOS token             = 151645 '<|im_end|>'
+print_info: EOT token             = 151645 '<|im_end|>'
+print_info: PAD token             = 151643 '<|endoftext|>'
+print_info: LF token              = 198 'Ċ'
+print_info: FIM PRE token         = 151659 '<|fim_prefix|>'
+print_info: FIM SUF token         = 151661 '<|fim_suffix|>'
+print_info: FIM MID token         = 151660 '<|fim_middle|>'
+print_info: FIM PAD token         = 151662 '<|fim_pad|>'
+print_info: FIM REP token         = 151663 '<|repo_name|>'
+print_info: FIM SEP token         = 151664 '<|file_sep|>'
+print_info: EOG token             = 128247 '</s>'
+print_info: EOG token             = 151643 '<|endoftext|>'
+print_info: EOG token             = 151645 '<|im_end|>'
+print_info: EOG token             = 151662 '<|fim_pad|>'
+print_info: EOG token             = 151663 '<|repo_name|>'
+print_info: EOG token             = 151664 '<|file_sep|>'
+print_info: max token length      = 256
+load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+load_tensors: done_getting_tensors complete
+load_tensors: init_mappings complete (1 mappings)
+load_tensors: preparing backend buffers for 2 contexts
+load_tensors: buffer_from_host_ptr path buft=CPU
+load_tensors: allocating ctx tensors buft=CPU_REPACK
+load_tensors: allocated ctx tensors buft=CPU_REPACK size=28.05 MiB
+load_tensors: backend buffer preparation complete
+load_tensors:   CPU_Mapped model buffer size =   373.71 MiB
+load_tensors:   CPU_REPACK model buffer size =    28.05 MiB
+.................................................................
+common_init_result: added </s> logit bias = -inf
+common_init_result: added <|endoftext|> logit bias = -inf
+common_init_result: added <|im_end|> logit bias = -inf
+common_init_result: added <|fim_pad|> logit bias = -inf
+common_init_result: added <|repo_name|> logit bias = -inf
+common_init_result: added <|file_sep|> logit bias = -inf
+llama_context: constructing llama_context
+llama_context: n_seq_max     = 4
+llama_context: n_ctx         = 2048
+llama_context: n_ctx_seq     = 512
+llama_context: n_batch       = 2048
+llama_context: n_ubatch      = 512
+llama_context: causal_attn   = 1
+llama_context: flash_attn    = auto
+llama_context: kv_unified    = false
+llama_context: freq_base     = 1000000.0
+llama_context: freq_scale    = 1
+llama_context: n_ctx_seq (512) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+llama_context:        CPU  output buffer size =     2.32 MiB
+llama_kv_cache:        CPU KV buffer size =    24.00 MiB
+llama_kv_cache: size =   24.00 MiB (   512 cells,  24 layers,  4/4 seqs), K (f16):   12.00 MiB, V (f16):   12.00 MiB
+llama_kv_cache: attn_rot_k = 0
+llama_kv_cache: attn_rot_v = 0
+sched_reserve: reserving ...
+sched_reserve: Flash Attention was auto, set to enabled
+sched_reserve: resolving fused Gated Delta Net support:
+sched_reserve: fused Gated Delta Net (autoregressive) enabled
+sched_reserve: fused Gated Delta Net (chunked) enabled
+sched_reserve:        CPU compute buffer size =   300.25 MiB
+sched_reserve: graph nodes  = 871
+sched_reserve: graph splits = 1
+sched_reserve: reserve took 1.42 ms, sched copies = 1
+common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+
+system_info: n_threads = 16 (n_threads_batch = 16) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+kl_divergence: computing over 20 chunks, n_ctx=512, batch_size=2048, n_seq=4
+kl_divergence: 6.38 seconds per pass - ETA 0.52 minutes
+
+chunk             PPL               ln(PPL(Q)/PPL(base))          KL Divergence              Δp RMS            Same top p
+   1       9.9443 ±    1.8488       0.02913 ±    0.01754       0.03105 ±    0.00240     4.512 ±  0.617 %    92.549 ±  1.648 %
+   2      13.5765 ±    1.9010       0.03078 ±    0.01736       0.03375 ±    0.00246     4.632 ±  0.733 %    91.569 ±  1.232 %
+   3      13.6021 ±    1.5073       0.02321 ±    0.01280       0.03388 ±    0.00177     4.543 ±  0.513 %    92.157 ±  0.973 %
+   4      13.5091 ±    1.2453       0.02199 ±    0.01058       0.03308 ±    0.00146     4.391 ±  0.416 %    91.961 ±  0.852 %
+   5      13.5920 ±    1.1094       0.02260 ±    0.00913       0.03233 ±    0.00122     4.296 ±  0.346 %    91.451 ±  0.783 %
+   6      14.1241 ±    1.0436       0.02687 ±    0.00813       0.03197 ±    0.00107     4.279 ±  0.299 %    90.915 ±  0.735 %
+   7      14.4875 ±    0.9882       0.02693 ±    0.00729       0.03079 ±    0.00094     4.105 ±  0.268 %    90.924 ±  0.680 %
+   8      15.5168 ±    1.0018       0.02490 ±    0.00684       0.03175 ±    0.00094     4.243 ±  0.289 %    90.784 ±  0.641 %
+   9      16.4823 ±    1.0087       0.02419 ±    0.00638       0.03211 ±    0.00087     4.250 ±  0.262 %    90.806 ±  0.603 %
+  10      17.0550 ±    0.9899       0.02236 ±    0.00598       0.03208 ±    0.00080     4.158 ±  0.243 %    90.667 ±  0.576 %
+  11      17.3873 ±    0.9644       0.02588 ±    0.00574       0.03287 ±    0.00084     4.223 ±  0.236 %    90.410 ±  0.556 %
+  12      17.5016 ±    0.9275       0.02688 ±    0.00539       0.03259 ±    0.00079     4.173 ±  0.220 %    90.327 ±  0.534 %
+  13      18.3057 ±    0.9345       0.02808 ±    0.00526       0.03282 ±    0.00077     4.127 ±  0.208 %    90.226 ±  0.516 %
+  14      17.7830 ±    0.8695       0.02959 ±    0.00505       0.03263 ±    0.00073     4.116 ±  0.196 %    90.308 ±  0.495 %
+  15      17.6206 ±    0.8308       0.02771 ±    0.00489       0.03286 ±    0.00072     4.122 ±  0.185 %    90.431 ±  0.476 %
+  16      18.1187 ±    0.8323       0.02921 ±    0.00475       0.03311 ±    0.00071     4.140 ±  0.175 %    90.245 ±  0.465 %
+  17      16.8288 ±    0.7444       0.02909 ±    0.00463       0.03297 ±    0.00069     4.163 ±  0.167 %    90.219 ±  0.451 %
+  18      16.9543 ±    0.7323       0.03099 ±    0.00452       0.03323 ±    0.00068     4.186 ±  0.160 %    90.174 ±  0.439 %
+  19      16.7759 ±    0.7057       0.03159 ±    0.00439       0.03338 ±    0.00067     4.201 ±  0.154 %    90.093 ±  0.429 %
+  20      16.7657 ±    0.6879       0.03248 ±    0.00426       0.03311 ±    0.00064     4.171 ±  0.148 %    90.098 ±  0.418 %
+
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  16.765666 ±   0.687883
+Mean PPL(base)                :  16.229929 ±   0.661814
+Cor(ln(PPL(Q)), ln(PPL(base))):  99.46%
+Mean ln(PPL(Q)/PPL(base))     :   0.032476 ±   0.004258
+Mean PPL(Q)/PPL(base)         :   1.033009 ±   0.004399
+Mean PPL(Q)-PPL(base)         :   0.535737 ±   0.074809
+
+====== KL divergence statistics ======
+Mean    KLD:   0.033112 ±   0.000638
+Maximum KLD:   1.026270
+99.9%   KLD:   0.540068
+99.0%   KLD:   0.192947
+95.0%   KLD:   0.096547
+90.0%   KLD:   0.066735
+Median  KLD:   0.023239
+10.0%   KLD:   0.002460
+ 5.0%   KLD:   0.000627
+ 1.0%   KLD:   0.000055
+ 0.1%   KLD:   0.000002
+Minimum KLD:  -0.000002
+
+====== Token probability statistics ======
+Mean    Δp: -0.505 ± 0.058 %
+Maximum Δp: 31.769%
+99.9%   Δp: 22.113%
+99.0%   Δp: 10.883%
+95.0%   Δp:  4.730%
+90.0%   Δp:  2.616%
+75.0%   Δp:  0.376%
+Median  Δp: -0.021%
+25.0%   Δp: -1.099%
+10.0%   Δp: -4.244%
+ 5.0%   Δp: -6.662%
+ 1.0%   Δp: -15.301%
+ 0.1%   Δp: -27.537%
+Minimum Δp: -55.723%
+RMS Δp    :  4.171 ± 0.148 %
+Same top p: 90.098 ± 0.418 %
+
+llama_perf_context_print:        load time =     199.98 ms
+llama_perf_context_print: prompt eval time =   24485.45 ms / 10240 tokens (    2.39 ms per token,   418.21 tokens per second)
+llama_perf_context_print:        eval time =       0.00 ms /     1 runs   (    0.00 ms per token,      inf tokens per second)
+llama_perf_context_print:       total time =   31768.54 ms / 10241 tokens
+llama_perf_context_print:    graphs reused =         10
+llama_memory_breakdown_print: | memory breakdown [MiB] | total   free    self   model   context   compute    unaccounted |
+llama_memory_breakdown_print: |   - Host               |                  697 =   373 +      24 +     300                |
+llama_memory_breakdown_print: |   - CPU_REPACK         |                   28 =    28 +       0 +       0                |
