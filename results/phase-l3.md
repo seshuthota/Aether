@@ -289,3 +289,8 @@ two runs each (raw: `raw/hybrid-prefill.txt`):
   5). In GPU-only mode, the long token-by-token prefill keeps the GPU busy
   and its clocks up. A 55-token decode is short, so this start-up loss
   weighs heavily.
+- Rerun on battery (not charging), cooler (37–38 °C), the modes
+  alternating: decode 84.4 / 96.5 tok/s GPU-only against 75.0 / 93.5 with
+  the CPU prefill. The gap shrank from ~20 % to 3–11 %. Most of it came
+  from the warm, charging phone; what is left is within the run-to-run
+  spread and still to be explained.

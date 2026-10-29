@@ -13,3 +13,8 @@ r2 --gpu -c 2-7  prefill (on the CPU): 345 tokens in 547.9 ms (629.7 tok/s) | de
 r2 -c 2-7        prefill: 345 tokens in 542.8 ms (635.6 tok/s) | decode: 55 tokens in 348.4 ms (157.9 tok/s)
 --gpu -c 7       prefill (on the CPU): 345 tokens in 1994.8 ms (173.0 tok/s) | decode: 55 tokens in 819.1 ms (67.1 tok/s)
 --gpu -c 2-7     prefill (on the CPU): 345 tokens in 544.8 ms (633.3 tok/s) | decode: 55 tokens in 736.6 ms (74.7 tok/s)
+# Rerun 2026-10-29 later: on battery (78 %, not charging), SoC 37-38 C, alternating, 30 s pauses.
+--gpu          prefill (token by token): 345 tokens in 3531.9 ms (97.7 tok/s) | decode: 55 tokens in 651.9 ms (84.4 tok/s)
+--gpu -c 2-7   prefill (on the CPU): 345 tokens in 519.2 ms (664.5 tok/s) | decode: 55 tokens in 733.8 ms (75.0 tok/s)
+--gpu          prefill (token by token): 345 tokens in 3445.3 ms (100.1 tok/s) | decode: 55 tokens in 569.8 ms (96.5 tok/s)
+--gpu -c 2-7   prefill (on the CPU): 345 tokens in 431.8 ms (799.1 tok/s) | decode: 55 tokens in 588.5 ms (93.5 tok/s)
