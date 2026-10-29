@@ -1,0 +1,13 @@
+// The calls the CPU makes into our library on the Hexagon DSP (cDSP).
+// `qaic` turns this into the DSP side's glue (aether_dsp_skel.c); the CPU
+// side packs the same arguments itself (src/kernels/hexagon.rs).
+
+#include "AEEStdDef.idl"
+#include "remote.idl"
+
+interface aether_dsp : remote_handle64 {
+    // y = x + 1: a round trip with no work, to time the call itself.
+    long ping(in uint32 x, rout uint32 y);
+    // c = a + b with HVX, every input copied in and the output out.
+    long add(in sequence<float> a, in sequence<float> b, rout sequence<float> c);
+};

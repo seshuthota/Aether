@@ -10,6 +10,8 @@ pub mod neon;
 #[cfg(target_arch = "aarch64")]
 pub mod neon_quant;
 pub mod scalar;
+#[cfg(feature = "hexagon")]
+pub mod hexagon;
 #[cfg(feature = "vulkan")]
 pub mod vulkan;
 

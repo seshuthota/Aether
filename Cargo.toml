@@ -21,10 +21,16 @@ codegen-units = 1   # one unit: slower build, better optimization
 # (it loads libvulkan.so at run time); the kernels are ours, in shaders/.
 [features]
 vulkan = ["dep:ash"]
+# The Hexagon DSP (NPU) through FastRPC; needs the Hexagon SDK to build (build.rs).
+hexagon = []
 
 [dependencies.ash]
 version = "0.38"
 optional = true
+
+[[example]]
+name = "dsp_hello"
+required-features = ["hexagon"]
 
 [[example]]
 name = "vk_bandwidth"

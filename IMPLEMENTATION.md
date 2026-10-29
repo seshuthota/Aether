@@ -345,7 +345,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
       reference for platform use (and its numbers to measure against: pp ~330, tg ~74 tok/s,
       results/phase-l3.md step 8), not code to copy. Unsigned DSP code runs on this phone (step 8).
-  - [ ] Step 1, hello: a DSP library (`dsp/`, C) with one call that adds two arrays with HVX in
+  - [x] Step 1, hello (results/phase-l5.md; ~146 µs per call, copies at 2.5 GB/s): a DSP library (`dsp/`, C) with one call that adds two arrays with HVX in
         a buffer shared with the CPU (`rpcmem` / `fastrpc_mmap`); the Rust side opens the
         unsigned `cdsp` session through `libcdsprpc.so` (dlopen, as `ash` does for Vulkan),
         checks the result, and times a round trip.
