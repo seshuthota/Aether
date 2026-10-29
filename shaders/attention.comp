@@ -8,27 +8,33 @@
 // combines the chunks. The dispatch covers every chunk the cache can hold
 // (it is recorded once); chunks past the current position return at once.
 // hs must be at most 64.
+//
+// For a batch (a prompt), workgroup (h, c, t) does token t, at position
+// pos + t, with its query `qstride` floats after token t − 1's and its
+// chunks at parts[t][h][c]; tokens of the batch attend to each other
+// through the cache, causally. Decoding is the batch of one.
 layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer Qv { float q[]; };
 layout(std430, binding = 1) readonly buffer Kc { float kc[]; };
 layout(std430, binding = 2) readonly buffer Vc { float vc[]; };
 layout(std430, binding = 3) writeonly buffer Pt { float parts[]; };
 layout(std430, binding = 4) readonly buffer Pm { uint pos; };
-layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; };
+layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; uint qstride; };
 
 shared float red[64];
 shared float p[64];
 
 void main() {
-    uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, id = gl_LocalInvocationID.x;
+    uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, tok = gl_WorkGroupID.z, id = gl_LocalInvocationID.x;
+    uint at = pos + tok, qo = tok * qstride + h * hs;
     uint t0 = 64 * c;
-    if (t0 > pos) return;
-    uint n = min(64, pos + 1 - t0);
+    if (t0 > at) return;
+    uint n = min(64, at + 1 - t0);
     uint kv_dim = n_kv * hs, kvo = layer_off + (h / (n_heads / n_kv)) * hs;
     float s = -1.0 / 0.0;
     if (id < n) {
         s = 0.0;
-        for (uint d = 0; d < hs; d++) s += q[h * hs + d] * kc[kvo + (t0 + id) * kv_dim + d];
+        for (uint d = 0; d < hs; d++) s += q[qo + d] * kc[kvo + (t0 + id) * kv_dim + d];
         s /= sqrt(float(hs));
     }
     red[id] = s;
@@ -47,7 +53,7 @@ void main() {
         if (id < m) red[id] += red[id + m];
         barrier();
     }
-    uint base = (h * chunks + c) * (hs + 2);
+    uint base = ((tok * n_heads + h) * chunks + c) * (hs + 2);
     if (id < hs) {
         float acc = 0.0;
         for (uint t = 0; t < n; t++) acc += p[t] * vc[kvo + (t0 + t) * kv_dim + id];

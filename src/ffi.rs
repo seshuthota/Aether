@@ -235,7 +235,7 @@ pub unsafe extern "C" fn aether_generate(
 /// Loads a `--pure` Q4_0 `.gguf` for decoding on the GPU (Vulkan). With
 /// `cores` (as in `aether_open`), a second copy of the model on those CPU
 /// cores runs each prompt as one batch and hands its KV cache to the GPU;
-/// with null or "", the prompt goes through the GPU token by token.
+/// with null or "", the prompt runs on the GPU, batched as well.
 /// `max_seq` as in `aether_open`. Fails with `AETHER_ERR_LOAD` when the
 /// library was built without the `vulkan` feature, there is no usable GPU,
 /// or a matrix is not Q4_0.

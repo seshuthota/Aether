@@ -7,6 +7,10 @@
 // the CPU, as the CPU path computes them) come from the params buffer, so
 // a recorded command buffer works for every position. `halves` picks the
 // pairing: element i with i + hs/2 (Hugging Face, Qwen2) or 2i with 2i+1.
+//
+// Workgroup t handles token t of a batch (a prompt): position pos + t,
+// its q, k, v `stride` floats after token t − 1's, its rotation table at
+// rot[t · hs/2]. Decoding is the batch of one.
 layout(local_size_x = 256) in;
 layout(std430, binding = 0) buffer Qv { float q[]; };
 layout(std430, binding = 1) readonly buffer Kv { float k[]; };
@@ -17,15 +21,16 @@ layout(std430, binding = 5) readonly buffer Bv { float bv[]; };
 layout(std430, binding = 6) writeonly buffer Kc { float kc[]; };
 layout(std430, binding = 7) writeonly buffer Vc { float vc[]; };
 layout(std430, binding = 8) readonly buffer Pm { uint pos; uint pad0; uint pad1; uint pad2; vec2 rot[]; };
-layout(push_constant) uniform P { uint dim; uint kv_dim; uint hs; uint halves; uint layer_off; };
+layout(push_constant) uniform P { uint dim; uint kv_dim; uint hs; uint halves; uint layer_off; uint stride; };
 
 void main() {
     uint half_hs = hs / 2, qp = dim / 2, kp = kv_dim / 2;
-    uint off = layer_off + pos * kv_dim;
+    uint t = gl_WorkGroupID.x, row = t * stride;
+    uint off = layer_off + (pos + t) * kv_dim;
     for (uint p = gl_LocalInvocationID.x; p < qp + kp + kv_dim; p += 256) {
         if (p >= qp + kp) {
             uint j = p - qp - kp;
-            vc[off + j] = v[j] + bv[j];
+            vc[off + j] = v[row + j] + bv[j];
             continue;
         }
         bool isq = p < qp;
@@ -33,13 +38,13 @@ void main() {
         uint h = pp / half_hs, i = pp % half_hs;
         uint i0 = halves != 0 ? h * hs + i : h * hs + 2 * i;
         uint i1 = halves != 0 ? i0 + half_hs : i0 + 1;
-        vec2 sc = rot[i];
+        vec2 sc = rot[t * half_hs + i];
         if (isq) {
-            float a = q[i0] + bq[i0], c = q[i1] + bq[i1];
-            q[i0] = a * sc.y - c * sc.x;
-            q[i1] = a * sc.x + c * sc.y;
+            float a = q[row + i0] + bq[i0], c = q[row + i1] + bq[i1];
+            q[row + i0] = a * sc.y - c * sc.x;
+            q[row + i1] = a * sc.x + c * sc.y;
         } else {
-            float a = k[i0] + bk[i0], c = k[i1] + bk[i1];
+            float a = k[row + i0] + bk[i0], c = k[row + i1] + bk[i1];
             kc[off + i0] = a * sc.y - c * sc.x;
             kc[off + i1] = a * sc.x + c * sc.y;
         }

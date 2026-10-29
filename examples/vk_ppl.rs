@@ -5,11 +5,15 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch]
+//!
+//! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
+//! path: matrix-matrix products, up to `batch` tokens per pass) instead of
+//! token by token through the decode step.
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
-use aether::model::gpu::GpuModel;
+use aether::model::gpu::{GpuModel, Options};
 use aether::session::Session;
 use aether::weight::Format;
 use std::path::PathBuf;
@@ -20,13 +24,15 @@ fn main() {
     let path = PathBuf::from(args.next().expect("usage: vk_ppl MODEL.gguf [CHUNKS] [CTX]"));
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
+    let batched = args.next().is_some_and(|a| a == "batch");
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
     let (config, weights, _) = aether::model::gguf::load(&path, ctx).unwrap();
     let gpu = Gpu::new().unwrap();
     let t0 = Instant::now();
-    let mut m = GpuModel::new(&gpu, config, weights, false).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let vocab = m.config.vocab_size;
     println!("# {} on {} | upload + record {:.0} ms", path.display(), gpu.info.name, t0.elapsed().as_secs_f64() * 1e3);
 
     // Greedy continuation (eyeball check) and decode speed.
@@ -57,18 +63,33 @@ fn main() {
         if let Some(b) = bos {
             chunk[0] = b;
         }
-        for p in 0..ctx - 1 {
-            let logits = m.forward(&gpu, chunk[p], p).unwrap();
+        let mut score = |p: usize, logits: &[f32]| {
             if p >= first {
                 let v = -log_probs(logits)[chunk[p + 1]];
                 s.nll += v;
                 s.nll2 += v * v;
                 s.count += 1;
             }
+        };
+        if batched {
+            let mut p = 0;
+            while p < ctx - 1 {
+                let n = m.batch.min(ctx - 1 - p);
+                let all = m.forward_batch(&gpu, &chunk[p..p + n], p).unwrap().to_vec();
+                for i in 0..n {
+                    score(p + i, &all[i * vocab..(i + 1) * vocab]);
+                }
+                p += n;
+            }
+        } else {
+            for (p, &t) in chunk[..ctx - 1].iter().enumerate() {
+                let logits = m.forward(&gpu, t, p).unwrap();
+                score(p, logits);
+            }
         }
         eprint!("[{}]{:.4},", ch + 1, s.ppl());
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
-    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU)", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt);
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}", m.batch) } else { String::new() });
 }

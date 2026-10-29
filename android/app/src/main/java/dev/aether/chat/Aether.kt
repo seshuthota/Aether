@@ -50,8 +50,8 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
 
         /**
          * Loads a --pure Q4_0 .gguf to decode on the GPU (Vulkan). With [cores] (like "2-7"),
-         * a CPU copy of the model runs each prompt in one batch; "" sends the prompt through
-         * the GPU token by token.
+         * a CPU copy of the model runs each prompt in one batch; with "" the GPU runs the
+         * prompt, batched as well.
          */
         fun openGpu(path: String, cores: String, maxSeq: Int) = Aether(nativeOpenGpu(path.toByteArray(), cores.toByteArray(), maxSeq))
 

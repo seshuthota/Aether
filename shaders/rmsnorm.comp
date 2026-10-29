@@ -1,19 +1,21 @@
 #version 450
-// o = w ⊙ x / sqrt(mean(x²) + eps), one workgroup for the whole vector:
+// o = w ⊙ x / sqrt(mean(x²) + eps), one workgroup per vector (token):
 // each thread sums the squares of every 256th element, shared memory adds
-// the 256 partial sums.
+// the 256 partial sums. Workgroup t reads row in_row + t of x and writes
+// row t of o (in_row picks the prompt's last token for the classifier).
 layout(local_size_x = 256) in;
 layout(std430, binding = 0) readonly buffer X { float x[]; };
 layout(std430, binding = 1) readonly buffer W { float w[]; };
 layout(std430, binding = 2) writeonly buffer O { float o[]; };
-layout(push_constant) uniform P { uint n; float eps; };
+layout(push_constant) uniform P { uint n; float eps; uint in_row; };
 
 shared float part[256];
 
 void main() {
     uint id = gl_LocalInvocationID.x;
+    uint xo = (in_row + gl_WorkGroupID.x) * n, oo = gl_WorkGroupID.x * n;
     float s = 0.0;
-    for (uint i = id; i < n; i += 256) s += x[i] * x[i];
+    for (uint i = id; i < n; i += 256) s += x[xo + i] * x[xo + i];
     part[id] = s;
     barrier();
     for (uint m = 128; m > 0; m >>= 1) {
@@ -21,5 +23,5 @@ void main() {
         barrier();
     }
     float inv = 1.0 / sqrt(part[0] / float(n) + eps);
-    for (uint i = id; i < n; i += 256) o[i] = w[i] * (x[i] * inv);
+    for (uint i = id; i < n; i += 256) o[oo + i] = w[i] * (x[xo + i] * inv);
 }

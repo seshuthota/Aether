@@ -660,7 +660,14 @@ impl Gpu {
 
     /// The prefill shader (tiles in shared memory; see the shader).
     pub fn q4_0_gemm_kernel(&self) -> Result<Kernel> {
-        Kernel::new(self, crate::spirv!("q4_0_gemm"), 4, 12)
+        self.q4_0_gemm_kernel_fused(false, false)
+    }
+
+    /// [`Gpu::q4_0_gemm_kernel`] with `accum` (`out += X Wᵀ`) and `glu`
+    /// (X's rows are gate then up, multiplied as silu(gate) · up), as for
+    /// [`Gpu::q4_0_gemv_kernel_fused`].
+    pub fn q4_0_gemm_kernel_fused(&self, accum: bool, glu: bool) -> Result<Kernel> {
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemm"), 4, 12, &[accum.into(), glu.into()])
     }
 }
 

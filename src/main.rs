@@ -28,8 +28,8 @@
 //!             checked like --lookup's
 //!   --gpu     decode on the GPU through Vulkan (builds with --features
 //!             vulkan; a --pure Q4_0 GGUF). With -c, the prompt runs on the
-//!             CPU (batched) and its KV cache goes to the GPU; without, the
-//!             prompt goes through the GPU token by token
+//!             CPU (batched) and its KV cache goes to the GPU; without, on
+//!             the GPU (batched as well)
 //!   --times   with --gpu: print the time of every decode token
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
@@ -218,7 +218,7 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
         eprintln!("token ms: {}", ms.iter().map(|m| format!("{m:.1}")).collect::<Vec<_>>().join(" "));
     }
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
-    let how = if s.cpu.is_some() { "on the CPU" } else { "token by token" };
+    let how = if s.cpu.is_some() { "on the CPU" } else { "on the GPU" };
     eprintln!("prefill ({how}): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
 }
 

@@ -14,12 +14,18 @@
 // Each weight is read from memory once per 64 tokens and each activation
 // once per 64 rows. Outside the matrix, tiles are padded with zeros and
 // nothing is written.
+//
+// As in q4_0_gemv.comp, ACCUM adds to `o` instead of storing, and GLU
+// reads each token's row of x as gate then up (2 · 32·nb values) and
+// multiplies by silu(gate) · up while loading it.
 layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
 layout(std430, binding = 1) readonly buffer D { uint dh[]; };
 layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
-layout(std430, binding = 3) writeonly buffer O { float o[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
 layout(push_constant) uniform P { uint rows; uint nb; uint tokens; };
+layout(constant_id = 0) const bool ACCUM = false;
+layout(constant_id = 1) const bool GLU = false;
 
 shared vec4 ws[32][16];
 shared vec4 xs[32][16];
@@ -51,7 +57,15 @@ void main() {
         // so that neighbouring threads read neighbouring floats made the
         // stores to shared memory collide in one bank: 40 % slower.)
         for (uint q = 0; q < 8; q++) {
-            vec4 v = tok < tokens ? x[(tok * nb + b) * 8 + q] : vec4(0.0);
+            vec4 v = vec4(0.0);
+            if (tok < tokens) {
+                if (GLU) {
+                    vec4 g = x[(2 * tok * nb + b) * 8 + q];
+                    v = g / (1.0 + exp(-g)) * x[((2 * tok + 1) * nb + b) * 8 + q];
+                } else {
+                    v = x[(tok * nb + b) * 8 + q];
+                }
+            }
             for (uint c = 0; c < 4; c++) xs[4 * q + c][id / 4][id % 4] = v[c];
         }
         barrier();
@@ -72,7 +86,10 @@ void main() {
         if (tk >= tokens) break;
         for (uint r = 0; r < 8; r++) {
             uint rw = row0 + 8 * tr + r;
-            if (rw < rows) o[tk * rows + rw] = acc[t][r / 4][r % 4];
+            if (rw < rows) {
+                if (ACCUM) o[tk * rows + rw] += acc[t][r / 4][r % 4];
+                else o[tk * rows + rw] = acc[t][r / 4][r % 4];
+            }
         }
     }
 }

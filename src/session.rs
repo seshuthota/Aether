@@ -387,10 +387,10 @@ impl GpuSession {
     }
 
     /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
-    /// prompt: the CPU's batched prefill is several times faster than
-    /// feeding the prompt through the GPU step token by token, and its KV
-    /// cache is copied over (~24 KB per token for Qwen2.5-0.5B). Costs a
-    /// second copy of the weights in memory.
+    /// prompt, whose KV cache is then copied over (~24 KB per token for
+    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is the
+    /// fastest (~630 tok/s against ~90 for the GPU token by token,
+    /// results/phase-l3.md). Costs a second copy of the weights in memory.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
         let mut s = GpuSession::open(path, max_seq)?;
         let (config, weights, _) = gguf::load(path, max_seq)?;
@@ -402,7 +402,8 @@ impl GpuSession {
 
     /// As [`Session::generate`] without echoing the prompt. The prompt runs
     /// on the CPU model if there is one (batched, then its KV cache is
-    /// copied to the GPU), otherwise token by token through the GPU step.
+    /// copied to the GPU), otherwise batched on the GPU
+    /// ([`crate::model::gpu::GpuModel::forward_batch`]).
     pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
         let steps = steps.min(self.model.config.seq_len);
         let tokens = self.text.encode(prompt);
@@ -415,8 +416,9 @@ impl GpuSession {
             let (k, v) = cpu.kv_cache();
             self.model.load_kv(k, v, cpu.config.seq_len, np);
         } else {
-            for (p, &t) in tokens[..np].iter().enumerate() {
-                logits = self.model.forward(&self.gpu, t, p).expect("GPU step").to_vec();
+            let b = self.model.batch;
+            for (i, part) in tokens[..np].chunks(b).enumerate() {
+                logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
             }
         }
         stats.prefill = t0.elapsed();
