@@ -25,6 +25,17 @@ pub enum Text {
 }
 
 impl Text {
+    /// The tokenizer and stop tokens a GGUF file's metadata describes.
+    pub fn from_gguf(g: &crate::format::gguf::Gguf) -> io::Result<Text> {
+        let tok = bytelevel::Tokenizer::from_gguf(g)?;
+        let id = |k: &str| g.get(k).and_then(Value::as_u64).map(|v| v as usize);
+        let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
+        stops.extend(tok.token_id("<|im_end|>"));
+        stops.extend(tok.token_id("<|endoftext|>"));
+        let start = id("tokenizer.ggml.bos_token_id").or(stops.first().copied()).unwrap_or(0);
+        Ok(Text::Hf { tok: Box::new(tok), start, stops })
+    }
+
     pub fn encode(&self, prompt: &str) -> Vec<usize> {
         match self {
             Text::Llama2c(t) => t.encode(prompt, true, false),
@@ -126,13 +137,7 @@ impl Session {
     pub fn open(path: &Path, l2c_tokenizer: Option<&Path>, max_seq: usize, format: Format, cores: Option<&[usize]>) -> io::Result<Session> {
         let (config, weights, text) = if path.extension().is_some_and(|e| e == "gguf") {
             let (config, weights, g) = gguf::load(path, max_seq)?;
-            let tok = bytelevel::Tokenizer::from_gguf(&g)?;
-            let id = |k: &str| g.get(k).and_then(Value::as_u64).map(|v| v as usize);
-            let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
-            stops.extend(tok.token_id("<|im_end|>"));
-            stops.extend(tok.token_id("<|endoftext|>"));
-            let start = id("tokenizer.ggml.bos_token_id").or(stops.first().copied()).unwrap_or(0);
-            (config, weights, Text::Hf { tok: Box::new(tok), start, stops })
+            (config, weights, Text::from_gguf(&g)?)
         } else if path.is_dir() {
             let (config, weights) = hf::load(path, max_seq)?;
             let tok = bytelevel::Tokenizer::load(path.join("tokenizer.json"))?;

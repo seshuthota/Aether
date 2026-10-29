@@ -237,3 +237,11 @@ bursts from position 0, on battery, each run starting below 42 °C,
   thermal budget. `GpuModel` now sleeps on the fence by default.
 - The charge-counter windows are short (42–89 s, the counter moves in
   steps), so the energy figures are ±15 %.
+
+`aether MODEL.gguf --gpu` now decodes on the GPU (`--features vulkan`;
+the prompt goes through token by token, since there is no batched GPU
+pass yet). Qwen2.5-0.5B Q4_0, "Why is the sky blue?", greedy: 98 tok/s
+decode on the GPU against 161 on the CPU, with a 35-token prompt in 541
+against 59 ms. The two greedy texts agree for the first ~30 tokens, then
+fork where two tokens are nearly tied. The GPU keeps activations in f32,
+while the CPU rounds them to int8 before each product.

@@ -26,6 +26,9 @@
 //!             vocabulary (e.g. SmolLM2-135M for SmolLM2-360M; -q applies to
 //!             it too): up to --draft-k K (default 4) greedy draft tokens,
 //!             checked like --lookup's
+//!   --gpu     decode on the GPU through Vulkan (builds with --features
+//!             vulkan; a --pure Q4_0 GGUF; the prompt goes through token by
+//!             token too)
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -60,10 +63,15 @@ fn main() {
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram) = (0usize, 2usize);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
+    let mut gpu = false;
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" {
-            if flag == "--kl" { kl = true } else { chat = true }
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" {
+            match flag.as_str() {
+                "--kl" => kl = true,
+                "--chat" => chat = true,
+                _ => gpu = true,
+            }
             continue;
         }
         let val = args.next().unwrap_or_else(|| usage());
@@ -96,6 +104,12 @@ fn main() {
     if let Some(file) = ppl_file {
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, ctx, chunks, base, cores);
+    }
+    if gpu {
+        if chat {
+            prompt = aether::chat::chatml(&system, &prompt);
+        }
+        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps);
     }
     let mut session = Session::open(&model_path, Some(&tok_path), steps, format, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -168,6 +182,52 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: u
         println!("PPL(base f32) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
         println!("Mean KLD: {:.6}   Same top p: {:.3} %", s.mean_kld(), s.same_top_pct());
     }
+}
+
+/// `--gpu`: every position, prompt included, through the GPU decode step
+/// (`model::gpu::GpuModel`); sampling on the CPU.
+#[cfg(feature = "vulkan")]
+fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize) {
+    let (config, weights, g) = aether::model::gguf::load(path, steps).unwrap_or_else(|e| fail(path, e));
+    let text = aether::session::Text::from_gguf(&g).unwrap_or_else(|e| fail(path, e));
+    let steps = steps.min(config.seq_len);
+    let gpu = aether::kernels::vulkan::Gpu::new().unwrap_or_else(|e| panic!("{e}"));
+    let mut m = aether::model::gpu::GpuModel::new(&gpu, config, weights, false).unwrap_or_else(|e| panic!("{e}"));
+    eprintln!("GPU: {}", gpu.info.name);
+    let tokens = text.encode(prompt);
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(&text.first_piece(tokens[0]));
+    let np = tokens.len().min(steps);
+    let t0 = Instant::now();
+    let mut logits = Vec::new();
+    for (p, &t) in tokens[..np].iter().enumerate() {
+        logits = m.forward(&gpu, t, p).unwrap().to_vec();
+        if p + 1 < np {
+            let _ = out.write_all(&text.piece(t, tokens[p + 1]));
+        }
+    }
+    let prefill = t0.elapsed();
+    let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+    while np == tokens.len() && pos < steps {
+        let next = sampler.sample(&mut logits);
+        if text.is_stop(next) {
+            break;
+        }
+        let _ = out.write_all(&text.piece(token, next)).and_then(|_| out.flush());
+        token = next;
+        logits = m.forward(&gpu, token, pos).unwrap().to_vec();
+        pos += 1;
+    }
+    let decode = t1.elapsed();
+    writeln!(out).unwrap();
+    let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
+    eprintln!("prefill (token by token): {np} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", prefill.as_secs_f64() * 1e3, rate(np, prefill), pos - np, decode.as_secs_f64() * 1e3, rate(pos - np, decode));
+}
+
+#[cfg(not(feature = "vulkan"))]
+fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize) {
+    eprintln!("--gpu needs a build with --features vulkan");
+    std::process::exit(2)
 }
 
 fn usage() -> ! {

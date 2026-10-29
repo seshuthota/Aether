@@ -294,7 +294,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         64-position chunks + merge (d1024 5.6 → 2.0 ms). Sustained 120 s: GPU 103 tok/s at
         ~2.3 W = 0.021–0.024 J/token, 68 °C; CPU 158 tok/s at 4.5 W = 0.029 J/token, 89 °C.
         Limit: GPU/bus clocks drop between bursts (no Vulkan control; sysfs needs root).
-  - [ ] Prefill on the GPU (the GEMM of step 3 in a batched forward pass); a CLI/app switch.
+  - [x] CLI switch `aether MODEL.gguf --gpu` (prompt token by token; `Text::from_gguf`).
+  - [ ] Prefill on the GPU (the GEMM of step 3 in a batched forward pass); the app.
 - [ ] **L.5** NPU: not started.
 
 ---
