@@ -1,0 +1,78 @@
+#version 450
+// out[t][row] = W[row] · X[t] for a Q4_0 matrix W (rows × 32·nb) and
+// `tokens` f32 activations X (row-major, tokens × 32·nb): the prefill
+// matrix product. W's layout is as in q4_0_gemv.comp.
+//
+// A workgroup of 64 computes a tile of 64 rows × 64 tokens, one block
+// (32 columns) at a time:
+//   1. each thread dequantizes one row's block into shared memory and
+//      copies one token's 32 activations, both stored by column (`ws[k]`
+//      holds column k of the 64 rows as 16 vec4s, `xs[k]` of the tokens);
+//   2. each thread computes its 8 rows × 8 tokens as outer products: per
+//      column, 2 vec4 loads of weights and 2 of activations feed 16 vec4
+//      multiply-adds (64 products).
+// Each weight is read from memory once per 64 tokens and each activation
+// once per 64 rows. Outside the matrix, tiles are padded with zeros and
+// nothing is written.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
+layout(std430, binding = 1) readonly buffer D { uint dh[]; };
+layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
+layout(std430, binding = 3) writeonly buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; uint tokens; };
+
+shared vec4 ws[32][16];
+shared vec4 xs[32][16];
+
+void main() {
+    uint id = gl_LocalInvocationID.x;
+    uint row0 = gl_WorkGroupID.x * 64, tok0 = gl_WorkGroupID.y * 64;
+    // This thread's outputs: rows row0 + 8·tr + r, tokens tok0 + 8·tt + t.
+    uint tr = id % 8, tt = id / 8;
+    // acc[t][h]: token 8·tt + t, rows 8·tr + 4h .. + 4.
+    vec4 acc[8][2];
+    for (uint t = 0; t < 8; t++) acc[t] = vec4[2](vec4(0.0), vec4(0.0));
+    uint row = row0 + id, tok = tok0 + id;
+    for (uint b = 0; b < nb; b++) {
+        // Value j of the block: byte j % 16, low nibble for j < 16.
+        if (row < rows) {
+            uint i = row * nb + b;
+            uvec4 w = qs[i];
+            float d = unpackHalf2x16(dh[i / 2] >> (16 * (i & 1))).x;
+            for (uint j = 0; j < 16; j++) {
+                uint byte = (w[j / 4] >> (8 * (j % 4))) & 255u;
+                ws[j][id / 4][id % 4] = (float(byte & 15u) - 8.0) * d;
+                ws[j + 16][id / 4][id % 4] = (float(byte >> 4) - 8.0) * d;
+            }
+        } else {
+            for (uint j = 0; j < 32; j++) ws[j][id / 4][id % 4] = 0.0;
+        }
+        // Activations: thread id copies token tok0 + id. (Reading the tile
+        // so that neighbouring threads read neighbouring floats made the
+        // stores to shared memory collide in one bank: 40 % slower.)
+        for (uint q = 0; q < 8; q++) {
+            vec4 v = tok < tokens ? x[(tok * nb + b) * 8 + q] : vec4(0.0);
+            for (uint c = 0; c < 4; c++) xs[4 * q + c][id / 4][id % 4] = v[c];
+        }
+        barrier();
+        for (uint k = 0; k < 32; k++) {
+            vec4 w0 = ws[k][2 * tr], w1 = ws[k][2 * tr + 1];
+            vec4 x0 = xs[k][2 * tt], x1 = xs[k][2 * tt + 1];
+            for (uint t = 0; t < 4; t++) {
+                acc[t][0] += w0 * x0[t];
+                acc[t][1] += w1 * x0[t];
+                acc[t + 4][0] += w0 * x1[t];
+                acc[t + 4][1] += w1 * x1[t];
+            }
+        }
+        barrier();
+    }
+    for (uint t = 0; t < 8; t++) {
+        uint tk = tok0 + 8 * tt + t;
+        if (tk >= tokens) break;
+        for (uint r = 0; r < 8; r++) {
+            uint rw = row0 + 8 * tr + r;
+            if (rw < rows) o[tk * rows + rw] = acc[t][r / 4][r % 4];
+        }
+    }
+}

@@ -33,6 +33,8 @@ fn main() {
     let i = &gpu.info;
     println!("# {} | Vulkan {}.{}.{} | driver {:#x}", i.name, i.api_version.0, i.api_version.1, i.api_version.2, i.driver_version);
     println!("# subgroup operations: {:?}", i.subgroup_ops);
+    println!("# shared memory per workgroup: {} KB", i.max_shared_memory / 1024);
+    println!("# extensions: {}", i.extensions.join(" "));
     println!("# subgroup {} | max workgroup {} | max storage buffer {} MB | timestamp {} ns", i.subgroup_size, i.max_workgroup_invocations, i.max_storage_buffer_range >> 20, i.timestamp_period);
     for (n, (size, flags)) in i.heaps.iter().enumerate() {
         println!("# heap {n}: {:.0} MB {flags:?}", *size as f64 / (1 << 20) as f64);

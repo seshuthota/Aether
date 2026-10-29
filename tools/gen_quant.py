@@ -25,6 +25,9 @@ the tiles (full tiles of 4 token pairs, then 1, 2 or 3 pairs):
   w.npy  [d, n] f32          x.npy  [t, n] f32 (each row quantized on its own)
   out_q8_0_b.npy, out_q4_0_b.npy, out_q5_0_b.npy
                              [t, d]: dequant(X_q8_0) @ dequant(W)ᵀ
+  w_q8_0.bin, w_q4_0.bin, w_q5_0.bin   the weight rows quantized, raw bytes
+  out_q8_0_a.npy, …          [t, d]: X @ dequant(W)ᵀ (f32 activations, as
+                             the GPU kernels use)
 
 K-quant cases go to the third directory, one quant_k_<d>x<n>_t<t>/ each (n
 a multiple of 256, the super-block size). The `gguf` package can decode
@@ -123,8 +126,11 @@ def batch(root):
         np.save(out / "x.npy", x)
         xd = quants.dequantize(quants.quantize(x, T.Q8_0), T.Q8_0).astype(np.float64)
         for typ, name in [(T.Q8_0, "q8_0"), (T.Q4_0, "q4_0"), (T.Q5_0, "q5_0")]:
-            wd = quants.dequantize(quants.quantize(w, typ), typ).astype(np.float64)
+            wq = quants.quantize(w, typ)
+            wd = quants.dequantize(wq, typ).astype(np.float64)
             np.save(out / f"out_{name}_b.npy", (xd @ wd.T).astype(np.float32))
+            (out / f"w_{name}.bin").write_bytes(wq.tobytes())
+            np.save(out / f"out_{name}_a.npy", (x.astype(np.float64) @ wd.T).astype(np.float32))
     print(f"wrote {len(cases)} cases to {root}")
 
 

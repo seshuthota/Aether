@@ -103,5 +103,46 @@ shapes):
   both read the same memory at the same speed, so the GPU does not make
   decode faster. What it can do is take the work off the CPU, and prefill.
 
-Next: a Q4_0 matrix-matrix shader for prefill, where the GPU's arithmetic
-should matter, then a whole forward pass on the GPU.
+## Step 3: a Q4_0 matrix-matrix shader for prefill (2026-10-29; `raw/vk-gemm.txt`)
+
+`shaders/q4_0_gemm.comp`, `Gpu::q4_0_gemm`. Test `q4_0_gemm_matches_reference`
+runs llama.cpp's Q4_0 bytes of the 11 batch cases (odd row and token
+counts) against X @ dequant(W)ᵀ in float64 (`out_q4_0_a`, now also written
+by `tools/gen_quant.py` for the batch cases, together with the raw weight
+bytes; the existing goldens are byte-identical).
+
+Prefill is compute-bound, so this is where a GPU should help. The steps
+(GFLOP/s = 2 · rows · cols · tokens / time; gate/up, 4864 × 896, 256
+tokens):
+
+| version | GFLOP/s |
+| --- | --- |
+| 1. GEMV-style: 32 lanes × 4 rows × T tokens, x reread from cache per row | 65 |
+| 2. 64 × 64 tile in shared memory, 4 × 4 outputs per thread, `dot()` | 180 |
+| 2b. two blocks per barrier pair (all 32 KB of shared memory) | 166 |
+| 3. 8 × 8 outputs per thread (64 threads) | 207 |
+| 4. outer products: tiles stored by column, `vec4` multiply-adds | **264** |
+| 4b. activations read so neighbouring threads read neighbouring floats | 169 (stores to shared memory then collide in one bank) |
+
+Now (median of 5, GPU vs CPU `linear_batch_on`, int8 + `smmla`, six
+threads; the CPU's numbers moved between runs with its clock caps):
+
+| tokens | wq/wo 896 × 896 | gate/up 4864 × 896 | down 896 × 4864 | CPU (same three) |
+| --- | --- | --- | --- | --- |
+| 64 | 157 | 215 | 160 | 205 / 478 / 506 |
+| 256 | 210 | 264 | 209 | 277–389 / 419–779 / 421–769 |
+| 512 | 249 | 263 | 251 | 688 / 732 / 647 |
+
+The GPU in f32 reaches ~260 GFLOP/s, a third to a half of the CPU's
+int8 `smmla` path. The limit is in the inner loop, not the loads (vec4
+activation loads changed nothing). It is likely occupancy: 64 accumulators
+per thread leave few waves to hide shared-memory latency. Ways to go
+further are known but not taken yet: f16 arithmetic
+(`VK_KHR_shader_float16_int8` is there, at double rate, at a cost in
+accuracy), int8 dot products (`VK_KHR_shader_integer_dot_product`, like
+the CPU), and smaller per-thread tiles with more threads. There is no
+cooperative-matrix extension on this driver.
+
+Next: a whole decode step on the GPU (norms, RoPE, attention and SwiGLU
+shaders around the GEMV), checked against the CPU path's goldens, with
+energy per token compared to the CPU.

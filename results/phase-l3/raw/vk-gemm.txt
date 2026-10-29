@@ -1,0 +1,15 @@
+# Adreno (TM) 830 | 64 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,cpu_ms,cpu_gflops
+wq/wo,896,896,0.66,157,0.50,205
+gate/up,4864,896,2.59,215,1.17,478
+down,896,4864,3.50,160,1.10,506
+# Adreno (TM) 830 | 256 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,cpu_ms,cpu_gflops
+wq/wo,896,896,1.96,210,1.48,277
+gate/up,4864,896,8.46,264,2.86,779
+down,896,4864,10.70,209,2.90,769
+# Adreno (TM) 830 | 512 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,cpu_ms,cpu_gflops
+wq/wo,896,896,3.30,249,1.20,688
+gate/up,4864,896,16.96,263,6.10,732
+down,896,4864,17.79,251,6.90,647

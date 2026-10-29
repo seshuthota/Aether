@@ -48,6 +48,10 @@ pub struct Info {
     pub subgroup_ops: vk::SubgroupFeatureFlags,
     pub max_workgroup_invocations: u32,
     pub max_storage_buffer_range: u32,
+    pub max_shared_memory: u32,
+    /// The device's extensions (e.g. VK_KHR_shader_float16_int8,
+    /// VK_KHR_cooperative_matrix).
+    pub extensions: Vec<String>,
     /// Nanoseconds per timestamp tick.
     pub timestamp_period: f32,
     /// (size in bytes, flags) per memory heap, and (heap, flags) per type.
@@ -100,6 +104,13 @@ impl Gpu {
                 subgroup_ops: sub.supported_operations,
                 max_workgroup_invocations: props.limits.max_compute_work_group_invocations,
                 max_storage_buffer_range: props.limits.max_storage_buffer_range,
+                max_shared_memory: props.limits.max_compute_shared_memory_size,
+                extensions: instance
+                    .enumerate_device_extension_properties(phys)
+                    .map_err(vkr("device extensions"))?
+                    .iter()
+                    .map(|e| CStr::from_ptr(e.extension_name.as_ptr()).to_string_lossy().into_owned())
+                    .collect(),
                 timestamp_period: props.limits.timestamp_period,
                 heaps,
                 types,
@@ -399,6 +410,25 @@ impl Gpu {
     }
 }
 
+impl Gpu {
+    /// `out[t][r] = W[r] · x[t]` for `tokens` activations (row-major in
+    /// `x`, `out` is tokens × rows), `reps` times; `kernel` from
+    /// [`Gpu::q4_0_gemm_kernel`]. Returns the GPU time of all reps.
+    pub fn q4_0_gemm(&self, kernel: &Kernel, w: &MatQ4_0, x: &Buffer, tokens: usize, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(x.size >= tokens * w.nb * 32 * 4 && out.size >= tokens * w.rows * 4);
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32, tokens as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        // Tiles of 64 rows × 64 tokens.
+        let [gx, gy] = [w.rows.div_ceil(64) as u32, tokens.div_ceil(64) as u32];
+        assert!(gx <= 65535 && gy <= 65535, "too many rows or tokens for one dispatch");
+        self.run(kernel, &[&w.qs, &w.d, x, out], &push, [gx, gy, 1], reps)
+    }
+
+    /// The prefill shader (tiles in shared memory; see the shader).
+    pub fn q4_0_gemm_kernel(&self) -> Result<Kernel> {
+        Kernel::new(self, crate::spirv!("q4_0_gemm"), 4, 12)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +478,35 @@ mod tests {
             }
         }
         assert!(cases >= 12, "only {cases} golden cases");
+    }
+
+    /// The Q4_0 prefill shader on llama.cpp's Q4_0 bytes against
+    /// X @ dequant(W)ᵀ in float64 (`out_q4_0_a`, the batch goldens: odd row
+    /// and token counts, so tiles have tails).
+    #[test]
+    fn q4_0_gemm_matches_reference() {
+        let Some(root) = crate::testutil::golden("quant_batch") else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let ks = [gpu.q4_0_gemm_kernel().unwrap()];
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
+            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
+            let blocks: Vec<BlockQ4_0> = bytes.chunks_exact(18).map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let w = MatQ4_0::new(&gpu, &blocks, ws[0]).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let mut out = gpu.buffer(want.len() * 4).unwrap();
+            for k in &ks {
+                out.as_mut_slice::<f32>().fill(f32::NAN);
+                gpu.q4_0_gemm(k, &w, &x, xs[0], &out, 1).unwrap();
+                let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+                assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{}: rel {rel:.2e}", dir.display());
+            }
+        }
+        assert!(cases >= 11, "only {cases} golden cases");
     }
 }
