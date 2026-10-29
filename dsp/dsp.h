@@ -29,9 +29,23 @@ int run_threads(uint32 threads, void (*fn)(void *arg, uint32 t), void *arg, uint
 // (see aether_dsp.c) and x quantized to Q8_0, `nb` blocks: the int8 values
 // (32 per block), then the blocks' f32 scales, then the i32 sums of each
 // block's values, 40 bytes per block. out[g] is group g's 32 results
-// (added to what is there with `accumulate`). With `prefetch`, the
-// next two groups are fetched into the L2 while two are computed.
-void q4_0_rows(const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int prefetch, int accumulate);
+// (added to what is there with `accumulate`), on thread t.
+void q4_0_rows(const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t);
+
+// How q4_0_rows gets the weights: plain loads, l2fetch of the next two
+// groups into the L2 while two are computed, or DMA of the next two into
+// thread t's two slots in VTCM (falling back to l2fetch where they do not
+// fit).
+enum { FETCH_NONE, FETCH_L2, FETCH_DMA };
+
+// Counted up at the start of every call that uses DMA (threads are new
+// in each call, so their DMA chains start afresh).
+extern uint32 dma_gen;
+
+// VTCM (all of it, held once asked for) and its size, or NULL. Only the
+// calling thread may ask, before it starts workers; q4_0_rows uses what
+// was got, and falls back to l2fetch without it.
+char *vtcm_get(uint32 *bytes);
 
 // Where thread t of `threads` starts in `groups` row groups: an even
 // group, so groups pair up.

@@ -38,6 +38,10 @@ pub const STAGES: [&str; 13] = [
     "thread start",
 ];
 
+/// Every product's weights by DMA into VTCM ([`DspModel::dma`]): 6.8 ms a
+/// token on Qwen2.5-0.5B against 10.4 with `l2fetch` (results/phase-l5.md).
+pub const DMA_ALL: u32 = 0x1f;
+
 /// Places byte ranges, 128-byte aligned (an HVX vector), one after another.
 #[derive(Default)]
 struct Layout(usize);
@@ -93,6 +97,8 @@ pub struct DspModel {
     logits_at: usize,
     prof_at: usize,
     pub threads: u32,
+    /// Which products fetch by DMA ([`Dsp::model_decode`]); all by default.
+    pub dma: u32,
     next: usize,
     /// The DSP's own time for the last step, in microseconds.
     pub last_us: u64,
@@ -194,7 +200,7 @@ impl DspModel {
         desc[d::S_BYTES] = sl.0 as u32;
         dsp.model_load(&desc)?;
         let (x_at, rot_at, logits_at, prof_at) = (desc[d::X] as usize, desc[d::ROT] as usize, desc[d::LOGITS] as usize, desc[d::PROF] as usize);
-        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, prof_at, threads, next: 0, last_us: 0 })
+        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, prof_at, threads, dma: DMA_ALL, next: 0, last_us: 0 })
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
@@ -209,7 +215,7 @@ impl DspModel {
             s[self.rot_at / 4 + 2 * i] = sin;
             s[self.rot_at / 4 + 2 * i + 1] = cos;
         }
-        let (next, us) = dsp.model_decode(pos as u32, self.threads)?;
+        let (next, us) = dsp.model_decode(pos as u32, self.threads, self.dma)?;
         self.next = next as usize;
         self.last_us = us;
         Ok(&self.state.as_slice::<f32>()[self.logits_at / 4..][..self.config.vocab_size])

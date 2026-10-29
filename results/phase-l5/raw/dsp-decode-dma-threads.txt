@@ -1,0 +1,75 @@
+threads 2
+#   attn norm + quantize        289.7 us/token   3.5%
+#   q/k/v                       273.8 us/token   3.3%
+#   bias + RoPE + KV store      294.4 us/token   3.5%
+#   attention + quantize        947.9 us/token  11.4%
+#   wo                          230.7 us/token   2.8%
+#   ffn norm + quantize         278.6 us/token   3.4%
+#   gate/up                    2061.8 us/token  24.8%
+#   down                       1125.8 us/token  13.6%
+#   final norm + quantize        11.4 us/token   0.1%
+#   classifier                 1321.2 us/token  15.9%
+#   argmax                      313.9 us/token   3.8%
+#   thread start                 20.6 us/token   0.2%
+#   q/k/v, layer 0               12.1 us/token   0.1%
+# 64 positions in 622.0 ms: 102.9 tok/s (8.30 ms per token on the DSP)
+threads 3
+#   attn norm + quantize        229.3 us/token   3.0%
+#   q/k/v                       269.2 us/token   3.6%
+#   bias + RoPE + KV store      220.6 us/token   2.9%
+#   attention + quantize        742.5 us/token   9.9%
+#   wo                          234.5 us/token   3.1%
+#   ffn norm + quantize         224.0 us/token   3.0%
+#   gate/up                    2087.1 us/token  27.7%
+#   down                       1139.9 us/token  15.1%
+#   final norm + quantize         8.8 us/token   0.1%
+#   classifier                 1335.6 us/token  17.7%
+#   argmax                      216.9 us/token   2.9%
+#   thread start                 26.6 us/token   0.4%
+#   q/k/v, layer 0               12.1 us/token   0.2%
+# 64 positions in 590.5 ms: 108.4 tok/s (7.53 ms per token on the DSP)
+threads 4
+#   attn norm + quantize        193.1 us/token   2.7%
+#   q/k/v                       279.2 us/token   3.9%
+#   bias + RoPE + KV store      184.0 us/token   2.6%
+#   attention + quantize        599.3 us/token   8.4%
+#   wo                          237.5 us/token   3.3%
+#   ffn norm + quantize         189.2 us/token   2.7%
+#   gate/up                    2075.6 us/token  29.1%
+#   down                       1139.8 us/token  16.0%
+#   final norm + quantize         7.7 us/token   0.1%
+#   classifier                 1335.1 us/token  18.7%
+#   argmax                      181.3 us/token   2.5%
+#   thread start                 32.7 us/token   0.5%
+#   q/k/v, layer 0               12.2 us/token   0.2%
+# 64 positions in 544.0 ms: 117.7 tok/s (7.12 ms per token on the DSP)
+threads 5
+#   attn norm + quantize        185.5 us/token   2.7%
+#   q/k/v                       279.3 us/token   4.0%
+#   bias + RoPE + KV store      173.7 us/token   2.5%
+#   attention + quantize        498.2 us/token   7.2%
+#   wo                          229.5 us/token   3.3%
+#   ffn norm + quantize         195.5 us/token   2.8%
+#   gate/up                    2106.9 us/token  30.3%
+#   down                       1161.6 us/token  16.7%
+#   final norm + quantize         7.3 us/token   0.1%
+#   classifier                 1349.9 us/token  19.4%
+#   argmax                      160.3 us/token   2.3%
+#   thread start                 39.3 us/token   0.6%
+#   q/k/v, layer 0               11.7 us/token   0.2%
+# 64 positions in 551.6 ms: 116.0 tok/s (6.93 ms per token on the DSP)
+threads 6
+#   attn norm + quantize        183.4 us/token   2.7%
+#   q/k/v                       274.7 us/token   4.0%
+#   bias + RoPE + KV store      159.8 us/token   2.4%
+#   attention + quantize        488.3 us/token   7.2%
+#   wo                          238.4 us/token   3.5%
+#   ffn norm + quantize         178.4 us/token   2.6%
+#   gate/up                    2103.1 us/token  30.9%
+#   down                       1149.5 us/token  16.9%
+#   final norm + quantize         7.4 us/token   0.1%
+#   classifier                 1347.1 us/token  19.8%
+#   argmax                      137.3 us/token   2.0%
+#   thread start                 45.5 us/token   0.7%
+#   q/k/v, layer 0               11.7 us/token   0.2%
+# 64 positions in 542.8 ms: 117.9 tok/s (6.79 ms per token on the DSP)

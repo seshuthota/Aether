@@ -61,9 +61,6 @@ enum {
 enum { L_WQKV, L_WO, L_WGU, L_WDOWN, L_ATTN_NORM, L_FFN_NORM, L_BQ, L_BK, L_BV, L_N };
 
 #define MAX_LAYERS 64
-#ifndef PREFETCH
-#define PREFETCH 1
-#endif
 
 // The stages of a step that thread 0 times (from the end of the previous
 // one to when every thread has finished this one).
@@ -129,6 +126,8 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
         M.l[l].bk = (const float *) (w + o[L_BK]);
         M.l[l].bv = (const float *) (w + o[L_BV]);
     }
+    // VTCM for the products' DMA (see vtcm_get).
+    vtcm_get(&(uint32) {0});
     M.loaded = 1;
     return AEE_SUCCESS;
 }
@@ -305,7 +304,7 @@ AEEResult aether_dsp_math_test(remote_handle64 h, uint32 op, const float *a, int
 }
 
 struct step {
-    uint32 pos, threads, next;
+    uint32 pos, threads, dma, next;
     uint64 t0;
     qurt_barrier_t bar;
     // Each thread's best logit and its index, for the argmax.
@@ -334,11 +333,12 @@ static void decode_thread(void *arg, uint32 t) {
     qurt_barrier_wait(bar);    \
     MARK(p)
     // Row groups of 32 per product, each thread a run of whole pairs.
-#define ROWS(w, x_nb, out, rows, acc) q4_0_rows(w, M.xq, x_nb, (HVX_Vector *) (out), pair_split((rows) / 32, t, T), pair_split((rows) / 32, t + 1, T), PREFETCH, acc)
+    // Product k (0 q/k/v, 1 wo, 2 gate/up, 3 down, 4 classifier) by DMA or l2fetch.
+#define ROWS(k, w, x_nb, out, rows, acc) q4_0_rows(w, M.xq, x_nb, (HVX_Vector *) (out), pair_split((rows) / 32, t, T), pair_split((rows) / 32, t + 1, T), st->dma >> (k) & 1 ? FETCH_DMA : FETCH_L2, acc, t)
     for (uint32 l = 0; l < M.layers; l++) {
         norm_quantize(M.xb, M.x, M.l[l].attn_norm, dim, FROM(dim / 32), TO(dim / 32));
         WAIT(P_NORM1);
-        ROWS(M.l[l].wqkv, dim / 32, M.qkv, dim + 2 * kv, 0);
+        ROWS(0, M.l[l].wqkv, dim / 32, M.qkv, dim + 2 * kv, 0);
         WAIT(P_QKV);
         qkv_post(l, pos, FROM(dim / 2 + kv / 2), TO(dim / 2 + kv / 2), FROM(kv), TO(kv));
         WAIT(P_POST);
@@ -347,22 +347,22 @@ static void decode_thread(void *arg, uint32 t) {
         for (uint32 h = FROM(M.heads); h < TO(M.heads); h++) attend(l, h, pos);
         quantize_q8_0(M.xb, dim / 32, FROM(M.heads) * hs / 32, TO(M.heads) * hs / 32, M.xq);
         WAIT(P_ATTEND);
-        ROWS(M.l[l].wo, dim / 32, M.x, dim, 1);
+        ROWS(1, M.l[l].wo, dim / 32, M.x, dim, 1);
         WAIT(P_WO);
         norm_quantize(M.xb, M.x, M.l[l].ffn_norm, dim, FROM(dim / 32), TO(dim / 32));
         WAIT(P_NORM2);
-        ROWS(M.l[l].wgu, dim / 32, M.hb, 2 * hid, 0);
+        ROWS(2, M.l[l].wgu, dim / 32, M.hb, 2 * hid, 0);
         WAIT(P_GATE_UP);
         // SwiGLU, quantized for down; a run of blocks each.
         swiglu(FROM(hid / 32), TO(hid / 32));
         quantize_q8_0(M.hb, hid / 32, FROM(hid / 32), TO(hid / 32), M.xq);
         WAIT(P_SWIGLU);
-        ROWS(M.l[l].wdown, hid / 32, M.x, dim, 1);
+        ROWS(3, M.l[l].wdown, hid / 32, M.x, dim, 1);
         WAIT(P_DOWN);
     }
     norm_quantize(M.xb, M.x, M.final_norm, dim, FROM(dim / 32), TO(dim / 32));
     WAIT(P_FINAL_NORM);
-    ROWS(M.cls, dim / 32, M.logits, M.vocab, 0);
+    ROWS(4, M.cls, dim / 32, M.logits, M.vocab, 0);
     WAIT(P_CLS);
     // The argmax: each thread over its run, then thread 0 over theirs (the
     // first of equal logits, as the CPU's argmax).
@@ -383,14 +383,15 @@ static void decode_thread(void *arg, uint32 t) {
 #undef MARK
 }
 
-AEEResult aether_dsp_model_decode(remote_handle64 h, uint32 pos, uint32 threads, uint32 *next, uint64 *us) {
+AEEResult aether_dsp_model_decode(remote_handle64 h, uint32 pos, uint32 threads, uint32 dma, uint32 *next, uint64 *us) {
     (void) h;
     if (!M.loaded || pos >= M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
     // The CPU wrote x and the RoPE table.
     cpu_wrote(M.x, 4 * M.dim);
     cpu_wrote(M.rot, 4 * M.hs);
     cpu_wrote(M.prof, 8 * N_STAGES);
-    struct step st = {pos, threads, 0, HAP_perf_get_qtimer_count()};
+    dma_gen++;
+    struct step st = {pos, threads, dma, 0, HAP_perf_get_qtimer_count()};
     qurt_barrier_init(&st.bar, threads);
     int err = run_threads(threads, decode_thread, &st, us);
     qurt_barrier_destroy(&st.bar);

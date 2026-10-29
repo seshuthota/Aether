@@ -5,7 +5,7 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features hexagon --example dsp_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [THREADS]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK]
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::hexagon::Dsp;
@@ -17,10 +17,12 @@ use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS] [CTX] [THREADS]"));
+    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK]"));
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let threads: u32 = args.next().map_or(6, |v| v.parse().unwrap());
+    // Bit k: product k (q/k/v, wo, gate/up, down, classifier) by DMA.
+    let dma: u32 = args.next().map_or(aether::model::dsp::DMA_ALL, |v| u32::from_str_radix(v.trim_start_matches("0x"), 16).unwrap());
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
@@ -29,7 +31,8 @@ fn main() {
     let dsp = Dsp::open(&dir).unwrap_or_else(|e| panic!("{e}"));
     let t0 = Instant::now();
     let mut m = DspModel::new(&dsp, config, weights, threads).unwrap_or_else(|e| panic!("{e}"));
-    println!("# {} on the DSP, {threads} threads | upload {:.0} ms", path.display(), t0.elapsed().as_secs_f64() * 1e3);
+    m.dma = dma;
+    println!("# {} on the DSP, {threads} threads, DMA mask {dma:#x} | upload {:.0} ms", path.display(), t0.elapsed().as_secs_f64() * 1e3);
 
     // Greedy continuation (eyeball check) and decode speed.
     let prompt = text.encode("The capital of France is");

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "AEEStdErr.h"
+#include "HAP_compute_res.h"
 #include "HAP_mem.h"
 #include "HAP_perf.h"
 #include "HAP_power.h"
@@ -235,18 +236,6 @@ AEEResult aether_dsp_refresh(remote_handle64 h, int fd, uint32 bytes) {
     return AEE_SUCCESS;
 }
 
-// Q4_0 x Q8_0 matrix-vector product. The weights come in groups of 32
-// rows; per group and block of 32 columns there are five vectors (640
-// bytes): four of quants, then the 32 rows' f32 scales. Quant vector k
-// holds, for row j of the group, bytes 4k..4k+3 of its block (byte i: the
-// element i in the low nibble, i + 16 in the high one, as in Q4_0), so a
-// 32-bit lane is one row.
-//
-// vrmpy multiplies each lane's 4 unsigned bytes by 4 signed bytes held in
-// a scalar register (4 elements of x) and adds the sum to the lane: eight
-// of them give each row's integer dot product over the block. Q4_0 stores
-// q + 8 with q in -8..7, so the lane starts at -8 * (sum of the block's x
-// values), and the unsigned nibbles go in as they are.
 // Asks the L2 for `bytes` from p on (rows of 4 KB), without waiting.
 static inline void prefetch(const void *p, uint32 bytes) {
     uint32 rows = (bytes + 4095) / 4096;
@@ -274,27 +263,124 @@ static inline HVX_Vector block_acc(HVX_Vector acc, HVX_Vector s, HVX_Vector scal
     return Q6_Vsf_vadd_VsfVsf(acc, Q6_Vsf_vmpy_VsfVsf(Q6_Vsf_equals_Vw(s), Q6_Vsf_vmpy_VsfVsf(scales, xd)));
 }
 
-void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int pf, int accumulate) {
+// Two groups (w0, then w1 right after it) into out[0] and out[1]: the
+// vector unit has independent work while each vrmpy's result is still on
+// its way, and x is read once for both.
+static inline void pair_rows(const HVX_Vector *w0, const char *xqb, uint32 nb, HVX_Vector *out, int accumulate) {
     const int32 *xq = (const int32 *) xqb;
     const float *xd = (const float *) (xqb + 32 * nb);
     const int32 *xs = (const int32 *) (xqb + 36 * nb);
     const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
-    uint32 g = g0;
-    // Two groups at a time: independent work for the vector unit while
-    // each vrmpy's result is still on its way, and x read once for both.
-    for (; g + 2 <= g1; g += 2) {
-        const HVX_Vector *w0 = wall + (size_t) g * nb * 5, *w1 = w0 + (size_t) nb * 5;
-        if (pf && g + 4 <= g1) prefetch(w0 + 10 * nb, 2 * nb * 640);
-        HVX_Vector a0 = Q6_V_vzero(), a1 = a0;
-        for (uint32 b = 0; b < nb; b++, w0 += 5, w1 += 5) {
-            const int32 *x = xq + 8 * b;
-            HVX_Vector d = splat_f(xd[b]);
-            HVX_Vector s0 = block_dot(w0, x, xs[b], low), s1 = block_dot(w1, x, xs[b], low);
-            a0 = block_acc(a0, s0, w0[4], d);
-            a1 = block_acc(a1, s1, w1[4], d);
+    const HVX_Vector *w1 = w0 + (size_t) nb * 5;
+    HVX_Vector a0 = Q6_V_vzero(), a1 = a0;
+    for (uint32 b = 0; b < nb; b++, w0 += 5, w1 += 5) {
+        const int32 *x = xq + 8 * b;
+        HVX_Vector d = splat_f(xd[b]);
+        HVX_Vector s0 = block_dot(w0, x, xs[b], low), s1 = block_dot(w1, x, xs[b], low);
+        a0 = block_acc(a0, s0, w0[4], d);
+        a1 = block_acc(a1, s1, w1[4], d);
+    }
+    out[0] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[0], a0) : a0;
+    out[1] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[1], a1) : a1;
+}
+
+// The DMA engine's one-dimensional descriptor (v73+ layout, as llama.cpp's
+// backend declares it; the SDK's header is older): copy `size` bytes from
+// `src` to `dst`, then go on to `next`. The engine sets `done`. With the
+// bypass bits the copy does not go through the L2.
+struct dma1d {
+    void *next;
+    uint32 size : 24;
+    uint32 desc_size : 2;  // 0: one-dimensional
+    uint32 dst_comp : 1;
+    uint32 src_comp : 1;
+    uint32 dst_bypass : 1;
+    uint32 src_bypass : 1;
+    uint32 order : 1;
+    uint32 done : 1;
+    const void *src;
+    void *dst;
+} __attribute__((aligned(64)));
+
+// Every hardware thread has its own DMA queue: dmstart begins a chain of
+// descriptors, dmlink appends one to the chain's tail (and the engine goes
+// on to it, even if it had finished). Each thread keeps a ring of
+// descriptors, so none is rewritten while the engine may still look at it,
+// and appends every copy to its last one; only its first copy in each call
+// (dma_gen, counted up per call) starts a chain.
+#define DMA_RING 64
+static struct dma1d ring[MAX_THREADS][DMA_RING];
+static struct dma1d *tail[MAX_THREADS];
+static uint32 ring_next[MAX_THREADS], tail_gen[MAX_THREADS];
+uint32 dma_gen;
+
+static struct dma1d *dma_copy(uint32 t, void *dst, const void *src, uint32 bytes) {
+    struct dma1d *d = &ring[t][ring_next[t]++ % DMA_RING];
+    *d = (struct dma1d) {NULL, bytes, 0, 0, 0, 1, 1, 0, 0, src, dst};
+    asm volatile(" release(%0):at" : : "r"(d));
+    if (tail[t] && tail_gen[t] == dma_gen)
+        asm volatile(" dmlink(%0, %1)" : : "r"(tail[t]), "r"(d));
+    else
+        asm volatile(" dmstart(%0)" : : "r"(d));
+    tail[t] = d, tail_gen[t] = dma_gen;
+    return d;
+}
+
+static inline void dma_wait(volatile struct dma1d *d) {
+    while (!d->done) {
+        uint32 r;
+        asm volatile(" %0 = dmpoll" : "=r"(r) : : "memory");
+    }
+}
+
+// VTCM, the DSP's 8 MB of on-chip memory, held from the first use on.
+// Asked for only by the thread FastRPC calls in on, before it starts
+// worker threads: workers that asked at once deadlocked (all but one
+// waited inside HAP_compute_res_acquire for the VTCM the one held).
+static char *vtcm;
+static uint32 vtcm_bytes;
+
+char *vtcm_get(uint32 *bytes) {
+    if (!vtcm) {
+        unsigned int size = 0;
+        if (HAP_compute_res_query_VTCM(0, &size, NULL, NULL, NULL) || !size) return NULL;
+        compute_res_attr_t attr;
+        HAP_compute_res_attr_init(&attr);
+        HAP_compute_res_attr_set_serialize(&attr, 0);
+        HAP_compute_res_attr_set_vtcm_param_v2(&attr, size, size, size);
+        unsigned int ctx = HAP_compute_res_acquire(&attr, 1000000);
+        void *p = NULL;
+        unsigned int got = 0;
+        if (!ctx || HAP_compute_res_attr_get_vtcm_ptr_v2(&attr, &p, &got) || !p) return NULL;
+        vtcm = p, vtcm_bytes = got;
+    }
+    *bytes = vtcm_bytes;
+    return vtcm;
+}
+
+void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    const int32 *xq = (const int32 *) xqb;
+    const float *xd = (const float *) (xqb + 32 * nb);
+    const int32 *xs = (const int32 *) (xqb + 36 * nb);
+    const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
+    uint32 g = g0, pair = 2 * nb * 640;
+    char *v = fetch == FETCH_DMA ? vtcm : NULL;
+    if (v && 2 * pair * (t + 1) <= vtcm_bytes && g + 2 <= g1) {
+        // Two VTCM slots per thread: the DMA fills one with the next pair
+        // of groups while the vector unit works on the other.
+        char *slot[2] = {v + 2 * pair * t, v + 2 * pair * t + pair};
+        uint32 n = (g1 - g) / 2;
+        struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * nb * 5, pair), NULL};
+        for (uint32 p = 0; p < n; p++, g += 2) {
+            if (p + 1 < n) d[(p + 1) % 2] = dma_copy(t, slot[(p + 1) % 2], wall + (size_t) (g + 2) * nb * 5, pair);
+            dma_wait(d[p % 2]);
+            pair_rows((const HVX_Vector *) slot[p % 2], xqb, nb, out + g, accumulate);
         }
-        out[g] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[g], a0) : a0;
-        out[g + 1] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[g + 1], a1) : a1;
+    }
+    for (; g + 2 <= g1; g += 2) {
+        const HVX_Vector *w0 = wall + (size_t) g * nb * 5;
+        if (fetch && g + 4 <= g1) prefetch(w0 + 10 * nb, pair);
+        pair_rows(w0, xqb, nb, out + g, accumulate);
     }
     for (; g < g1; g++) {
         const HVX_Vector *w = wall + (size_t) g * nb * 5;
@@ -325,7 +411,7 @@ struct gemv_job {
 
 static void gemv_thread(void *arg, uint32 t) {
     struct gemv_job *j = arg;
-    q4_0_rows(j->w, j->x, j->nb, j->out, pair_split(j->groups, t, j->threads), pair_split(j->groups, t + 1, j->threads), j->prefetch, 0);
+    q4_0_rows(j->w, j->x, j->nb, j->out, pair_split(j->groups, t, j->threads), pair_split(j->groups, t + 1, j->threads), j->prefetch, 0, t);
 }
 
 AEEResult aether_dsp_q4_0_gemv(remote_handle64 h, int w_fd, int x_fd, int out_fd, uint32 rows, uint32 nb, uint32 threads, uint32 prefetch, uint64 *us) {
@@ -338,6 +424,8 @@ AEEResult aether_dsp_q4_0_gemv(remote_handle64 h, int w_fd, int x_fd, int out_fd
     int err = AEE_EBADPARM;
     if (w && x && out) {
         cpu_wrote(x, nb * 40);
+        dma_gen++;
+        if (prefetch == FETCH_DMA) vtcm_get(&(uint32) {0});
         struct gemv_job j = {w, x, out, groups, nb, threads, prefetch};
         err = run_threads(threads, gemv_thread, &j, us);
         cpu_reads(out, groups * 128);
