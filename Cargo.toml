@@ -29,3 +29,7 @@ optional = true
 [[example]]
 name = "vk_bandwidth"
 required-features = ["vulkan"]
+
+[[example]]
+name = "vk_gemv"
+required-features = ["vulkan"]

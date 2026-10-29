@@ -18,6 +18,7 @@
 //! Every Vulkan call is `unsafe` (raw handles, lifetimes the API cannot
 //! check); the types here own their handles and free them in `Drop`.
 
+use crate::quant::BlockQ4_0;
 use ash::vk;
 use std::ffi::CStr;
 
@@ -43,6 +44,8 @@ pub struct Info {
     pub driver_version: u32,
     /// Invocations that run in lockstep (a "wave"); 64 or 128 on Adreno.
     pub subgroup_size: u32,
+    /// Which subgroup operations shaders may use (arithmetic, clustered, …).
+    pub subgroup_ops: vk::SubgroupFeatureFlags,
     pub max_workgroup_invocations: u32,
     pub max_storage_buffer_range: u32,
     /// Nanoseconds per timestamp tick.
@@ -94,6 +97,7 @@ impl Gpu {
                 api_version: (vk::api_version_major(v), vk::api_version_minor(v), vk::api_version_patch(v)),
                 driver_version: props.driver_version,
                 subgroup_size: sub.subgroup_size,
+                subgroup_ops: sub.supported_operations,
                 max_workgroup_invocations: props.limits.max_compute_work_group_invocations,
                 max_storage_buffer_range: props.limits.max_storage_buffer_range,
                 timestamp_period: props.limits.timestamp_period,
@@ -270,8 +274,10 @@ impl Drop for Buffer {
     }
 }
 
-/// A compute shader with `bindings` storage buffers (bindings 0, 1, …) and
-/// `push_bytes` of push constants.
+/// A compute shader with `bindings` storage buffers (bindings 0, 1, …),
+/// `push_bytes` of push constants, and u32 specialization constants
+/// (`constant_id` 0, 1, … = `spec[0]`, `spec[1]`, …: fixed when the pipeline
+/// is built, so the driver compiles them in as constants).
 pub struct Kernel {
     device: ash::Device,
     module: vk::ShaderModule,
@@ -281,10 +287,15 @@ pub struct Kernel {
     desc_pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
     bindings: usize,
+    pub spec: Vec<u32>,
 }
 
 impl Kernel {
     pub fn new(gpu: &Gpu, spirv: &[u8], bindings: usize, push_bytes: u32) -> Result<Kernel> {
+        Kernel::with_spec(gpu, spirv, bindings, push_bytes, &[])
+    }
+
+    pub fn with_spec(gpu: &Gpu, spirv: &[u8], bindings: usize, push_bytes: u32, spec: &[u32]) -> Result<Kernel> {
         let d = &gpu.device;
         let code = ash::util::read_spv(&mut std::io::Cursor::new(spirv)).map_err(|e| format!("SPIR-V: {e}"))?;
         // SAFETY: `d` is live; the objects are freed in Drop, in reverse.
@@ -301,14 +312,17 @@ impl Kernel {
                 li = li.push_constant_ranges(&ranges);
             }
             let layout = d.create_pipeline_layout(&li, None).map_err(vkr("pipeline layout"))?;
-            let stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(c"main");
+            let entries: Vec<vk::SpecializationMapEntry> = (0..spec.len() as u32).map(|i| vk::SpecializationMapEntry { constant_id: i, offset: 4 * i, size: 4 }).collect();
+            let data: Vec<u8> = spec.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let si = vk::SpecializationInfo::default().map_entries(&entries).data(&data);
+            let stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(c"main").specialization_info(&si);
             let pipeline = d
                 .create_compute_pipelines(vk::PipelineCache::null(), &[vk::ComputePipelineCreateInfo::default().stage(stage).layout(layout)], None)
                 .map_err(|(_, e)| format!("create pipeline: {e}"))?[0];
             let sizes = [vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: bindings.max(1) as u32 }];
             let desc_pool = d.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes), None).map_err(vkr("descriptor pool"))?;
             let set = d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(desc_pool).set_layouts(&sets)).map_err(vkr("descriptor set"))?[0];
-            Ok(Kernel { device: d.clone(), module, set_layout, layout, pipeline, desc_pool, set, bindings })
+            Ok(Kernel { device: d.clone(), module, set_layout, layout, pipeline, desc_pool, set, bindings, spec: spec.to_vec() })
         }
     }
 }
@@ -324,6 +338,64 @@ impl Drop for Kernel {
             d.destroy_descriptor_set_layout(self.set_layout, None);
             d.destroy_shader_module(self.module, None);
         }
+    }
+}
+
+/// A Q4_0 matrix in GPU memory, in the layout `shaders/q4_0_gemv.comp`
+/// reads: the nibble bytes of all blocks, then the f16 scales.
+pub struct MatQ4_0 {
+    qs: Buffer,
+    d: Buffer,
+    pub rows: usize,
+    /// Blocks per row (columns / 32).
+    pub nb: usize,
+}
+
+impl MatQ4_0 {
+    /// Uploads `blocks` (row-major, `rows` rows).
+    pub fn new(gpu: &Gpu, blocks: &[BlockQ4_0], rows: usize) -> Result<MatQ4_0> {
+        assert!(rows > 0 && blocks.len().is_multiple_of(rows));
+        let mut qs = gpu.buffer(blocks.len() * 16)?;
+        // Scales two per u32: round up to a whole one.
+        let mut d = gpu.buffer(blocks.len().div_ceil(2) * 4)?;
+        for (dst, b) in qs.as_mut_slice::<[u8; 16]>().iter_mut().zip(blocks) {
+            *dst = b.qs;
+        }
+        for (dst, b) in d.as_mut_slice::<u16>().iter_mut().zip(blocks) {
+            *dst = b.d;
+        }
+        Ok(MatQ4_0 { qs, d, rows, nb: blocks.len() / rows })
+    }
+}
+
+/// Workgroups for `n` items in groups of `per` (rows per workgroup), split
+/// over x and y because one dimension allows at most 65535.
+pub fn groups_for(n: usize, per: usize) -> [u32; 3] {
+    let g = n.div_ceil(per);
+    let x = g.min(65535);
+    [x as u32, g.div_ceil(x) as u32, 1]
+}
+
+impl Gpu {
+    /// `out[r] = W[r] · x` for a Q4_0 matrix on the GPU, `reps` times;
+    /// `kernel` is `q4_0_gemv` (see [`Gpu::q4_0_gemv_kernel`]). Returns the
+    /// GPU time of all reps in seconds.
+    pub fn q4_0_gemv(&self, kernel: &Kernel, w: &MatQ4_0, x: &Buffer, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(x.size >= w.nb * 32 * 4 && out.size >= w.rows * 4);
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        // 128 lanes = 4 groups of 32, each R = 4 · spec[0] rows.
+        self.run(kernel, &[&w.qs, &w.d, x, out], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
+    }
+
+    /// The shader for `rows_per_32` rows per 32 lanes, a multiple of 4 (see
+    /// the shader; 8 is fastest for big matrices, 4 for small ones). It
+    /// adds partial sums across 32 subgroup lanes by shuffles.
+    pub fn q4_0_gemv_kernel(&self, rows_per_32: u32) -> Result<Kernel> {
+        assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
+        if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
+            return Err(format!("q4_0_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
+        }
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 4, 8, &[rows_per_32 / 4])
     }
 }
 
@@ -347,5 +419,34 @@ mod tests {
         let (a, b) = (a.as_slice::<f32>(), b.as_slice::<f32>());
         assert_eq!(&b[..n / 4 * 4], &a[..n / 4 * 4]);
         assert_eq!(&b[n / 4 * 4..], &[-1.0; 3], "past n4 vec4s nothing is written");
+    }
+
+    /// The Q4_0 GEMV shader on llama.cpp's own Q4_0 bytes (`w_q4_0.bin`)
+    /// against dequant(W) @ x in float64 (`out_q4_0_a`, tools/gen_quant.py).
+    #[test]
+    fn q4_0_gemv_matches_reference() {
+        let Some(root) = crate::testutil::golden("quant") else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let ks: Vec<Kernel> = [4, 8, 12].map(|r| gpu.q4_0_gemv_kernel(r).unwrap()).into();
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (_, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
+            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
+            let blocks: Vec<BlockQ4_0> = bytes.chunks_exact(18).map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let w = MatQ4_0::new(&gpu, &blocks, ws[0]).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let mut out = gpu.buffer(ws[0] * 4).unwrap();
+            for k in &ks {
+                out.as_mut_slice::<f32>().fill(f32::NAN);
+                gpu.q4_0_gemv(k, &w, &x, &out, 1).unwrap();
+                let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..ws[0]], &want);
+                assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} R={}: rel {rel:.2e}", dir.display(), 4 * k.spec[0]);
+            }
+        }
+        assert!(cases >= 12, "only {cases} golden cases");
     }
 }

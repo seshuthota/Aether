@@ -1,0 +1,64 @@
+#version 450
+// out = W x for a Q4_0 matrix W (rows × 32·nb) and an f32 vector x: the
+// decode matrix-vector product, dequantizing on the fly.
+//
+// W comes as two arrays (llama.cpp's 18-byte blocks are split at upload so
+// every load is aligned): `qs`, the 16 nibble bytes of every block in row
+// order, one uvec4 each; `dh`, the f16 scales, two per uint. In a block,
+// byte j holds value j (low nibble) and value j + 16 (high), each stored
+// as q + 8.
+//
+// 32 lanes of a subgroup compute R = 4·RV rows together (RV a
+// specialization constant: more rows reuse each x load more, fewer give
+// small matrices more workgroups): lane l takes blocks l, l + 32, …, loads
+// that block's 32 x values once and uses them for all R rows. The partial
+// sums live in vec4s (row r in acc[r / 4][r % 4]): one shuffle then moves
+// four of them, and the driver compiles this 15 % faster than R floats. Neighbouring lanes read neighbouring 16-byte blocks.
+// The 32 partial sums of each row are added by butterfly shuffles within
+// the 32 lanes (XOR with 16, 8, 4, 2, 1 stays inside an aligned group of
+// 32), which needs no shared memory or barriers. Adreno's subgroups have
+// 64 or 128 lanes, so the 32 never span two subgroups. (Adreno 830's
+// driver offers no clustered subgroup ops; a shader using them crashed its
+// compiler.)
+#extension GL_KHR_shader_subgroup_shuffle : enable
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
+layout(std430, binding = 1) readonly buffer D { uint dh[]; };
+layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
+layout(std430, binding = 3) writeonly buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; };
+
+layout(constant_id = 0) const uint RV = 1;
+const uint R = 4 * RV;
+
+vec4 lo(uint w) { return vec4(uvec4(w, w >> 8, w >> 16, w >> 24) & 15u) - 8.0; }
+vec4 hi(uint w) { return vec4(uvec4(w >> 4, w >> 12, w >> 20, w >> 28) & 15u) - 8.0; }
+
+void main() {
+    uint lane = gl_LocalInvocationID.x & 31;
+    // Rows can outnumber what one dimension of workgroups allows.
+    uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint row0 = (wg * (gl_WorkGroupSize.x / 32) + gl_LocalInvocationID.x / 32) * R;
+    // Rows past the end stay 0 and are not written.
+    vec4 acc[RV];
+    for (uint v = 0; v < RV; v++) acc[v] = vec4(0.0);
+    uint nr = min(R, rows - min(rows, row0));
+    for (uint b = lane; b < nb; b += 32) {
+        vec4 x0 = x[8 * b], x1 = x[8 * b + 1], x2 = x[8 * b + 2], x3 = x[8 * b + 3];
+        vec4 x4 = x[8 * b + 4], x5 = x[8 * b + 5], x6 = x[8 * b + 6], x7 = x[8 * b + 7];
+        for (uint r = 0; r < nr; r++) {
+            uint i = (row0 + r) * nb + b;
+            uvec4 w = qs[i];
+            float d = unpackHalf2x16(dh[i / 2] >> (16 * (i & 1))).x;
+            float s = dot(lo(w.x), x0) + dot(lo(w.y), x1) + dot(lo(w.z), x2) + dot(lo(w.w), x3)
+                    + dot(hi(w.x), x4) + dot(hi(w.y), x5) + dot(hi(w.z), x6) + dot(hi(w.w), x7);
+            acc[r / 4][r % 4] += d * s;
+        }
+    }
+    for (uint v = 0; v < RV; v++) {
+        for (uint m = 16; m > 0; m >>= 1) acc[v] += subgroupShuffleXor(acc[v], m);
+    }
+    if (lane == 0) {
+        for (uint r = 0; r < nr; r++) o[row0 + r] = acc[r / 4][r % 4];
+    }
+}

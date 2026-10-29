@@ -283,7 +283,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
   - [x] Device, buffers, compute kernels (`kernels::vulkan`, shaders/ via `build.rs` + NDK
         `glslc`, `ash` for the C API), `vk_bandwidth`: GPU reads DRAM at ~66 GB/s (CPU: ~67),
         an empty dispatch + barrier costs 1.7 µs. Test `copy_shader_copies`.
-  - [ ] Q4_0 GEMV shader against the llama.cpp goldens (`testdata/quant`); speed vs CPU.
+  - [x] Q4_0 GEMV shader against the llama.cpp goldens (`q4_0_gemv_matches_reference`):
+        62 GB/s on the classifier (CPU 50), level with the CPU on layer matrices.
   - [ ] Q4_0 GEMM (prefill), then a whole forward pass on the GPU, checked like the CPU one.
 - [ ] **L.5** NPU: not started.
 
