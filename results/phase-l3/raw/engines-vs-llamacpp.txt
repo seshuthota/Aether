@@ -1,0 +1,162 @@
+== Thu Oct 29 09:20:52 PM IST 2026
+  AC powered: false
+  level: 85
+  Capacity level: -1
+>>> ours-cpu r1 35700 caps 2745600 2649600
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 153 ms
+test,tok_per_s,ms
+pp64,749.4,85.4
+pp256,973.0,263.1
+pp512,854.7,599.1
+tg64@d0,192.0,333.4
+# tg64@d0 per token: median 5.00 ms, p95 5.28 ms (128 samples)
+tg64@d256,184.1,347.7
+# tg64@d256 per token: median 5.38 ms, p95 5.52 ms (128 samples)
+tg64@d512,175.2,365.2
+# tg64@d512 per token: median 5.66 ms, p95 5.79 ms (128 samples)
+ttft_pp64,13.8,72.6
+# peak RSS 350164 kB
+after 56500 caps 2745600 2649600
+>>> llama-cpu r1 38400 caps 2745600 2649600
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0800.78 Compiler E031.47.18.56
+ggml_opencl: vector subgroup broadcast support: true
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels........................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |            pp64 |        929.94 ± 3.18 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |           pp256 |        936.86 ± 2.50 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |           pp512 |        739.09 ± 4.51 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |            tg64 |        172.29 ± 1.70 |
+after 56100 caps 2745600 2649600
+>>> ours-gpu r1 39200 caps 2745600 2649600
+prefill (on the GPU): 345 tokens in 1291.3 ms (267.2 tok/s) | decode: 55 tokens in 516.6 ms (106.5 tok/s)
+prefill (on the CPU): 345 tokens in 393.9 ms (875.9 tok/s) | decode: 55 tokens in 500.4 ms (109.9 tok/s)
+after 47600 caps 2745600 2649600
+>>> llama-ocl r1 38400 caps 2745600 2649600
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0800.78 Compiler E031.47.18.56
+ggml_opencl: vector subgroup broadcast support: true
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels........................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |            pp64 |       688.54 ± 51.35 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |           pp256 |       1387.40 ± 6.06 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |           pp512 |      1346.81 ± 10.53 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |            tg64 |         57.98 ± 1.74 |
+after 48800 caps 2745600 2649600
+>>> llama-npu r1 39200 caps 2745600 2649600
+ggml-hex: Loading driver libcdsprpc.so
+ggml-hex: Hexagon backend (experimental) : allocating new registry : ndev 1
+ggml-hex: Hexagon Arch version v79
+ggml-hex: allocating new session: HTP0
+ggml-hex: new session: HTP0 : session-id 0 domain-id 3 uri file:///libggml-htp-v79.so?htp_iface_skel_handle_invoke&_modver=1.0&_dom=cdsp&_session=0 handle 0xb400007d94cc5710
+Segmentation fault 
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |            pp64 |        295.47 ± 6.55 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |           pp256 |        329.52 ± 1.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |           pp512 |        312.88 ± 1.12 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |            tg64 |         74.52 ± 0.08 |
+after 68000 caps 2745600 2649600
+>>> llama-npu r2 39600 caps 2400000 2438400
+ggml-hex: Loading driver libcdsprpc.so
+ggml-hex: Hexagon backend (experimental) : allocating new registry : ndev 1
+ggml-hex: Hexagon Arch version v79
+ggml-hex: allocating new session: HTP0
+ggml-hex: new session: HTP0 : session-id 0 domain-id 3 uri file:///libggml-htp-v79.so?htp_iface_skel_handle_invoke&_modver=1.0&_dom=cdsp&_session=0 handle 0xb400007af863cbd0
+Segmentation fault 
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |            pp64 |        295.94 ± 3.41 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |           pp256 |        327.21 ± 1.23 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |           pp512 |        310.59 ± 0.33 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | HTP        |  99 |       6 | 0xfc       |          1 |       1000 |      256 |  1 | HTP0         |    0 |            tg64 |         73.98 ± 1.09 |
+after 68800 caps 2400000 2438400
+>>> llama-ocl r2 40300 caps 2400000 2438400
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0800.78 Compiler E031.47.18.56
+ggml_opencl: vector subgroup broadcast support: true
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels........................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |            pp64 |        645.99 ± 3.42 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |           pp256 |       1216.03 ± 8.49 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |           pp512 |       1194.31 ± 4.21 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |  99 |       6 | 0xfc       |          1 | GPUOpenCL    |    0 |            tg64 |         48.91 ± 1.36 |
+after 48000 caps 2400000 2438400
+>>> ours-gpu r2 39900 caps 2400000 2438400
+prefill (on the GPU): 345 tokens in 1437.9 ms (239.9 tok/s) | decode: 55 tokens in 541.3 ms (101.6 tok/s)
+prefill (on the CPU): 345 tokens in 429.0 ms (804.2 tok/s) | decode: 55 tokens in 518.7 ms (106.0 tok/s)
+after 47300 caps 2400000 2438400
+>>> llama-cpu r2 38800 caps 2400000 2438400
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0800.78 Compiler E031.47.18.56
+ggml_opencl: vector subgroup broadcast support: true
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels........................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |            pp64 |       831.08 ± 20.82 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |           pp256 |       843.01 ± 10.29 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |           pp512 |        660.79 ± 3.71 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | OpenCL     |   0 |       6 | 0xfc       |          1 | none         |    0 |            tg64 |        165.96 ± 3.00 |
+after 55700 caps 2400000 2438400
+>>> ours-cpu r2 38800 caps 2400000 2438400
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 163 ms
+test,tok_per_s,ms
+pp64,832.2,76.9
+pp256,852.4,300.3
+pp512,769.9,665.0
+tg64@d0,193.7,330.5
+# tg64@d0 per token: median 5.15 ms, p95 5.28 ms (128 samples)
+tg64@d256,164.3,389.5
+# tg64@d256 per token: median 5.55 ms, p95 5.73 ms (128 samples)
+tg64@d512,171.1,374.1
+# tg64@d512 per token: median 5.82 ms, p95 5.96 ms (128 samples)
+ttft_pp64,14.1,70.9
+# peak RSS 350524 kB
+after 57300 caps 2400000 2438400

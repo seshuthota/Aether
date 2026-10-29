@@ -446,3 +446,43 @@ un-fusing and the argmax.
 
 What is left for GPU decode: the CPU still decodes ~1.7× faster. The
 matrix products run at 30–40 GB/s of the GPU's 66.
+
+## Step 8: every engine on this phone, against llama.cpp (2026-10-29, 21:20, battery 85 %)
+
+Qwen2.5-0.5B Q4_0, two rounds in opposite orders, cooled below 40 °C
+before each run, screen kept awake (clock caps 2.75 / 2.65 GHz in round 1,
+2.40 / 2.44 in round 2). llama.cpp `d00685831` built three ways: CPU,
+OpenCL (its Adreno backend, linked against the phone's `libOpenCL.so`)
+and Hexagon (its NPU backend, Hexagon SDK 6.4.0.2), `llama-bench -t 6
+--cpu-mask 0xfc --mmap 0 -r 2`. Ours: `bench_suite -c 2-7` and `aether
+--gpu` (345-token prompt, 55 tokens; our GPU prompt pass is batched by
+128, so it is compared with pp256 / pp512). tok/s, round 1 / round 2
+(raw: `raw/engines-vs-llamacpp.txt`):
+
+| engine | pp64 | pp256 | pp512 | decode |
+| --- | --- | --- | --- | --- |
+| **ours, CPU** | 749 / 832 | 973 / 852 | 855 / 770 | 192 / 194 (tg64) |
+| llama.cpp, CPU | 930 / 831 | 937 / 843 | 739 / 661 | 172 / 166 |
+| **ours, GPU** | | 267 / 240 (345 tok) | | 106.5 / 101.6 |
+| **ours, CPU prompt + GPU decode** | | 876 / 804 (345 tok) | | 109.9 / 106.0 |
+| llama.cpp, OpenCL GPU | 689 / 646 | 1387 / 1216 | 1347 / 1194 | 58 / 49 |
+| llama.cpp, Hexagon NPU | 295 / 296 | 330 / 327 | 313 / 311 | 74.5 / 74.0 |
+
+- **CPU**: we decode 11–17 % faster and prefill 4–16 % faster from 256
+  tokens on; llama.cpp is ahead at pp64 in round 1 (930 vs 749), level in
+  round 2.
+- **GPU decode**: ours is ~2× llama.cpp's OpenCL (106 vs 58).
+- **GPU prefill**: llama.cpp's OpenCL is ~5× ours (1,387 vs 267) and
+  faster than either CPU. Its Adreno Q4_0 kernel (`mul_mat_Ab_Bi_8x4.cl`)
+  reads the activations as an fp16 image (the texture path) and multiplies
+  and accumulates in fp16, 8 × 4 outputs per thread; ours is f32 and
+  reaches ~240 GFLOP/s (step 7). This is the largest gap left.
+- **NPU** (llama.cpp only): runs the whole model on the Hexagon DSP with
+  correct text ("The capital of France is Paris. It is the largest city in
+  France…"); 74 tok/s decode, ~330 tok/s prefill. Its prompt products run
+  on HMX (weights expanded to fp16 tiles in VTCM), decode on HVX. During
+  its runs the phone heated to 68 °C (its CPU threads poll), against
+  47–57 °C for the other engines.
+- **Unsigned code on the NPU works on this phone**: llama.cpp opens a
+  `cdsp` session with `DSPRPC_CONTROL_UNSIGNED_MODULE` and loads its own
+  `libggml-htp-v79.so`. So L.5 can run our own DSP code without signing.

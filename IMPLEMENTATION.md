@@ -340,7 +340,21 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
           152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
           after a CPU prompt 63–66 → 96–101 (no gap left).
-- [ ] **L.5** NPU: not started.
+- [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
+      6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
+      Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
+      reference for platform use (and its numbers to measure against: pp ~330, tg ~74 tok/s,
+      results/phase-l3.md step 8), not code to copy. Unsigned DSP code runs on this phone (step 8).
+  - [ ] Step 1, hello: a DSP library (`dsp/`, C) with one call that adds two arrays with HVX in
+        a buffer shared with the CPU (`rpcmem` / `fastrpc_mmap`); the Rust side opens the
+        unsigned `cdsp` session through `libcdsprpc.so` (dlopen, as `ash` does for Vulkan),
+        checks the result, and times a round trip.
+  - [ ] Step 2, memory: how fast HVX threads read DRAM (cf. CPU and GPU ~66 GB/s), and VTCM.
+  - [ ] Step 3, decode GEMV: Q4_0 × f32 (or ×Q8_0) on HVX across the DSP's hardware threads,
+        checked against llama.cpp's bytes / numpy as the GPU kernels were; bandwidth per shape.
+  - [ ] Step 4, a whole decode step on the DSP (a request queue per token, as `dspqueue`),
+        PPL against llama.cpp.
+  - [ ] Step 5, prefill on HMX (the matrix unit; fp16 tiles in VTCM), PPL again.
 
 ---
 
