@@ -15,8 +15,11 @@
 //!   -i TEXT   prompt
 //!   -c LIST   cores to run on, one thread each, e.g. 7 or 0-7 (default:
 //!             one unpinned thread)
-//!   -q FMT    store the matrices as f32 (default), q8_0 or q4_0 (GGUF
-//!             files keep the formats they were saved in)
+//!   -q FMT    store the matrices as f32 (default), q8_0, q4_0 or q5_0
+//!             (GGUF files keep the formats they were saved in)
+//!   --imatrix FILE  quantize -q q4_0 / q5_0 with llama.cpp's importance
+//!             matrix (a GGUF from llama-imatrix), as llama-quantize
+//!             --pure --imatrix does
 //!   --chat    wrap the prompt in the ChatML chat template (instruct models)
 //!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
 //!             copied from the last earlier match of the last --ngram N
@@ -47,6 +50,7 @@
 //! in one batched pass) and decode (one forward pass per token), measured
 //! separately.
 
+use aether::format::imatrix::Imatrix;
 use aether::model::sampler::Sampler;
 use aether::session::Session;
 use aether::weight::Format;
@@ -60,6 +64,7 @@ fn main() {
     let mut tok_path = model_path.with_file_name("tokenizer.bin");
     let mut cores = None;
     let mut format = Format::F32;
+    let mut imatrix_path: Option<PathBuf> = None;
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
     let mut base_path: Option<PathBuf> = None;
@@ -96,6 +101,7 @@ fn main() {
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
+            "--imatrix" => imatrix_path = Some(val.into()),
             "-c" => cores = Some(aether::sys::affinity::parse_cpu_list(&val).unwrap_or_else(|e| panic!("{e}"))),
             _ => usage(),
         }
@@ -104,9 +110,16 @@ fn main() {
         seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     }
 
+    let imatrix = imatrix_path.map(|p| {
+        let im = aether::format::imatrix::Imatrix::open(&p).unwrap_or_else(|e| fail(&p, e));
+        eprintln!("imatrix: {} matrices, {} chunks of {:?}", im.len(), im.chunks, im.datasets);
+        im
+    });
+    let imatrix = imatrix.as_ref();
+
     if let Some(file) = ppl_file {
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
-        return score(&model_path, &tok_path, &file, format, ctx, chunks, base, cores);
+        return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
     }
     if gpu {
         if chat {
@@ -114,7 +127,7 @@ fn main() {
         }
         return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times);
     }
-    let mut session = Session::open(&model_path, Some(&tok_path), steps, format, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
+    let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
@@ -166,11 +179,11 @@ fn peak_rss() -> String {
 /// `--ppl` mode: perplexity (and with `--kl`, KL divergence against the f32
 /// model) over a text file, printed like llama-perplexity.
 #[allow(clippy::too_many_arguments)]
-fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: usize, chunks: usize, base: Option<PathBuf>, cores: Option<Vec<usize>>) {
-    let open = |p: &Path, f: Format, c: Option<&[usize]>| Session::open(p, Some(tok_path), ctx, f, c).unwrap_or_else(|e| fail(p, e));
-    let Session { mut model, text } = open(model_path, format, cores.as_deref());
+fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatrix: Option<&Imatrix>, ctx: usize, chunks: usize, base: Option<PathBuf>, cores: Option<Vec<usize>>) {
+    let open = |p: &Path, f: Format, im: Option<&Imatrix>, c: Option<&[usize]>| Session::open_imatrix(p, Some(tok_path), ctx, f, im, c).unwrap_or_else(|e| fail(p, e));
+    let Session { mut model, text } = open(model_path, format, imatrix, cores.as_deref());
     let kl = base.is_some();
-    let mut base = base.map(|b| open(&b, Format::F32, None).model);
+    let mut base = base.map(|b| open(&b, Format::F32, None, None).model);
     let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
     let t0 = Instant::now();
     let tokens = text.encode(&raw);
@@ -229,7 +242,7 @@ fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _:
 }
 
 fn usage() -> ! {
-    eprintln!("usage: aether (MODEL.bin | HF_MODEL_DIR) [-z tokenizer.bin] [-t temp] [-p top_p] [-k top_k] [-s seed] [-n steps] [-i prompt] [-c cores] [-q f32|q8_0|q4_0]");
+    eprintln!("usage: aether (MODEL.bin | HF_MODEL_DIR) [-z tokenizer.bin] [-t temp] [-p top_p] [-k top_k] [-s seed] [-n steps] [-i prompt] [-c cores] [-q f32|q8_0|q4_0|q5_0] [--imatrix FILE]");
     std::process::exit(2)
 }
 

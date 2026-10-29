@@ -21,7 +21,9 @@ use super::config::{Config, RopeLayout};
 use crate::aligned::AlignedBuf;
 use crate::kernels as k;
 use crate::pool::{SharedOut, ThreadPool, par_chunks_mut};
+use crate::format::imatrix::Imatrix;
 use crate::weight::{Format, Weight};
+use std::io;
 
 /// One layer's weights. Matrices are row-major `[out, in]`, in any storage
 /// format; norm gains are always f32.
@@ -57,41 +59,64 @@ pub struct Weights {
 impl Weights {
     /// Converts every matrix (not the norms) to `format`, as llama.cpp's
     /// `llama-quantize --pure` does: the embedding/classifier included.
-    pub fn convert(self, c: &Config, format: Format) -> Weights {
-        self.map_matrices(c, |w, cols| w.convert(cols, format))
+    /// With an importance matrix, each matrix it has an entry for is
+    /// quantized with that entry (`--pure --imatrix`); llama-imatrix records
+    /// none for the embedding, which is then quantized without one. An
+    /// entry of the wrong length is an error, as in `llama-quantize`.
+    pub fn convert(self, c: &Config, format: Format, imatrix: Option<&Imatrix>) -> io::Result<Weights> {
+        let wrong = std::cell::RefCell::new(None);
+        let w = self.map_matrices(c, |w, cols, name| {
+            let qw = imatrix.and_then(|im| im.get(name)).filter(|qw| {
+                let ok = qw.len() == cols;
+                if !ok && name != "token_embd.weight" {
+                    wrong.borrow_mut().get_or_insert(format!("imatrix entry for {name} has {} values, the matrix {cols} columns", qw.len()));
+                }
+                ok
+            });
+            w.convert_weighted(cols, format, qw)
+        });
+        match wrong.into_inner() {
+            Some(msg) => Err(io::Error::new(io::ErrorKind::InvalidData, msg)),
+            None => Ok(w),
+        }
     }
 
     /// Repacks every quantized matrix four rows at a time for the `smmla`
     /// kernels (see [`Weight::repack`]).
     pub fn repack(self, c: &Config) -> Weights {
-        self.map_matrices(c, |w, cols| w.repack(cols))
+        self.map_matrices(c, |w, cols, _| w.repack(cols))
     }
 
-    /// Applies `f(matrix, columns)` to every matrix, not the norms.
-    fn map_matrices(self, c: &Config, f: impl Fn(Weight, usize) -> Weight) -> Weights {
+    /// Applies `f(matrix, columns, llama.cpp tensor name)` to every matrix,
+    /// not the norms.
+    fn map_matrices(self, c: &Config, f: impl Fn(Weight, usize, &str) -> Weight) -> Weights {
         let (dim, hidden) = (c.dim, c.hidden_dim);
         Weights {
-            token_embedding: f(self.token_embedding, dim),
+            token_embedding: f(self.token_embedding, dim, "token_embd.weight"),
             layers: self
                 .layers
                 .into_iter()
-                .map(|l| LayerWeights {
-                    attn_norm: l.attn_norm,
-                    wq: f(l.wq, dim),
-                    wk: f(l.wk, dim),
-                    wv: f(l.wv, dim),
-                    wo: f(l.wo, dim),
-                    bq: l.bq,
-                    bk: l.bk,
-                    bv: l.bv,
-                    ffn_norm: l.ffn_norm,
-                    w_gate: f(l.w_gate, dim),
-                    w_down: f(l.w_down, hidden),
-                    w_up: f(l.w_up, dim),
+                .enumerate()
+                .map(|(i, l)| {
+                    let g = |w, cols, name: &str| f(w, cols, &format!("blk.{i}.{name}.weight"));
+                    LayerWeights {
+                        attn_norm: l.attn_norm,
+                        wq: g(l.wq, dim, "attn_q"),
+                        wk: g(l.wk, dim, "attn_k"),
+                        wv: g(l.wv, dim, "attn_v"),
+                        wo: g(l.wo, dim, "attn_output"),
+                        bq: l.bq,
+                        bk: l.bk,
+                        bv: l.bv,
+                        ffn_norm: l.ffn_norm,
+                        w_gate: g(l.w_gate, dim, "ffn_gate"),
+                        w_down: g(l.w_down, hidden, "ffn_down"),
+                        w_up: g(l.w_up, dim, "ffn_up"),
+                    }
                 })
                 .collect(),
             final_norm: self.final_norm,
-            classifier: self.classifier.map(|w| f(w, dim)),
+            classifier: self.classifier.map(|w| f(w, dim, "output.weight")),
         }
     }
 

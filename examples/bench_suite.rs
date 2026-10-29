@@ -92,7 +92,7 @@ fn main() {
     let max_seq = pp.iter().max().unwrap().max(&(depths.iter().max().unwrap() + tg)) + 1;
     let t_load = Instant::now();
     let (config, weights) = load_any(&path, max_seq).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let weights = weights.convert(&config, format);
+    let weights = weights.convert(&config, format, None).unwrap();
     // Until the model is ready: includes the repacking in Transformer::new.
     let mut model = Transformer::new(config, weights);
     let load_ms = t_load.elapsed().as_secs_f64() * 1e3;

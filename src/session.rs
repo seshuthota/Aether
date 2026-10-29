@@ -3,6 +3,7 @@
 //! the C ABI (`ffi`) the Android app calls.
 
 use crate::format::gguf::Value;
+use crate::format::imatrix::Imatrix;
 use crate::format::json::Json;
 use crate::kernels::argmax;
 use crate::model::sampler::Sampler;
@@ -135,6 +136,12 @@ impl Session {
     /// (with its `tokenizer.bin` at `l2c_tokenizer`, default next to it),
     /// converts the matrices to `format`, and spreads work over `cores`.
     pub fn open(path: &Path, l2c_tokenizer: Option<&Path>, max_seq: usize, format: Format, cores: Option<&[usize]>) -> io::Result<Session> {
+        Session::open_imatrix(path, l2c_tokenizer, max_seq, format, None, cores)
+    }
+
+    /// [`Session::open`], quantizing with an importance matrix (see
+    /// [`Weights::convert`](crate::model::transformer::Weights::convert)).
+    pub fn open_imatrix(path: &Path, l2c_tokenizer: Option<&Path>, max_seq: usize, format: Format, imatrix: Option<&Imatrix>, cores: Option<&[usize]>) -> io::Result<Session> {
         let (config, weights, text) = if path.extension().is_some_and(|e| e == "gguf") {
             let (config, weights, g) = gguf::load(path, max_seq)?;
             (config, weights, Text::from_gguf(&g)?)
@@ -154,7 +161,7 @@ impl Session {
             let tok = l2c_tok::Tokenizer::load(&tok_path, config.vocab_size)?;
             (config, weights, Text::Llama2c(tok))
         };
-        let weights = weights.convert(&config, format);
+        let weights = weights.convert(&config, format, imatrix)?;
         let mut model = Transformer::new(config, weights);
         if let Some(cores) = cores {
             // One thread per core; the calling thread becomes the first.
