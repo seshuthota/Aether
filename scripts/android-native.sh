@@ -11,7 +11,8 @@ strip="$(dirname "$cc")/llvm-strip"
 out=android/app/src/main/jniLibs/arm64-v8a
 mkdir -p "$out"
 
-cargo build --release --target aarch64-linux-android --lib
+# With the GPU path (Vulkan; `aether_open_gpu`).
+cargo build --release --target aarch64-linux-android --lib --features vulkan
 lib=target/aarch64-linux-android/release
 # The release profile keeps debug symbols for simpleperf; the APK doesn't need them.
 "$strip" --strip-debug -o "$out/libaether.so" "$lib/libaether.so"

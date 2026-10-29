@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var cores: EditText
     private lateinit var chat: CheckBox
     private lateinit var lookup: CheckBox
+    private lateinit var gpu: CheckBox
     private lateinit var prompt: EditText
     private lateinit var go: Button
     private lateinit var output: TextView
@@ -60,6 +61,8 @@ class MainActivity : Activity() {
         }
         // Prompt lookup decoding: pays when the reply repeats the prompt.
         lookup = CheckBox(this).apply { text = "lookup" }
+        // Decode on the GPU (a --pure Q4_0 model; cores and lookup unused).
+        gpu = CheckBox(this).apply { text = "GPU" }
         prompt = EditText(this).apply {
             hint = "Ask something"
             setText("Why is the sky blue?")
@@ -81,6 +84,7 @@ class MainActivity : Activity() {
             addView(cores)
             addView(chat)
             addView(lookup)
+            addView(gpu)
         }
         val ask = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -127,6 +131,7 @@ class MainActivity : Activity() {
         val text = prompt.text.toString()
         val asChat = chat.isChecked
         val draft = if (lookup.isChecked) 3 else 0
+        val onGpu = gpu.isChecked
         running = true
         stop.set(false)
         go.text = "Stop"
@@ -134,16 +139,16 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         engine.execute {
             try {
-                val key = "${file.path}|$coreList"
+                val key = "${file.path}|${if (onGpu) "gpu" else coreList}"
                 if (session == null || loaded != key) {
                     session?.close()
                     session = null
                     ui { status.text = "Loading ${file.name}…" }
                     val t0 = System.nanoTime()
-                    session = Aether.open(file.path, coreList, MAX_SEQ)
+                    session = if (onGpu) Aether.openGpu(file.path, MAX_SEQ) else Aether.open(file.path, coreList, MAX_SEQ)
                     loaded = key
                     val ms = (System.nanoTime() - t0) / 1e6
-                    ui { status.text = "Loaded in %.0f ms".format(ms) }
+                    ui { status.text = "Loaded in %.0f ms (%s)".format(ms, if (onGpu) "GPU" else "CPU $coreList") }
                 }
                 session!!.setLookup(draft)
                 val utf8 = Utf8Stream()

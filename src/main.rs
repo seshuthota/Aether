@@ -185,43 +185,21 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, ctx: u
 }
 
 /// `--gpu`: every position, prompt included, through the GPU decode step
-/// (`model::gpu::GpuModel`); sampling on the CPU.
+/// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
 fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize) {
-    let (config, weights, g) = aether::model::gguf::load(path, steps).unwrap_or_else(|e| fail(path, e));
-    let text = aether::session::Text::from_gguf(&g).unwrap_or_else(|e| fail(path, e));
-    let steps = steps.min(config.seq_len);
-    let gpu = aether::kernels::vulkan::Gpu::new().unwrap_or_else(|e| panic!("{e}"));
-    let mut m = aether::model::gpu::GpuModel::new(&gpu, config, weights, false).unwrap_or_else(|e| panic!("{e}"));
-    eprintln!("GPU: {}", gpu.info.name);
-    let tokens = text.encode(prompt);
+    let mut s = aether::session::GpuSession::open(path, steps).unwrap_or_else(|e| fail(path, e));
+    eprintln!("GPU: {}", s.gpu.info.name);
     let mut out = std::io::stdout().lock();
-    let _ = out.write_all(&text.first_piece(tokens[0]));
-    let np = tokens.len().min(steps);
-    let t0 = Instant::now();
-    let mut logits = Vec::new();
-    for (p, &t) in tokens[..np].iter().enumerate() {
-        logits = m.forward(&gpu, t, p).unwrap().to_vec();
-        if p + 1 < np {
-            let _ = out.write_all(&text.piece(t, tokens[p + 1]));
-        }
+    let t = s.text.encode(prompt);
+    let _ = out.write_all(&s.text.first_piece(t[0]));
+    for p in 0..t.len() - 1 {
+        let _ = out.write_all(&s.text.piece(t[p], t[p + 1]));
     }
-    let prefill = t0.elapsed();
-    let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
-    while np == tokens.len() && pos < steps {
-        let next = sampler.sample(&mut logits);
-        if text.is_stop(next) {
-            break;
-        }
-        let _ = out.write_all(&text.piece(token, next)).and_then(|_| out.flush());
-        token = next;
-        logits = m.forward(&gpu, token, pos).unwrap().to_vec();
-        pos += 1;
-    }
-    let decode = t1.elapsed();
+    let st = s.generate(prompt, &mut sampler, steps, |piece| out.write_all(piece).and_then(|_| out.flush()).is_ok());
     writeln!(out).unwrap();
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
-    eprintln!("prefill (token by token): {np} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", prefill.as_secs_f64() * 1e3, rate(np, prefill), pos - np, decode.as_secs_f64() * 1e3, rate(pos - np, decode));
+    eprintln!("prefill (token by token): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
 }
 
 #[cfg(not(feature = "vulkan"))]

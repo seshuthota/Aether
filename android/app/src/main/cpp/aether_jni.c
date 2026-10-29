@@ -39,6 +39,20 @@ Java_dev_aether_chat_Aether_nativeOpen(JNIEnv *env, jclass cls, jbyteArray path,
     return (jlong)(intptr_t)s;
 }
 
+JNIEXPORT jlong JNICALL
+Java_dev_aether_chat_Aether_nativeOpenGpu(JNIEnv *env, jclass cls, jbyteArray path, jint max_seq) {
+    (void)cls;
+    char *p = cstr(env, path);
+    AetherSession *s = NULL;
+    int code = aether_open_gpu(p, (uint32_t)max_seq, &s);
+    free(p);
+    if (code != AETHER_OK) {
+        throw_error(env);
+        return 0;
+    }
+    return (jlong)(intptr_t)s;
+}
+
 /* What on_text needs to call back into Kotlin. The engine calls on_text on
  * the thread that called aether_generate, so `env` stays valid. */
 struct callback {

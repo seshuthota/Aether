@@ -362,6 +362,57 @@ impl Drafter {
     }
 }
 
+/// A model decoding on the GPU (`--features vulkan`, a `--pure` Q4_0
+/// GGUF; see `model::gpu`): every position, prompt included, goes through
+/// the GPU decode step, and sampling runs on the CPU.
+#[cfg(feature = "vulkan")]
+pub struct GpuSession {
+    // Declared before `gpu`: its buffers must be freed while the device lives.
+    pub model: crate::model::gpu::GpuModel,
+    pub gpu: crate::kernels::vulkan::Gpu,
+    pub text: Text,
+}
+
+#[cfg(feature = "vulkan")]
+impl GpuSession {
+    pub fn open(path: &Path, max_seq: usize) -> io::Result<GpuSession> {
+        let (config, weights, g) = gguf::load(path, max_seq)?;
+        let text = Text::from_gguf(&g)?;
+        let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
+        let model = crate::model::gpu::GpuModel::new(&gpu, config, weights, false).map_err(io::Error::other)?;
+        Ok(GpuSession { model, gpu, text })
+    }
+
+    /// As [`Session::generate`] without echoing the prompt. The prompt is
+    /// fed token by token (there is no batched GPU pass yet), so "prefill"
+    /// here is that loop.
+    pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
+        let steps = steps.min(self.model.config.seq_len);
+        let tokens = self.text.encode(prompt);
+        let np = tokens.len().min(steps);
+        let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
+        let t0 = Instant::now();
+        let mut logits = Vec::new();
+        for (p, &t) in tokens[..np].iter().enumerate() {
+            logits = self.model.forward(&self.gpu, t, p).expect("GPU step").to_vec();
+        }
+        stats.prefill = t0.elapsed();
+        let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+        while np == tokens.len() {
+            let next = sampler.sample(&mut logits);
+            if self.text.is_stop(next) || !emit(&self.text.piece(token, next)) || pos >= steps {
+                break;
+            }
+            token = next;
+            logits.copy_from_slice(self.model.forward(&self.gpu, token, pos).expect("GPU step"));
+            pos += 1;
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        stats
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

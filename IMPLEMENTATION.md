@@ -50,8 +50,7 @@ tok/s sustained), but it takes ~2.3 W instead of 4.5 W: 0.021–0.024 J/token vs
 99 tests on the phone with `--features vulkan` (96 without).
 
 Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), trying the app's new "lookup" checkbox (built and installed,
-but the phone was locked), GPU prefill and the GPU in the app, L.5 (NPU).
+screen off or kept awake by keyevents), GPU prefill, L.5 (NPU).
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
@@ -288,8 +287,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       model decodes only 2× faster, and a K = 3 pass costs ~2.9 target steps.
 - [x] **Lookup in the C ABI and the app** (2026-10-29): `aether_set_lookup(session, k, ngram)`
       (include/aether.h), `Aether.setLookup` in Kotlin, a "lookup" checkbox in the app (K = 3).
-      `c_abi_round_trip` checks the greedy text with lookup on. Not yet tried in the app's UI
-      (the phone was locked); the APK builds and installs.
+      `c_abi_round_trip` checks the greedy text with lookup on; tried in the app on the phone.
 - [~] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
   - [x] Device, buffers, compute kernels (`kernels::vulkan`, shaders/ via `build.rs` + NDK
         `glslc`, `ash` for the C API), `vk_bandwidth`: GPU reads DRAM at ~66 GB/s (CPU: ~67),
@@ -306,7 +304,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         ~2.3 W = 0.021–0.024 J/token, 68 °C; CPU 158 tok/s at 4.5 W = 0.029 J/token, 89 °C.
         Limit: GPU/bus clocks drop between bursts (no Vulkan control; sysfs needs root).
   - [x] CLI switch `aether MODEL.gguf --gpu` (prompt token by token; `Text::from_gguf`).
-  - [ ] Prefill on the GPU (the GEMM of step 3 in a batched forward pass); the app.
+  - [x] The app: `aether_open_gpu` (C ABI), `GpuSession`, a "GPU" checkbox; tried on the phone
+        (decode 90–92 tok/s vs 155 on the CPU). The "lookup" checkbox tried too (works).
+  - [ ] Prefill: on the GPU (the GEMM of step 3 in a batched pass), or on the CPU with the KV
+        cache handed to the GPU for decode.
 - [ ] **L.5** NPU: not started.
 
 ---

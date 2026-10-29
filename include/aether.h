@@ -39,6 +39,12 @@ typedef int (*AetherTokenCallback)(const uint8_t *bytes, size_t len, void *user)
  * thread. max_seq: longest prompt + reply in tokens. */
 int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
+/* Loads a --pure Q4_0 .gguf for decoding on the GPU (Vulkan). Every
+ * aether_generate on it runs on the GPU, the prompt token by token. Fails
+ * with AETHER_ERR_LOAD if the library was built without the vulkan feature,
+ * there is no usable GPU, or a matrix is not Q4_0. */
+int aether_open_gpu(const char *path, uint32_t max_seq, AetherSession **out);
+
 /* Generates a reply. chat != 0 wraps the prompt in the ChatML template.
  * temperature 0 = greedy. stats may be NULL. */
 int aether_generate(AetherSession *session, const char *prompt, int chat,
@@ -48,7 +54,8 @@ int aether_generate(AetherSession *session, const char *prompt, int chat,
 /* Prompt lookup decoding for later aether_generate calls: up to k draft
  * tokens copied from the last earlier match of the last `ngram` tokens,
  * checked in one batched pass. Faster when the reply repeats the prompt
- * (code edits, quoting). k = 0 turns it off; ngram >= 1 (2 is a good default). */
+ * (code edits, quoting). k = 0 turns it off; ngram >= 1 (2 is a good default).
+ * CPU sessions only (a GPU session ignores it). */
 int aether_set_lookup(AetherSession *session, uint32_t k, uint32_t ngram);
 
 /* Message for the last error on this thread; valid until the next call. */

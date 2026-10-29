@@ -26,12 +26,24 @@ pub const AETHER_ERR_ARGUMENT: c_int = 1;
 pub const AETHER_ERR_LOAD: c_int = 2;
 pub const AETHER_ERR_PANIC: c_int = 3;
 
-/// What C holds: a loaded model, and the prompt lookup settings
-/// (`aether_set_lookup`; draft length 0 = off).
+/// What C holds: a loaded model on the CPU or the GPU, and the prompt
+/// lookup settings (`aether_set_lookup`; draft length 0 = off; CPU only).
 pub struct AetherSession {
-    session: Session,
+    engine: Engine,
     lookup_k: usize,
     lookup_ngram: usize,
+}
+
+enum Engine {
+    Cpu(Session),
+    #[cfg(feature = "vulkan")]
+    Gpu(Box<crate::session::GpuSession>),
+}
+
+impl AetherSession {
+    fn new(engine: Engine) -> *mut AetherSession {
+        Box::into_raw(Box::new(AetherSession { engine, lookup_k: 0, lookup_ngram: 2 }))
+    }
 }
 
 /// Timings of one `aether_generate` call (milliseconds).
@@ -130,7 +142,7 @@ pub unsafe extern "C" fn aether_open(path: *const c_char, cores: *const c_char, 
         match Session::open(Path::new(path), None, max_seq as usize, Format::F32, cores.as_deref()) {
             Ok(s) => {
                 // SAFETY: `out` is non-null and writable (caller's contract).
-                unsafe { *out = Box::into_raw(Box::new(AetherSession { session: s, lookup_k: 0, lookup_ngram: 2 })) };
+                unsafe { *out = AetherSession::new(Engine::Cpu(s)) };
                 AETHER_OK
             }
             Err(e) => {
@@ -172,22 +184,32 @@ pub unsafe extern "C" fn aether_generate(
         }
         // SAFETY: a live handle from aether_open (caller's contract); the
         // caller does not use it from another thread during this call.
-        let AetherSession { session: s, lookup_k, lookup_ngram } = unsafe { &mut *session };
+        let AetherSession { engine, lookup_k, lookup_ngram } = unsafe { &mut *session };
         // SAFETY: caller's contract.
         let prompt = match unsafe { str_arg(prompt, "prompt") } {
             Ok(p) => p,
             Err(code) => return code,
         };
         let text = if chat != 0 { crate::chat::chatml(crate::chat::QWEN_DEFAULT_SYSTEM, prompt) } else { prompt.to_string() };
-        let prompt_len = s.text.encode(&text).len();
+        let (tok, seq_len) = match engine {
+            Engine::Cpu(s) => (&s.text, s.model.config.seq_len),
+            #[cfg(feature = "vulkan")]
+            Engine::Gpu(g) => (&g.text, g.model.config.seq_len),
+        };
+        let prompt_len = tok.encode(&text).len();
         let steps = prompt_len + max_tokens as usize;
-        if steps > s.model.config.seq_len {
-            set_error(format!("prompt ({prompt_len} tokens) + max_tokens ({max_tokens}) exceeds the context ({})", s.model.config.seq_len));
+        if steps > seq_len {
+            set_error(format!("prompt ({prompt_len} tokens) + max_tokens ({max_tokens}) exceeds the context ({seq_len})"));
             return AETHER_ERR_ARGUMENT;
         }
         let mut sampler = Sampler::new(temperature, top_p, 0, seed.max(1));
         let emit = |piece: &[u8]| on_text(piece.as_ptr(), piece.len(), user) != 0;
-        let st = if *lookup_k > 0 { s.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0 } else { s.generate(&text, &mut sampler, steps, false, emit) };
+        let st = match engine {
+            Engine::Cpu(s) if *lookup_k > 0 => s.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
+            Engine::Cpu(s) => s.generate(&text, &mut sampler, steps, false, emit),
+            #[cfg(feature = "vulkan")]
+            Engine::Gpu(g) => g.generate(&text, &mut sampler, steps, emit),
+        };
         if !stats.is_null() {
             // SAFETY: non-null and writable (caller's contract).
             unsafe {
@@ -203,12 +225,54 @@ pub unsafe extern "C" fn aether_generate(
     })
 }
 
+/// Loads a `--pure` Q4_0 `.gguf` for decoding on the GPU (Vulkan): every
+/// later `aether_generate` runs on it, prompt included, token by token.
+/// `max_seq` as in `aether_open`. Fails with `AETHER_ERR_LOAD` when the
+/// library was built without the `vulkan` feature, there is no usable GPU,
+/// or a matrix is not Q4_0.
+///
+/// # Safety
+/// As for `aether_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, max_seq: u32, out: *mut *mut AetherSession) -> c_int {
+    guard(|| {
+        if out.is_null() {
+            set_error("out is null");
+            return AETHER_ERR_ARGUMENT;
+        }
+        // SAFETY: caller's contract.
+        let path = match unsafe { str_arg(path, "path") } {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        #[cfg(feature = "vulkan")]
+        match crate::session::GpuSession::open(Path::new(path), max_seq as usize) {
+            Ok(g) => {
+                // SAFETY: `out` is non-null and writable (caller's contract).
+                unsafe { *out = AetherSession::new(Engine::Gpu(Box::new(g))) };
+                AETHER_OK
+            }
+            Err(e) => {
+                set_error(format!("{path}: {e}"));
+                AETHER_ERR_LOAD
+            }
+        }
+        #[cfg(not(feature = "vulkan"))]
+        {
+            let _ = max_seq;
+            set_error(format!("{path}: this library was built without the GPU (vulkan) feature"));
+            AETHER_ERR_LOAD
+        }
+    })
+}
+
 /// Turns prompt lookup decoding on for later `aether_generate` calls:
 /// after each token, up to `k` draft tokens are copied from the last
 /// earlier place where the last `ngram` tokens occurred, and checked in one
 /// batched pass (`Session::generate_lookup`). Faster when the reply repeats
 /// the prompt (code edits, quoting); the output keeps the sampler's
-/// distribution. `k` = 0 turns it off; `ngram` must be at least 1.
+/// distribution. `k` = 0 turns it off; `ngram` must be at least 1. Only the
+/// CPU path uses it (a GPU session accepts and ignores it).
 ///
 /// # Safety
 /// `session` must come from `aether_open` and not be closed.
@@ -283,6 +347,28 @@ mod tests {
             assert_eq!(aether_open(bad.as_ptr(), std::ptr::null(), 256, &mut s2), AETHER_ERR_LOAD);
             assert!(CStr::from_ptr(aether_last_error()).to_str().unwrap().contains("nonexistent"));
             assert_eq!(aether_generate(s, std::ptr::null(), 0, 0.0, 0.9, 8, 1, collect, std::ptr::null_mut(), std::ptr::null_mut()), AETHER_ERR_ARGUMENT);
+            aether_close(s);
+        }
+    }
+
+    /// A GPU session through the C ABI (skipped without a Vulkan GPU or
+    /// the feature): greedy output on SmolLM2-135M Q4_0 is real text, and
+    /// generation stops at max_tokens.
+    #[test]
+    fn c_abi_gpu_session() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let path = CString::new(model.to_str().unwrap()).unwrap();
+        let mut s: *mut AetherSession = std::ptr::null_mut();
+        unsafe {
+            if aether_open_gpu(path.as_ptr(), 128, &mut s) != AETHER_OK {
+                assert!(!cfg!(all(feature = "vulkan", target_os = "android")), "{:?}", CStr::from_ptr(aether_last_error()));
+                return;
+            }
+            let (mut out, mut stats) = (Vec::<u8>::new(), AetherStats::default());
+            let prompt = CString::new("The capital of France is").unwrap();
+            assert_eq!(aether_generate(s, prompt.as_ptr(), 0, 0.0, 0.9, 16, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
+            assert_eq!(stats.decode_tokens, 16);
+            assert!(String::from_utf8(out).unwrap().contains("capital"));
             aether_close(s);
         }
     }

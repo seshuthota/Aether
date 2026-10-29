@@ -245,3 +245,15 @@ decode on the GPU against 161 on the CPU, with a 35-token prompt in 541
 against 59 ms. The two greedy texts agree for the first ~30 tokens, then
 fork where two tokens are nearly tied. The GPU keeps activations in f32,
 while the CPU rounds them to int8 before each product.
+
+**In the app** (2026-10-29, phone charging, 44–49 °C): `aether_open_gpu`
+in the C ABI (`GpuSession` in the library, shared with `aether --gpu`;
+test `c_abi_gpu_session`), `Aether.openGpu` in Kotlin, and a "GPU"
+checkbox. `libaether.so` is now built with `--features vulkan`. Qwen2.5-0.5B
+Q4_0 chat, "Why is the sky blue?", t 0.7 (driven over adb):
+
+| app mode | prefill (35 tokens) | decode |
+| --- | --- | --- |
+| CPU, cores 2–7 | 56 ms | 155.5 tok/s |
+| CPU + lookup | 53 ms | 159.6 tok/s (prose: about neutral, as measured before) |
+| GPU | 319–442 ms (token by token) | 90–92 tok/s |
