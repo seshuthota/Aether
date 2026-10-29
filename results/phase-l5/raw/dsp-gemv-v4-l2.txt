@@ -1,0 +1,8 @@
+fetch: L2
+    matrix           MB     1 thr us     2 thr us     3 thr us     4 thr us     5 thr us     6 thr us   best GB/s
+     q/k/v          0.6           22           22           21           24           26           29       30.7
+        wo          0.5           18           18           19           20           24           27       27.9
+   gate/up          5.4          180          188          199          211          215          216       30.3
+      down          2.7          150          180          186          152          115          105       25.9
+classifier         85.1         2130         2073         2194         2267         2299         2281       41.0
+ per token           ms        11.01        11.87        12.39        12.04        11.42        11.33

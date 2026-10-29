@@ -349,13 +349,15 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         a buffer shared with the CPU (`rpcmem` / `fastrpc_mmap`); the Rust side opens the
         unsigned `cdsp` session through `libcdsprpc.so` (dlopen, as `ash` does for Vulkan),
         checks the result, and times a round trip.
-  - [x] Step 2, memory (DRAM via HVX 46–47 GB/s at 4–5 threads; DMA into VTCM still open): how fast HVX threads read DRAM (cf. CPU and GPU ~66 GB/s), and VTCM.
+  - [x] Step 2, memory (DRAM via HVX 46–47 GB/s at 4–5 threads; DMA into VTCM in step 4b): how fast HVX threads read DRAM (cf. CPU and GPU ~66 GB/s), and VTCM.
   - [x] Step 3, decode GEMV (`vrmpy`, rel err ≤ 4.8e-7 vs llama.cpp bytes; ~10.5 ms of products per token): Q4_0 × f32 (or ×Q8_0) on HVX across the DSP's hardware threads,
         checked against llama.cpp's bytes / numpy as the GPU kernels were; bandwidth per shape.
   - [x] Step 4, a whole decode step on the DSP (one call per token; PPL 27.7429 / 19.7584 vs
         llama.cpp 27.7412 / 19.7283; Qwen 10.5 ms a token, 81 tok/s, vs llama.cpp NPU 74),
-        PPL against llama.cpp. Open: the products reach ~36 of 46 GB/s (DMA into VTCM).
-        (A request queue as `dspqueue` was not needed: one FastRPC call per token is ~150 µs.)
+        PPL against llama.cpp. (A request queue as `dspqueue` was not needed: one FastRPC call
+        per token is ~150 µs.)
+  - [x] Step 4b, weights by DMA into VTCM (products ~36 → ~60 GB/s; Qwen 6.75 ms a token,
+        123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
   - [ ] Step 5, prefill on HMX (the matrix unit; fp16 tiles in VTCM), PPL again.
 
 ---

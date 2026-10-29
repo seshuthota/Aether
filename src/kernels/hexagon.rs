@@ -241,9 +241,9 @@ impl Dsp {
 
     /// out = W x on `threads` DSP threads, x already quantized to Q8_0;
     /// `xbuf` from [`Dsp::q8_0_vector`], `out` at least `rows` rounded up
-    /// to 32 floats. With `prefetch`, each DSP thread prefetches its next
-    /// rows into the L2. Returns the DSP's own time in microseconds.
-    pub fn q4_0_gemv(&self, w: &DspMatQ4_0, x: &[BlockQ8_0], xbuf: &mut Shared, out: &mut Shared, threads: u32, prefetch: bool) -> Result<u64> {
+    /// to 32 floats. `fetch`: how each DSP thread gets its next rows
+    /// ([`Fetch`]). Returns the DSP's own time in microseconds.
+    pub fn q4_0_gemv(&self, w: &DspMatQ4_0, x: &[BlockQ8_0], xbuf: &mut Shared, out: &mut Shared, threads: u32, fetch: Fetch) -> Result<u64> {
         let nb = w.nb;
         assert!(x.len() == nb && xbuf.len >= 40 * nb && out.len >= 4 * w.rows.div_ceil(32) * 32);
         // The int8 values, then the scales, then each block's sum.
@@ -257,7 +257,7 @@ impl Dsp {
             xb[36 * nb + 4 * i..][..4].copy_from_slice(&sum.to_le_bytes());
         }
         let mut t = [0u8; 8];
-        self.call(Q4_0_GEMV, &[&words(&[w.buf.fd as u32, xbuf.fd as u32, out.fd as u32, w.rows as u32, nb as u32, threads, prefetch as u32])], &mut [&mut t])?;
+        self.call(Q4_0_GEMV, &[&words(&[w.buf.fd as u32, xbuf.fd as u32, out.fd as u32, w.rows as u32, nb as u32, threads, fetch as u32])], &mut [&mut t])?;
         Ok(u64::from_le_bytes(t))
     }
 
@@ -269,9 +269,12 @@ impl Dsp {
 
     /// One decode step of the loaded model at `pos` on `threads` DSP
     /// threads: the greedy next token and the DSP's time in microseconds.
-    pub fn model_decode(&self, pos: u32, threads: u32) -> Result<(u32, u64)> {
+    /// Bit k of `dma`: product k (q/k/v, wo, gate/up, down, classifier)
+    /// fetches its weights by DMA into VTCM ([`Fetch::Dma`]), else by
+    /// `l2fetch`.
+    pub fn model_decode(&self, pos: u32, threads: u32, dma: u32) -> Result<(u32, u64)> {
         let mut out = [0u8; 16];
-        self.call(MODEL_DECODE, &[&words(&[pos, threads])], &mut [&mut out])?;
+        self.call(MODEL_DECODE, &[&words(&[pos, threads, dma])], &mut [&mut out])?;
         Ok((u32::from_le_bytes(out[..4].try_into().unwrap()), u64::from_le_bytes(out[8..].try_into().unwrap())))
     }
 
@@ -341,6 +344,18 @@ impl DspMatQ4_0 {
     pub fn bytes(&self) -> usize {
         self.rows.div_ceil(32) * self.nb * 640
     }
+}
+
+/// How the DSP's matrix product gets its weights from DRAM (dsp/dsp.h).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fetch {
+    /// Plain vector loads.
+    None = 0,
+    /// `l2fetch` of the next two row groups into the L2 while two are
+    /// computed.
+    L2 = 1,
+    /// DMA of the next two row groups into the thread's slot in VTCM.
+    Dma = 2,
 }
 
 /// A buffer the CPU and the DSP share ([`Dsp::shared`]).
@@ -487,11 +502,11 @@ mod tests {
             let w = d.q4_0_matrix(&blocks, ws[0]).unwrap();
             let mut xbuf = d.q8_0_vector(w.nb).unwrap();
             let mut out = d.shared(4 * ws[0].div_ceil(32) * 32).unwrap();
-            for (threads, prefetch) in [(1, false), (5, false), (5, true)] {
+            for (threads, fetch) in [(1, Fetch::None), (5, Fetch::None), (5, Fetch::L2), (1, Fetch::Dma), (6, Fetch::Dma)] {
                 out.as_mut_slice::<f32>().fill(f32::NAN);
-                d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, threads, prefetch).unwrap();
+                d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, threads, fetch).unwrap();
                 let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..ws[0]], &want);
-                assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} on {threads} threads (prefetch {prefetch}): rel {rel:.2e}", dir.display());
+                assert!(rel < 1e-6 * (ws[1] as f32).sqrt().max(4.0), "{} on {threads} threads ({fetch:?}): rel {rel:.2e}", dir.display());
             }
         }
         assert!(cases >= 12, "only {cases} golden cases");

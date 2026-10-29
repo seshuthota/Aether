@@ -3,14 +3,18 @@
 //! DSP's own (thread start to join), so the ~146 us call overhead is not in
 //! them; the weights are random blocks.
 //!
-//!     cargo run --release --target aarch64-linux-android --features hexagon --example dsp_gemv [prefetch]
+//!     cargo run --release --target aarch64-linux-android --features hexagon --example dsp_gemv [l2|dma]
 
-use aether::kernels::hexagon::Dsp;
+use aether::kernels::hexagon::{Dsp, Fetch};
 use aether::quant::{BlockQ4_0, BlockQ8_0};
 
 fn main() {
-    let prefetch = std::env::args().any(|a| a == "prefetch");
-    println!("l2fetch: {prefetch}");
+    let fetch = match std::env::args().nth(1).as_deref() {
+        Some("l2") => Fetch::L2,
+        Some("dma") => Fetch::Dma,
+        _ => Fetch::None,
+    };
+    println!("fetch: {fetch:?}");
     let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     let d = Dsp::open(&dir).unwrap_or_else(|e| panic!("{e}"));
     let mut seed = 1u64;
@@ -38,8 +42,8 @@ fn main() {
         print!("{name:>10} {:>12.1}", w.bytes() as f64 / 1e6);
         let mut best = f64::MAX;
         for (i, &t) in threads.iter().enumerate() {
-            d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, t, prefetch).unwrap();
-            let mut us: Vec<u64> = (0..15).map(|_| d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, t, prefetch).unwrap()).collect();
+            d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, t, fetch).unwrap();
+            let mut us: Vec<u64> = (0..15).map(|_| d.q4_0_gemv(&w, &x, &mut xbuf, &mut out, t, fetch).unwrap()).collect();
             us.sort();
             let m = us[us.len() / 2] as f64;
             best = best.min(m);

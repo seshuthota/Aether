@@ -79,7 +79,7 @@ flight per thread, split over DSP threads, timed on the DSP; GB/s):
   first chain of 1-D descriptors reported every descriptor done but gave
   timings that do not scale with the bytes moved (four 1 MB descriptors:
   30 ms; 16,384 of 16 KB: 4.4 ms). That is not understood, so no DMA
-  number is reported; it is open for step 3 or later.
+  number is reported. (Step 4b: DMA into VTCM in the products, ~60 GB/s.)
 
 ## Step 3: a Q4_0 matrix-vector product on HVX (2026-10-29; `raw/dsp-gemv-v*.txt`)
 
@@ -217,3 +217,74 @@ threads so they do not compete.
 
 Attention grows with position: over the perplexity run (positions 0–510)
 the DSP does 63 tok/s on Qwen, against 81 at positions 0–63.
+
+## Step 4b: the weights by DMA into VTCM (2026-10-30; `raw/dsp-gemv-v4-*.txt`, `raw/dsp-ppl-v4-*.txt`, `raw/dsp-decode-dma-threads.txt`)
+
+Step 4's products read the weights from DRAM through the L2 with
+`l2fetch`, at ~36 GB/s. Now each DSP thread has two slots in VTCM (the
+DSP's 8 MB of on-chip memory). The DMA engine copies the thread's next
+pair of row groups (2 × 32 rows, all their blocks) into one slot while
+the vector unit computes on the pair in the other. The copies bypass the
+L2. `Fetch::Dma` in `Dsp::q4_0_gemv`; per product in the model (bit k of
+`DspModel::dma`, all five by default).
+
+**How the DMA engine is driven**: a 16-byte descriptor (source,
+destination, size, a `done` bit the engine sets). Every hardware thread
+has its own queue: `dmstart` begins a chain, `dmlink` appends to its
+tail, and the thread polls `done` (with `dmpoll`). The descriptor layout
+for v79 and the use of `dmlink` follow llama.cpp's backend (the SDK's
+header is older). Each thread keeps a ring of 64 descriptors, so none is
+rewritten while the engine may still read it.
+
+**The bug that hid this in step 2**: VTCM is asked for with
+`HAP_compute_res_acquire`. When all the worker threads asked at once,
+one got it and the others waited inside the call for ever: the call
+never returned. A probe (each thread writing where it was into shared
+memory, flushed, read by the CPU while the call hung) showed five of six
+threads inside the acquire and the sixth at the barrier after its rows.
+A matrix test whose first call used 1 thread never raced, which is why it
+worked there. Now VTCM is asked for once, by the thread FastRPC calls in
+on, before the workers start (`model_load`, and `q4_0_gemv` with DMA).
+Step 2's odd DMA timings (a single thread, no race) remain unexplained;
+that test was not rerun.
+
+**Correct**: `dsp_q4_0_gemv_matches_reference` runs the DMA path too (1
+and 6 threads; 108/108 tests on the phone). Perplexity is unchanged to
+the last digit, 27.7429 and 19.7584: only how the bytes arrive changed.
+
+**Matrix products** (Qwen2.5-0.5B's shapes, random weights, DSP time,
+best of 1–6 threads):
+
+| matrix | MB | l2fetch | DMA | GB/s, l2fetch → DMA |
+| --- | --- | --- | --- | --- |
+| q/k/v | 0.6 | 21 µs | 21 µs | 31 → 31 |
+| wo | 0.5 | 18 | 24 | 28 → 21 |
+| gate/up | 5.4 | 180 | 100 | 30 → 55 |
+| down | 2.7 | 105 | 63 | 26 → 43 |
+| classifier | 85.1 | 2073 | 1311 | 41 → 65 |
+| per token | | 11.0 ms | 6.5 ms | |
+
+65 GB/s is the DRAM speed the CPU and GPU reach (~66 GB/s). The small
+matrices are thread start and join in this test (the model starts its
+threads once per token).
+
+**Decode** (6 threads, DSP time per token at positions 0–63):
+
+| | l2fetch | DMA |
+| --- | --- | --- |
+| Qwen2.5-0.5B | 10.44 ms (81 tok/s) | **6.75 ms (123 tok/s)** |
+| SmolLM2-135M | 3.95 ms (198 tok/s) | **2.76 ms (271 tok/s)** |
+
+On Qwen the five products now take 5.1 ms for ~306 MB, ~60 GB/s:
+gate/up 2.09 ms, classifier 1.35, down 1.13, q/k/v 0.28, wo 0.23. Thread
+count (`raw/dsp-decode-dma-threads.txt`): 2 threads 8.30 ms, 3 7.53,
+4 7.12, 5 6.93, 6 6.79.
+
+Against the others on Qwen decode: llama.cpp's NPU backend 13.5 ms (74
+tok/s), our GPU ~10 ms, our CPU ~5.2 ms (192 tok/s). The DSP's ~1.7 ms
+left over beyond the products is the norms, RoPE, attention and SwiGLU
+(~1.5 ms) and 9 barriers per layer.
+
+Over the perplexity run (positions 0–510) Qwen does 72 tok/s: attention
+grows with position. Next for decode: attention over the whole cache in
+vectors of positions, not one reduction per position.
