@@ -274,7 +274,16 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **Measurement: bimodal timed runs** (2026-10-29): explained — the prime cores' clock cap
       drops 1.69 → 1.02 GHz partway through some runs (results/phase-6.md, "Night of").
       `prefill-ab.sh` now records the lowest caps seen during each run ("# lowest clock caps").
-- [ ] **L.2 Importance matrices / our own K-quant quantizer** (only if a model needs it).
+- [x] **L.2 Importance matrices / our own K-quant quantizer** (2026-10-29, host only, on
+      branch gpu-pending; results/phase-6.md "Importance matrices"): our own Q4_K / Q6_K
+      quantizers and imatrix-weighted Q4_0 / Q5_0 / Q4_K / Q6_K, byte-identical to ggml-base's
+      (`imatrix_quantizers_are_byte_identical_to_llama_cpp`); llama-imatrix files read
+      (`format::imatrix`), `aether -q q4_0|q5_0 --imatrix FILE` byte-identical to
+      `llama-quantize --pure --imatrix`, and every tensor of its imatrix Q4_K_M re-quantized to
+      the same bytes; our own imatrix (`Imatrix::collect`) within 1.7e-3 of llama-imatrix's.
+      PPL / KLD match llama-perplexity; the imatrix cuts KLD 11–33 % at the same size.
+      Not done: writing imatrix files, and choosing a Q4_K_M mix ourselves (`-q` stays
+      `--pure`). Phone test run pending with the rest of gpu-pending.
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.

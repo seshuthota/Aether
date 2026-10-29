@@ -16,6 +16,11 @@
 #                  --pure`) plus llama.cpp's usual Q4_K_M mix, for SmolLM2-135M
 #                  and Qwen2.5 (Phases 6-7)
 #   wikitext       testdata/wikitext/wikitext-2-raw/wiki.test.raw (perplexity)
+#   imatrix        hostdata/imatrix/ (host-only, ~1.3 GB; needs gguf and
+#                  wikitext): llama-imatrix importance matrices on the second
+#                  half of wiki.test.raw (perplexity scores the first chunks),
+#                  and llama-quantize --imatrix output (--pure Q4_0 / Q5_0,
+#                  Q4_K_M) for SmolLM2-135M and Qwen2.5 (L.2)
 #
 # Needs: curl, unzip; for gguf also tools/.venv (tools/requirements.txt) and a
 # host build of llama.cpp (LLAMA_CPP, default ~/llama.cpp, tools in build/bin;
@@ -90,6 +95,33 @@ wikitext() {
   rm testdata/wikitext/wikitext-2-raw-v1.zip
 }
 
+# imatrix_of NAME: NAME.imatrix.gguf (100 chunks of 512),
+# NAME-10.imatrix.gguf (10 chunks, for the collection test) and
+# NAME-{q4_0,q5_0,q4_k_m}-im.gguf.
+imatrix_of() {
+  local m=$1 d=hostdata/imatrix f32=hostdata/gguf/$1-f32.gguf
+  mkdir -p $d
+  if [ ! -f $d/calib.txt ]; then
+    local w=testdata/wikitext/wikitext-2-raw/wiki.test.raw
+    tail -n +$(( $(wc -l < $w) / 2 )) $w > $d/calib.txt
+  fi
+  for n in 100 10; do
+    local out=$d/$m.imatrix.gguf
+    [ $n = 10 ] && out=$d/$m-10.imatrix.gguf
+    [ -f $out ] || { echo "imatrix $out"; "$LLAMA_BIN/llama-imatrix" -m $f32 -f $d/calib.txt -o $out --chunks $n -c 512 > $out.log 2>&1; }
+  done
+  for q in q4_0 q5_0; do
+    local out=$d/$m-$q-im.gguf
+    [ -f $out ] || { echo "quantize $out"; "$LLAMA_BIN/llama-quantize" --pure --imatrix $d/$m.imatrix.gguf $f32 $out "${q^^}" > $out.log 2>&1; }
+  done
+  local out=$d/$m-q4_k_m-im.gguf
+  [ -f $out ] || { echo "quantize $out"; "$LLAMA_BIN/llama-quantize" --imatrix $d/$m.imatrix.gguf $f32 $out Q4_K_M > $out.log 2>&1; }
+}
+imatrix() {
+  imatrix_of smollm2-135m
+  imatrix_of qwen2.5-0.5b
+}
+
 case "${1:-all}" in
   stories15m) stories15m ;;
   smollm2-135m) smollm2_135m ;;
@@ -97,6 +129,7 @@ case "${1:-all}" in
   qwen2.5) qwen25 ;;
   gguf) gguf ;;
   wikitext) wikitext ;;
+  imatrix) imatrix ;;
   all) stories15m; smollm2_135m; smollm2_360m; qwen25; gguf; wikitext ;;
-  *) sed -n 2,20p "$0"; exit 1 ;;
+  *) sed -n 2,25p "$0"; exit 1 ;;
 esac

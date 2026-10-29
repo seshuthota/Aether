@@ -1,0 +1,219 @@
+common_init_result: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on
+llama_params_fit_impl: no devices with dedicated memory found
+llama_params_fit: successfully fit params to free device memory
+llama_params_fit: fitting params to free memory took 0.07 seconds
+llama_model_loader: loaded meta data with 29 key-value pairs and 272 tensors from testdata/gguf/smollm2-135m-q4_k_m.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.type str              = model
+llama_model_loader: - kv   2:                               general.name str              = SmolLM2 135M
+llama_model_loader: - kv   3:                           general.basename str              = SmolLM2
+llama_model_loader: - kv   4:                         general.size_label str              = 135M
+llama_model_loader: - kv   5:                          llama.block_count u32              = 30
+llama_model_loader: - kv   6:                       llama.context_length u32              = 8192
+llama_model_loader: - kv   7:                     llama.embedding_length u32              = 576
+llama_model_loader: - kv   8:                  llama.feed_forward_length u32              = 1536
+llama_model_loader: - kv   9:                 llama.attention.head_count u32              = 9
+llama_model_loader: - kv  10:              llama.attention.head_count_kv u32              = 3
+llama_model_loader: - kv  11:                       llama.rope.freq_base f32              = 100000.000000
+llama_model_loader: - kv  12:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - kv  13:                 llama.attention.key_length u32              = 64
+llama_model_loader: - kv  14:               llama.attention.value_length u32              = 64
+llama_model_loader: - kv  15:                           llama.vocab_size u32              = 49152
+llama_model_loader: - kv  16:                 llama.rope.dimension_count u32              = 64
+llama_model_loader: - kv  17:                       tokenizer.ggml.model str              = gpt2
+llama_model_loader: - kv  18:                         tokenizer.ggml.pre str              = smollm
+llama_model_loader: - kv  19:                      tokenizer.ggml.tokens arr[str,49152]   = ["<|endoftext|>", "<|im_start|>", "<|...
+llama_model_loader: - kv  20:                  tokenizer.ggml.token_type arr[i32,49152]   = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, ...
+llama_model_loader: - kv  21:                      tokenizer.ggml.merges arr[str,48900]   = ["Ġ t", "Ġ a", "i n", "h e", "Ġ Ġ...
+llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 0
+llama_model_loader: - kv  23:                tokenizer.ggml.eos_token_id u32              = 0
+llama_model_loader: - kv  24:            tokenizer.ggml.unknown_token_id u32              = 0
+llama_model_loader: - kv  25:            tokenizer.ggml.add_space_prefix bool             = false
+llama_model_loader: - kv  26:               tokenizer.ggml.add_bos_token bool             = false
+llama_model_loader: - kv  27:               general.quantization_version u32              = 2
+llama_model_loader: - kv  28:                          general.file_type u32              = 15
+llama_model_loader: - type  f32:   61 tensors
+llama_model_loader: - type q5_0:  166 tensors
+llama_model_loader: - type q8_0:   15 tensors
+llama_model_loader: - type q4_K:   16 tensors
+llama_model_loader: - type q6_K:   14 tensors
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = Q4_K - Medium
+print_info: file size   = 98.87 MiB (6.17 BPW) 
+load: 0 unused tokens
+load: printing all EOG tokens:
+load:   - 0 ('<|endoftext|>')
+load:   - 2 ('<|im_end|>')
+load:   - 4 ('<reponame>')
+load: special tokens cache size = 17
+load: token to piece cache size = 0.3170 MB
+print_info: arch                  = llama
+print_info: vocab_only            = 0
+print_info: no_alloc              = 0
+print_info: n_ctx_train           = 8192
+print_info: n_embd                = 576
+print_info: n_embd_inp            = 576
+print_info: n_layer               = 30
+print_info: n_head                = 9
+print_info: n_head_kv             = 3
+print_info: n_rot                 = 64
+print_info: n_swa                 = 0
+print_info: is_swa_any            = 0
+print_info: n_embd_head_k         = 64
+print_info: n_embd_head_v         = 64
+print_info: n_gqa                 = 3
+print_info: n_embd_k_gqa          = 192
+print_info: n_embd_v_gqa          = 192
+print_info: f_norm_eps            = 0.0e+00
+print_info: f_norm_rms_eps        = 1.0e-05
+print_info: f_clamp_kqv           = 0.0e+00
+print_info: f_max_alibi_bias      = 0.0e+00
+print_info: f_logit_scale         = 0.0e+00
+print_info: f_attn_scale          = 0.0e+00
+print_info: n_ff                  = 1536
+print_info: n_expert              = 0
+print_info: n_expert_used         = 0
+print_info: n_expert_groups       = 0
+print_info: n_group_used          = 0
+print_info: causal attn           = 1
+print_info: pooling type          = -1
+print_info: rope type             = 0
+print_info: rope scaling          = linear
+print_info: freq_base_train       = 100000.0
+print_info: freq_scale_train      = 1
+print_info: n_ctx_orig_yarn       = 8192
+print_info: rope_yarn_log_mul     = 0.0000
+print_info: rope_finetuned        = unknown
+print_info: model type            = 256M
+print_info: model params          = 134.52 M
+print_info: general.name          = SmolLM2 135M
+print_info: vocab type            = BPE
+print_info: n_vocab               = 49152
+print_info: n_merges              = 48900
+print_info: BOS token             = 0 '<|endoftext|>'
+print_info: EOS token             = 0 '<|endoftext|>'
+print_info: EOT token             = 0 '<|endoftext|>'
+print_info: UNK token             = 0 '<|endoftext|>'
+print_info: LF token              = 198 'Ċ'
+print_info: FIM REP token         = 4 '<reponame>'
+print_info: EOG token             = 0 '<|endoftext|>'
+print_info: EOG token             = 2 '<|im_end|>'
+print_info: EOG token             = 4 '<reponame>'
+print_info: max token length      = 162
+load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+load_tensors: done_getting_tensors complete
+load_tensors: init_mappings complete (1 mappings)
+load_tensors: preparing backend buffers for 2 contexts
+load_tensors: buffer_from_host_ptr path buft=CPU
+load_tensors: allocating ctx tensors buft=CPU_REPACK
+load_tensors: allocated ctx tensors buft=CPU_REPACK size=7.59 MiB
+load_tensors: backend buffer preparation complete
+load_tensors:   CPU_Mapped model buffer size =    98.87 MiB
+load_tensors:   CPU_REPACK model buffer size =     7.59 MiB
+........................................................................
+common_init_result: added <|endoftext|> logit bias = -inf
+common_init_result: added <|im_end|> logit bias = -inf
+common_init_result: added <reponame> logit bias = -inf
+llama_context: constructing llama_context
+llama_context: n_seq_max     = 4
+llama_context: n_ctx         = 2048
+llama_context: n_ctx_seq     = 512
+llama_context: n_batch       = 2048
+llama_context: n_ubatch      = 512
+llama_context: causal_attn   = 1
+llama_context: flash_attn    = auto
+llama_context: kv_unified    = false
+llama_context: freq_base     = 100000.0
+llama_context: freq_scale    = 1
+llama_context: n_ctx_seq (512) < n_ctx_train (8192) -- the full capacity of the model will not be utilized
+llama_context:        CPU  output buffer size =     0.75 MiB
+llama_kv_cache:        CPU KV buffer size =    45.00 MiB
+llama_kv_cache: size =   45.00 MiB (   512 cells,  30 layers,  4/4 seqs), K (f16):   22.50 MiB, V (f16):   22.50 MiB
+llama_kv_cache: attn_rot_k = 0
+llama_kv_cache: attn_rot_v = 0
+sched_reserve: reserving ...
+sched_reserve: Flash Attention was auto, set to enabled
+sched_reserve: resolving fused Gated Delta Net support:
+sched_reserve: fused Gated Delta Net (autoregressive) enabled
+sched_reserve: fused Gated Delta Net (chunked) enabled
+sched_reserve:        CPU compute buffer size =   103.14 MiB
+sched_reserve: graph nodes  = 997
+sched_reserve: graph splits = 1
+sched_reserve: reserve took 1.86 ms, sched copies = 1
+common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+
+system_info: n_threads = 16 (n_threads_batch = 16) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+kl_divergence: computing over 20 chunks, n_ctx=512, batch_size=2048, n_seq=4
+kl_divergence: 2.19 seconds per pass - ETA 0.17 minutes
+
+chunk             PPL               ln(PPL(Q)/PPL(base))          KL Divergence              Δp RMS            Same top p
+   1      10.6855 ±    2.0161       0.05231 ±    0.02435       0.06261 ±    0.01256     8.337 ±  1.893 %    89.412 ±  1.931 %
+   2      16.0161 ±    2.2515       0.04771 ±    0.01784       0.05627 ±    0.00666     6.974 ±  1.170 %    89.216 ±  1.375 %
+   3      16.1449 ±    1.7990       0.05802 ±    0.01410       0.05781 ±    0.00474     6.972 ±  0.810 %    88.889 ±  1.137 %
+   4      16.3101 ±    1.5298       0.04988 ±    0.01226       0.05714 ±    0.00365     6.758 ±  0.641 %    87.745 ±  1.027 %
+   5      16.4751 ±    1.3650       0.05661 ±    0.01045       0.05499 ±    0.00297     6.493 ±  0.544 %    87.765 ±  0.918 %
+   6      16.6036 ±    1.2327       0.05418 ±    0.00930       0.05417 ±    0.00254     6.478 ±  0.486 %    87.255 ±  0.853 %
+   7      17.0249 ±    1.1577       0.05236 ±    0.00851       0.05334 ±    0.00221     6.247 ±  0.435 %    87.563 ±  0.781 %
+   8      17.8228 ±    1.1289       0.05162 ±    0.00790       0.05352 ±    0.00196     6.058 ±  0.394 %    87.010 ±  0.745 %
+   9      19.0675 ±    1.1523       0.05252 ±    0.00741       0.05312 ±    0.00177     6.011 ±  0.366 %    86.972 ±  0.703 %
+  10      19.4366 ±    1.1065       0.05406 ±    0.00704       0.05309 ±    0.00162     5.940 ±  0.336 %    86.549 ±  0.676 %
+  11      19.5324 ±    1.0579       0.05367 ±    0.00661       0.05249 ±    0.00149     5.850 ±  0.312 %    86.488 ±  0.646 %
+  12      19.6796 ±    1.0193       0.05423 ±    0.00631       0.05313 ±    0.00139     5.888 ±  0.290 %    86.275 ±  0.622 %
+  13      19.7015 ±    0.9732       0.05910 ±    0.00610       0.05417 ±    0.00135     6.052 ±  0.277 %    86.124 ±  0.601 %
+  14      20.4152 ±    0.9771       0.05794 ±    0.00587       0.05436 ±    0.00128     5.987 ±  0.262 %    86.134 ±  0.578 %
+  15      20.9186 ±    0.9694       0.05913 ±    0.00571       0.05431 ±    0.00122     5.945 ±  0.249 %    85.935 ±  0.562 %
+  16      21.2529 ±    0.9534       0.05721 ±    0.00552       0.05421 ±    0.00115     5.931 ±  0.237 %    85.784 ±  0.547 %
+  17      20.1615 ±    0.8791       0.05646 ±    0.00532       0.05311 ±    0.00110     5.884 ±  0.225 %    86.090 ±  0.526 %
+  18      20.4232 ±    0.8732       0.05697 ±    0.00519       0.05315 ±    0.00105     5.876 ±  0.215 %    86.122 ±  0.510 %
+  19      20.7358 ±    0.8652       0.05527 ±    0.00504       0.05299 ±    0.00101     5.838 ±  0.206 %    86.006 ±  0.498 %
+  20      20.7784 ±    0.8512       0.05542 ±    0.00492       0.05332 ±    0.00098     5.884 ±  0.198 %    86.137 ±  0.484 %
+
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  20.778441 ±   0.851191
+Mean PPL(base)                :  19.658241 ±   0.811051
+Cor(ln(PPL(Q)), ln(PPL(base))):  99.29%
+Mean ln(PPL(Q)/PPL(base))     :   0.055419 ±   0.004919
+Mean PPL(Q)/PPL(base)         :   1.056984 ±   0.005199
+Mean PPL(Q)-PPL(base)         :   1.120200 ±   0.107051
+
+====== KL divergence statistics ======
+Mean    KLD:   0.053319 ±   0.000979
+Maximum KLD:   2.848138
+99.9%   KLD:   0.727111
+99.0%   KLD:   0.277485
+95.0%   KLD:   0.135260
+90.0%   KLD:   0.101580
+Median  KLD:   0.040305
+10.0%   KLD:   0.008332
+ 5.0%   KLD:   0.003239
+ 1.0%   KLD:   0.000318
+ 0.1%   KLD:   0.000044
+Minimum KLD:   0.000008
+
+====== Token probability statistics ======
+Mean    Δp: -1.310 ± 0.080 %
+Maximum Δp: 47.803%
+99.9%   Δp: 28.475%
+99.0%   Δp: 12.296%
+95.0%   Δp:  5.640%
+90.0%   Δp:  2.639%
+75.0%   Δp:  0.170%
+Median  Δp: -0.098%
+25.0%   Δp: -2.291%
+10.0%   Δp: -7.120%
+ 5.0%   Δp: -10.896%
+ 1.0%   Δp: -21.497%
+ 0.1%   Δp: -41.362%
+Minimum Δp: -86.638%
+RMS Δp    :  5.884 ± 0.198 %
+Same top p: 86.137 ± 0.484 %
+
+llama_perf_context_print:        load time =     131.81 ms
+llama_perf_context_print: prompt eval time =   10344.18 ms / 10240 tokens (    1.01 ms per token,   989.93 tokens per second)
+llama_perf_context_print:        eval time =       0.00 ms /     1 runs   (    0.00 ms per token,      inf tokens per second)
+llama_perf_context_print:       total time =   12929.93 ms / 10241 tokens
+llama_perf_context_print:    graphs reused =         10
+llama_memory_breakdown_print: | memory breakdown [MiB] | total   free    self   model   context   compute    unaccounted |
+llama_memory_breakdown_print: |   - Host               |                  247 =    98 +      45 +     103                |
+llama_memory_breakdown_print: |   - CPU_REPACK         |                    7 =     7 +       0 +       0                |

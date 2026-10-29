@@ -1042,3 +1042,75 @@ both runs start equally cool.
 The greedy texts of draft runs differ from plain greedy where the
 batched-path logits fork (see "Prompt lookup decoding"); within a target
 format, all draft K give one text (same md5).
+
+## Importance matrices (L.2, 2026-10-29; `raw/imatrix/`, host only)
+
+**What it is.** Rounding a block of 32 weights to 4 bits always loses
+something; the question is *where*. The plain quantizers (`--pure` without
+`--imatrix`) pick each block's scale from its largest weight alone. An
+importance matrix tells them which columns matter: for every matrix, the mean
+of x² per input column over a calibration text, where x is the activation
+that the matrix multiplies (`llama-imatrix`). The searching quantizers
+(`quant::quantize_q4_0_row` and friends, ports of llama.cpp's `make_qx_quants`
+/ `make_qkx3_quants` / `make_qp_quants`) then try several scales per block
+and keep the one with the smallest error weighted by that importance. The
+file is the same size; only the choice of rounding changes.
+
+**Setup.** `tools/fetch_models.sh imatrix`: `llama-imatrix` (`d00685831`,
+host CPU) on the second half of `wiki.test.raw`, 100 chunks of 512 tokens;
+perplexity scores the first 20 chunks, so calibration and test text do not
+overlap. llama.cpp's files: `llama-quantize --imatrix` (`--pure` Q4_0 / Q5_0,
+and the usual Q4_K_M mix). Ours: `aether HF_DIR -q q4_0|q5_0 --imatrix FILE
+--ppl wiki.test.raw --chunks 20 --kl` (quantized in memory at load); for
+Q4_K_M, which we cannot pick per tensor ourselves, llama.cpp's file read by
+our engine. Same procedure as the tables above; KL against each engine's own
+f32 logits (ours 19.6715 / 16.2745, llama.cpp 19.6582 / 16.2299).
+
+**Correctness first** (`format::imatrix::tests`, host):
+
+- Our `-q q4_0|q5_0 --imatrix` writes exactly llama-quantize's bytes, every
+  matrix of both models; every layer matrix differs from the plain
+  conversion (the embedding has no imatrix entry and is the same).
+- Every tensor of llama-quantize's imatrix Q4_K_M (SmolLM2: 16 Q4_K, 14 Q6_K,
+  166 Q5_0, 15 Q8_0; Qwen: 12, 12, 132, 13) re-quantized by our quantizers
+  from the f32 GGUF with the same entry: the same bytes.
+- Our own imatrix (`Imatrix::collect`, an `Observer` on the matrix inputs)
+  against `llama-imatrix --chunks 10` on SmolLM2-135M: median relative
+  difference 2.4e-5, 99th percentile 2.7e-4, largest 1.7e-3 (a `ffn_down`
+  column one large activation dominates), no bias. llama.cpp sums in f32 in
+  another order, so this is agreement, not identity.
+
+**Accuracy** (wikitext-2, 20 × 512):
+
+| Model, format | PPL ours | PPL llama.cpp | Mean KLD ours | Mean KLD llama.cpp | Same top ours / llama.cpp |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2-135M Q4_0 | 27.7150 | 27.7412 ± 1.177 | 0.335544 | 0.335355 ± 0.004256 | 64.71 % / 64.77 ± 0.67 % |
+| SmolLM2-135M Q4_0 + imatrix | 25.8604 | 25.8345 ± 1.093 | 0.269287 | 0.269190 ± 0.003723 | 68.61 % / 69.00 ± 0.65 % |
+| SmolLM2-135M Q5_0 | 21.5970 | 21.6071 ± 0.902 | 0.087258 | 0.087117 ± 0.001080 | 81.69 % / 81.67 ± 0.54 % |
+| SmolLM2-135M Q5_0 + imatrix | 21.0388 | 20.9951 ± 0.873 | 0.065694 | 0.065063 ± 0.000866 | 83.69 % / 83.61 ± 0.52 % |
+| SmolLM2-135M Q4_K_M | 20.7201 ¹ | 20.7784 ± 0.851 | 0.051455 ¹ | 0.053319 ± 0.000979 | 85.86 % / 86.14 ± 0.48 % |
+| SmolLM2-135M Q4_K_M + imatrix | 20.3799 | 20.4365 ± 0.842 | 0.034498 | 0.035912 ± 0.000582 | 88.82 % / 88.49 ± 0.45 % |
+| Qwen2.5-0.5B Q4_0 | 19.7441 ² | 19.7283 ± 0.836 | 0.180924 ² | 0.181010 ± 0.002752 | 77.18 % / 76.98 ± 0.59 % |
+| Qwen2.5-0.5B Q4_0 + imatrix | 19.3080 | 19.2975 ± 0.810 | 0.160706 | 0.160990 ± 0.002563 | 77.86 % / 77.65 ± 0.58 % |
+| Qwen2.5-0.5B Q5_0 + imatrix | 16.8326 | 16.8576 ± 0.696 | 0.038088 | 0.037799 ± 0.000810 | 88.61 % / 88.84 ± 0.44 % |
+| Qwen2.5-0.5B Q4_K_M | 16.7088 ¹ | 16.7657 ± 0.688 | 0.031828 ¹ | 0.033112 ± 0.000638 | 90.43 % / 90.10 ± 0.42 % |
+| Qwen2.5-0.5B Q4_K_M + imatrix | 16.6217 | 16.6112 ± 0.684 | 0.023360 | 0.024539 ± 0.000526 | 91.45 % / 91.00 ± 0.40 % |
+
+¹ On the phone, from the Q4_K_M section above. ² `results/phase-7.md`. No
+plain Q5_0 file was made for Qwen.
+
+Every pair agrees within llama.cpp's error bars (Q4_K_M KLD again a little
+lower for us, for the activation-rounding reason given in the Q4_K_M
+section). What the imatrix buys, by KLD to f32:
+
+- **SmolLM2-135M**: Q4_0 −20 %, Q5_0 −25 %, Q4_K_M −33 %; Q4_0's perplexity
+  penalty over f32 drops from +41 % to +31 %.
+- **Qwen2.5-0.5B**: Q4_0 −11 %, Q4_K_M −27 %; Q4_K_M + imatrix is within
+  +2.1 % perplexity of f32.
+
+The smaller model gains more, as it lost more to begin with. The cost is
+calibration (`llama-imatrix`, 43 s for SmolLM2-135M and 2 min for
+Qwen2.5-0.5B on the host for 51,200 tokens) and slower quantizing (each
+block tries ~20 scales); the files, the kernels and the decode speed are
+unchanged, since the bytes have the same layout. Not run on the phone (the
+phone check of gpu-pending is on hold); nothing here is phone-specific.
