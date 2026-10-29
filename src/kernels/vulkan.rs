@@ -622,26 +622,30 @@ impl Gpu {
         assert!(x.size >= w.nb * 32 * 4 && out.size >= w.rows * 4);
         let push: Vec<u8> = [w.rows as u32, w.nb as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
         // 128 lanes = 4 groups of 32, each R = 4 · spec[0] rows.
-        self.run(kernel, &[&w.qs, &w.d, x, out], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
+        // Binding 4 (the norm's weights) is unused without NORM.
+        self.run(kernel, &[&w.qs, &w.d, x, out, x], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
     }
 
     /// The shader for `rows_per_32` rows per 32 lanes, a multiple of 4 (see
     /// the shader; 8 is fastest for big matrices, 4 for small ones). It
     /// adds partial sums across 32 subgroup lanes by shuffles.
     pub fn q4_0_gemv_kernel(&self, rows_per_32: u32) -> Result<Kernel> {
-        self.q4_0_gemv_kernel_fused(rows_per_32, false, false)
+        self.q4_0_gemv_kernel_fused(rows_per_32, false, false, false)
     }
 
     /// [`Gpu::q4_0_gemv_kernel`] that, with `accum`, adds the product to
     /// `out` (`out += W x`: the residual add fused in) and, with `glu`,
     /// reads x as gate then up (twice the columns) and multiplies by
-    /// silu(gate) · up (the SwiGLU fused in).
-    pub fn q4_0_gemv_kernel_fused(&self, rows_per_32: u32, accum: bool, glu: bool) -> Result<Kernel> {
+    /// silu(gate) · up (the SwiGLU fused in), and with `norm`, RMS-normalizes
+    /// x first with the weights in binding 4 and the epsilon pushed after
+    /// rows and nb (the RMS norm fused in).
+    pub fn q4_0_gemv_kernel_fused(&self, rows_per_32: u32, accum: bool, glu: bool, norm: bool) -> Result<Kernel> {
+        assert!(!(glu && norm), "a GLU input is not normalized");
         assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
         if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
             return Err(format!("q4_0_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
         }
-        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 4, 8, &[rows_per_32 / 4, accum.into(), glu.into()])
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 5, 12, &[rows_per_32 / 4, accum.into(), glu.into(), norm.into()])
     }
 }
 

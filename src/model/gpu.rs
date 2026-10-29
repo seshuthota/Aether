@@ -124,7 +124,10 @@ pub struct GpuModel {
     pub spin: bool,
     bound: Vec<Bl>,
     fnorm: Bound,
+    /// The classifier in decode (the final norm fused in), and after a
+    /// batch (reading the last token's row, normalized by `fnorm`).
     fcls: Bound,
+    fcls_b: Bound,
     fcls_mm: Option<Bound>,
     // Everything the recorded commands use must outlive them; held here.
     _keep: Vec<Buffer>,
@@ -222,33 +225,34 @@ impl GpuModel {
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
         let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
-        // wo adds its product to the residual stream x; down does too, and
-        // reads gate and up, applying the SwiGLU as it loads them.
-        let wo_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, false)?;
-        let down_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, true)?;
-        let gemvs = [4, 8, 16].map(|r| gpu.q4_0_gemv_kernel(r));
-        let gemvs: Vec<Kernel> = gemvs.into_iter().collect::<Result<_>>()?;
-        let gemv_k = |rows: usize| &gemvs[match gemv_r(rows) {
-            4 => 0,
-            8 => 1,
-            _ => 2,
-        }];
+        // In decode, wo adds its product to the residual stream x; down does
+        // too, and reads gate and up, applying the SwiGLU as it loads them;
+        // q/k/v, gate/up and the classifier apply the RMS norm before them
+        // as they load x.
+        let wo_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, false, false)?;
+        let down_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, true, false)?;
+        let rs = [4, 8, 16];
+        let by_r = |r: u32| rs.iter().position(|&x| x == r).unwrap();
+        let gemvs: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel(r)).into_iter().collect::<Result<_>>()?;
+        let normed: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel_fused(r, false, false, true)).into_iter().collect::<Result<_>>()?;
         let (mm, mm_acc, mm_glu) = (gpu.q4_0_gemm_kernel()?, gpu.q4_0_gemm_kernel_fused(true, false)?, gpu.q4_0_gemm_kernel_fused(true, true)?);
 
         // Bind everything first (binding can fail; recording cannot).
-        let gemv_bind = |m: &MatQ4_0, input: &Buffer, out: &Buffer| gemv_k(m.rows).bind(gpu, &[&m.qs, &m.d, input, out]);
+        // The GEMV's binding 4 is the norm's weights, unused (any buffer)
+        // without the norm.
+        let normed_bind = |m: &MatQ4_0, out: &Buffer, w: &Buffer| normed[by_r(gemv_r(m.rows))].bind(gpu, &[&m.qs, &m.d, &x, out, w]);
         let mut bound = Vec::new();
         for ly in &layers {
             bound.push(Bl {
                 norm1: rms.bind(gpu, &[&x, &ly.attn_norm, &xb])?,
-                qkv: gemv_bind(&ly.wqkv, &xb, &qkv)?,
+                qkv: normed_bind(&ly.wqkv, &qkv, &ly.attn_norm)?,
                 post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
                 attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
-                o: wo_k.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x])?,
+                o: wo_k.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x, &x])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
-                gate_up: gemv_bind(&ly.w_gate_up, &xb, &hb12)?,
-                down: down_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x])?,
+                gate_up: normed_bind(&ly.w_gate_up, &hb12, &ly.ffn_norm)?,
+                down: down_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x, &x])?,
                 qkv_mm: mm.bind(gpu, &[&ly.wqkv.qs, &ly.wqkv.d, &xb, &qkv])?,
                 o_mm: mm_acc.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x])?,
                 gate_up_mm: mm.bind(gpu, &[&ly.w_gate_up.qs, &ly.w_gate_up.d, &xb, &hb12])?,
@@ -256,7 +260,8 @@ impl GpuModel {
             });
         }
         let fnorm = rms.bind(gpu, &[&x, &final_norm, &xb])?;
-        let fcls = gemv_bind(&cls, &xb, &logits)?;
+        let fcls = normed_bind(&cls, &logits, &final_norm)?;
+        let fcls_b = gemvs[by_r(gemv_r(cls.rows))].bind(gpu, &[&cls.qs, &cls.d, &xb, &logits, &xb])?;
         let fcls_mm = match &logits_all {
             Some(l) => Some(mm.bind(gpu, &[&cls.qs, &cls.d, &xb, l])?),
             None => None,
@@ -266,6 +271,7 @@ impl GpuModel {
         keep.shrink_to_fit();
         let mut kernels = vec![rms, post, attn, merge, wo_k, down_k, mm, mm_acc, mm_glu];
         kernels.extend(gemvs);
+        kernels.extend(normed);
         let mut m = GpuModel {
             config,
             batch,
@@ -285,6 +291,7 @@ impl GpuModel {
             bound,
             fnorm,
             fcls,
+            fcls_b,
             fcls_mm,
             _keep: keep,
             cls,
@@ -324,17 +331,21 @@ impl GpuModel {
             stages.push(name);
         };
         // A matrix product: GEMV for one token, GEMM for several.
-        let product = |r: &mut Recorder, gemv: &Bound, gemm: &Bound, m: &MatQ4_0| {
+        let gemv = |r: &mut Recorder, k: &Bound, m: &MatQ4_0| r.dispatch(k, &push(&[m.rows as u32, m.nb as u32, eps]), groups_for(m.rows, 4 * gemv_r(m.rows) as usize));
+        let product = |r: &mut Recorder, gemv_b: &Bound, gemm: &Bound, m: &MatQ4_0| {
             if n == 1 {
-                r.dispatch(gemv, &push(&[m.rows as u32, m.nb as u32]), groups_for(m.rows, 4 * gemv_r(m.rows) as usize));
+                gemv(r, gemv_b, m);
             } else {
                 r.dispatch(gemm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
             }
         };
         for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
             let layer_off = (l * c.seq_len * kv_dim) as u32;
-            r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
-            end(r, "rmsnorm");
+            // In decode the norms are part of the products after them.
+            if n > 1 {
+                r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+                end(r, "rmsnorm");
+            }
             product(r, &b.qkv, &b.qkv_mm, &ly.wqkv);
             end(r, "q/k/v");
             r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
@@ -345,8 +356,10 @@ impl GpuModel {
             end(r, "attention merge");
             product(r, &b.o, &b.o_mm, &ly.wo);
             end(r, "wo + add");
-            r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
-            end(r, "rmsnorm");
+            if n > 1 {
+                r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+                end(r, "rmsnorm");
+            }
             product(r, &b.gate_up, &b.gate_up_mm, &ly.w_gate_up);
             end(r, "gate/up");
             product(r, &b.down, &b.down_mm, &ly.w_down);
@@ -359,12 +372,12 @@ impl GpuModel {
                 let m = &self.cls;
                 r.dispatch(cls_mm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
             }
+            None if n == 1 => gemv(r, &self.fcls, &self.cls),
             None => {
                 // Only the last token: its row of x, normalized into row 0.
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, nt - 1]), [1, 1, 1]);
                 end(r, "rmsnorm");
-                let m = &self.cls;
-                r.dispatch(&self.fcls, &push(&[m.rows as u32, m.nb as u32]), groups_for(m.rows, 4 * gemv_r(m.rows) as usize));
+                gemv(r, &self.fcls_b, &self.cls);
             }
         }
         end(r, "classifier");

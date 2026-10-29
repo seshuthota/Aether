@@ -24,22 +24,34 @@
 // Two specialization constants fuse the step's neighbours in: ACCUM adds
 // the product to `o` (the residual stream) instead of storing it, and GLU
 // takes x as gate then up (2 · 32·nb values) and multiplies by
-// silu(gate) · up (silu(g) = g / (1 + e^(−g))) while loading it.
+// silu(gate) · up (silu(g) = g / (1 + e^(−g))) while loading it. NORM
+// applies the RMS norm before the product (the stage before it in a
+// layer): each workgroup sums the squares of x itself (32·nb floats,
+// cached), then loads w ⊙ x / sqrt(mean(x²) + eps), with the norm's
+// weights w in binding 4. Binding 4 is bound even without NORM (any
+// buffer): the five bindings are the same for every variant.
 #extension GL_KHR_shader_subgroup_shuffle : enable
 layout(local_size_x = 128) in;
 layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
 layout(std430, binding = 1) readonly buffer D { uint dh[]; };
 layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
 layout(std430, binding = 3) buffer O { float o[]; };
-layout(push_constant) uniform P { uint rows; uint nb; };
+layout(std430, binding = 4) readonly buffer NW { vec4 nw[]; };
+layout(push_constant) uniform P { uint rows; uint nb; float eps; };
 
 layout(constant_id = 0) const uint RV = 1;
 layout(constant_id = 1) const bool ACCUM = false;
 layout(constant_id = 2) const bool GLU = false;
+layout(constant_id = 3) const bool NORM = false;
 const uint R = 4 * RV;
 
-// x's i-th vec4, through silu(gate) · up with GLU.
+shared float red[128];
+// With NORM: 1 / sqrt(mean(x²) + eps).
+float inv = 1.0;
+
+// x's i-th vec4, through silu(gate) · up with GLU, normalized with NORM.
 vec4 xin(uint i, uint nb) {
+    if (NORM) return nw[i] * (x[i] * inv);
     if (!GLU) return x[i];
     vec4 g = x[i];
     return g / (1.0 + exp(-g)) * x[8 * nb + i];
@@ -50,6 +62,18 @@ vec4 hi(uint w) { return vec4(uvec4(w >> 4, w >> 12, w >> 20, w >> 28) & 15u) - 
 
 void main() {
     uint lane = gl_LocalInvocationID.x & 31;
+    if (NORM) {
+        uint id = gl_LocalInvocationID.x;
+        float s = 0.0;
+        for (uint i = id; i < 8 * nb; i += 128) s += dot(x[i], x[i]);
+        red[id] = s;
+        barrier();
+        for (uint m = 64; m > 0; m >>= 1) {
+            if (id < m) red[id] += red[id + m];
+            barrier();
+        }
+        inv = 1.0 / sqrt(red[0] / float(32 * nb) + eps);
+    }
     // Rows can outnumber what one dimension of workgroups allows.
     uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
     uint row0 = (wg * (gl_WorkGroupSize.x / 32) + gl_LocalInvocationID.x / 32) * R;
