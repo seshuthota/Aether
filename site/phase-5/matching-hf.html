@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Matching Hugging Face · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 5 · 04</p>
+
+<h1>Matching Hugging Face</h1>
+<p class="lede">llama2.c gave Phase 2 one answer to match bit for bit. For SmolLM2 the reference is Hugging Face transformers, which adds numbers in a different order. The engine checks every layer to a tolerance, and the tokens and the tokenizer exactly.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-2/correctness.html">bit-identical with llama2.c</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#dump">How do you get the reference’s numbers out of PyTorch?</a>
+  <a href="#tolerance">Why not demand the same bits?</a>
+  <a href="#where">Why compare every layer, not just the output?</a>
+  <a href="#greedy">Why might greedy tokens disagree when the code is right?</a>
+  <a href="#tokenizer">How do you test a tokenizer?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Show that SmolLM2 runs correctly by comparing with transformers and tokenizers, never with our own code.">What are we trying to do here?</h2>
+<p>The project’s rule is that correctness comes from outside: a second copy of our own code would share our bugs. For SmolLM2 the outside references are Hugging Face <strong>transformers</strong>, the Python library the model was published for, and <strong>tokenizers</strong>, its tokenizer library.</p>
+<p>Three things are checked, each in a different way:</p>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Every layer’s output, every prompt position</td><td>worst relative error 5.5e-5 <span class="tag m">measured</span>; the test fails above 1e-3</td></tr>
+    <tr><td>48 greedy tokens against <code>generate</code></td><td>identical <span class="tag m">measured</span></td></tr>
+    <tr><td>Tokenizer encode and decode</td><td>433 strings identical <span class="tag m">measured</span></td></tr>
+  </tbody>
+</table>
+<p>By the end of the page you can say why each check uses the kind of comparison it does, and what to look at first when a reference disagrees. The script is <code>tools/hf_dump.py</code>; the tests are in <code>src/model/hf.rs</code>, <code>src/model/reference.rs</code> and <code>src/tokenizer/bytelevel.rs</code>.</p>
+
+<h2 id="dump" data-short="The dump" data-step="Forward hooks record each layer in f32; the dump is a safetensors file the engine reads itself.">How do you get the reference’s numbers out of PyTorch?</h2>
+<p>transformers runs the whole model in one call and returns only the final scores. To compare layer by layer, the engine needs the vectors in between. PyTorch lets you attach a <strong>forward hook</strong> to any part of a model: a function that runs after that part and can copy its output.</p>
+<pre><code>def save(name):
+    def hook(_mod, inputs, output):
+        t = output[0] if isinstance(output, tuple) \
+            else output
+        acts[name] = t[0].detach().float().numpy()
+    return hook
+
+for l, layer in enumerate(m.layers):
+    layer.input_layernorm.register_forward_hook(
+        save(f"L{l}.attn_norm"))
+    # ... v_proj, self_attn, mlp, the layer itself</code></pre>
+<ul>
+  <li>Each layer gets hooks after its first norm, the value projection, attention, the second norm, the MLP, and the layer’s output.</li>
+  <li>The names (<code>L3.attn_norm</code>) are the ones the engine’s own <strong>observer</strong> uses when it traces a forward pass, so each pair can be matched by name.</li>
+  <li>The model is loaded in f32 with <code>attn_implementation="eager"</code>, the plain attention code. bf16 weights widen exactly, as in the engine, so the only difference left is the order of additions.</li>
+  <li>The dump is written as a safetensors file. The engine reads it with the reader from <a href="safetensors.html">page 01</a>, so the test needs no Python.</li>
+</ul>
+<p><strong>Takeaway: hooks copy every layer out of transformers, under names the engine uses too, so each vector has a partner to compare with.</strong></p>
+<div class="quiz" data-quiz="check" data-for="dump" id="c-dump">
+  <p>Why load the reference in f32 rather than its native bf16?</p>
+  <ul>
+    <li data-right>The engine computes in f32; a bf16 reference would differ by its own rounding <div class="why">Both sides then start from the same exact numbers, and only summation order differs.</div></li>
+    <li>bf16 cannot be hooked <div class="why">Hooks work in any dtype; the choice is about what is being compared.</div></li>
+    <li>f32 runs faster in PyTorch <div class="why">Speed does not matter for a one-off dump; matching arithmetic does.</div></li>
+  </ul>
+</div>
+
+<h2 id="tolerance" data-short="Tolerance" data-step="f32 addition is not associative, so a different order changes the last bits; compare relative to the vector’s size.">Why not demand the same bits?</h2>
+<p>In Phase 2 the engine matched llama2.c bit for bit, because both added the numbers of each dot product in the same order. transformers does not: its matrix products go through optimised libraries that split and reorder the sums.</p>
+<div class="quiz" data-quiz="predict" data-for="tolerance" id="g-tolerance">
+  <p>In f32, is <code>(a + b) + c</code> always equal to <code>a + (b + c)</code>?</p>
+  <ul>
+    <li data-right>No; each addition rounds, so a different order can round differently <div class="why">Each sum is rounded to 24 bits of mantissa, and the rounding depends on what was added first.</div></li>
+    <li>Yes; addition is associative <div class="why">It is for real numbers, not for floats, which round after every step.</div></li>
+    <li>Only when the numbers are negative <div class="why">The sign does not matter; rounding happens for any values.</div></li>
+  </ul>
+</div>
+<p>Example in f32: (10<sup>8</sup> + 1) − 10<sup>8</sup> is 0, because 10<sup>8</sup> + 1 rounds back to 10<sup>8</sup>; 10<sup>8</sup> − 10<sup>8</sup> + 1 is 1 <span class="tag c">calculated</span>. So two correct engines give slightly different vectors, and the test needs a tolerance. The engine measures the error relative to the size of the reference vector:</p>
+<pre><code>let scale = reference.iter()
+    .fold(0.0f32, |m, v| m.max(v.abs()));
+let abs = ours.iter().zip(reference)
+    .fold(0.0f32, |m, (&amp;a, &amp;r)| m.max((a - r).abs()));
+(abs, abs / scale)</code></pre>
+<ul>
+  <li>The worst difference is divided by the largest value in the reference. A difference of 0.001 in a vector whose values reach 100 is tiny; in a vector whose values reach 0.01 it is not.</li>
+  <li>The test fails above 1e-3. The worst over all 30 layers and every prompt position was 5.5e-5 <span class="tag m">measured</span>, about twenty times inside the limit.</li>
+  <li>A real bug, such as a wrong RoPE layout or a wrong key/value group, gives errors of order 1, not 1e-4. The gap between the two is what makes a tolerance safe.</li>
+</ul>
+<p><strong>Takeaway: different summation orders change the last bits, so layers are compared relative to their size, with a limit far below what a bug produces.</strong></p>
+<div class="quiz" data-quiz="check" data-for="tolerance" id="c-tolerance">
+  <p>A layer’s reference values reach at most 40, and the worst difference is 0.02. Does it pass a 1e-3 limit?</p>
+  <ul>
+    <li data-right>Yes: 0.02 ÷ 40 = 5e-4 <div class="why">The relative error is under 1e-3, so the test passes.</div></li>
+    <li>No: 0.02 is above 1e-3 <div class="why">The limit is relative; the absolute difference must first be divided by 40.</div></li>
+    <li>It depends on the number of positions <div class="why">The test takes the worst position; the count does not change the limit.</div></li>
+  </ul>
+</div>
+
+<h2 id="where" data-short="Every layer" data-step="A layer-by-layer comparison points at the first stage that goes wrong; q and k are skipped because the two sides record them at different points.">Why compare every layer, not just the output?</h2>
+<p>If only the final scores were compared, a wrong number would show that something is wrong, but not where. SmolLM2 has 30 layers with seven stages each.</p>
+<div class="quiz" data-quiz="predict" data-for="where" id="g-where">
+  <p>The final scores are wrong. The comparison shows layer 0’s attention output matches, but layer 0’s MLP output does not. Where is the bug?</p>
+  <ul>
+    <li data-right>Between the two: the second norm, or the MLP <div class="why">Everything up to attention agrees, so the first stage that disagrees is in the MLP half of layer 0.</div></li>
+    <li>In the classifier <div class="why">The classifier comes after all 30 layers; the error already shows in layer 0.</div></li>
+    <li>In attention <div class="why">Attention’s output matched, so attention is not where the numbers first go wrong.</div></li>
+  </ul>
+</div>
+<p>The test walks every recorded stage at every prompt position, and reports the worst error per stage name. A bug shows up as the first stage, in the first layer, whose error jumps.</p>
+<ul>
+  <li>The query and key vectors are not compared. transformers records them before RoPE, and the engine after. The attention output, which uses both, is compared instead.</li>
+  <li>The prompt runs as one batch (<code>forward_batch_traced</code>), so the batched prefill path is the one being checked.</li>
+</ul>
+<p><strong>Takeaway: comparing every stage points at the first one that goes wrong, which a final-output check cannot.</strong></p>
+
+<h2 id="greedy" data-short="Greedy tokens" data-step="Tokens are discrete, so they must match exactly; check generation settings before suspecting code.">Why might greedy tokens disagree when the code is right?</h2>
+<p>After the layers, the test runs <strong>greedy</strong> generation, always taking the highest-scoring token, for 48 tokens, and compares the ids with transformers’ <code>generate(do_sample=False)</code>. Ids are whole numbers: they either match or they do not, so this check is exact.</p>
+<p>Small differences in the last bits could in principle change a token, when two candidates score almost the same. For SmolLM2’s 48 tokens it did not happen: all 48 matched <span class="tag m">measured</span>.</p>
+<div class="quiz" data-quiz="predict" data-for="greedy" id="g-greedy">
+  <p>For Qwen2.5-Instruct, the engine and transformers agree on every layer but disagree on the 20th greedy token. What should you check first?</p>
+  <ul>
+    <li data-right>The reference’s generation settings <div class="why">generate reads generation_config.json, which can add a repetition penalty even when sampling is off.</div></li>
+    <li>The attention kernel <div class="why">Every layer already matched, so the kernels compute the same scores.</div></li>
+    <li>The tokenizer <div class="why">The ids are compared directly; the tokenizer is not used after the prompt.</div></li>
+  </ul>
+</div>
+<p>This trap is real. <code>generate</code> reads the model’s <code>generation_config.json</code>, and Qwen2.5-Instruct’s sets a <strong>repetition penalty</strong> of 1.05, which lowers the score of tokens already used. “Greedy” in transformers was then not plain greedy. <code>hf_dump.py</code> now passes <code>repetition_penalty=1.0</code>. SmolLM2’s generation config sets only the special token ids, so it was not affected.</p>
+<p><strong>Takeaway: tokens must match exactly; when they do not and the layers do, look at the reference’s settings before the code.</strong></p>
+
+<h2 id="tokenizer" data-short="Tokenizer" data-step="A corpus of 433 hard strings must encode and decode to exactly HF tokenizers’ ids and text.">How do you test a tokenizer?</h2>
+<p>A tokenizer has no floating point, so there is nothing to round: every id must be the same. The question is which inputs to try. Plain English sentences would pass even with a broken Unicode table or a wrong whitespace rule.</p>
+<div class="quiz" data-quiz="predict" data-for="tokenizer" id="g-tokenizer">
+  <p>Which input is most likely to catch a bug in the pre-tokenizer?</p>
+  <ul>
+    <li data-right>Text in several scripts, with runs of spaces and newlines <div class="why">Those exercise the letter table and the whitespace rules, where hand-written regex code goes wrong.</div></li>
+    <li>A long English paragraph <div class="why">It repeats the same easy cases: ASCII letters and single spaces.</div></li>
+    <li>A list of the most common English words <div class="why">Each is one word with no edge cases at its boundaries.</div></li>
+  </ul>
+</div>
+<p><code>hf_dump.py</code> writes a corpus of 433 strings with the ids and the decoded text that HF tokenizers gives for each. The corpus includes several scripts, emoji, emoji joined with zero-width joiners (ZWJ, as in family emoji), flags, code, and chat markup with special tokens. The test encodes and decodes every string and compares both directions.</p>
+<ul>
+  <li>All 433 match exactly, on the host and on the phone <span class="tag m">measured</span>.</li>
+  <li>The regex has its own hand-checked cases too (the splits on <a href="bytelevel.html#split">page 03</a>), so a failure can be traced to the split or to the merges.</li>
+  <li>The Phase 5 totals were 85 of 85 tests passing on 2026-10-22 <span class="tag m">measured</span>.</li>
+</ul>
+<p>One gap: SmolLM2-360M uses the same code but has not been run through this comparison. Until it is, “works for SmolLM2” means 135M.</p>
+<p><strong>Takeaway: a tokenizer test is only as good as its corpus, so it must include the scripts, spaces and emoji that break hand-written rules.</strong></p>
+<div class="quiz" data-quiz="check" data-for="tokenizer" id="c-tokenizer">
+  <p>Why is the tokenizer compared exactly, while layers get a tolerance?</p>
+  <ul>
+    <li data-right>Tokenizing involves no arithmetic to reorder, so any difference is a bug <div class="why">Ids come from string rules and lookups; both sides must reach the same ids.</div></li>
+    <li>The tokenizer is simpler, so a tolerance is not needed <div class="why">It is not simpler; it has nothing that rounds.</div></li>
+    <li>A tolerance would be too slow to compute <div class="why">Speed is not the reason; an id is either equal or not.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Forward hooks copy every layer out of transformers; the engine compares each one relative to its size.</p>
+<p>Floats differ in the last bits when sums are reordered, so layers get a tolerance; ids and the tokenizer must match exactly.</p>
+<p>When tokens disagree but layers match, check the reference’s generation settings first.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

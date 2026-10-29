@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A C door into Rust · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 8 · 01</p>
+
+<h1>A C door into Rust</h1>
+<p class="lede">The Android app cannot call Rust directly. The engine exports a small C interface: a handle C cannot look inside, error codes instead of crashes, and a callback that streams text out and lets the caller stop it.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-1/rust-memory.html">raw memory in Rust</a>, which explains <code>unsafe</code> and <code>SAFETY:</code> comments.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#why">Why can’t Kotlin call Rust directly?</a>
+  <a href="#handle">How does C hold a Rust object it cannot see?</a>
+  <a href="#panic">What happens if Rust panics inside a C call?</a>
+  <a href="#errors">How does C find out what went wrong?</a>
+  <a href="#callback">How does text get out while it is being generated?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Give any language a safe way to load a model, stream a reply and close it, through six C functions.">What are we trying to do here?</h2>
+<p>Until Phase 8 the engine was a Rust library used by a Rust command-line tool. An app needs to call it from another language. The way almost every language can call into another is the <strong>C ABI</strong> (application binary interface): the rules C uses for passing arguments, returning values and naming functions in a compiled library.</p>
+<p>The engine’s C interface is <code>include/aether.h</code> (the header, the contract) and <code>src/ffi.rs</code> (the Rust side). Cargo builds the library a second time as a <code>cdylib</code>, a shared library for C callers: <code>libaether.so</code>.</p>
+<pre><code>int  aether_open(path, cores, max_seq, &amp;session);
+int  aether_open_gpu(path, max_seq, &amp;session);
+int  aether_generate(session, prompt, chat, ...,
+                     on_text, user, &amp;stats);
+int  aether_set_lookup(session, k, ngram);
+const char *aether_last_error(void);
+void aether_close(session);</code></pre>
+<p>By the end you can explain each rule these functions follow, and what goes wrong without it. <code>examples/c/smoke.c</code> calls them from plain C, and the test <code>ffi::tests::c_abi_round_trip</code> drives them from Rust the way C would and reproduces llama2.c’s greedy stories15M text.</p>
+
+<h2 id="why" data-short="Why C" data-step="Rust promises no layout or names unless asked; extern &quot;C&quot; and no_mangle ask.">Why can’t Kotlin call Rust directly?</h2>
+<p>Kotlin on Android runs on Android’s Java runtime. Its way to call compiled code is <strong>JNI</strong> (Java Native Interface), and JNI calls C functions with C types. A Rust function is not a C function by default.</p>
+<div class="quiz" data-quiz="predict" data-for="why" id="g-why">
+  <p>What does Rust not promise about an ordinary <code>pub fn</code> in a compiled library?</p>
+  <ul>
+    <li data-right>Its symbol name or how it passes arguments <div class="why">Rust mangles names and may change its calling convention between compiler versions.</div></li>
+    <li>That it exists in the library <div class="why">A public function is compiled in; the problem is that C cannot find or call it reliably.</div></li>
+    <li>That it is memory-safe <div class="why">Safe Rust is memory-safe; the boundary problem is about names and conventions.</div></li>
+  </ul>
+</div>
+<p>Rust <strong>mangles</strong> function names, encoding the module path and a hash into the symbol so two functions called <code>open</code> do not clash. It also keeps the right to change how arguments are passed. Two annotations turn both off for one function:</p>
+<pre><code>#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_close(
+    session: *mut AetherSession) { ... }</code></pre>
+<ul>
+  <li><code>extern "C"</code> uses the C calling convention, so a C caller passes arguments where Rust expects them.</li>
+  <li><code>#[unsafe(no_mangle)]</code> keeps the symbol name <code>aether_close</code>, so the C linker finds it. It is marked unsafe because two libraries exporting the same name would clash.</li>
+  <li>Structs that cross the boundary, like <code>AetherStats</code>, are <code>#[repr(C)]</code>: fields in declaration order, with C’s padding. Rust otherwise may reorder fields.</li>
+</ul>
+<p><strong>Takeaway: C is the one convention both sides share, and extern "C", no_mangle and repr(C) put a Rust function or struct into it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="why" id="c-why">
+  <p><code>AetherStats</code> loses its <code>#[repr(C)]</code>. What can go wrong?</p>
+  <ul>
+    <li data-right>Rust may reorder its fields, and C reads the wrong ones <div class="why">C assumes declaration order; without repr(C), Rust may put the two f64s first to save padding.</div></li>
+    <li>It no longer compiles <div class="why">It compiles; nothing checks the layout against the C header.</div></li>
+    <li>Nothing; the fields are plain numbers <div class="why">Plain fields can still be reordered; only their order in memory matters to C.</div></li>
+  </ul>
+</div>
+
+<h2 id="handle" data-short="Opaque handle" data-step="C gets a pointer from Box::into_raw and hands it back once to Box::from_raw.">How does C hold a Rust object it cannot see?</h2>
+<p>A loaded model is a Rust value with fields, borrowed data and a lifetime. C knows none of that. The header gives C an <strong>opaque handle</strong>: a pointer to a type that is declared but never defined, so C can store it and pass it back, but never look inside.</p>
+<pre><code>typedef struct AetherSession AetherSession;</code></pre>
+<p>On the Rust side, <code>aether_open</code> puts the session on the heap and gives up Rust’s ownership of it:</p>
+<pre><code>Box::into_raw(Box::new(AetherSession {
+    engine, lookup_k: 0, lookup_ngram: 2 }))</code></pre>
+<div class="quiz" data-quiz="predict" data-for="handle" id="g-handle">
+  <p>After <code>Box::into_raw</code>, when does Rust free the session?</p>
+  <ul>
+    <li data-right>Only when the pointer comes back through <code>Box::from_raw</code> <div class="why">into_raw stops Rust from dropping it; only rebuilding the Box restores ownership.</div></li>
+    <li>When <code>aether_open</code> returns <div class="why">That would leave C with a dangling pointer; into_raw exists to prevent it.</div></li>
+    <li>When the garbage collector runs <div class="why">Rust has no garbage collector, and Java’s cannot see native memory.</div></li>
+  </ul>
+</div>
+<pre><code>/// # Safety
+/// `session` must come from `aether_open` and not
+/// have been closed.
+pub unsafe extern "C" fn aether_close(
+    session: *mut AetherSession) {
+    let _ = guard(|| {
+        if !session.is_null() {
+            // SAFETY: created by Box::into_raw in
+            // aether_open, freed once.
+            drop(unsafe { Box::from_raw(session) });
+        }
+        AETHER_OK
+    });
+}</code></pre>
+<ul>
+  <li>Closing twice frees the same memory twice, and a pointer from anywhere else frees memory Rust never owned. Rust cannot check either; the <code># Safety</code> section is the contract, and the caller must keep it.</li>
+  <li>Null is allowed and does nothing, so cleanup code can close a session it never managed to open.</li>
+  <li>Because C never sees the fields, <code>AetherSession</code> could gain the GPU engine and the lookup settings without changing a line of the app.</li>
+</ul>
+<p><strong>Takeaway: C holds an opaque pointer made by Box::into_raw, and must hand it back exactly once.</strong></p>
+<div class="quiz" data-quiz="check" data-for="handle" id="c-handle">
+  <p>The Kotlin wrapper sets its handle to 0 after <code>close()</code>. Which bug does that prevent?</p>
+  <ul>
+    <li data-right>A second <code>close()</code> freeing the session twice <div class="why">Closing 0 is a null close, which the engine allows and ignores.</div></li>
+    <li>A memory leak <div class="why">The session was already freed by the first close; zeroing frees nothing.</div></li>
+    <li>A panic in Rust <div class="why">A double free is undefined behaviour, not a panic; that is why it must not happen.</div></li>
+  </ul>
+</div>
+
+<h2 id="panic" data-short="catch_unwind" data-step="A panic that unwinds into C is undefined behaviour; every entry point catches it and returns a code.">What happens if Rust panics inside a C call?</h2>
+<p>A <strong>panic</strong> is Rust’s response to a bug it detects at run time, such as an index out of range. It <strong>unwinds</strong>: it walks back up the stack, running each function’s cleanup, until something catches it or the thread ends.</p>
+<div class="quiz" data-quiz="predict" data-for="panic" id="g-panic">
+  <p>A panic unwinds out of <code>aether_generate</code> into the C code that called it. What happens?</p>
+  <ul>
+    <li data-right>Undefined behaviour: anything, from a crash to corrupted state <div class="why">C frames have no Rust cleanup information; the language makes no promise at all.</div></li>
+    <li>C receives an error code <div class="why">Only if Rust catches the panic first and returns one; unwinding by itself returns nothing.</div></li>
+    <li>The C caller’s exception handler catches it <div class="why">C has no exceptions, and Rust panics are not Java exceptions either.</div></li>
+  </ul>
+</div>
+<p>So every entry point runs its body inside <code>guard</code>:</p>
+<pre><code>fn guard(body: impl FnOnce() -&gt; c_int) -&gt; c_int {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(code) =&gt; code,
+        Err(p) =&gt; {
+            // the panic's message, if it is a string
+            set_error(format!("internal error: {msg}"));
+            AETHER_ERR_PANIC
+        }
+    }
+}</code></pre>
+<ul>
+  <li><code>catch_unwind</code> stops the unwinding at this function and returns <code>Err</code> with the panic’s payload.</li>
+  <li><code>AssertUnwindSafe</code> is the programmer’s claim that nothing is left half-changed in a way that matters. Rust does not check it.</li>
+  <li>The guard is on every function, even <code>aether_close</code>: any of them can reach code that panics.</li>
+</ul>
+<p><strong>Takeaway: a panic must never cross into C, so each entry point catches it and returns AETHER_ERR_PANIC.</strong></p>
+
+<h2 id="errors" data-short="Error codes" data-step="Codes say what kind of failure; the message is kept per thread and read with aether_last_error.">How does C find out what went wrong?</h2>
+<p>C functions usually report failure with a number. The header defines four:</p>
+<pre><code>#define AETHER_OK           0
+#define AETHER_ERR_ARGUMENT 1 /* null, non-UTF-8,
+                                 prompt too long */
+#define AETHER_ERR_LOAD     2 /* file missing, bad */
+#define AETHER_ERR_PANIC    3 /* a bug */</code></pre>
+<p>A number cannot say which file was missing. The message is stored separately, in a <strong>thread-local</strong> variable (one copy per thread), and <code>aether_last_error()</code> returns it.</p>
+<div class="quiz" data-quiz="predict" data-for="errors" id="g-errors">
+  <p>Why per thread, and not one global message?</p>
+  <ul>
+    <li data-right>Two threads failing at once would overwrite each other’s message <div class="why">With one copy per thread, each caller reads its own last error.</div></li>
+    <li>Global variables are not allowed in Rust <div class="why">Rust allows them (with synchronisation); the problem is two writers, not the language.</div></li>
+    <li>It is faster <div class="why">Errors are rare; correctness, not speed, is the reason.</div></li>
+  </ul>
+</div>
+<ul>
+  <li>The returned pointer is valid until the next call on the same thread. A caller that needs it later must copy it; the JNI shim copies it into a Java <code>IOException</code> at once.</li>
+  <li>Too-long prompts are caught before any work: <code>aether_generate</code> encodes the prompt and fails with <code>AETHER_ERR_ARGUMENT</code> if prompt plus <code>max_tokens</code> exceeds the context, with both numbers in the message.</li>
+  <li>Strings from C must be NUL-terminated UTF-8, and are only read during the call. Bad UTF-8 is an argument error, not a panic.</li>
+</ul>
+<p><strong>Takeaway: the code tells the caller what kind of failure it was, and the per-thread message tells it the details.</strong></p>
+<div class="quiz" data-quiz="check" data-for="errors" id="c-errors">
+  <p><code>aether_open</code> is given a path to a file that does not exist. What does it return?</p>
+  <ul>
+    <li data-right><code>AETHER_ERR_LOAD</code>, with the path in the message <div class="why">A missing or unreadable model is a load error; the message names the file.</div></li>
+    <li><code>AETHER_ERR_ARGUMENT</code> <div class="why">The argument is a valid string; it is the file behind it that is missing.</div></li>
+    <li><code>AETHER_ERR_PANIC</code> <div class="why">A missing file is an expected failure, handled as an error, not a bug.</div></li>
+  </ul>
+</div>
+
+<h2 id="callback" data-short="The callback" data-step="A function pointer plus a user pointer streams bytes out; returning 0 stops generation.">How does text get out while it is being generated?</h2>
+<p>A reply takes seconds. The app wants each piece as soon as it exists, not the whole text at the end. So <code>aether_generate</code> takes a <strong>callback</strong>: a pointer to a function that the engine calls once per piece of text.</p>
+<pre><code>typedef int (*AetherTokenCallback)(
+    const uint8_t *bytes, size_t len, void *user);</code></pre>
+<div class="quiz" data-quiz="predict" data-for="callback" id="g-callback">
+  <p>C has no closures. How does the callback reach the app’s own state, such as which text view to update?</p>
+  <ul>
+    <li data-right>Through the <code>user</code> pointer, passed in and handed back unchanged <div class="why">The engine never looks at it; it is the caller’s way to carry context into the callback.</div></li>
+    <li>Through a global variable <div class="why">That works for one caller, and breaks as soon as two exist.</div></li>
+    <li>The engine stores the app’s state <div class="why">The engine knows nothing about the app; it only passes the pointer through.</div></li>
+  </ul>
+</div>
+<ul>
+  <li>The pieces are bytes, not text. A token can end in the middle of a multi-byte character, so the header says the next piece completes it. <a href="app.html#utf8">The app page</a> shows how the app puts the halves together.</li>
+  <li>The return value is the stop signal: non-zero means “go on”, 0 means “stop”. The app’s Stop button sets a flag, the callback returns 0, and the engine stops at the next token.</li>
+  <li>The callback runs on the thread that called <code>aether_generate</code>. That matters to JNI, whose environment pointer is only valid on its own thread.</li>
+  <li>When the call returns, <code>stats</code> (if not null) holds the prefill and decode token counts and times.</li>
+</ul>
+<p><strong>Takeaway: the callback streams bytes out, the user pointer carries the caller’s state in, and the return value lets the caller stop.</strong></p>
+<div class="quiz" data-quiz="check" data-for="callback" id="c-callback">
+  <p>A callback always returns 1, and the user taps Stop. What happens?</p>
+  <ul>
+    <li data-right>Generation runs on until <code>max_tokens</code> or end of text <div class="why">The return value is the only stop signal the engine reads.</div></li>
+    <li>It stops at once <div class="why">The engine cannot see the button; it only sees what the callback returns.</div></li>
+    <li>The engine panics <div class="why">Nothing has gone wrong from the engine’s side; it keeps generating.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>C is the shared convention: extern "C", no_mangle and repr(C) put Rust into it, and the header is the whole contract.</p>
+<p>C holds an opaque handle and gives it back once; panics are caught at the door and become error codes.</p>
+<p>A callback streams bytes out, and its return value is how the caller stops the engine.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

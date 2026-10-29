@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>After Phase 8 · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">After Phase 8 · faster decoding and the GPU</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>Speculative decoding reproduces llama2.c’s greedy text byte for byte on stories15M, and speculative sampling keeps the sampler’s distribution (200,000 draws). The GPU decode step gives llama.cpp’s perplexity on SmolLM2-135M and Qwen2.5-0.5B. Some of the newest GPU work is verified on the PC’s GPU and still waits for its speed measurement on the phone; the pages tag those numbers.</p></div>
+
+<h1>After Phase 8 — faster decoding and the GPU</h1>
+<p class="lede">By Phase 8 the engine ran in an app at close to the phone’s memory limit. The work since asks two questions. Can one read of the weights produce more than one token? And what is the phone’s GPU good for, when it reads the same memory as the CPU?</p>
+<nav class="toc">
+  <a href="#why">Why go further than the plan?</a>
+  <a href="#built">What was built?</a>
+  <a href="#numbers">What are the headline numbers?</a>
+  <a href="#order">Which page should I read first?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#files">Which files hold the code?</a>
+</nav>
+
+<h2 id="why">Why go further than the plan?</h2>
+<p>The plan’s section 13 lists later work: K-quant files, speculative decoding, Vulkan compute on the GPU, and the NPU. Decode had reached about 180 tokens per second for Qwen2.5-0.5B Q4_0, about 50 GB/s of weights <span class="tag c">calculated</span>, close to the memory’s 61–67 GB/s. A faster kernel could not give much more. Getting several tokens per weight read could, and the GPU might do the same work for less energy.</p>
+<p><strong>Takeaway: once decode is near the memory limit, the next gains come from more tokens per read and from cheaper hardware, not faster kernels.</strong></p>
+
+<h2 id="built">What was built?</h2>
+<ul>
+  <li><strong>Q4_K_M files.</strong> llama.cpp’s most common mix (Q5_0, Q4_K and Q6_K blocks) loads and runs, with perplexity checked against llama.cpp (<code>results/phase-6.md</code>, “Q4_K_M files”). Page: <a href="q4km.html">Q4_K_M files</a>.</li>
+  <li><strong>Speculative decoding.</strong> Draft tokens, copied from earlier text (prompt lookup) or proposed by a smaller model, checked in one batched pass. CLI <code>--lookup K</code>, <code>--draft PATH</code>; the app’s “lookup” checkbox.</li>
+  <li><strong>Vulkan compute on the Adreno GPU.</strong> A Q4_0 matrix-vector and matrix-matrix shader, then a whole decode step, then the prompt: on the CPU with the KV cache handed to the GPU, or batched on the GPU. CLI <code>--gpu</code>; the app’s “GPU” checkbox.</li>
+</ul>
+<p><strong>Takeaway: three additions, each checked against an outside reference before any speed was measured.</strong></p>
+
+<h2 id="numbers">What are the headline numbers?</h2>
+<div class="statrow">
+  <div class="stat"><b>+60–75 %</b><span>decode with prompt lookup when the answer copies the prompt, greedy, Qwen2.5-0.5B <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>0.021–0.024 J</b><span>energy per token on the GPU at 102.7 tok/s, against 0.029 J on the CPU at 157.6 <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>19.7193</b><span>GPU perplexity of Qwen2.5-0.5B Q4_0; llama.cpp 19.7283 ± 0.836 <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>7×</b><span>faster prompt in GPU mode when the CPU reads it and hands over the KV cache (345 tokens: ~4 s → ~0.55 s) <span class="tag m">measured</span></span></div>
+</div>
+<p><strong>Takeaway: lookup pays on repeated text; the GPU is slower than the CPU but spends less energy per token.</strong></p>
+
+<h2 id="order">Which page should I read first?</h2>
+<ol>
+  <li><a href="speculative.html">Several tokens per weight read</a>: drafts, the rule that keeps them, lookup against a draft model, and speculative sampling.</li>
+  <li><a href="gpu-basics.html">How the GPU runs our code</a>: lanes, workgroups, Vulkan, and how a matrix-vector product is split across lanes.</li>
+  <li><a href="gpu-decode.html">Decoding on the GPU</a>: the whole step, attention in chunks, clock swings, energy, and where the time goes.</li>
+  <li><a href="gpu-prompt.html">Who reads the prompt?</a>: the KV-cache handoff from CPU to GPU, a misleading measurement, and a batched GPU pass.</li>
+  <li><a href="q4km.html">Q4_K_M files</a>: llama.cpp’s most common mix, K-quant super-blocks, accuracy against llama.cpp, and two speed fixes.</li>
+</ol>
+<p><strong>Takeaway: the speculative and Q4_K_M pages stand alone; the three GPU pages build on each other.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<ul>
+  <li>Phone timing of the newest GPU work: stages folded into the matrix products, logits in cached memory, and the batched GPU prompt. All are correct on the PC’s GPU.</li>
+  <li>L.2, an importance-weighted quantizer of our own, only if a model needs it.</li>
+  <li>L.5, the NPU: not started. It would need Qualcomm’s SDK, which conflicts with writing the engine from scratch, so it needs a decision first.</li>
+</ul>
+
+<h2 id="files">Which files hold the code?</h2>
+<table>
+  <thead><tr><th>file</th><th>what it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/session.rs</code></td><td>speculative decoding (<code>generate_speculative</code>, lookup, <code>Drafter</code>); <code>GpuSession</code></td></tr>
+    <tr><td><code>src/model/sampler.rs</code></td><td><code>sample_draft</code>: speculative sampling</td></tr>
+    <tr><td><code>src/kernels/vulkan.rs</code></td><td>the GPU device, buffers, kernels, recording and submitting</td></tr>
+    <tr><td><code>src/model/gpu.rs</code></td><td><code>GpuModel</code>: the decode step and the batched pass on the GPU</td></tr>
+    <tr><td><code>shaders/*.comp</code></td><td>the GPU programs: GEMV, GEMM, RMSNorm, RoPE, attention</td></tr>
+    <tr><td><code>examples/vk_*.rs</code></td><td>measurements: bandwidth, GEMV, GEMM, decode profile, perplexity</td></tr>
+    <tr><td><code>results/phase-l3.md</code></td><td>every GPU number, with the conditions it was measured under</td></tr>
+  </tbody>
+</table>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+</body>
+</html>

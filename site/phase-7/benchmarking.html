@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarking like llama-bench · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · 05</p>
+
+<h1>Benchmarking like llama-bench</h1>
+<p class="lede">“How fast is it?” has no single answer for a language model. Reading a prompt and writing a reply are different kinds of work, speed changes as the conversation grows, and a phone changes speed by itself. This page shows how <code>examples/bench_suite.rs</code> measures, following llama.cpp’s <code>llama-bench</code> so the two engines can be compared number for number.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-0/decode-ceiling.html">the decode ceiling</a> (prefill and decode) and <a href="attention-ab.html">NEON attention, measured honestly</a> (why one run is not enough).</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#two">Why are there two speeds?</a>
+  <a href="#depth">Why measure decode at several depths?</a>
+  <a href="#tokens">Do the prompt’s words matter?</a>
+  <a href="#repeat">Which run is the real number?</a>
+  <a href="#fair">What must both engines share?</a>
+  <a href="#user">What does a person actually notice?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Measure prefill and decode separately, at several context lengths, under recorded conditions, the way llama-bench does.">What are we trying to do here?</h2>
+<p>A <strong>benchmark</strong> is a measurement made the same way every time, so that two results can be compared. For an inference engine the questions are: how fast does it read a prompt, how fast does it write, how does that change as the context grows, how soon does the first word appear, and how much memory does it take.</p>
+<p>llama.cpp answers the speed questions with <code>llama-bench</code>, and its notation is widely used, so <code>bench_suite</code> copies it. Both ran on the same phone, on the same GGUF files made by llama.cpp’s own tools, through <code>scripts/phase7-bench.sh</code>. The numbers below are Qwen2.5-0.5B-Instruct Q4_0 from 2026-10-21 (<code>results/phase-7.md</code>). The engine has become faster since then; this page is about the method.</p>
+
+<h2 id="two" data-short="Two speeds" data-step="pp N times reading an N-token prompt; tg N times generating N tokens. They are different work.">Why are there two speeds?</h2>
+<p><strong>Prefill</strong> reads the whole prompt in one batched pass. <strong>Decode</strong> then makes one token at a time, each a full pass over the weights. llama-bench writes them as <code>pp N</code> (“prompt processing”, a prompt of N tokens from an empty cache) and <code>tg N</code> (“text generation”, N new tokens), both in tokens per second.</p>
+<div class="quiz" data-quiz="predict" data-for="two" id="g-two">
+  <p>Same model, same cores. Which has more tokens per second, pp512 or tg64?</p>
+  <ul>
+    <li data-right>pp512, by a wide margin <div class="why">Prefill reads each weight once for many tokens; decode reads every weight for each token.</div></li>
+    <li>tg64: generating is the engine’s main job, so it is the fastest path <div class="why">Being the main job does not make it cheap; each new token needs a full pass.</div></li>
+    <li>About the same: a token is a token <div class="why">The same arithmetic per token, but very different memory traffic per token.</div></li>
+  </ul>
+</div>
+<p>llama.cpp’s numbers on cores 2–7: pp512 432 tok/s, tg64 125 tok/s. Decode reads all 278 MB of Q4_0 weights for every token, so it is limited by memory bandwidth (278 MB × 125 tok/s ≈ 35 GB/s). Prefill reuses each weight across all 512 prompt tokens, so it is limited by arithmetic instead. A single “tokens per second” would mix the two and hide both.</p>
+<p><strong>Takeaway: prefill and decode are different work, so a benchmark reports them separately.</strong></p>
+
+<h2 id="depth" data-short="Depth" data-step="tg64 @ dD decodes 64 tokens after D are already in the KV cache; attention grows with D.">Why measure decode at several depths?</h2>
+<p>Each new token attends to every earlier token in the <a href="../phase-2/kv-cache.html">KV cache</a>, so decode gets slower as the conversation grows. llama-bench writes <code>tg64 @ d512</code>: 64 decode steps after 512 tokens are already in the cache. <code>bench_suite</code> fills the cache with an untimed prefill of D tokens, then times 64 single steps, recording each token’s own time.</p>
+<p>Ours on 2026-10-21, cores 2–7: tg64 @ d0 128.8 tok/s, @ d256 113.2, @ d512 62.8. That last number looked like a serious problem in attention. It was not: the next day the same commit gave 110.6 → 87.0 in three alternating runs, so the 62.8 was mostly one bad run.</p>
+<p><strong>Takeaway: decode speed depends on context length, so it is measured at several depths, and a surprising depth result needs a repeat before it is believed.</strong></p>
+<div class="quiz" data-quiz="check" data-for="depth" id="c-depth">
+  <p>An app user has a 2,000-token conversation. Which number predicts their reply speed best?</p>
+  <ul>
+    <li data-right>tg at a depth near 2,000 <div class="why">Each reply token attends to the whole conversation, so depth 2,000 is the matching test.</div></li>
+    <li>tg64 @ d0 <div class="why">That is the speed with an empty cache, the best case, not this user’s case.</div></li>
+    <li>pp2000 <div class="why">That times reading a 2,000-token prompt, not writing the reply after it.</div></li>
+  </ul>
+</div>
+
+<h2 id="tokens" data-short="Synthetic tokens" data-step="Speed depends on how many tokens there are, not which; fixed pseudo-random ids keep runs identical.">Do the prompt’s words matter?</h2>
+<p>A benchmark needs a prompt. Real text would have to be tokenized first, and different texts give different lengths.</p>
+<div class="quiz" data-quiz="predict" data-for="tokens" id="g-tokens">
+  <p>Is prefill of 512 copies of “the” faster than prefill of 512 tokens of a real article?</p>
+  <ul>
+    <li data-right>No: the same work for any 512 ids <div class="why">Every token goes through the same matrices; the values change, the amount of arithmetic does not.</div></li>
+    <li>Yes: repeated tokens can be cached <div class="why">The engine computes every position; nothing is skipped for repeats in plain prefill.</div></li>
+    <li>Yes: common words have smaller numbers <div class="why">Multiplying by small values costs the same as by large ones.</div></li>
+  </ul>
+</div>
+<p>So, like llama-bench, <code>bench_suite</code> uses <strong>synthetic</strong> token ids: a fixed pseudo-random sequence, the same in every run.</p>
+<pre><code>// Fixed pseudo-random token ids (an LCG), away
+// from special tokens.
+let tokens: Vec&lt;usize&gt; = (0..max_seq as u64)
+    .map(|i| 100 + ((i * 2654435761 + 12345)
+        % (vocab as u64 - 200)) as usize)
+    .collect();</code></pre>
+<ul>
+  <li>An LCG (linear congruential generator) is the simplest pseudo-random formula; it is enough here because only the count matters.</li>
+  <li>Starting at 100 and leaving out the top 100 ids avoids special tokens, whose ids sit at the ends of some vocabularies.</li>
+  <li>One exception: <a href="../beyond/speculative.html">prompt lookup decoding</a> does depend on the text, so it is measured on real text instead.</li>
+</ul>
+<p><strong>Takeaway: plain prefill and decode cost the same for any token ids, so a fixed synthetic sequence makes every run identical.</strong></p>
+
+<h2 id="repeat" data-short="Repeats" data-step="Repeat each test, report the median, and keep the spread; day-to-day spread was as large as the gap between engines.">Which run is the real number?</h2>
+<p>A phone does not run at one speed. Clocks rise and fall with temperature, battery state and whatever else is running. One run gives one sample of that.</p>
+<div class="quiz" data-quiz="predict" data-for="repeat" id="g-repeat">
+  <p>Ours was level with llama.cpp at tg64 on 2026-10-21 (128.8 vs 125.0). What did the same commits give the next day?</p>
+  <ul>
+    <li data-right>Ours about 20 % behind (111.5 vs 134.9) <div class="why">Measured; the day-to-day spread was as large as the gap itself.</div></li>
+    <li>Level again, within 1 % <div class="why">That would need the phone to be in the same state both days; it was not.</div></li>
+    <li>Ours 20 % ahead <div class="why">Possible in principle, but not what was measured.</div></li>
+  </ul>
+</div>
+<p>So both programs repeat each test: llama-bench 5 times by default (3 here), reporting mean ± standard deviation; <code>bench_suite</code> 3 times, reporting the <strong>median</strong> (the middle value, which one bad run cannot drag), plus each token’s median and 95th-percentile time. Even then, the honest summary from these two days is “within about 20 %”, not “level”. When the question is whether a change helps, the stronger method is to run old and new <a href="attention-ab.html">alternately</a>, so drift affects both equally.</p>
+<p><strong>Takeaway: one run is one sample of a moving target, so repeat, report the median and the spread, and alternate when comparing.</strong></p>
+
+<h2 id="fair" data-short="Fair test" data-step="Same files, same cores, same thread count, recorded power and temperature, cooled before each run.">What must both engines share?</h2>
+<p>A comparison only means something if the only difference is the engine. <code>scripts/phase7-bench.sh</code> fixes everything else it can:</p>
+<ul>
+  <li><strong>The same bytes:</strong> both read the same GGUF files from llama.cpp’s <code>llama-quantize</code>, so neither gets a better-quantized model.</li>
+  <li><strong>The same cores:</strong> llama-bench is pinned with <code>taskset</code> to the cores ours uses, one thread per core (<code>-t 6</code> for cores 2–7).</li>
+  <li><strong>The same start:</strong> each run waits until the hottest CPU zone is below 48 °C, wakes the screen (screen-off lowers the clock caps), and records battery state and time.</li>
+  <li><strong>Written down:</strong> the commit, the llama.cpp version (<code>d00685831</code>) and its build flags go in <code>results/phase-7.md</code>.</li>
+</ul>
+<p><strong>Takeaway: same files, same cores, same thermal start, and the conditions recorded with the numbers.</strong></p>
+<div class="quiz" data-quiz="check" data-for="fair" id="c-fair">
+  <p>Ours runs on a file made by our own quantizer, llama.cpp on its own file. Ours is 5 % faster. What is wrong with the comparison?</p>
+  <ul>
+    <li data-right>The files may differ in format or bytes, so the engine is not the only difference <div class="why">A different file can change both the work and the accuracy; the same file removes that.</div></li>
+    <li>Nothing, if both files are called Q4_0 <div class="why">The name fixes the layout but not which tensors were converted or how.</div></li>
+    <li>Only that 5 % is too small to matter <div class="why">Size is a separate question; the setup must be fair first.</div></li>
+  </ul>
+</div>
+
+<h2 id="user" data-short="What users feel" data-step="Time to first token and peak memory: what a person waits for and what the phone must hold.">What does a person actually notice?</h2>
+<p>Tokens per second is an engine’s number. A person notices two other things: how long until the reply starts, and whether the app gets killed for using too much memory.</p>
+<p><strong>Time to first token</strong> is prefill plus choosing one token: for a 64-token prompt, ours took 569 ms on cores 2–7. <strong>Peak RSS</strong> (resident set size, the most RAM the process held at once, read from <code>VmHWM</code> in <code>/proc/self/status</code>) was 348 MB: the 278 MB of weights, the KV cache and the buffers. llama-bench reports neither, so <code>bench_suite</code> adds them.</p>
+<p><strong>Takeaway: time to first token and peak memory are what a person feels, so the suite measures them too.</strong></p>
+<div class="quiz" data-quiz="check" data-for="user" id="c-user">
+  <p>Prefill doubles in speed and decode stays the same. Which user number improves most?</p>
+  <ul>
+    <li data-right>Time to first token <div class="why">It is almost all prefill, so it roughly halves.</div></li>
+    <li>Peak memory <div class="why">Speed does not change how much the process holds.</div></li>
+    <li>The time per reply word <div class="why">That is decode, which did not change.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Report prefill (pp) and decode (tg) separately, and decode at several depths. Use synthetic tokens, repeat every test, report the median and the spread, and compare engines on the same files, cores and starting temperature. Add what a person feels: time to first token and peak memory.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) on 2026-10-21 and 2026-10-22, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

@@ -1,8 +1,11 @@
 # Content plan: Phases 2–8
 
-The site covers Phase 0 and Phase 1. The engine is built and verified through
-Phase 8, so every topic below has real code to point at and real numbers
-measured on this phone. This is the list of pages to write, in reading order.
+Phases 0–6 and 8 have their pages, Phase 7 its overview and seven topic
+pages, and the work after Phase 8 (Q4_K_M files, speculative decoding, the
+GPU) has its own section, `beyond/`. The engine is built and verified through Phase 8
+and beyond, so every topic below has real code to point at and real numbers
+measured on this phone. This is the list of pages still to write, in
+reading order (some entries below are now written; check `js/pages.js`).
 
 Each entry: **what the reader learns** · *interactive idea* · `where it
 lives in the engine` / measured numbers to use. ★ marks pages that would
@@ -21,10 +24,10 @@ is labelled an illustration.
    its own page below. · *A clickable pipeline: each stage shows its input,
    output and time share.* · `android/` → `ffi.rs` → `session.rs` →
    `model/transformer.rs`; prefill 35 tokens in ~200 ms, decode ~100 tok/s.
-2. **Code map** — which file does what, in the order a token meets them. ·
+2. **Code map** (written: `start/code-map.html`, as tables; the hover tree is still open) — which file does what, in the order a token meets them. ·
    *A tree of `src/` where hovering a file shows its one-line job and the
    page that explains it.*
-3. **How we know it's right** — the external-reference rule: numpy,
+3. **How we know it's right** (written: `start/right.html`) — the external-reference rule: numpy,
    llama2.c, Hugging Face, llama.cpp; golden files; why a second copy of our
    own code proves nothing. · `tools/`, `testdata/`, `src/testutil.rs`; 85
    tests on the phone.
@@ -124,6 +127,11 @@ is labelled an illustration.
 
 ## Phase 5 · Real model files (SmolLM2)
 
+**Written (2026-10-29)**, as four pages: `phase-5/safetensors.html` (1–3),
+`config.html` (4–6), `bytelevel.html` (7–8), `matching-hf.html` (9). Still
+open from the ideas below: the interactive hex view, the bit editor, the
+MHA/GQA/MQA toggle and the step-by-step encoder.
+
 1. **safetensors** — 8-byte length, a JSON header, raw tensors; parsing JSON
    by hand. · *Hex view of a real header with the fields highlighted.* ·
    `format/safetensors.rs`, `format/json.rs`.
@@ -181,22 +189,28 @@ is labelled an illustration.
    `format/gguf.rs`.
 2. **Reading the architecture from metadata** — llama vs qwen2, QKV biases,
    RoPE θ = 1,000,000.
-3. **Unicode normalization (NFC)** — "é" as one code point or two; why a
+3. **Unicode normalization (NFC)** (written: `phase-7/nfc.html`; the
+   string widget is still open) — "é" as one code point or two; why a
    tokenizer must pick one. · *Type a string, see both forms' bytes.* ·
    `tokenizer/nfc.rs`; 17,253 cases identical to Python.
-4. **Chat templates** — ChatML, special tokens, stop tokens; why an instruct
+4. **Chat templates** (written: `phase-7/chat.html`) — ChatML, special tokens, stop tokens; why an instruct
    model answers only when asked in its format. · `chat.rs`.
-5. **Benchmarking like llama-bench** — prefill vs decode, depth, time to
+5. **Benchmarking like llama-bench** (written: `phase-7/benchmarking.html`) — prefill vs decode, depth, time to
    first token, peak memory, synthetic tokens.
-6. **★ Where the time goes** — decode moves ~36 GB/s of weights; prefill is
+6. **★ Where the time goes** (written: `phase-7/time.html`, with item 8's `smmla` and repacking) — decode moves ~36 GB/s of weights; prefill is
    compute; why llama.cpp is 2–6× faster at prefill (repacked weights,
    `smmla`). · `results/phase-7.md`.
-7. **Heat and energy** — 5 minutes of decoding: 112 → 65–75 tok/s at
+7. **Heat and energy** (written: `phase-7/heat.html`, with the plot) — 5 minutes of decoding: 112 → 65–75 tok/s at
    84.5 °C, 3.5 W, 0.041 J per token. · *Plot of the sustained trace.*
 8. **`smmla` and weight repacking (preview)** — a 2×8 by 8×2 int8 block
    product per instruction; the next speed-up.
 
 ## Phase 8 · On the phone, in an app
+
+**Written (2026-10-29)**, as two pages: `phase-8/c-abi.html` (1) and
+`app.html` (2, 3, the engine thread from 4, and 5). Still open: APK
+packaging (`jniLibs`, 16 KB alignment), model storage and `run-as`, and the
+app's own memory (not measured).
 
 1. **A C interface** — why C is the common language; opaque handles, error
    codes, and why a Rust panic must never cross into C (`catch_unwind`). ·
@@ -213,6 +227,11 @@ is labelled an illustration.
    the low-memory killer.
 
 ---
+
+## After Phase 8
+
+`beyond/q4km.html` (Q4_K_M: Q5_0, Q4_K, Q6_K, accuracy, speed) is written,
+alongside the speculative and GPU pages.
 
 ## Glossary terms to add
 

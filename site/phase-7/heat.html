@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heat and energy · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+<style>
+/* The sustained-decode chart: two series, colours checked for colour-blind
+   separation and contrast on the page surface in both themes. */
+.viz-root { --series-1: #2a78d6; --series-2: #eb6834; position: relative; margin: 1rem 0; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .viz-root { --series-1: #3987e5; --series-2: #d95926; }
+}
+:root[data-theme="dark"] .viz-root { --series-1: #3987e5; --series-2: #d95926; }
+.viz-root svg { width: 100%; height: auto; display: block; background: var(--surface); border-radius: .4rem; }
+.viz-root .grid { stroke: var(--line); stroke-width: 1; }
+.viz-root .axis { fill: var(--muted); font: 12px var(--sans); }
+.viz-root .lab { font: 600 12px var(--sans); fill: var(--ink); }
+.viz-root .s1 { stroke: var(--series-1); } .viz-root .s2 { stroke: var(--series-2); }
+.viz-root .d1 { fill: var(--series-1); } .viz-root .d2 { fill: var(--series-2); }
+.viz-root .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.viz-root .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; font: 14px var(--sans); color: var(--ink); margin: .3rem 0; }
+.viz-root .legend span::before { content: ""; display: inline-block; width: 1.2em; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: .4em; background: var(--c); }
+.viz-root .tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: .3rem; padding: .3rem .5rem; font: 13px var(--sans); box-shadow: 0 2px 6px rgba(0,0,0,.15); display: none; white-space: nowrap; }
+.viz-root .tip b { font-weight: 600; }
+.viz-root .tip i { display: inline-block; width: .7em; height: .7em; border-radius: 50%; margin-right: .3em; background: var(--c); }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · 07</p>
+
+<h1>Heat and energy</h1>
+<p class="lede">A phone has no fan. Run the engine for five minutes and it heats up, the system lowers the clock, and the speed falls. This page shows two five-minute runs, how energy per token is worked out from the battery, and why the GPU, slower than the CPU, can be the better choice for a long chat.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-1/power.html">power and heat</a> and <a href="time.html">Where the time goes</a> (clock caps).</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#burst">Why is the first minute faster?</a>
+  <a href="#joules">How do we measure energy per token?</a>
+  <a href="#faster">Can a faster engine use less energy?</a>
+  <a href="#gpu">CPU or GPU for a long chat?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Measure speed over minutes, not seconds, and energy per token from the battery.">What are we trying to do here?</h2>
+<p>A benchmark burst lasts a second or two. A person chatting runs the engine for minutes. On a phone those give different answers, because the chip is allowed to run fast only while it is cool. So <code>bench_suite --sustain 300</code> decodes in 64-token bursts, back to back, for 300 seconds, and reports the speed of every 10-second window. With <code>--monitor</code> it also samples temperatures and battery power four times a second.</p>
+<p>Two numbers come out: the <strong>sustained speed</strong> (tokens per second averaged over the whole run) and the <strong>energy per token</strong> in joules (J). A joule is one watt for one second. By the end you can work out energy per token from a power reading and a speed, and say what that number includes.</p>
+
+<h2 id="burst" data-short="Burst vs minutes" data-step="Speed is highest for the first tens of seconds, then falls as heat lowers the clock caps.">Why is the first minute faster?</h2>
+<p>Both runs below are Qwen2.5-0.5B Q4_0 on cores 2–7, on battery, each started cool (the second at 41.5 °C). The first is the engine at the end of Phase 7 (2026-10-21), the second after the speed work of 2026-10-29.</p>
+<div class="quiz" data-quiz="predict" data-for="burst" id="g-burst">
+  <p>The newer engine does a 64-token burst from cold at 172.7 tok/s. What is its average over 5 minutes?</p>
+  <ul>
+    <li data-right>About 95 tok/s, a bit over half <div class="why">Within the first half minute the caps drop, and the rest of the run is at the lower clock.</div></li>
+    <li>About 170 tok/s; the work does not change <div class="why">The work is the same, but the clock it runs at is not.</div></li>
+    <li>About 30 tok/s; it overheats and nearly stops <div class="why">The system lowers the clock to hold the temperature, it does not stop the work.</div></li>
+  </ul>
+</div>
+<div class="viz-root" data-sustain-chart>
+  <div class="legend"><span style="--c: var(--series-2)">Phase 7 engine (2026-10-21), average 85.7</span><span style="--c: var(--series-1)">After 2026-10-29, average 94.8</span></div>
+  <div class="js-only" data-plot role="img" aria-label="Decode speed in tokens per second for each 10-second window over 300 seconds, for two engine versions. The Phase 7 engine starts at 112 and falls to 60 to 89; the newer one starts at 121 and swings between 72 and 137."></div>
+  <div class="tip" data-tip></div>
+  <details>
+    <summary>Show the numbers as a table</summary>
+    <table>
+      <thead><tr><th>window ends (s)</th><th class="num">Phase 7 (tok/s)</th><th>window ends (s)</th><th class="num">after 10-29 (tok/s)</th></tr></thead>
+      <tbody data-table></tbody>
+    </table>
+  </details>
+</div>
+<p>Speed in each 10-second window <span class="tag m">measured</span>. The newer engine is faster in almost every window, but both fall from their start. The cause is the clock limit, not the code: as the chip warms, the system lowers the highest frequency the cores may run at (<a href="time.html#caps">clock caps</a>). The newer run swings more, between 72 and 137; it did not record the caps, so which window ran at which clock is not known.</p>
+<p><strong>Takeaway: a phone runs fast only while cool, so a minutes-long average is the speed a long chat gets, and it is well below the first burst.</strong></p>
+
+<h2 id="joules" data-short="Joules" data-step="Battery power in watts divided by tokens per second gives joules per token, for the whole phone.">How do we measure energy per token?</h2>
+<p>Android reports the battery’s remaining charge through a <strong>charge counter</strong>. The drop in charge over a time window, times the battery voltage, gives the energy the phone drew; divided by the time, that is the average power in watts.</p>
+<pre><code>energy per token = power / speed
+  Phase 7:  3.49 W / 85.7 tok/s = 0.041 J
+  10-29:    2.65 W / 94.8 tok/s = 0.028 J</code></pre>
+<ul>
+  <li>Watts are joules per second, and speed is tokens per second, so the seconds cancel and leave joules per token <span class="tag c">calculated</span>.</li>
+  <li>The power is the <strong>whole phone</strong>: screen, radios and everything else, not just the CPU. The screen was kept on, because switching it off lowers the clock caps.</li>
+  <li>The counter moves in steps and covered 277 of the 300 seconds; a second estimate from sampled current and voltage gave 3.16 W (0.033 J). So the figure is good to about ±15 %.</li>
+</ul>
+<p><strong>Takeaway: energy per token is battery power divided by speed, and on a phone it counts everything that was switched on.</strong></p>
+<div class="quiz" data-quiz="check" data-for="joules" id="c-joules">
+  <p>The phone draws 3 W while decoding at 100 tok/s. How many tokens per joule is that?</p>
+  <ul>
+    <li data-right>About 33 <div class="why">3 W / 100 tok/s = 0.03 J per token, and 1 / 0.03 ≈ 33.</div></li>
+    <li>300 <div class="why">That multiplies power by speed; energy per token is power divided by speed.</div></li>
+    <li>3 <div class="why">That is the power; it needs dividing by the speed first.</div></li>
+  </ul>
+</div>
+
+<h2 id="faster" data-short="Faster, cheaper" data-step="Finishing a token sooner means less time drawing power; at similar power, faster is cheaper.">Can a faster engine use less energy?</h2>
+<p>It can seem that a faster engine must work harder and so cost more. But most of a phone’s power is drawn whether a token finishes quickly or slowly: the screen, the memory, the cores running at their capped clock.</p>
+<div class="quiz" data-quiz="predict" data-for="faster" id="g-faster">
+  <p>The newer engine is 11 % faster over 5 minutes. What happened to its energy per token?</p>
+  <ul>
+    <li data-right>It fell, by about a third <div class="why">Each token took less time, at about the same or lower power, so less energy went into it.</div></li>
+    <li>It rose: faster means more power <div class="why">Power is capped by the same thermal limit; the faster code gets more done within it.</div></li>
+    <li>It stayed the same: the work per token did not change <div class="why">The arithmetic per token did not change, but the time spent drawing power did.</div></li>
+  </ul>
+</div>
+<p>From 0.041 to 0.028 J per token <span class="tag c">calculated</span>, and the newer run also peaked cooler, 80.3 against 84.5 °C <span class="tag m">measured</span>. The power reading fell too, from 3.49 to 2.65 W. Both runs were limited by the same thermal budget; the faster code simply finishes more tokens inside it.</p>
+<p><strong>Takeaway: on a phone, speed and energy usually improve together, because a token that finishes sooner spends less time drawing power.</strong></p>
+
+<h2 id="gpu" data-short="CPU or GPU" data-step="The GPU decodes at two thirds of the CPU’s speed for half the power: less energy per token and a cooler phone.">CPU or GPU for a long chat?</h2>
+<p>After Phase 8 the engine can also decode on the phone’s GPU (<a href="../beyond/gpu-decode.html">Decoding on the GPU</a>). The same test, 120 seconds each, 2026-10-29 <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th></th><th class="num">tok/s</th><th class="num">power</th><th class="num">energy per token</th><th class="num">max temp</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, cores 2–7</td><td class="num">157.6</td><td class="num">4.55 W</td><td class="num">0.029 J</td><td class="num">88.8 °C</td></tr>
+    <tr><td>GPU</td><td class="num">102.7</td><td class="num">2.17–2.48 W</td><td class="num">0.021–0.024 J</td><td class="num">67.6 °C</td></tr>
+  </tbody>
+</table>
+<p>The GPU is slower, but it draws about half the power, so each token costs less energy, and the phone stays 20 °C cooler. Reading speed for a person is a few words per second, so 100 tok/s is already far faster than anyone reads. For a long answer the cooler, cheaper path can be the better one, and it leaves the CPU free for the app.</p>
+<p><strong>Takeaway: the fastest path is not always the best one on a phone; the GPU trades a third of the speed for a fifth to a quarter less energy per token and a much cooler phone.</strong></p>
+<div class="quiz" data-quiz="check" data-for="gpu" id="c-gpu">
+  <p>An app shows a 50-token reply to a quick question. Which path makes more sense?</p>
+  <ul>
+    <li data-right>The CPU: the reply is short, so speed matters and heat has no time to build <div class="why">Over half a second the phone stays cool; the energy difference is tiny.</div></li>
+    <li>The GPU: it always uses less energy per token <div class="why">It does, but for 50 tokens the saving is a fraction of a joule, and the CPU answers sooner.</div></li>
+    <li>Either: speed and energy are the same for short replies <div class="why">Speed still differs (158 against 103 tok/s); only the heat does not have time to matter.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A phone is fast only while it is cool, so measure speed over minutes. Energy per token is battery power divided by speed, and it counts the whole phone. Faster code usually costs less energy per token, and the GPU, slower than the CPU, uses the least energy and runs much cooler.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) on battery (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>, <code>results/phase-l3.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script>
+// The sustained-decode chart: 10-second windows from bench_suite --sustain
+// (results/phase-7/raw/aether-qwen-q4_0-c2-7-sustained.txt and
+// results/phase-6/raw/sustained-2026-10-29/q4_0-c2-7.txt).
+(function () {
+  var series = [
+    { name: "Phase 7 engine", cls: "2", label: "Phase 7",
+      t: [10,20,31,41,51,61,72,82,93,103,114,124,135,145,155,166,176,186,197,207,218,228,238,249,259,270,280,290,301],
+      v: [111.8,113.0,112.2,112.4,107.1,106.0,101.3,97.6,96.4,97.3,73.4,86.8,83.3,86.4,89.0,67.5,82.0,71.5,72.1,82.2,80.2,75.0,60.3,63.8,78.4,67.9,75.0,74.2,65.6] },
+    { name: "After 2026-10-29", cls: "1", label: "10-29",
+      t: [10,20,31,42,52,63,73,83,93,104,114,124,134,145,156,166,177,187,198,208,219,230,240,250,261,272,282,293],
+      v: [121.3,108.6,78.3,81.3,92.5,108.1,108.8,91.0,101.2,93.5,75.9,88.8,73.5,89.3,72.4,137.3,81.2,96.8,98.1,90.5,117.7,86.4,81.8,97.7,86.9,78.8,107.6,105.5] }
+  ];
+  var root = document.querySelector("[data-sustain-chart]");
+  var body = root.querySelector("[data-table]");
+  for (var i = 0; i < Math.max(series[0].t.length, series[1].t.length); i++) {
+    var tr = document.createElement("tr");
+    [0, 1].forEach(function (k) {
+      var s = series[k];
+      tr.insertAdjacentHTML("beforeend", "<td>" + (s.t[i] != null ? s.t[i] : "") + "</td><td class=\"num\">" + (s.v[i] != null ? s.v[i].toFixed(1) : "") + "</td>");
+    });
+    body.appendChild(tr);
+  }
+  var W = 640, H = 300, L = 44, R = 64, T = 14, B = 34;
+  var x = function (t) { return L + (t / 300) * (W - L - R); };
+  var y = function (v) { return T + (1 - v / 150) * (H - T - B); };
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  var h = "";
+  [0, 50, 100, 150].forEach(function (g) {
+    h += "<line class=\"grid\" x1=\"" + L + "\" x2=\"" + (W - R) + "\" y1=\"" + y(g) + "\" y2=\"" + y(g) + "\"/>";
+    h += "<text class=\"axis\" x=\"" + (L - 6) + "\" y=\"" + (y(g) + 4) + "\" text-anchor=\"end\">" + g + "</text>";
+  });
+  [0, 60, 120, 180, 240, 300].forEach(function (t) {
+    h += "<text class=\"axis\" x=\"" + x(t) + "\" y=\"" + (H - B + 18) + "\" text-anchor=\"middle\">" + t + (t === 300 ? " s" : "") + "</text>";
+  });
+  h += "<text class=\"axis\" x=\"" + L + "\" y=\"" + (T - 2) + "\">tok/s</text>";
+  series.forEach(function (s) {
+    var d = s.t.map(function (t, i) { return (i ? "L" : "M") + x(t).toFixed(1) + " " + y(s.v[i]).toFixed(1); }).join(" ");
+    h += "<path class=\"s" + s.cls + "\" d=\"" + d + "\" fill=\"none\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>";
+    var n = s.t.length - 1;
+    h += "<text class=\"lab\" x=\"" + (x(s.t[n]) + 6) + "\" y=\"" + (y(s.v[n]) + 4 + (s.cls === "2" ? 8 : -8)) + "\">" + s.label + "</text>";
+  });
+  h += "<line class=\"cross\" data-cross y1=\"" + T + "\" y2=\"" + (H - B) + "\" style=\"display:none\"/>";
+  series.forEach(function (s) {
+    h += "<circle class=\"d" + s.cls + "\" data-dot=\"" + s.cls + "\" r=\"4.5\" stroke=\"var(--surface)\" stroke-width=\"2\" style=\"display:none\"/>";
+  });
+  h += "<rect data-hit x=\"" + L + "\" y=\"" + T + "\" width=\"" + (W - L - R) + "\" height=\"" + (H - T - B) + "\" fill=\"transparent\"/>";
+  svg.innerHTML = h;
+  root.querySelector("[data-plot]").appendChild(svg);
+  var tip = root.querySelector("[data-tip]"), cross = svg.querySelector("[data-cross]");
+  function nearest(s, t) {
+    var best = 0;
+    s.t.forEach(function (u, i) { if (Math.abs(u - t) < Math.abs(s.t[best] - t)) best = i; });
+    return best;
+  }
+  function show(ev) {
+    var r = svg.getBoundingClientRect();
+    var px = (ev.clientX - r.left) * W / r.width;
+    var t = Math.max(0, Math.min(300, (px - L) / (W - L - R) * 300));
+    var lines = [];
+    series.forEach(function (s) {
+      var i = nearest(s, t), dot = svg.querySelector("[data-dot=\"" + s.cls + "\"]");
+      dot.setAttribute("cx", x(s.t[i])); dot.setAttribute("cy", y(s.v[i])); dot.style.display = "";
+      lines.push("<div><i style=\"--c: var(--series-" + s.cls + ")\"></i>" + s.name + ": <b>" + s.v[i].toFixed(1) + "</b> tok/s at " + s.t[i] + " s</div>");
+    });
+    cross.setAttribute("x1", x(t)); cross.setAttribute("x2", x(t)); cross.style.display = "";
+    tip.innerHTML = lines.join("");
+    tip.style.display = "block";
+    var left = (x(t) / W) * r.width + 12;
+    if (left + tip.offsetWidth > r.width) left = (x(t) / W) * r.width - tip.offsetWidth - 12;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = (r.top - root.getBoundingClientRect().top + 24) + "px";
+  }
+  function hide() {
+    tip.style.display = "none"; cross.style.display = "none";
+    svg.querySelectorAll("[data-dot]").forEach(function (d) { d.style.display = "none"; });
+  }
+  var hit = svg.querySelector("[data-hit]");
+  hit.addEventListener("pointermove", show);
+  hit.addEventListener("pointerdown", show);
+  hit.addEventListener("pointerleave", hide);
+})();
+</script>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

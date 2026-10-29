@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How we know it's right · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Start here · 06</p>
+
+<h1>How we know it’s right</h1>
+<p class="lede">An inference engine can be wrong in ways that still produce fluent text. A sign error in one layer, a token split differently, a rounding choice in a quantizer: the model still talks, just slightly worse. This page explains the one rule every test in Aether follows, the outside programs it checks against, and how close “right” has to be.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="llm.html">How an LLM makes text</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#copy">Why can’t the code check itself?</a>
+  <a href="#refs">Which outside programs are the references?</a>
+  <a href="#close">Identical, or only close?</a>
+  <a href="#golden">Where do the reference answers live?</a>
+  <a href="#stats">How do you check a quantized model?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Every result is checked against a program someone else wrote, never against a second copy of our own.">What are we trying to do here?</h2>
+<p>Text from a language model is hard to judge by eye. A broken engine often writes plausible sentences, so “it looks fine” proves very little. Aether therefore checks numbers, not impressions: each part of the engine is compared with the same computation done by an established program that other people wrote and use.</p>
+<p>Those programs are the <strong>references</strong>: numpy for the kernels, llama2.c for the first model, Hugging Face <code>transformers</code> and <code>tokenizers</code> for the real models, and llama.cpp for its file formats, quantizers and quality numbers. Their outputs, saved to files, are the <strong>golden data</strong> the tests compare against. By the end you can say, for any part of the engine, what it is checked against and how close it must be.</p>
+
+<h2 id="copy" data-short="No second copy" data-step="A second implementation by the same person shares their misunderstandings, so agreement proves little.">Why can’t the code check itself?</h2>
+<p>A tempting way to test a fast kernel is to write a second, simple version and compare the two. If they agree, surely both are right?</p>
+<div class="quiz" data-quiz="predict" data-for="copy" id="g-copy">
+  <p>You misread how RoPE pairs the numbers, and write both a fast and a simple version that way. What do the two versions do in a comparison test?</p>
+  <ul>
+    <li data-right>Agree perfectly, and the test passes <div class="why">Both carry the same misunderstanding, so they make the same mistake.</div></li>
+    <li>Disagree, because one of them is fast <div class="why">Speed does not change the result; both compute the same wrong thing.</div></li>
+    <li>The compiler catches it <div class="why">The code is valid; it just computes a different function than the model expects.</div></li>
+  </ul>
+</div>
+<p>This is the reason for the project’s rule: <strong>no duplicate implementations for testing</strong>. A second copy written by the same person catches typing mistakes, but not mistakes in understanding, and those are the expensive ones. A program written by someone else and used by many people carries independent understanding. Agreement with it means something.</p>
+<p>The same rule applies to speed. Our benchmark numbers are compared with llama.cpp’s <code>llama-bench</code> on the same phone, not with our own earlier claims.</p>
+<p><strong>Takeaway: a test is only as independent as its reference, so every reference is a program someone else wrote.</strong></p>
+
+<h2 id="refs" data-short="References" data-step="numpy, llama2.c, Hugging Face and llama.cpp, each for the part it is the authority on.">Which outside programs are the references?</h2>
+<p>Each part has the reference that defines it. The model’s numbers are defined by the code it was trained and published with, the file formats by the program that writes them.</p>
+<table>
+  <thead><tr><th>Part</th><th>Reference</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Kernels (matmul, softmax, RoPE …)</td><td>numpy, in float64</td><td>within 1e-6 × √n relative</td></tr>
+    <tr><td>stories15M, every layer</td><td>llama2.c, patched to dump activations</td><td>bit-identical</td></tr>
+    <tr><td>SmolLM2 and Qwen2.5, every layer</td><td>Hugging Face <code>transformers</code></td><td>within 5.5e-5 and 1.4e-4 relative</td></tr>
+    <tr><td>Tokenizers</td><td>llama2.c’s encoder; Hugging Face <code>tokenizers</code></td><td>identical ids on 323 and 433 strings</td></tr>
+    <tr><td>Unicode NFC</td><td>Python’s <code>unicodedata</code></td><td>identical on 17,253 cases</td></tr>
+    <tr><td>Quantizers</td><td>llama.cpp (<code>gguf</code> package, <code>libggml-base</code>)</td><td>byte-identical</td></tr>
+    <tr><td>Quantized model quality</td><td><code>llama-perplexity</code></td><td>within its error bars</td></tr>
+    <tr><td>Speed</td><td><code>llama-bench</code></td><td>measured side by side</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: each part is checked against the program that defines it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="refs" id="c-refs">
+  <p>A new model family needs a different chat template. What is its reference?</p>
+  <ul>
+    <li data-right><code>transformers</code>’ <code>apply_chat_template</code> on that model’s own files <div class="why">The model’s published template defines the prompt it was trained with.</div></li>
+    <li>Our ChatML function, which already passes its tests <div class="why">Those tests are for Qwen’s template; a new family needs its own reference.</div></li>
+    <li>Reading the generated text and seeing if it answers sensibly <div class="why">Fluent text is exactly what a slightly wrong prompt still produces.</div></li>
+  </ul>
+</div>
+
+<h2 id="close" data-short="How close" data-step="Same operations in the same order give identical bits; a different order gives a small, bounded difference.">Identical, or only close?</h2>
+<p>Floating-point addition rounds after every step, so the order of additions changes the last bits of a sum. <code>(a + b) + c</code> and <code>a + (b + c)</code> can differ.</p>
+<div class="quiz" data-quiz="predict" data-for="close" id="g-close">
+  <p>Our NEON matmul adds products in four interleaved chains; numpy adds them in another order. What should the test require?</p>
+  <ul>
+    <li data-right>A small relative difference, growing slowly with the row length <div class="why">Rounding differences add up like a random walk, so about √n.</div></li>
+    <li>Identical bits <div class="why">Only possible if both add in exactly the same order, which they do not.</div></li>
+    <li>Anything within 1 % <div class="why">Far too loose; a real bug, such as a missing element, can hide inside 1 %.</div></li>
+  </ul>
+</div>
+<p>So the kernel tests allow a relative error of 1e-6 × √n, where n is the number of terms in each sum. The bound is tight enough that dropping a single element of a long row fails it.</p>
+<p>Two kinds of result are held to exact equality instead:</p>
+<ul>
+  <li><strong>stories15M against llama2.c.</strong> Phase 2 did every operation in llama2.c’s order, so every activation of every layer matches to the last bit, and so do greedy and seeded generations.</li>
+  <li><strong>Integers and bytes.</strong> Token ids, quantized blocks and tokenizer output have no rounding to excuse a difference. The quantizers write exactly llama.cpp’s bytes, with and without an importance matrix.</li>
+</ul>
+<p><strong>Takeaway: when the order of operations is the same, results must be identical; when it differs, the test allows a bound that grows like √n and no more.</strong></p>
+<div class="quiz" data-quiz="check" data-for="close" id="c-close">
+  <p>A threaded matmul gives slightly different results depending on the number of threads. Is that acceptable here?</p>
+  <ul>
+    <li data-right>No: each output’s sum is done by one thread in a fixed order, so the bits must not depend on the thread count <div class="why">The split is by rows, not within a sum, so there is no reason for any difference.</div></li>
+    <li>Yes, within 1e-6 × √n <div class="why">That bound is for comparing with a different program; the same code must match itself exactly.</div></li>
+    <li>Yes, threads are never deterministic <div class="why">Their timing is not, but each output can still be computed by one thread in a fixed order.</div></li>
+  </ul>
+</div>
+
+<h2 id="golden" data-short="Golden files" data-step="Scripts in tools/ run the references and write testdata/; large files are regenerated, not committed.">Where do the reference answers live?</h2>
+<p>The references are Python and C programs, and the tests run on the phone in Rust. So the two meet through files. Scripts in <code>tools/</code> run the reference once on the PC and save inputs and expected outputs to <code>testdata/</code>; the Rust tests read them back.</p>
+<ul>
+  <li><code>tools/gen_kernels.py</code> writes numpy inputs and outputs for every kernel, at awkward sizes (odd lengths, tails) where SIMD bugs live.</li>
+  <li><code>tools/hf_dump.py</code> runs <code>transformers</code> with hooks that save every layer’s activations.</li>
+  <li><code>tools/gen_quant.py</code> and <code>gen_quant_imatrix.py</code> quantize with llama.cpp’s own code.</li>
+  <li><code>tools/fetch_models.sh</code> downloads the models and builds GGUF files with llama.cpp’s converter.</li>
+</ul>
+<p>Some of these files are hundreds of megabytes, so they are <strong>regenerated, not committed</strong>. A test that needs a missing file prints <code>SKIP</code> with the path and returns, instead of failing on a fresh checkout. The cargo runner copies <code>testdata/</code> to the phone, so the same tests run there (<code>cargo test --release --target aarch64-linux-android</code>): 105 passed on the phone on 2026-10-29 <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: references run once on the PC and leave their answers in files, which the Rust tests read on the PC and on the phone.</strong></p>
+<div class="quiz" data-quiz="check" data-for="golden" id="c-golden">
+  <p>A test prints SKIP on your machine. What does that tell you about the code?</p>
+  <ul>
+    <li data-right>Nothing yet: its golden file is missing, so the comparison never ran <div class="why">A skip is not a pass; regenerate the file with the script in <code>tools/</code> and run it again.</div></li>
+    <li>The code passed <div class="why">Nothing was compared, so nothing was shown.</div></li>
+    <li>The code failed <div class="why">Nothing was compared either way.</div></li>
+  </ul>
+</div>
+
+<h2 id="stats" data-short="Quality checks" data-step="A quantized model cannot match f32 exactly, so its perplexity and KL divergence are compared with llama.cpp’s.">How do you check a quantized model?</h2>
+<p>A 4-bit model is meant to differ from the original: it rounds every weight. So “identical to f32” is the wrong test. The question becomes whether it loses the same amount of quality as llama.cpp’s version of the same file.</p>
+<p>Two measures answer that, both computed on the same wikitext text by our engine and by <code>llama-perplexity</code>. <a href="../phase-6/perplexity.html">Perplexity</a> is how surprised the model is by real text. <strong>KL divergence</strong> is how far its predicted probabilities drift from the f32 model’s. For SmolLM2-135M Q4_0 quantized with an importance matrix, for example:</p>
+<pre><code>             ours       llama.cpp
+perplexity   25.8604    25.8345 ± 1.093
+mean KLD     0.269287   0.269190 ± 0.003723</code></pre>
+<ul>
+  <li>The two engines agree well inside llama.cpp’s own error bar.</li>
+  <li>The error bar is a statistical one: it says how much the number would move with different text. A difference much larger than it would point to a bug.</li>
+</ul>
+<p><strong>Takeaway: for results that are meant to be approximate, the test is the same quality loss as the reference, within the reference’s error bar.</strong></p>
+<div class="quiz" data-quiz="check" data-for="stats" id="c-stats">
+  <p>Our Q4_0 perplexity is 27.7 and llama.cpp’s 27.7 ± 1.2, but our KL divergence is twice llama.cpp’s. What do you conclude?</p>
+  <ul>
+    <li data-right>Something differs: KL is much more sensitive than perplexity, and it disagrees <div class="why">KL compares every probability, so it catches drift that averages out in perplexity.</div></li>
+    <li>All is well: perplexity matches <div class="why">Perplexity can match while the probabilities differ; both measures must agree.</div></li>
+    <li>llama.cpp is wrong <div class="why">Possible, but the reference is the program many people check against; look at ours first.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Every test compares against a program someone else wrote, never a second copy of our own. Results with the same order of operations must be identical; others must stay inside a bound that grows like √n. Quantized models are checked by matching the reference’s perplexity and KL divergence within its error bars.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Results are from <code>results/phase-N.md</code> and the test suite as of 2026-10-29. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

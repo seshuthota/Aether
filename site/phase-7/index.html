@@ -41,7 +41,7 @@
   <li><strong>The file.</strong> SmolLM2 was read from Hugging Face's <code>safetensors</code> and <code>config.json</code>. Qwen comes as a single GGUF file that holds the config, the tokenizer and the weights. The reader is in <code>src/format/gguf.rs</code>, and <a href="gguf.html">the GGUF page</a> walks through it.</li>
   <li><strong>The architecture.</strong> Qwen2 has biases on the query, key and value projections, and the loader reads them when the file has them. Its RoPE base (θ, the number that sets how fast position rotations change) is 1,000,000 <span class="tag a">assumption</span>, read from the file's <code>rope.freq_base</code>. Its rotation pairs the two halves of each head, not adjacent numbers, so the loader picks the layout from <code>general.architecture</code>. The embeddings are tied: no separate output matrix is stored, and the loader reuses the token embedding table for the final projection (<code>src/model/gguf.rs</code>).</li>
   <li><strong>The tokenizer.</strong> Qwen's tokenizer is byte-level BPE like SmolLM2's, but with a different pre-tokenizer: the rule that cuts text into words before merges happen. It is written by hand (<code>qwen2_split</code> in <code>src/tokenizer/bytelevel.rs</code>), and it needs Unicode category tables generated from Python's <code>unicodedata</code>. Its text is also normalised to NFC first (<code>src/tokenizer/nfc.rs</code>), so that the same accented letter always becomes the same bytes.</li>
-  <li><strong>The chat format.</strong> Qwen is trained on ChatML, where each turn is wrapped in <code>&lt;|im_start|&gt;</code> and <code>&lt;|im_end|&gt;</code> markers. Without them the model continues the text instead of answering. <code>src/chat.rs</code> builds the prompt, and the <code>--chat</code> flag turns it on.</li>
+  <li><strong>The chat format.</strong> Qwen is trained on ChatML, where each turn is wrapped in <code>&lt;|im_start|&gt;</code> and <code>&lt;|im_end|&gt;</code> markers. Without them the model continues the text instead of answering. <code>src/chat.rs</code> builds the prompt, and the <code>--chat</code> flag turns it on (<a href="chat.html">Talking to a chat model</a>).</li>
 </ul>
 <p><strong>Takeaway: a new architecture is mostly a few config switches, but the tokenizer and the file format each needed a new piece of code.</strong></p>
 
@@ -98,12 +98,17 @@
 <p><strong>Takeaway: the sustained number is lower than the first burst, and the energy number is for the whole phone.</strong></p>
 
 <h2 id="reading">Which pages should I read next?</h2>
-<p>Two pages go deeper on this phase. Read them in this order.</p>
+<p>Seven pages go deeper on this phase. Read them in this order.</p>
 <ol>
   <li><a href="gguf.html">GGUF: one file for everything</a>: the header, the typed metadata, the alignment rule, and why the weights are used in place from the memory map.</li>
   <li><a href="attention-ab.html">NEON attention, measured honestly</a>: a NEON version of attention that looked faster in one run and was measured properly with an alternating A/B test. The result is +10 % at depth 512 and no change at depth 0.</li>
+  <li><a href="nfc.html">One text, two spellings</a>: Unicode normalization (NFC), the three steps that give every text one spelling before Qwen’s tokenizer sees it, and the 17,253 cases that check it against Python.</li>
+  <li><a href="chat.html">Talking to a chat model</a>: the ChatML template, why a plain request makes the model ramble on, and how <code>&lt;|im_end|&gt;</code> ends the reply.</li>
+  <li><a href="benchmarking.html">Benchmarking like llama-bench</a>: how the speed tables on this page were measured, and why one run is not a number.</li>
+  <li><a href="time.html">Where the time goes</a>: why decode waits for memory and prefill for arithmetic, how <code>smmla</code> closed the prefill gap after this phase, and clock caps that move during a run.</li>
+  <li><a href="heat.html">Heat and energy</a>: two five-minute runs as a chart, how joules per token come from the battery, and when the GPU is the better choice.</li>
 </ol>
-<p><strong>Takeaway: the file format explains how the model loads, and the attention page explains how a speed claim should be tested.</strong></p>
+<p><strong>Takeaway: the file format explains how the model loads, the attention page how a speed claim should be tested, and the NFC page why the tokenizer rewrites text first, the chat page how to ask the model a question, the benchmarking page how the speeds were measured, the time page what limits them, and the heat page what they cost.</strong></p>
 
 <h2 id="open">What is still open?</h2>
 <p>Four things this phase did not finish. Each one is a question for a later run, not a result.</p>
@@ -154,8 +159,8 @@
 </main>
 </div>
 <p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=31"></script>
-<script src="../js/glossary.js?v=30"></script>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
 </html>

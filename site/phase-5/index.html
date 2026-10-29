@@ -19,7 +19,7 @@
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
 <p class="kicker">Phase 5 · real model files</p>
-<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine now loads a real Hugging Face checkpoint, SmolLM2-135M, from its <code>config.json</code>, its <code>model.safetensors</code> file and its <code>tokenizer.json</code>. Every layer's activations match <code>transformers</code> within a relative error of 5.5e-5, the 48 greedy tokens match exactly, and 433 test strings encode and decode exactly as HF <code>tokenizers</code> does it. The checks pass on the host and on the phone. SmolLM2-360M is not verified yet. The detailed pages for this phase are still to write; this overview covers what was built and measured.</p></div>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine now loads a real Hugging Face checkpoint, SmolLM2-135M, from its <code>config.json</code>, its <code>model.safetensors</code> file and its <code>tokenizer.json</code>. Every layer's activations match <code>transformers</code> within a relative error of 5.5e-5, the 48 greedy tokens match exactly, and 433 test strings encode and decode exactly as HF <code>tokenizers</code> does it. The checks pass on the host and on the phone. SmolLM2-360M is not verified yet. This overview covers what was built and measured; the topic pages go deeper: <a href="safetensors.html">reading weights in place</a>, <a href="config.html">one forward pass, two families</a>, <a href="bytelevel.html">byte-level BPE</a> and <a href="matching-hf.html">matching Hugging Face</a>.</p></div>
 
 <h1>Phase 5 — real model files (SmolLM2)</h1>
 <p class="lede">Phases 2 to 4 ran one tiny model from one small llama2.c file. Phase 5 reads the files that Hugging Face publishes: a JSON config, a weights file in a format called safetensors, and a tokenizer described by a JSON file. The model is SmolLM2-135M. Reading these files adds three new ideas: how to map a file into memory without copying it, how a config file can decide the shape of the model, and how a byte-level tokenizer splits text. Most of the model's maths did not change.</p>
@@ -275,8 +275,8 @@ Hugging Face (halves): (0,32) (1,33) (2,34) ...  (31,63)</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise; the decode speeds are from the Phase 4 sweep on battery. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=31"></script>
-<script src="../js/glossary.js?v=30"></script>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
 </html>

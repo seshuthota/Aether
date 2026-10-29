@@ -36,6 +36,11 @@
   <a href="#phase2">What does Phase 2 build?</a>
   <a href="#phase3">How does Phase 3 make it fast?</a>
   <a href="#phase4">What do threads add in Phase 4?</a>
+  <a href="#phase5">What does Phase 5 add for a real model?</a>
+  <a href="#phase6">How does Phase 6 make the weights smaller?</a>
+  <a href="#phase7">What does Phase 7 run?</a>
+  <a href="#phase8">How does Phase 8 reach an app?</a>
+  <a href="#beyond">What came after Phase 8?</a>
   <a href="#serve">How do I open the site later?</a>
   <a href="#takeaway">What you should take away</a>
 </nav>
@@ -55,7 +60,7 @@
     <tr><td><span class="tag a">assumption</span></td><td>A stand-in used to learn the shape of an idea. 30 GB/s in the tokens-per-second exercise is one of these. It is not this phone’s bandwidth.</td></tr>
   </tbody>
 </table>
-<p>Which pages describe finished work? Phase 0 pages do: the project builds, <code>cargo test</code> runs on the phone, and the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for. The measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. Phases 5 to 8 have an overview page each, and Phases 6 and 7 have their first topic pages. The <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
+<p>Which pages describe finished work? Phase 0 pages do: the project builds, <code>cargo test</code> runs on the phone, and the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for. The measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. Phases 5, 6 and 8 have an overview and topic pages each, and Phase 7 has its overview and seven topic pages. Work done after Phase 8 (Q4_K_M files, speculative decoding, the GPU) has its own section, <a href="beyond/index.html">After Phase 8</a>. The <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
 <p><strong>Takeaway: a number is only as good as its label, so read the label before you trust the number.</strong></p>
 
 <h2 id="why">Why build this on a phone?</h2>
@@ -104,11 +109,35 @@
 <div class="cards" data-cards="Phase 4 · threads"></div>
 <p><strong>Takeaway: on this phone, more cores stop helping at about six, so pick the thread count by measuring.</strong></p>
 
+<h2 id="phase5">What does Phase 5 add for a real model?</h2>
+<p>Phase 5 loads SmolLM2-135M from Hugging Face’s own files: a config, a safetensors weights file and a tokenizer description. Three ideas are new: weights read in place with mmap, query heads that share key/value heads, and a tokenizer that starts from bytes. Every layer matches transformers within 5.5e-5, and 433 test strings tokenize exactly as Hugging Face does.</p>
+<div class="cards" data-cards="Phase 5 · real model files"></div>
+<p><strong>Takeaway: a second model family needs new file readers and a config, not new maths.</strong></p>
+
+<h2 id="phase6">How does Phase 6 make the weights smaller?</h2>
+<p>Phase 6 stores weights in 8 and 4 bits, one scale per block of 32, and multiplies them with integer instructions. Fewer bytes per token means faster decode, and perplexity and KL divergence measure what the lost bits cost.</p>
+<div class="cards" data-cards="Phase 6 · quantization"></div>
+<p><strong>Takeaway: quantization trades a measured amount of accuracy for fewer bytes, and decode speed follows the bytes.</strong></p>
+
+<h2 id="phase7">What does Phase 7 run?</h2>
+<p>Qwen2.5-0.5B, a small chat model, from llama.cpp’s GGUF file, with its tokenizer and chat template, compared with llama.cpp on the same phone.</p>
+<div class="cards" data-cards="Phase 7 · GGUF and Qwen"></div>
+<p><strong>Takeaway: one GGUF file carries the weights, the tokenizer and the chat template together.</strong></p>
+
+<h2 id="phase8">How does Phase 8 reach an app?</h2>
+<p>The engine gets a C interface, a small JNI shim connects it to Kotlin, and a one-screen app streams a chat reply at the command-line tool’s speed.</p>
+<div class="cards" data-cards="Phase 8 · the app"></div>
+<p><strong>Takeaway: C is the shared language between the app and the engine, and the app adds no measurable cost.</strong></p>
+
+<h2 id="beyond">What came after Phase 8?</h2>
+<p>Three optional directions from the plan: llama.cpp’s Q4_K_M files, several tokens per weight read with speculative decoding, and decoding on the phone’s GPU.</p>
+<div class="cards" data-cards="After Phase 8 · faster decoding and the GPU"></div>
+<p><strong>Takeaway: near the memory limit, the gains come from better formats, more tokens per read and cheaper hardware.</strong></p>
+
 <h2 id="serve">How do I open the site later?</h2>
 <p>From the repo root, run this command. It starts a small web server on port 8765 that serves the <code>site</code> folder:</p>
 <pre><code>python3 -m http.server 8765 --directory site</code></pre>
 <p>Then open <code>http://localhost:8765/</code>. Opening <code>site/index.html</code> as a file also works, because the links are relative. The typefaces load from Google Fonts when the network is up, and fall back to the system fonts when it is not. On a phone on the same Wi-Fi, use the PC’s address instead of <code>localhost</code>.</p>
-<p>Later phases get a section here as their pages are written.</p>
 <p>Do not skip ahead in the engine. The early measurements are what the later kernels get compared against.</p>
 <p><strong>Takeaway: serve the folder over HTTP, and read the phases in order, because the early measurements are the baseline.</strong></p>
 
@@ -121,8 +150,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="js/pages.js?v=31"></script>
-<script src="js/glossary.js?v=30"></script>
+<script src="js/pages.js?v=34"></script>
+<script src="js/glossary.js?v=33"></script>
 <script src="js/site.js?v=30"></script>
 </body>
 </html>

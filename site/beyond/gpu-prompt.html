@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who reads the prompt? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">After Phase 8 · 04</p>
+
+<h1>Who reads the prompt?</h1>
+<p class="lede">Feeding a prompt through the GPU’s decode step one token at a time took seconds. The CPU reads the same prompt in one batch in about half a second, and its KV cache can be handed to the GPU, which then decodes. This page covers that handoff, a measurement that first pointed the wrong way, and a batched prompt pass on the GPU itself.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="gpu-decode.html">Decoding on the GPU</a>, <a href="../phase-3/prefill.html">prefill</a> and <a href="../phase-2/kv-cache.html">the KV cache</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#slow">Why is the prompt slow through the decode step?</a>
+  <a href="#handoff">How can the CPU hand its work to the GPU?</a>
+  <a href="#measure">Did decoding get slower after the handoff?</a>
+  <a href="#gpubatch">Can the GPU read the prompt in one batch too?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Make the prompt fast in GPU mode: CPU prefill with a KV-cache handoff, or a batched GPU pass.">What are we trying to do here?</h2>
+<p>Before the first new token, the model has to read the whole prompt. That is <strong>prefill</strong>: every prompt token goes through every layer, and the keys and values of every position land in the KV cache. Prefill can share each weight read across many tokens, so it is limited by arithmetic, not memory (<a href="../phase-3/prefill.html">prefill</a>).</p>
+<p>The first GPU mode had no batched pass, so it fed the prompt through the decode step one token at a time. This page makes the prompt fast in GPU mode in two ways: let the CPU do it and hand over the KV cache (<code>aether --gpu -c 2-7</code>, and the app’s GPU mode), or give the GPU a batched pass of its own (<code>GpuModel::forward_batch</code>).</p>
+
+<h2 id="slow" data-short="The slow prompt" data-step="Token by token, each prompt token pays a full decode step's weight read.">Why is the prompt slow through the decode step?</h2>
+<p>A decode step reads all 278 MB of Qwen2.5-0.5B’s weights for one token. Fed one at a time, every prompt token pays that read again. The CPU’s batched pass reads each weight once for many tokens and spends the time on arithmetic instead.</p>
+<div class="quiz" data-quiz="predict" data-for="slow" id="g-slow">
+  <p>A 345-token prompt took 3.9–4.5 s through the GPU’s decode step. About how long did the CPU’s batched pass take on cores 2–7?</p>
+  <ul>
+    <li data-right>About 0.55 s, 7× faster <div class="why">The batched pass reads the weights once per batch, so the CPU’s arithmetic units set the pace.</div></li>
+    <li>About 4 s, the same <div class="why">That would be true if the CPU also went token by token.</div></li>
+    <li>About 0.05 s <div class="why">Batching removes the repeated reads, but the arithmetic for 345 tokens still takes time: 570–635 tokens per second.</div></li>
+  </ul>
+</div>
+<p>Measured, Qwen2.5-0.5B Q4_0, the start of wikitext-2 as the prompt, two runs <span class="tag m">measured</span>: token by token on the GPU 3,873 and 4,474 ms; batched on the CPU 602 and 543 ms.</p>
+<p><strong>Takeaway: through the decode step every prompt token pays a full weight read; a batched pass pays it once.</strong></p>
+
+<h2 id="handoff" data-short="The handoff" data-step="Both caches are [layer][position][kv_dim]; copy rows 0..n and decode on from n.">How can the CPU hand its work to the GPU?</h2>
+<p>After prefill, the only state the next token needs is the KV cache: the keys and values of every prompt position in every layer. The logits of the last prompt token give the first new token.</p>
+<p>The CPU’s cache and the GPU’s use the same layout, one block per layer, one row of <code>kv_dim</code> floats per position:</p>
+<pre><code>layer 0: pos 0 | pos 1 | ... | pos seq_len-1
+layer 1: pos 0 | pos 1 | ...
+...
+each row: kv_dim floats (128 for Qwen2.5-0.5B)
+</code></pre>
+<div class="quiz" data-quiz="predict" data-for="handoff" id="g-handoff">
+  <p>How much must be copied per prompt token for Qwen2.5-0.5B (24 layers, kv_dim 128, f32 keys and values)?</p>
+  <ul>
+    <li data-right>About 24 KB <div class="why">24 layers × 128 floats × 2 (keys and values) × 4 bytes = 24,576 bytes.</div></li>
+    <li>About 278 MB <div class="why">That is the weights, which the GPU already has.</div></li>
+    <li>About 3.5 KB, one activation vector <div class="why">Every layer keeps its own keys and values, so it is 24 layers’ worth.</div></li>
+  </ul>
+</div>
+<p><code>GpuSession::open_hybrid</code> loads a second copy of the model for the CPU. Per prompt: the CPU runs <code>forward_batch</code>, samples the first token from its logits, and <code>GpuModel::load_kv</code> copies rows <code>0..n</code> of each layer into the GPU’s cache. Decoding continues on the GPU at position n. For the 345-token prompt that is about 8 MB <span class="tag c">calculated</span>, a negligible share of the time.</p>
+<p>The cost is memory: the weights are loaded twice, +278 MB. The check that it is right: on “Why is the sky blue?”, GPU-only and CPU-prompt-then-GPU printed the same greedy text, token for token, for 114 tokens. A wrong cache row would change the text within a few tokens. The C ABI test also runs both modes and compares their output.</p>
+<p><strong>Takeaway: the KV cache is all the state a prompt leaves, so with matching layouts the CPU can read the prompt and the GPU continue.</strong></p>
+<div class="quiz" data-quiz="check" data-for="handoff" id="c-handoff">
+  <p>The CPU’s cache was sized for 400 positions and the GPU’s for 1,024. What must the copy take care of?</p>
+  <ul>
+    <li data-right>Each layer starts at a different offset in each cache <div class="why">Layer l starts at l × seq_len × kv_dim, so the copy uses each side’s own seq_len per layer.</div></li>
+    <li>Nothing: one block copy of n × kv_dim floats <div class="why">That copies layer 0 correctly and the other layers to the wrong place.</div></li>
+    <li>It cannot work unless both are equal <div class="why">It works per layer; <code>load_kv</code> takes the CPU’s seq_len for that reason.</div></li>
+  </ul>
+</div>
+
+<h2 id="measure" data-short="A wrong lead" data-step="It looked slower on a warm, charging phone; on a cool one it was faster.">Did decoding get slower after the handoff?</h2>
+<p>The first measurement, on a warm phone on the charger (44–50 °C), said yes: decode after the CPU prefill ran at 63–75 tokens per second, against 81–82 for GPU-only <span class="tag m">measured</span>. The obvious suspects were the CPU’s threads still spinning, or the GPU’s clocks dropping during the half second it sat idle while the CPU read the prompt.</p>
+<div class="quiz" data-quiz="predict" data-for="measure" id="g-measure">
+  <p>The same comparison was repeated on battery, at 34 °C, alternating the two modes and timing every token. What did it show?</p>
+  <ul>
+    <li data-right>The CPU-prompt mode decoded faster: 102–103 against 84–89 tok/s <div class="why">The earlier gap came from the phone’s state, not from the handoff.</div></li>
+    <li>The same 20 % gap <div class="why">The gap did not survive a cooler phone and alternating runs.</div></li>
+    <li>A slow start for 20 tokens, then equal speed <div class="why">Per-token times showed no slow start, only one slow token in each run.</div></li>
+  </ul>
+</div>
+<p>Each step of the investigation removed one suspect <span class="tag m">measured</span>:</p>
+<ul>
+  <li>One prefill core instead of six decoded no faster, and the pool’s threads park about 3 ms after the batch. The threads were not the cause.</li>
+  <li>Off the charger at 37–38 °C, the gap shrank to 3–11 %, about the spread between runs of the same mode.</li>
+  <li>At 34 °C, with every token’s time printed (<code>aether --gpu --times</code>), the CPU-prompt runs held 8–10 ms per token from the first token on; GPU-only runs sat at 11–12 ms after their 3.5 s of GPU prefill.</li>
+</ul>
+<p>The lesson is the same as in <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a>: on a phone, the conditions (heat, charger, the last few seconds of load) can be bigger than the change you are measuring, and only alternating runs under recorded conditions settle it.</p>
+<p><strong>Takeaway: the slowdown came from a warm, charging phone; alternating runs on a cool phone reversed it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="measure" id="c-measure">
+  <p>Why did per-token times settle the question when tokens per second could not?</p>
+  <ul>
+    <li data-right>They show whether a gap is a slow start or a steady difference <div class="why">A start-up loss and a sustained slowdown give the same average but different per-token traces.</div></li>
+    <li>They are more precise than an average <div class="why">The average uses the same tokens; the shape over time is what was missing.</div></li>
+    <li>They exclude the prompt <div class="why">The tokens-per-second figure excluded the prompt too.</div></li>
+  </ul>
+</div>
+
+<h2 id="gpubatch" data-short="GPU batch" data-step="Every stage gets a token index; matrix products become tiled GEMMs. Correct; phone speed pending.">Can the GPU read the prompt in one batch too?</h2>
+<p>The CPU copy costs 278 MB. A batched pass on the GPU itself needs no second copy. Every stage needs a batched form:</p>
+<ul>
+  <li>The matrix products become matrix-matrix products: <code>q4_0_gemm.comp</code> computes tiles of 64 rows × 64 tokens in shared memory, so each weight is read once per 64 tokens. On its own it reached about 260 GFLOP/s on the Adreno <span class="tag m">measured</span>.</li>
+  <li>RMSNorm, bias + RoPE, attention and the merge take a token index from their workgroup ID. Token t is at position pos + t, and attends to the cache up to its own position, which includes the batch’s earlier tokens, written in the same pass.</li>
+  <li>With one token every index is 0, so the decode step runs the same shaders unchanged.</li>
+</ul>
+<div class="quiz" data-quiz="predict" data-for="gpubatch" id="g-gpubatch">
+  <p>The batched GEMM adds numbers in a different order from the decode GEMV. What should scoring wikitext-2 through the batched pass give?</p>
+  <ul>
+    <li data-right>The same perplexity to four decimals <div class="why">The order changes the last bits of each logit, far below what an average over 5,100 tokens can show.</div></li>
+    <li>A clearly different perplexity <div class="why">The math is the same; only rounding differs, and f32 activations keep that tiny.</div></li>
+    <li>It cannot be scored in batches <div class="why"><code>vk_ppl … batch</code> returns every token’s logits from each pass.</div></li>
+  </ul>
+</div>
+<p>Through <code>vk_ppl … batch</code>, 128 tokens per pass: SmolLM2-135M 27.6910 and Qwen2.5-0.5B 19.7193, the same as token by token <span class="tag m">measured</span> (on the PC’s GPU, which matches the phone’s perplexities to four decimals).</p>
+<p>Its speed on the phone is not measured yet. From the GEMM’s 260 GFLOP/s, a rough estimate is a few hundred tokens per second: several times the token-by-token GPU prompt, but likely below the CPU’s 570–635 <span class="tag a">estimate, not measured</span>. So the app’s GPU mode keeps the CPU for the prompt, and the GPU batch is the option that saves the memory.</p>
+<p><strong>Takeaway: a batched GPU pass needs every stage to take a token index; it gives the same perplexity, and its phone speed decides when to use it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="gpubatch" id="c-gpubatch">
+  <p>Token 5 of a batch attends to positions up to its own. Where do the keys of tokens 0–4 of the same batch come from?</p>
+  <ul>
+    <li data-right>The cache, written by the bias + RoPE stage earlier in the same layer <div class="why">A barrier separates that stage from attention, so all of the batch’s keys are in the cache by then.</div></li>
+    <li>They are not used: a batch only attends to earlier batches <div class="why">Causal attention includes every earlier position, inside the batch too.</div></li>
+    <li>Each attention workgroup recomputes them <div class="why">They are computed once, by the stage before attention.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A prompt fed token by token pays a full weight read per token; a batched pass pays it once.</p>
+<p>The KV cache is all a prompt leaves behind, so the CPU can read the prompt and hand it to the GPU. Measure such changes on a cool phone, alternating.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

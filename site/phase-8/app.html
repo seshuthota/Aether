@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the Android app · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 8 · 02</p>
+
+<h1>Inside the Android app</h1>
+<p class="lede">The app is one screen of Kotlin over a small C shim. Three things need care: text crosses from Kotlin to C as real UTF-8, the engine runs on one background thread of its own, and characters split across tokens are held back until they are whole.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="c-abi.html">the C interface</a> and <a href="../phase-5/safetensors.html#mmap">mmap</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#hops">How does a Kotlin call reach the engine?</a>
+  <a href="#thread">Which thread runs the engine?</a>
+  <a href="#utf8">How do you show half an emoji?</a>
+  <a href="#memory">How much memory does the model take on the phone?</a>
+  <a href="#speed">Does the app slow the engine down?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Stream a chat reply in an installable app, at the command-line tool’s speed.">What are we trying to do here?</h2>
+<p>The plan’s test for Phase 8 is an installable app that streams a chat reply at the same speed as the command-line tool. The app is deliberately small: a model list, a prompt box, a few settings (cores, chat template, lookup, GPU), a Generate/Stop button and the reply.</p>
+<p>Android apps are written in Kotlin and run on Android’s Java runtime. The engine is a Rust library with a C interface. This page follows one tap of Generate through the layers between them, and then asks what the app costs in memory and speed. The code is in <code>android/</code>; build steps are in <code>android/README.md</code>.</p>
+
+<h2 id="hops" data-short="Three hops" data-step="Kotlin → JNI shim in C → the C interface; strings cross as byte arrays of real UTF-8.">How does a Kotlin call reach the engine?</h2>
+<p>A call goes through three layers, and two shared libraries:</p>
+<pre><code>Kotlin  Aether.kt: external fun nativeGenerate(...)
+  |        JNI
+libaether_jni.so  aether_jni.c: converts types
+  |        C ABI (include/aether.h)
+libaether.so      the Rust engine (src/ffi.rs)</code></pre>
+<ul>
+  <li>JNI looks a native method up by a fixed name, such as <code>Java_dev_aether_chat_Aether_nativeGenerate</code>. The shim provides those names and calls the plain <code>aether_*</code> functions.</li>
+  <li><code>scripts/android-native.sh</code> builds both libraries into the app’s <code>jniLibs/arm64-v8a</code> folder.</li>
+  <li>An error code becomes a Java <code>IOException</code> carrying <code>aether_last_error()</code>, so Kotlin handles failures with ordinary <code>try</code>/<code>catch</code>.</li>
+</ul>
+<div class="quiz" data-quiz="predict" data-for="hops" id="g-hops">
+  <p>JNI has <code>GetStringUTFChars</code> to turn a Java string into C bytes. Why does the app pass <code>prompt.toByteArray()</code> instead?</p>
+  <ul>
+    <li data-right>JNI’s function gives “modified UTF-8”, which writes emoji and NUL differently <div class="why">The engine expects real UTF-8; modified UTF-8 would change the bytes, and so the token ids.</div></li>
+    <li>Byte arrays are faster to pass <div class="why">Speed is not the reason; a prompt is copied once either way.</div></li>
+    <li>C cannot hold Java strings <div class="why">Both routes give C a byte buffer; what differs is the encoding inside it.</div></li>
+  </ul>
+</div>
+<p>“Modified UTF-8” is Java’s internal variant: it writes the NUL character as two bytes, and characters outside the basic plane, like most emoji, as two 3-byte halves instead of one 4-byte sequence. A prompt with an emoji would reach the tokenizer as bytes the model never saw in training. Kotlin’s <code>toByteArray()</code> gives standard UTF-8, and the shim copies it into a NUL-terminated C string.</p>
+<p><strong>Takeaway: three layers lead from Kotlin to Rust, and strings cross as real UTF-8 bytes, not as JNI strings.</strong></p>
+
+<h2 id="thread" data-short="One thread" data-step="One background executor runs every engine call; the UI thread only receives text.">Which thread runs the engine?</h2>
+<p>Android draws the screen and handles taps on one thread, the <strong>UI thread</strong> (main thread). If it is busy for about five seconds, Android shows “app isn’t responding”. A reply takes several seconds, so the engine cannot run there.</p>
+<div class="quiz" data-quiz="predict" data-for="thread" id="g-thread">
+  <p>The app runs each Generate on a fresh background thread. What can go wrong with the engine?</p>
+  <ul>
+    <li data-right>Two generates could use one session at once, which the engine forbids <div class="why">The header says a session must not be used from two threads at the same time.</div></li>
+    <li>Nothing; any background thread is fine <div class="why">A second tap while the first runs would start a second thread on the same session.</div></li>
+    <li>The callback could not update the screen <div class="why">That is solved by posting to the UI thread, whatever thread runs the engine.</div></li>
+  </ul>
+</div>
+<pre><code>// Every engine call runs on this one thread.
+private val engine =
+    Executors.newSingleThreadExecutor()
+
+engine.execute {
+    session = Aether.open(file.path, coreList, MAX_SEQ)
+    val st = session!!.generate(text, ...) { bytes -&gt;
+        val piece = utf8.feed(bytes)
+        ui { output.append(piece) }
+        !stop.get()
+    }
+}</code></pre>
+<ul>
+  <li>A single-thread executor runs its tasks one after another on one thread, so the session is never used twice at once.</li>
+  <li>Open and generate run on the same thread on purpose. The engine pins the thread that opens a session to the fastest core, and that thread then does the work of generate.</li>
+  <li>The callback runs on the engine thread, so it posts each piece to the UI thread with <code>runOnUiThread</code> (the <code>ui { }</code> helper). Views may only be changed there.</li>
+  <li><code>stop</code> is an <code>AtomicBoolean</code>: the Stop button sets it on the UI thread, and the callback reads it on the engine thread and returns <code>false</code>.</li>
+</ul>
+<p><strong>Takeaway: one background thread owns the engine, and the UI thread only shows text and sets the stop flag.</strong></p>
+<div class="quiz" data-quiz="check" data-for="thread" id="c-thread">
+  <p>Why is <code>stop</code> an <code>AtomicBoolean</code> and not a plain <code>var</code>?</p>
+  <ul>
+    <li data-right>It is written on one thread and read on another <div class="why">Atomic access makes the UI thread’s write visible to the engine thread.</div></li>
+    <li>Kotlin forbids plain booleans in lambdas <div class="why">Lambdas can capture plain vars; the issue is two threads, not the lambda.</div></li>
+    <li>It is faster <div class="why">It is not faster; it is correct across threads.</div></li>
+  </ul>
+</div>
+
+<h2 id="utf8" data-short="Half characters" data-step="Utf8Stream keeps the bytes of an unfinished character until the next piece completes it.">How do you show half an emoji?</h2>
+<p>The engine streams bytes, and a token can end inside a character: an emoji is four bytes, and the model may produce it as two tokens of two bytes each. Decoding each piece on its own would show two broken symbols instead of one emoji.</p>
+<div class="quiz" data-quiz="predict" data-for="utf8" id="g-utf8">
+  <p>The first piece is the first two bytes of an emoji. What should the app show after it?</p>
+  <ul>
+    <li data-right>Nothing yet, and keep the two bytes <div class="why">They are not a character yet; the next piece will complete them.</div></li>
+    <li>A replacement character, �, for now <div class="why">Then the next piece would add a second �, and the emoji would never appear.</div></li>
+    <li>The two bytes as Latin-1 letters <div class="why">That shows the wrong characters; the bytes only mean something together.</div></li>
+  </ul>
+</div>
+<pre><code>class Utf8Stream {
+    private val decoder = Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPLACE)
+    private var pending = ByteArray(0)
+    fun feed(bytes: ByteArray): String {
+        val input = ByteBuffer.wrap(pending + bytes)
+        val out = CharBuffer.allocate(input.remaining())
+        decoder.decode(input, out, false)
+        pending = ByteArray(input.remaining())
+            .also { input.get(it) }
+        return out.flip().toString()
+    }
+}</code></pre>
+<ul>
+  <li><code>decode(..., false)</code> means “more input may follow”: the decoder converts every complete character and stops before an incomplete one, without calling it an error.</li>
+  <li>Whatever it did not consume stays in <code>pending</code> and is put in front of the next piece.</li>
+  <li><code>REPLACE</code> handles bytes that can never be valid UTF-8: they become �, not an exception.</li>
+  <li>There is no final flush. If a reply ended inside a character, the held bytes would be dropped silently. The model rarely stops there, so this is a gap to close, not an observed bug.</li>
+</ul>
+<p><strong>Takeaway: the engine streams bytes, and the app holds back the unfinished end of each piece until the character is whole.</strong></p>
+<div class="quiz" data-quiz="check" data-for="utf8" id="c-utf8">
+  <p>Pieces arrive as: “a” plus the first byte of “é”, then the second byte of “é” plus “b”. What do the two <code>feed</code> calls return?</p>
+  <ul>
+    <li data-right>“a”, then “éb” <div class="why">The lone first byte of é waits in pending until the second byte arrives.</div></li>
+    <li>“a�”, then “�b” <div class="why">That is what decoding each piece alone would give.</div></li>
+    <li>“”, then “aéb” <div class="why">“a” is complete, so it is returned at once; only é waits.</div></li>
+  </ul>
+</div>
+
+<h2 id="memory" data-short="Memory" data-step="Mapped weights are file-backed and can be dropped; the CLI peaked at 348 MB for Qwen2.5-0.5B Q4_0; the app is not measured yet.">How much memory does the model take on the phone?</h2>
+<p>A phone shares its RAM between every app and Android itself, and Android stops apps that use too much. The engine’s memory has two kinds. The weights come from a memory-mapped file (<a href="../phase-5/safetensors.html#mmap">mmap</a>): <strong>file-backed</strong> pages that Android can drop and re-read. Everything else (the KV cache, the activations, the tokenizer’s tables) is <strong>anonymous</strong> heap memory that exists only in RAM.</p>
+<div class="quiz" data-quiz="predict" data-for="memory" id="g-memory">
+  <p>Qwen2.5-0.5B in Q4_0 has 278 MB of weights. The CLI’s peak resident memory was measured. Roughly what was it?</p>
+  <ul>
+    <li data-right>About 350 MB <div class="why">The weights, plus tens of megabytes of KV cache, buffers and tables.</div></li>
+    <li>About 278 MB, the weights alone <div class="why">The KV cache and working buffers are real memory too.</div></li>
+    <li>About 1 GB <div class="why">That would be the weights widened to f32; a Q4_0 file is used as it is.</div></li>
+  </ul>
+</div>
+<p>The measured peak <strong>resident set</strong> (<code>VmHWM</code>, the most RAM the process held at once) was 348 MB on cores 2–7 and 349 MB on cores 6–7 <span class="tag m">measured</span>, in the Phase 7 benchmark. For Q8_0, with 525 MB of weights, it was 589 MB <span class="tag m">measured</span>.</p>
+<ul>
+  <li>About 70 MB is not weights. The KV cache is the biggest part that grows with context: Qwen2.5-0.5B stores 24 layers × 2 key/value heads × 64 numbers × 2 (keys and values) × 4 bytes = 24 KB per token in f32, so the app’s 2,048-token limit means up to 50 MB <span class="tag c">calculated</span>.</li>
+  <li>Resident memory counts mapped weight pages once they are touched, but Android can drop those first. The anonymous part is what the low-memory killer weighs against the app.</li>
+  <li>The app’s own memory has not been measured. These are CLI numbers, and the app adds the Java runtime and its views on top.</li>
+</ul>
+<p><strong>Takeaway: the model costs its weights plus about 70 MB, and only the non-weight part is memory the phone cannot take back.</strong></p>
+<div class="quiz" data-quiz="check" data-for="memory" id="c-memory">
+  <p>The app raises its limit from 2,048 to 8,192 tokens. How much more f32 KV cache can a full context need for Qwen2.5-0.5B?</p>
+  <ul>
+    <li data-right>About 150 MB more <div class="why">24 KB per token × 6,144 extra tokens ≈ 151 MB.</div></li>
+    <li>None; the cache size is fixed by the model <div class="why">The cache is sized by max_seq, which the caller chooses.</div></li>
+    <li>About 4 times the weights <div class="why">The cache grows with tokens, not with the weights; 8,192 tokens need about 200 MB.</div></li>
+  </ul>
+</div>
+
+<h2 id="speed" data-short="Speed" data-step="Once warm, the app decoded at 93.6–100.4 tok/s against the CLI’s 98.0–103.9: the same engine.">Does the app slow the engine down?</h2>
+<p>The app and the CLI call the same engine. The only extra work in the app is JNI, one callback per token and a text view update, each a tiny cost next to a 10 ms decode step. On 2026-10-22 both ran the same prompt (“Why is the sky blue?”, 35 tokens with the chat template), on cores 2–7, at temperature 0.7, in one session:</p>
+<table>
+  <thead><tr><th>Run</th><th>Prefill, 35 tokens</th><th>Decode</th></tr></thead>
+  <tbody>
+    <tr><td>App, 1st after load</td><td>262 ms <span class="tag m">measured</span></td><td>94.6 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>App, 2nd and 3rd</td><td>205, 200 ms <span class="tag m">measured</span></td><td>100.4, 93.6 tok/s <span class="tag m">measured</span></td></tr>
+    <tr><td>CLI, two seeds</td><td>216, 215 ms <span class="tag m">measured</span></td><td>98.0, 103.9 tok/s <span class="tag m">measured</span></td></tr>
+  </tbody>
+</table>
+<ul>
+  <li>The decode ranges overlap, which is run-to-run spread: the app does not slow the engine down.</li>
+  <li>The first prefill is slower because it is the first touch of the mapped weight pages, which are read from storage then.</li>
+  <li>Another app was playing a video in picture-in-picture during these runs, so the absolute speeds are below Phase 7’s; both sides ran under the same load. The numbers come from a debug build; the release build has not been measured.</li>
+</ul>
+<p><strong>Takeaway: once warm, the app runs at the CLI’s speed; only its first reply pays for reading the weights from storage.</strong></p>
+<div class="quiz" data-quiz="check" data-for="speed" id="c-speed">
+  <p>Say one callback, with its JNI call and the UI post, costs 20 µs. At 100 tokens per second, how much does it slow decode?</p>
+  <ul>
+    <li data-right>About 0.2 %, far inside the run-to-run spread <div class="why">A step takes 10 ms; 20 µs is a fiftieth of a percent of it, times ten.</div></li>
+    <li>About 20 % <div class="why">That mixes up microseconds and milliseconds; 20 µs is 0.02 ms.</div></li>
+    <li>It cannot be known without measuring the app <div class="why">Measuring confirms it, but the arithmetic already bounds the cost.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Kotlin reaches Rust through a JNI shim and the C interface; strings cross as real UTF-8 bytes.</p>
+<p>One background thread owns the engine; the UI thread shows text and sets the stop flag; unfinished characters wait for the next piece.</p>
+<p>The model costs its weights plus about 70 MB, and once warm the app runs at the CLI’s speed.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q4_K_M files · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">After Phase 8 · 05</p>
+
+<h1>Q4_K_M files</h1>
+<p class="lede">Q4_K_M is the llama.cpp file most people download. It is not one format but a mix: K-quant blocks of 256 weights where a row allows them, and simpler 32-weight blocks where it does not. The engine reads all of them, matches llama.cpp’s accuracy, and on this phone runs them faster.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../phase-6/blocks.html">block quantization</a> (Q8_0, Q4_0), <a href="../phase-6/dot-products.html">integer dot products</a> and <a href="../phase-6/perplexity.html">perplexity and KL</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#mix">What is actually inside a Q4_K_M file?</a>
+  <a href="#q5">How do you store 5 bits per weight?</a>
+  <a href="#ksuper">Why does a K-quant have scales of scales?</a>
+  <a href="#accuracy">What do the extra bits buy?</a>
+  <a href="#speed">Why was it slow at first, and what fixed it?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Run llama.cpp’s most common file type, matching its perplexity, and learn what its formats trade.">What are we trying to do here?</h2>
+<p>Phase 6 built two formats: <strong>Q8_0</strong> (8-bit values, one f16 scale per 32 weights, 34 bytes per block) and <strong>Q4_0</strong> (4-bit values, 18 bytes per block). Both store one scale per block of 32 weights. llama.cpp has a family of better formats, the <strong>K-quants</strong>, and its tool <code>llama-quantize</code> mixes them into presets. <code>Q4_K_M</code> (“4-bit K-quant, medium”) is the one most model pages offer first.</p>
+<p>This page reads two such files, made with <code>llama-quantize</code> for SmolLM2-135M and Qwen2.5-0.5B. It covers the three new block formats (Q5_0, Q4_K, Q6_K), what they cost and buy in accuracy, and two speed fixes. The code is in <code>src/quant.rs</code>; every number is in <code>results/phase-6.md</code>, section “Q4_K_M files”.</p>
+
+<h2 id="mix" data-short="The mix" data-step="K-quants need rows that are multiples of 256; on small models only ffn_down qualifies, so Q4_K_M is mostly Q5_0.">What is actually inside a Q4_K_M file?</h2>
+<p>A K-quant packs 256 weights into one <strong>super-block</strong>. A block may not cross the end of a row, so a matrix can use a K-quant only if its rows are a multiple of 256 long.</p>
+<div class="quiz" data-quiz="predict" data-for="mix" id="g-mix">
+  <p>SmolLM2’s rows are 576 long for most matrices, and 1536 for the MLP’s down projection (<code>ffn_down</code>). Which can be stored as K-quants?</p>
+  <ul>
+    <li data-right>Only <code>ffn_down</code> <div class="why">1536 = 6 × 256; 576 is 2.25 × 256, so those rows cannot be split into super-blocks.</div></li>
+    <li>All of them <div class="why">576 is not a multiple of 256; a super-block would cross the end of a row.</div></li>
+    <li>None of them <div class="why">1536 divides evenly by 256, so ffn_down qualifies.</div></li>
+  </ul>
+</div>
+<p>When a row does not fit, llama.cpp falls back to a 32-weight format: Q5_0 in place of Q4_K, and Q8_0 in place of Q6_K. The two files contain:</p>
+<table>
+  <thead><tr><th>Format</th><th>SmolLM2-135M</th><th>Qwen2.5-0.5B</th></tr></thead>
+  <tbody>
+    <tr><td>Q5_0</td><td>q, k, o, gate, up, half of v</td><td>q, k, o, gate, up, half of v</td></tr>
+    <tr><td>Q4_K / Q6_K</td><td><code>ffn_down</code>: 16 / 14 layers</td><td><code>ffn_down</code>: 12 / 12 layers</td></tr>
+    <tr><td>Q8_0</td><td>the other half of v, token embedding</td><td>the other half of v, token embedding</td></tr>
+  </tbody>
+</table>
+<p>Qwen2.5-0.5B’s rows are 896 long (3.5 × 256) except <code>ffn_down</code>’s 4864 (19 × 256), so it has the same pattern. “M” means some layers get the bigger Q6_K, here about half of <code>ffn_down</code>.</p>
+<p><strong>Takeaway: on small models, Q4_K_M is mostly Q5_0, with K-quants only where rows are a multiple of 256.</strong></p>
+<div class="quiz" data-quiz="check" data-for="mix" id="c-mix">
+  <p>A larger model has rows of 2048 everywhere. What would its Q4_K_M file mostly contain?</p>
+  <ul>
+    <li data-right>Q4_K and Q6_K <div class="why">2048 = 8 × 256, so every matrix can use the K-quants; no fallback is needed.</div></li>
+    <li>Q5_0, as in SmolLM2 <div class="why">Q5_0 is only the fallback for rows that do not fit 256.</div></li>
+    <li>Q4_0 <div class="why">Q4_0 is not part of the Q4_K_M mix at all.</div></li>
+  </ul>
+</div>
+
+<h2 id="q5" data-short="Q5_0" data-step="Q5_0 is Q4_0 plus a fifth bit per weight in a 32-bit word: 22 bytes per 32 weights.">How do you store 5 bits per weight?</h2>
+<p>Bytes hold 8 bits, and 5 does not divide 8. Packing 5-bit values end to end would split many of them across two bytes, and the kernel would spend its time cutting them out.</p>
+<div class="quiz" data-quiz="predict" data-for="q5" id="g-q5">
+  <p>How could a block of 32 five-bit values be laid out so that unpacking stays cheap?</p>
+  <ul>
+    <li data-right>The low 4 bits as in Q4_0, and the 32 fifth bits together in one 32-bit word <div class="why">The nibbles reuse Q4_0’s unpacking; the fifth bits are one word, one bit per weight.</div></li>
+    <li>Each value in its own byte, with 3 bits unused <div class="why">That works but costs 8 bits per weight, the size of Q8_0, for 5 bits of precision.</div></li>
+    <li>Values packed end to end, 160 bits in a row <div class="why">Compact, but most values straddle two bytes, which makes unpacking slow.</div></li>
+  </ul>
+</div>
+<pre><code>pub struct BlockQ5_0 {
+    pub d: u16,        // f16 scale
+    pub qh: [u8; 4],   // bit j: fifth bit of value j
+    pub qs: [u8; 16],  // low 4 bits, as in Q4_0
+}                      // 22 bytes per 32 weights</code></pre>
+<ul>
+  <li>A value is q = low nibble + 16 × fifth bit, from 0 to 31, and the weight is <code>d × (q − 16)</code>.</li>
+  <li>22 bytes for 32 weights is 5.5 bits per weight, counting the scale <span class="tag c">calculated</span>.</li>
+  <li>The engine’s quantizer gives llama.cpp’s bytes exactly in 12 test cases, so <code>-q q5_0</code> can make Q5_0 weights from any model too.</li>
+</ul>
+<p><strong>Takeaway: Q5_0 keeps Q4_0’s nibbles and adds the fifth bits as one 32-bit word, for 5.5 bits per weight.</strong></p>
+<div class="quiz" data-quiz="check" data-for="q5" id="c-q5">
+  <p>A Q5_0 weight has low nibble 3, fifth bit 1, and scale d = 0.01. What is the weight?</p>
+  <ul>
+    <li data-right>0.03 <div class="why">q = 3 + 16 = 19, and 0.01 × (19 − 16) = 0.03.</div></li>
+    <li>0.19 <div class="why">That forgets the offset of 16, which makes the values signed.</div></li>
+    <li>−0.13 <div class="why">That ignores the fifth bit: 0.01 × (3 − 16).</div></li>
+  </ul>
+</div>
+
+<h2 id="ksuper" data-short="Super-blocks" data-step="Q4_K: 8 sub-blocks of 32, each with a 6-bit scale and min, scaled by two f16 numbers per 256.">Why does a K-quant have scales of scales?</h2>
+<p>A Q4_0 block spends 16 bits on its scale for 32 weights: half a bit per weight, just for the scale. A smaller scale costs fewer bits, but an f16 is the smallest float the format has. The K-quant answer is to store the small scales as integers, and give the integers a float scale of their own.</p>
+<pre><code>pub struct BlockQ4_K {
+    pub d: u16,           // f16: scale of the scales
+    pub dmin: u16,        // f16: scale of the mins
+    pub scales: [u8; 12], // 8 scales + 8 mins, 6 bits
+    pub qs: [u8; 128],    // 256 values, 4 bits each
+}                         // 144 bytes per 256 weights</code></pre>
+<ul>
+  <li>The 256 weights are 8 <strong>sub-blocks</strong> of 32. Sub-block j has a 6-bit scale <code>sc</code> and a 6-bit <code>m</code>, packed into the 12 bytes.</li>
+  <li>A weight is <code>d·sc·q − dmin·m</code>, with q from 0 to 15. The <strong>min</strong> term lets a sub-block cover a range that does not sit around zero, which Q4_0’s <code>d·(q − 8)</code> cannot.</li>
+  <li>144 bytes per 256 is 4.5 bits per weight, the same as Q4_0 <span class="tag c">calculated</span>, but with a scale and a min per 32 weights for the price of Q4_0’s scale alone.</li>
+</ul>
+<div class="quiz" data-quiz="predict" data-for="ksuper" id="g-ksuper">
+  <p>Q4_K and Q4_0 both use 4.5 bits per weight. Where does Q4_K find the bits for a min per sub-block?</p>
+  <ul>
+    <li data-right>Its per-32 scale and min are 6 bits each, not 16 <div class="why">12 bits per sub-block, plus 32 bits of f16 per 256, replaces Q4_0’s 16 bits per 32.</div></li>
+    <li>It uses fewer bits for each weight <div class="why">Both store 4 bits per weight; the saving is in the scales.</div></li>
+    <li>It does not; its mins are shared by the whole super-block <div class="why">Each of the 8 sub-blocks has its own min; only dmin is shared.</div></li>
+  </ul>
+</div>
+<p><strong>Q6_K</strong> works the same way with more bits: 16 sub-blocks of 16 weights, each with an 8-bit signed scale, values of 6 bits (q − 32), and one f16 per 256. That is 210 bytes per 256, or 6.56 bits per weight <span class="tag c">calculated</span>.</p>
+<p>The <code>gguf</code> Python package can decode Q4_K and Q6_K but not encode them, so the tests use random block bytes: every bit of the layout is exercised, and the engine’s decoder gives exactly the package’s values.</p>
+<p><strong>Takeaway: K-quants store each sub-block’s scale as a small integer under one float per 256, which pays for a min per sub-block.</strong></p>
+<div class="quiz" data-quiz="check" data-for="ksuper" id="c-ksuper">
+  <p>A sub-block’s weights all lie between 0.2 and 0.5. Why does Q4_K store it better than Q4_0?</p>
+  <ul>
+    <li data-right>Its min shifts the 16 levels onto 0.2–0.5; Q4_0’s levels are centred on zero <div class="why">Q4_0 must reach 0.5 from zero, so half its levels cover negative values nobody uses.</div></li>
+    <li>It has more levels per weight <div class="why">Both have 16 levels; Q4_K places them better.</div></li>
+    <li>It does not; the two are equal at 4.5 bits <div class="why">Same size, but the min lets Q4_K fit ranges away from zero.</div></li>
+  </ul>
+</div>
+
+<h2 id="accuracy" data-short="Accuracy" data-step="Q4_K_M matches llama.cpp’s perplexity and costs Qwen2.5-0.5B +2.7 % against Q4_0’s +21 %, for a file 1.4× larger.">What do the extra bits buy?</h2>
+<p>The test is the one from <a href="../phase-6/perplexity.html">Phase 6</a>: perplexity on wikitext-2 (20 chunks of 512 tokens), and KL divergence against each engine’s own f32 model. Our numbers were run on the phone, llama.cpp’s on the PC.</p>
+<table>
+  <thead><tr><th>Model, format</th><th>PPL ours</th><th>PPL llama.cpp</th><th>Mean KLD ours</th><th>llama.cpp</th></tr></thead>
+  <tbody>
+    <tr><td>SmolLM2-135M Q4_K_M</td><td>20.7201 <span class="tag m">measured</span></td><td>20.7784 ± 0.851</td><td>0.0515</td><td>0.0533</td></tr>
+    <tr><td>SmolLM2-135M Q5_0, every matrix</td><td>21.6167 <span class="tag m">measured</span></td><td>21.6071 ± 0.902</td><td>0.0873</td><td>0.0871</td></tr>
+    <tr><td>Qwen2.5-0.5B Q4_K_M</td><td>16.7088 <span class="tag m">measured</span></td><td>16.7657 ± 0.688</td><td>0.0318</td><td>0.0331</td></tr>
+  </tbody>
+</table>
+<div class="quiz" data-quiz="predict" data-for="accuracy" id="g-accuracy">
+  <p>Our Q4_K_M KLD is about two of llama.cpp’s standard errors lower, while pure Q5_0 agrees to 0.2 %. What most likely explains it?</p>
+  <ul>
+    <li data-right>The two engines round the activations differently for K-quants <div class="why">Ours uses one scale per 32 activations everywhere; llama.cpp uses one per 256 for K-quants.</div></li>
+    <li>Our weights are decoded differently <div class="why">The decoders give the gguf package’s values exactly, so the weights are the same.</div></li>
+    <li>Chance <div class="why">Two standard errors in both models, in the same direction, points at a cause.</div></li>
+  </ul>
+</div>
+<p>Before a dot product, both engines quantize the activation vector to 8 bits. Ours uses Q8_0 (one scale per 32 values) for every format. llama.cpp uses Q8_K for K-quants (one scale per 256), which rounds a little more coarsely. With Q5_0, both use Q8_0, and the two engines agree to 0.2 %.</p>
+<p>What the format buys, for Qwen2.5-0.5B: Q4_K_M raises perplexity by 2.7 % over f32 (KLD 0.03); Q4_0 raises it by 21 % (KLD 0.18). The file is 380 MB against 265 MB, 1.4 times larger <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: Q4_K_M matches llama.cpp, and for 1.4 times the file it cuts Qwen2.5-0.5B’s quantization loss from 21 % to 2.7 %.</strong></p>
+
+<h2 id="speed" data-short="Speed" data-step="Repacking Q5_0 four rows at a time and smmla for K-quants made Q4_K_M faster than llama.cpp’s on this phone.">Why was it slow at first, and what fixed it?</h2>
+<p>Decode reads every weight once per token, so a file 1.4 times larger should decode about 1.4 times slower. The first measurement was worse than that, in both engines: Qwen2.5-0.5B Q4_K_M decoded at 75.2 tok/s in ours and 85.0 in llama.cpp, against 153.4 for Q4_0 <span class="tag m">measured</span>.</p>
+<div class="quiz" data-quiz="predict" data-for="speed" id="g-speed">
+  <p>A profile shows decode spending 39 % of its time in the Q5_0 kernel. What is the likely cost?</p>
+  <ul>
+    <li data-right>Turning each block’s fifth bits into bytes, row by row <div class="why">Spreading 32 bits into 32 lanes took a table lookup and a bit test per block.</div></li>
+    <li>Reading the extra bytes from memory <div class="why">Q5_0 is only 22 % larger than Q4_0; that cannot explain half the speed.</div></li>
+    <li>Converting the f16 scales <div class="why">One scale per 32 weights is cheap; the per-weight bit work dominates.</div></li>
+  </ul>
+</div>
+<p>Two fixes followed:</p>
+<ul>
+  <li><strong>Q5_0 repacked four rows at a time.</strong> At load, the nibbles are laid out as for Q4_0’s four-row blocks, and the fifth bits are stored inverted and arranged so each byte feeds one vector the kernel builds. An inverted fifth bit is the sign bit of q − 16, so <code>(nibble &lt;&lt; 3) | (bit &lt;&lt; 7)</code>, read as a signed byte, is exactly 8 × (q − 16): a shift, a mask and one bit-select per 16 weights. The factor 8 is divided out exactly when the integer sum becomes a float, so the results are bit-identical.</li>
+  <li><strong><code>smmla</code> for Q4_K and Q6_K</strong> in prefill. Each group of four rows is unpacked once per matrix product into 8-bit values with per-row scales, and every token of the prompt reuses it, instead of each token unpacking it again.</li>
+</ul>
+<table>
+  <thead><tr><th>Qwen2.5-0.5B Q4_K_M, tok/s</th><th>prefill, 512</th><th>decode, empty cache</th></tr></thead>
+  <tbody>
+    <tr><td>ours, before</td><td>164.2 <span class="tag m">measured</span></td><td>75.2 <span class="tag m">measured</span></td></tr>
+    <tr><td>ours, Q5_0 repacked</td><td>199.4 <span class="tag m">measured</span></td><td>96.6 <span class="tag m">measured</span></td></tr>
+    <tr><td>llama.cpp, same run</td><td>152.8 <span class="tag m">measured</span></td><td>85.7 <span class="tag m">measured</span></td></tr>
+    <tr><td>ours, with <code>smmla</code> for K-quants</td><td>331 <span class="tag m">measured</span></td><td>—</td></tr>
+  </tbody>
+</table>
+<p>With the repack, decode is 13 % faster than llama.cpp’s on this phone, and with <code>smmla</code> prefill is about twice llama.cpp’s. The <code>smmla</code> row comes from a cycle-count run, because the timed A/B was spoiled by a clock change mid-run; its perplexity changed only in the summation order (16.7354 against 16.7088).</p>
+<p><strong>Takeaway: Q4_K_M was slow because of per-weight bit work, not bytes; repacking at load and reusing unpacked rows made it faster than llama.cpp’s here.</strong></p>
+<div class="quiz" data-quiz="check" data-for="speed" id="c-speed">
+  <p>Why does unpacking a group of rows once per matrix product help prefill but not decode?</p>
+  <ul>
+    <li data-right>Prefill has many tokens to share one unpack; decode has one <div class="why">With one token, unpacking once or per token is the same work.</div></li>
+    <li>Decode does not use K-quants <div class="why">Decode reads the same ffn_down weights; it just has only one token to reuse them.</div></li>
+    <li>Decode is already at the memory limit <div class="why">It was not: Q4_K_M decode was limited by bit work, which the repack addressed.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Q4_K_M is a mix: K-quants where rows are a multiple of 256, Q5_0 and Q8_0 elsewhere; on small models it is mostly Q5_0.</p>
+<p>K-quants spend their scale bits as small integers under one float per 256, which pays for a min per sub-block.</p>
+<p>For 1.4 times the file, Qwen2.5-0.5B loses 2.7 % instead of 21 %, and after two kernel fixes it runs faster than llama.cpp’s on this phone.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise; llama.cpp’s perplexities were run on the PC. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

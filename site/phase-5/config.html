@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One forward pass, two families · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 5 · 02</p>
+
+<h1>One forward pass, two families</h1>
+<p class="lede">stories15M and SmolLM2 differ in width, depth, head layout and the way RoPE pairs numbers. None of that is written into the code. A config file gives the numbers, and the same forward pass runs both.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-2/qkv.html">queries, keys and values</a>, <a href="../phase-2/kv-cache.html">the KV cache</a> and <a href="../phase-2/rope.html">RoPE</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#config">Where do the model’s shapes come from?</a>
+  <a href="#tied">Why does SmolLM2 have no classifier matrix?</a>
+  <a href="#gqa">How can 9 query heads share 3 key/value heads?</a>
+  <a href="#rope">Which two numbers does RoPE rotate together?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Run a second model family with the same code, by reading its shapes and choices from a file.">What are we trying to do here?</h2>
+<p>Phase 2 ran one model, stories15M, and its numbers came from the header of the llama2.c file. Phase 5 adds SmolLM2-135M from Hugging Face. Its layers do the same maths (RMSNorm, attention, SwiGLU), but almost every size is different, and two choices are new: several query heads share one key/value head, and RoPE pairs the numbers of a head differently.</p>
+<table>
+  <thead><tr><th>Item</th><th>stories15M</th><th>SmolLM2-135M</th></tr></thead>
+  <tbody>
+    <tr><td>Width of a token’s vector</td><td>288</td><td>576</td></tr>
+    <tr><td>Layers</td><td>6</td><td>30</td></tr>
+    <tr><td>Query heads × head width</td><td>6 × 48</td><td>9 × 64</td></tr>
+    <tr><td>Key/value heads</td><td>6</td><td>3</td></tr>
+    <tr><td>Vocabulary</td><td>32,000</td><td>49,152</td></tr>
+    <tr><td>RoPE base θ, pairing</td><td>10,000, adjacent</td><td>100,000, halves</td></tr>
+  </tbody>
+</table>
+<p>The goal is one forward pass that reads all of this from data. By the end of the page you can read a <code>config.json</code>, say which key/value head a query head reads, and name the RoPE pairs for a head of any width. The code is <code>src/model/config.rs</code> and <code>src/model/hf.rs</code>.</p>
+
+<h2 id="config" data-short="config.json" data-step="Hugging Face’s keys map into one Config struct; every loop and buffer size comes from it.">Where do the model’s shapes come from?</h2>
+<p>A Hugging Face model ships a <code>config.json</code> next to its weights. The engine reads it into one struct, <code>Config</code>, and every loop bound and buffer size in the forward pass comes from that struct.</p>
+<pre><code>"hidden_size": 576          -&gt; dim
+"intermediate_size": 1536   -&gt; hidden_dim
+"num_hidden_layers": 30     -&gt; n_layers
+"num_attention_heads": 9    -&gt; n_heads
+"num_key_value_heads": 3    -&gt; n_kv_heads
+"max_position_embeddings"   -&gt; seq_len (capped)
+"rope_theta": 100000        -&gt; rope_theta</code></pre>
+<div class="quiz" data-quiz="predict" data-for="config" id="g-config">
+  <p>A config has no <code>num_key_value_heads</code> key. What should the loader assume?</p>
+  <ul>
+    <li data-right>One key/value head per query head <div class="why">Without the key, the model was built the classic way, as in Phase 2.</div></li>
+    <li>One key/value head for all query heads <div class="why">That layout exists, but a missing key does not announce it.</div></li>
+    <li>The file is broken and must be rejected <div class="why">Older configs simply leave it out; rejecting them would refuse working models.</div></li>
+  </ul>
+</div>
+<ul>
+  <li>The loader uses <code>num_attention_heads</code> when <code>num_key_value_heads</code> is missing, and defaults <code>rope_theta</code> to 10,000 and <code>rms_norm_eps</code> to 1e-5 when those are missing.</li>
+  <li><code>seq_len</code> is the smaller of the model’s limit (8,192 for SmolLM2) and the <code>max_seq</code> the caller asks for, so a short run allocates a short KV cache.</li>
+  <li>Two sizes are derived, not read: <code>head_size = dim / n_heads</code> (576 ÷ 9 = 64) and <code>kv_group = n_heads / n_kv_heads</code> (9 ÷ 3 = 3) <span class="tag c">calculated</span>.</li>
+  <li>Every weight’s shape is checked against the config. A mismatch fails at load with the tensor’s name, not later as wrong text.</li>
+</ul>
+<p><strong>Takeaway: the shapes live in config.json, and a new model of the same kind needs a new config, not new code.</strong></p>
+<div class="quiz" data-quiz="check" data-for="config" id="c-config">
+  <p>Qwen2.5-0.5B has <code>hidden_size</code> 896 and 14 attention heads. What is its head width?</p>
+  <ul>
+    <li data-right>64 <div class="why">896 ÷ 14 = 64, the same head width as SmolLM2.</div></li>
+    <li>896 <div class="why">That is the whole vector; it is split across the 14 heads.</div></li>
+    <li>It must be read from the config <div class="why">The engine derives it as dim ÷ n_heads; there is no separate key for it.</div></li>
+  </ul>
+</div>
+
+<h2 id="tied" data-short="Tied embeddings" data-step="With tied embeddings the classifier reuses the token embedding table, so there is no lm_head tensor.">Why does SmolLM2 have no classifier matrix?</h2>
+<p>The first step of the model looks a token up in the <strong>embedding table</strong>, one row of 576 numbers per token id. The last step, the <strong>classifier</strong>, multiplies the final vector by a [vocabulary × width] matrix to score every token. The two matrices have the same shape.</p>
+<div class="quiz" data-quiz="predict" data-for="tied" id="g-tied">
+  <p>SmolLM2’s file has no <code>lm_head.weight</code>. What does the engine use as the classifier?</p>
+  <ul>
+    <li data-right>The embedding table itself <div class="why">The model was trained with one shared matrix for both jobs, called tied embeddings.</div></li>
+    <li>A matrix of zeros <div class="why">Every token would score 0; the model could not choose anything.</div></li>
+    <li>Its transpose, copied at load <div class="why">The same [vocab, dim] layout serves both, so no copy or transpose is needed.</div></li>
+  </ul>
+</div>
+<p>SmolLM2 sets <code>"tie_word_embeddings": true</code>: one matrix does both jobs. The loader does not read the flag. It looks for the tensor, and if <code>lm_head.weight</code> is absent the classifier reuses the embedding table.</p>
+<ul>
+  <li>Sharing saves 49,152 × 576 ≈ 28.3 million numbers <span class="tag c">calculated</span>, about a fifth of the 135 million.</li>
+  <li>A row of the table is one token’s embedding; the same row, used in a dot product, is that token’s score. So the classifier asks “how close is the final vector to each token’s embedding?”</li>
+</ul>
+<p><strong>Takeaway: a tied model uses its embedding table as the classifier, so the loader checks for the tensor instead of trusting a flag.</strong></p>
+
+<h2 id="gqa" data-short="GQA" data-step="Query head h reads key/value head h / group; SmolLM2’s cache is a third of the classic layout.">How can 9 query heads share 3 key/value heads?</h2>
+<p>Attention keeps every past token’s keys and values in the KV cache, for every layer. In Phase 2 each query head had its own key/value head. <strong>Grouped-query attention</strong> (GQA) lets a group of query heads read the same key/value head, so the cache holds fewer of them.</p>
+<pre><code>query:  q0 q1 q2 | q3 q4 q5 | q6 q7 q8
+           \|/        \|/        \|/
+kv:        kv0        kv1        kv2</code></pre>
+<div class="quiz" data-quiz="predict" data-for="gqa" id="g-gqa">
+  <p>With 9 query heads and 3 key/value heads, which key/value head does query head 5 read?</p>
+  <ul>
+    <li data-right>kv1 <div class="why">5 ÷ 3 = 1 with integer division: heads 3, 4 and 5 form the second group.</div></li>
+    <li>kv2 <div class="why">That is 5 mod 3; groups are consecutive heads, not every third head.</div></li>
+    <li>kv5 <div class="why">There is no kv5; only 3 key/value heads exist.</div></li>
+  </ul>
+</div>
+<p>The rule in the attention loop is <code>kv_head = h / kv_group</code>. For stories15M the group is 1 and the rule gives back <code>h</code>, so the same line serves both models.</p>
+<ul>
+  <li>The key/value width per token is 3 × 64 = 192 numbers, against 9 × 64 = 576 without sharing <span class="tag c">calculated</span>.</li>
+  <li>At SmolLM2’s full 8,192 positions in f32, the cache is 30 layers × 8,192 × 192 × 2 (keys and values) × 4 bytes ≈ 377 MB <span class="tag c">calculated</span>; without GQA it would be about 1.13 GB.</li>
+  <li>The <code>k</code> and <code>v</code> matrices shrink with it: [192, 576] instead of [576, 576].</li>
+</ul>
+<p>Getting the group wrong does not reliably crash. A loop that reads head <code>h</code> instead of <code>h / kv_group</code> reads past the three heads of a position into the next position’s keys; a wrong group size pairs queries with the wrong keys. Either way the model writes fluent nonsense, and the comparison with transformers is what catches it.</p>
+<p><strong>Takeaway: GQA makes query heads in a group share one key/value head, and the cache shrinks by the group size.</strong></p>
+<div class="quiz" data-quiz="check" data-for="gqa" id="c-gqa">
+  <p>Qwen2.5-0.5B has 14 query heads and 2 key/value heads. What is its group size, and which key/value head does query head 9 read?</p>
+  <ul>
+    <li data-right>7, and kv1 <div class="why">14 ÷ 2 = 7; 9 ÷ 7 = 1, so heads 7 to 13 read kv1.</div></li>
+    <li>2, and kv4 <div class="why">That divides by the number of key/value heads, not by the group size.</div></li>
+    <li>7, and kv2 <div class="why">There are only kv0 and kv1; integer division rounds 9 ÷ 7 down to 1.</div></li>
+  </ul>
+</div>
+
+<h2 id="rope" data-short="RoPE pairs" data-step="Both layouts rotate pairs by the same angles; llama2.c pairs neighbours, Hugging Face pairs the two halves.">Which two numbers does RoPE rotate together?</h2>
+<p>RoPE rotates each pair of numbers in a head by an angle that grows with the token’s position. Pair i uses the angle <code>pos × θ^(−2i / head_size)</code>. A head of 64 numbers has 32 pairs. Which two numbers make up pair i is a choice, made once when the model was trained.</p>
+<div class="quiz" data-quiz="predict" data-for="rope" id="g-rope">
+  <p>A Hugging Face checkpoint is run with llama2.c’s adjacent pairs instead of its own layout. What happens?</p>
+  <ul>
+    <li data-right>It runs and writes wrong text <div class="why">The rotation is valid maths on the wrong pairs; nothing checks which pairing the weights expect.</div></li>
+    <li>It crashes on an index error <div class="why">Both layouts touch the same 64 numbers, so no index goes out of range.</div></li>
+    <li>Nothing changes; the layouts are equivalent <div class="why">They give the same result only if the q and k weights are permuted to match.</div></li>
+  </ul>
+</div>
+<pre><code>adjacent (llama2.c): (0,1) (2,3) ... (62,63)
+halves (HF):         (0,32) (1,33) ... (31,63)</code></pre>
+<p>The halves version, from <code>src/kernels/scalar.rs</code>, shortened to one head:</p>
+<pre><code>let half = head_size / 2;
+for i in 0..half {
+    let freq = 1.0
+        / theta.powf((2 * i) as f32 / head_size as f32);
+    let angle = pos as f32 * freq;
+    let (sin, cos) = (angle.sin(), angle.cos());
+    let (v0, v1) = (head[i], head[i + half]);
+    head[i] = v0 * cos - v1 * sin;
+    head[i + half] = v0 * sin + v1 * cos;
+}</code></pre>
+<ul>
+  <li>The angle formula is the same as in <code>rope_adjacent</code>; only the indices <code>i</code> and <code>i + half</code> differ.</li>
+  <li><code>Config</code> holds a <code>RopeLayout</code>: <code>AdjacentPairs</code> for llama2.c and Llama-type GGUF files, <code>Halves</code> for Hugging Face checkpoints and Qwen2 GGUF files.</li>
+  <li>The two layouts are related by a fixed reordering of each head’s numbers. llama.cpp’s converter applies it to the q and k weights of Llama-type models, which is why those GGUF files use adjacent pairs.</li>
+</ul>
+<p><strong>Takeaway: the rotation is the same in both layouts, but the pairs are not, so the engine must use the layout the weights were saved for.</strong></p>
+<div class="quiz" data-quiz="check" data-for="rope" id="c-rope">
+  <p>In the halves layout, a head has 128 numbers. Which number is rotated together with number 10?</p>
+  <ul>
+    <li data-right>Number 74 <div class="why">half = 64, so element 10 pairs with 10 + 64.</div></li>
+    <li>Number 11 <div class="why">That is the adjacent layout’s pair.</div></li>
+    <li>Number 42 <div class="why">That uses a half of 32, the value for a 64-wide head.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>The model’s shapes come from config.json, and every loop reads them from one struct.</p>
+<p>Grouped-query attention shares key/value heads: head h reads h / group, and the cache shrinks by the group size.</p>
+<p>RoPE’s pairs depend on how the weights were saved; a wrong layout runs without error and writes wrong text.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

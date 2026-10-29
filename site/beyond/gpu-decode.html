@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decoding on the GPU · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">After Phase 8 · 03</p>
+
+<h1>Decoding on the GPU</h1>
+<p class="lede">The whole decode step of Qwen2.5-0.5B runs on the GPU and gives llama.cpp’s perplexity. It is slower than the CPU, about 100 against 158 tokens per second, but it uses about half the power and less energy per token. This page shows how the step is built, what made it faster, and why its speed jumps around.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="gpu-basics.html">How the GPU runs our code</a>, <a href="../phase-2/attention.html">attention</a> and <a href="../phase-1/power.html">power and heat</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#step">What does one decode step look like on the GPU?</a>
+  <a href="#attention">Why was attention slow at long contexts?</a>
+  <a href="#clocks">Why does the same step take 7 ms in one run and 11 in the next?</a>
+  <a href="#energy">If the GPU is slower, why use it?</a>
+  <a href="#time">Where does a GPU token’s time go?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Run every stage of a decode step on the GPU, correctly, and find out what it is good for.">What are we trying to do here?</h2>
+<p><a href="gpu-basics.html">The previous page</a> built a matrix-vector shader. A decode step also needs RMSNorm, the q/k/v biases, RoPE, the KV cache, attention, SwiGLU and the residual adds. <code>GpuModel</code> in <code>src/model/gpu.rs</code> runs all of them as shaders, so the only work left on the CPU per token is writing the embedding row and reading the logits.</p>
+<p>The GPU reads memory no faster than the CPU, so speed was never the point. The questions are whether it is correct, what it costs in energy, and what limits it. By the end you can explain each of those with this phone’s numbers. Try it with <code>aether MODEL.gguf --gpu</code> or the app’s GPU checkbox.</p>
+
+<h2 id="step" data-short="One step" data-step="About a dozen stages per layer, recorded once; correctness checked by perplexity against llama.cpp.">What does one decode step look like on the GPU?</h2>
+<p>Per layer, the step runs these stages, each one dispatch followed by a barrier:</p>
+<pre><code>rmsnorm      -> xb
+q/k/v        -> q, k, v        (matrix products)
+bias + RoPE  -> q; k, v into the KV cache
+attention    -> partial results per chunk
+merge        -> xb2
+wo           -> x += ...       (residual add)
+rmsnorm      -> xb
+gate/up      -> hb, hb2
+swiglu, down -> x += ...
+</code></pre>
+<p>After the 24 layers come a last RMSNorm and the classifier, the big matrix that produces the 151,936 logits.</p>
+<div class="quiz" data-quiz="predict" data-for="step" id="g-step">
+  <p>The GPU keeps activations in f32; the CPU path rounds them to int8 before each product. How can we tell the GPU step is correct?</p>
+  <ul>
+    <li data-right>Compare its perplexity on wikitext-2 with llama.cpp’s for the same file <div class="why">Perplexity is an external reference that tolerates tiny rounding differences but catches a broken stage.</div></li>
+    <li>Require the same greedy text as the CPU path <div class="why">The rounding differs, so the texts legitimately fork where two tokens are nearly tied.</div></li>
+    <li>Require bit-identical logits with the CPU path <div class="why">Different rounding means different last digits; that would fail on a correct step.</div></li>
+  </ul>
+</div>
+<p><code>examples/vk_ppl.rs</code> scores wikitext-2 with every token through the GPU step, by <code>llama-perplexity</code>’s procedure <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>model, Q4_0</th><th>GPU step</th><th>llama.cpp</th></tr></thead>
+  <tbody>
+    <tr><td>SmolLM2-135M</td><td class="num">27.6910</td><td class="num">27.7412 ± 1.177</td></tr>
+    <tr><td>Qwen2.5-0.5B</td><td class="num">19.7193</td><td class="num">19.7283 ± 0.836</td></tr>
+  </tbody>
+</table>
+<p>Both are well inside llama.cpp’s error bars. The greedy texts of the GPU and CPU paths agree for about 30 tokens on “Why is the sky blue?”, then fork where two tokens are nearly tied.</p>
+<p><strong>Takeaway: the GPU step’s perplexity matches llama.cpp’s; its greedy text may fork from the CPU’s because it rounds differently.</strong></p>
+<div class="quiz" data-quiz="check" data-for="step" id="c-step">
+  <p>RoPE needs a sine and cosine per pair, which depend on the position. Who computes them?</p>
+  <ul>
+    <li data-right>The CPU, exactly as the CPU path does, written into the params buffer each token <div class="why">The recorded step is reused for every position, so per-token values come from memory.</div></li>
+    <li>The GPU, with its own sin and cos <div class="why">That would give slightly different angles from the CPU path; the CPU writes the table.</div></li>
+    <li>They are recorded into the commands <div class="why">The commands are recorded once, before any position is known.</div></li>
+  </ul>
+</div>
+
+<h2 id="attention" data-short="Attention" data-step="One workgroup per head left the GPU idle; 64-position chunks plus a merge fixed it.">Why was attention slow at long contexts?</h2>
+<p>The first attention shader ran one workgroup per query head. Qwen2.5-0.5B has 14 heads, so attention was 14 workgroups, each walking through every cached position.</p>
+<div class="quiz" data-quiz="predict" data-for="attention" id="g-attention">
+  <p>At depth 1024, how did attention’s share of the GPU step change compared with depth 0 (0.51 ms)?</p>
+  <ul>
+    <li data-right>It grew to 5.59 ms, almost half the step <div class="why">14 workgroups cannot fill a GPU built for hundreds, and each walked 1024 positions alone.</div></li>
+    <li>It stayed about the same <div class="why">Attention’s work grows with the number of cached positions.</div></li>
+    <li>It grew to about 1 ms <div class="why">It grew far more, because so few workgroups did all of it.</div></li>
+  </ul>
+</div>
+<p>The fix is the CPU’s flash-decoding, done on the GPU: split the positions into chunks of 64. Workgroup (head, chunk) scores its 64 positions and writes three things: the chunk’s largest score m, the sum l of e<sup>score − m</sup>, and its weighted sum of values. A second shader merges the chunks of each head:</p>
+<pre><code>M   = max over chunks of m_c
+out = sum_c e^(m_c - M) * out_c
+    / sum_c e^(m_c - M) * l_c
+</code></pre>
+<p>Rescaling by e<sup>m_c − M</sup> makes every chunk’s numbers relative to the same maximum, so the result is the same softmax as one pass over all positions. At depth 1024 attention went from 5.59 to 1.95 ms <span class="tag m">measured</span>, and the perplexities did not change.</p>
+<p><strong>Takeaway: attention needs work split across positions as well as heads, or a few workgroups do it all.</strong></p>
+<div class="quiz" data-quiz="check" data-for="attention" id="c-attention">
+  <p>The dispatch is recorded once, for every chunk the cache can hold. What do chunks past the current position do?</p>
+  <ul>
+    <li data-right>They return at once <div class="why">Their first position is beyond the current one, so they have nothing to score.</div></li>
+    <li>They score zeros and slow the merge down <div class="why">The merge only reads chunks up to the current position.</div></li>
+    <li>The dispatch is re-recorded every 64 tokens <div class="why">It is recorded once; empty chunks cost almost nothing.</div></li>
+  </ul>
+</div>
+
+<h2 id="clocks" data-short="Clock swings" data-step="The GPU's clocks follow its recent load; after idle gaps the same work is up to 2.7x slower.">Why does the same step take 7 ms in one run and 11 in the next?</h2>
+<p>Run to run, the same GPU decode measured anywhere from 50 to 105 tokens per second <span class="tag m">measured</span>. A <strong>governor</strong> sets the GPU’s clock speed from its recent load, as the CPU’s does (<a href="../phase-1/power.html">power and heat</a>), and so does the memory bus’s.</p>
+<div class="quiz" data-quiz="predict" data-for="clocks" id="g-clocks">
+  <p>The classifier GEMV takes 1.23 ms when run back to back. What happens if the GPU sits idle for 20 ms before each run?</p>
+  <ul>
+    <li data-right>It takes about 3.3 ms, nearly 3× longer <div class="why">The governor lowered the clocks during the idle time, and they take a while to come back up.</div></li>
+    <li>It takes 1.23 ms, the same <div class="why">The work is the same, but the clock it runs at is not.</div></li>
+    <li>It is faster: the GPU is cool <div class="why">Temperature matters over minutes; this effect is about the last few milliseconds of load.</div></li>
+  </ul>
+</div>
+<p>After 1, 5 and 20 ms of idle time, the classifier took 1.66, 2.70 and 3.34 ms <span class="tag m">measured</span>. Decode is bursty: one token’s dispatches, then the CPU’s turn to sample. Vulkan has no way to ask for clocks, and the controls in <code>/sys/class/kgsl/</code> need root.</p>
+<p>So GPU comparisons on this phone need the same care as CPU ones: alternate the two versions, repeat, and compare per-stage GPU timestamps rather than one wall-clock number. A cool phone on battery and a warm phone on the charger gave different answers to the same question.</p>
+<p><strong>Takeaway: the GPU’s clocks follow its recent load, so its speed swings by 2× and comparisons must alternate.</strong></p>
+
+<h2 id="energy" data-short="Energy" data-step="The GPU decodes at about two thirds of the CPU's speed for about half the power: less energy per token.">If the GPU is slower, why use it?</h2>
+<p>Energy per token is power divided by tokens per second (<a href="../phase-1/power.html">power and heat</a>). Both sides decoded Qwen2.5-0.5B Q4_0 for 120 seconds, in 64-token bursts, on battery, each starting below 42 °C.</p>
+<div class="quiz" data-quiz="predict" data-for="energy" id="g-energy">
+  <p>The CPU decoded at 157.6 tok/s and the GPU at 102.7. Which used less energy per token?</p>
+  <ul>
+    <li data-right>The GPU, by about a quarter <div class="why">It drew about half the power, which more than makes up for being a third slower.</div></li>
+    <li>The CPU, because it finishes sooner <div class="why">Finishing sooner helps only if the power is similar; the CPU drew about twice as much.</div></li>
+    <li>They used the same <div class="why">Power differed by about 2×, speed by about 1.5×.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th></th><th>tok/s</th><th>power</th><th>energy per token</th><th>max temperature</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, cores 2–7</td><td class="num">157.6</td><td class="num">4.3–4.6 W</td><td class="num">0.029 J</td><td class="num">88.8 °C</td></tr>
+    <tr><td>GPU, CPU sleeps on the fence</td><td class="num">102.7</td><td class="num">2.2–2.5 W</td><td class="num">0.021–0.024 J</td><td class="num">67.6 °C</td></tr>
+    <tr><td>GPU, CPU polls the fence</td><td class="num">86.4</td><td class="num">1.9–2.4 W</td><td class="num">0.027 J</td><td class="num">64.6 °C</td></tr>
+  </tbody>
+</table>
+<p class="note">All measured; energy ±15 % (short charge-counter windows).</p>
+<p>The GPU path uses about half the power and stays about 20 °C cooler. That is a real choice on a phone: the CPU when speed matters, the GPU for long generations or to leave the CPU free for the app. Polling the fence (the CPU spinning until the GPU is done) made the GPU path slower as well as costlier, probably because the spinning core competes for the shared power budget, so the engine sleeps on the fence.</p>
+<p><strong>Takeaway: the GPU is slower but spends less energy per token and runs much cooler.</strong></p>
+<div class="quiz" data-quiz="check" data-for="energy" id="c-energy">
+  <p>Why might polling the fence make the GPU slower, not faster?</p>
+  <ul>
+    <li data-right>The busy CPU core draws power from the same budget the GPU’s clocks depend on <div class="why">The SoC shares power and heat limits between its parts.</div></li>
+    <li>Polling delays the GPU’s start <div class="why">The GPU starts when the work is submitted; polling only changes how the CPU waits.</div></li>
+    <li>The fence is slower to read than to wait on <div class="why">Reading it is cheap; the cost is a core kept busy for the whole wait.</div></li>
+  </ul>
+</div>
+
+<h2 id="time" data-short="Where time goes" data-step="Not the CPU's gaps: ~75% is matrix products at 30-40 GB/s, plus a fixed cost per dispatch.">Where does a GPU token’s time go?</h2>
+<p>Streaming 278 MB of weights at the GPU’s 66 GB/s would take about 4.2 ms per token <span class="tag c">calculated</span>, yet a token took about 9–11 ms. Two tools separated the causes. <code>vk_decode split</code> timed the CPU’s part after each step: copying the 151,936 logits out of GPU memory and finding the largest took 0.3–1.1 ms. <code>vk_decode queued</code> recorded 8 steps into one submit, so the GPU never waited for the CPU.</p>
+<div class="quiz" data-quiz="predict" data-for="time" id="g-time">
+  <p>With 8 steps queued back to back, how long did each step take?</p>
+  <ul>
+    <li data-right>7.6–8.6 ms, about the same as one step per submit <div class="why">The gaps between tokens were not the main cost; the work inside the step was.</div></li>
+    <li>About 4.2 ms, the bandwidth limit <div class="why">That would mean the CPU’s gaps caused all of the slowdown.</div></li>
+    <li>Much longer, because the GPU overheated <div class="why">Eight steps take under 0.1 s, far too short to heat the phone.</div></li>
+  </ul>
+</div>
+<p>The per-stage GPU timestamps show where the step goes: the matrix products are about 75 % of it, and run at 30–40 GB/s there, while the other stages total about 1.1 ms <span class="tag m">measured</span>. Each dispatch’s fixed cost (<a href="gpu-basics.html#small">about 10 µs</a>) adds up over ~290 dispatches per token.</p>
+<p>Measured on the phone: stacking wq/wk/wv and gate/up cut q/k/v’s GPU time by 20 % and gate/up’s by 6 %, about 3–4 % of a token. Built and checked on the PC since, waiting for the phone’s timing <span class="tag a">not yet measured on the phone</span>: the residual adds, the SwiGLU and the RMS norms are folded into the matrix products next to them, which brings a token from ~290 to ~169 dispatches with the same perplexity.</p>
+<p><strong>Takeaway: GPU decode is limited by its matrix products and the fixed cost per dispatch, not by the CPU between tokens.</strong></p>
+<div class="quiz" data-quiz="check" data-for="time" id="c-time">
+  <p>Folding RMSNorm into the next matrix product means each of that product’s workgroups recomputes the norm. Why is that still a saving?</p>
+  <ul>
+    <li data-right>The norm reads 896 floats from cache, far cheaper than a dispatch with a barrier <div class="why">Repeating a tiny computation beats paying a fixed cost per dispatch.</div></li>
+    <li>The norm is not needed any more <div class="why">It is still applied, just inside the product as the input is loaded.</div></li>
+    <li>Each workgroup computes a different part of the norm <div class="why">Each computes the whole sum of squares; the repetition is the price.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>The GPU runs the whole decode step with llama.cpp’s perplexity, at about two thirds of the CPU’s speed for about half its power.</p>
+<p>Its time goes to matrix products and fixed per-dispatch costs, and its clocks swing with load, so measure it by alternating runs and GPU timestamps.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md, steps 4 to 6) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

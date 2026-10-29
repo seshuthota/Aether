@@ -90,8 +90,8 @@
     <p class="meta">Done when: you can explain the speed-vs-threads curve and the energy-vs-core-set trade-off. 1–2 weeks.</p>
   </li>
   <li>
-    <h3>Phase 5 — a modern architecture <span class="tag d">built</span> <span class="tag c">overview written</span></h3>
-    <p>SmolLM2-135M: safetensors, memory-mapped weights, grouped-query attention, byte-level BPE tokenizer. The <a href="../phase-5/index.html">overview</a> is written; the topic pages are still to write.</p>
+    <h3><a href="../phase-5/index.html">Phase 5 — a modern architecture</a> <span class="tag d">built, notes written</span></h3>
+    <p>SmolLM2-135M: safetensors, memory-mapped weights, grouped-query attention, byte-level BPE tokenizer. The overview and four topic pages are written.</p>
     <p class="meta">Done when: output matches Hugging Face, and the tokenizer matches exactly. 2–4 weeks.</p>
   </li>
   <li>
@@ -105,12 +105,12 @@
     <p class="meta">Done when: usable chat on the phone, with a written explanation of where the time and energy go. 3–5 weeks.</p>
   </li>
   <li>
-    <h3>Phase 8 — Android app <span class="tag d">built</span> <span class="tag c">overview written</span></h3>
-    <p>A C interface, a thin JNI layer, a small Kotlin app that streams tokens. The <a href="../phase-8/index.html">overview</a> is written.</p>
+    <h3><a href="../phase-8/index.html">Phase 8 — Android app</a> <span class="tag d">built, notes written</span></h3>
+    <p>A C interface, a thin JNI layer, a small Kotlin app that streams tokens. The overview, <a href="../phase-8/c-abi.html">the C interface</a> and <a href="../phase-8/app.html">the app</a> are written.</p>
     <p class="meta">Done when: an installable APK streams a chat reply at the same speed as the command-line binary.</p>
   </li>
 </ol>
-<p>After that, optional directions: better quantization formats, GPU kernels with Vulkan, speculative decoding, the NPU.</p>
+<p>After that, optional directions from the plan’s section 13. Three are built: llama.cpp’s Q4_K_M files, speculative decoding, and decoding on the GPU with Vulkan. <a href="../beyond/index.html">After Phase 8</a> explains them with this phone’s numbers. The NPU is not started.</p>
 
 <p><strong>Takeaway: the phases run in order, and each one ends with a Done when line you must meet.</strong></p>
 
@@ -133,9 +133,9 @@
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo on 2026-10-24: the engine is built through Phase 8; the notes cover Phases 0–4 in full, and Phases 5–8 with an overview each plus the first topic pages.</p>
-<script src="../js/pages.js?v=31"></script>
-<script src="../js/glossary.js?v=30"></script>
+<p class="colophon">Phase scope and effort come from the plan. Status reflects the repo on 2026-10-29: the engine is built through Phase 8; the notes cover Phases 0–6 and 8 with topic pages, and Phase 7 with its overview and seven topic pages.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
 </html>

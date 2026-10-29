@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Several tokens per weight read · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">After Phase 8 · 01</p>
+
+<h1>Several tokens per weight read</h1>
+<p class="lede">Decode reads every weight once per token, and the phone’s memory can only deliver so many bytes a second. Speculative decoding guesses a few tokens ahead and checks all the guesses in one pass over the weights. When the guesses are right, several tokens cost about one read.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../phase-0/decode-ceiling.html">the decode ceiling</a>, <a href="../phase-3/prefill.html">prefill</a> and <a href="../phase-2/sampling.html">sampling</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#why">Why can checking five tokens cost about as much as one?</a>
+  <a href="#accept">How does one pass tell which guesses were right?</a>
+  <a href="#lookup">Where do guesses come from without a second model?</a>
+  <a href="#draft">Why didn’t a small draft model help more?</a>
+  <a href="#sampling">Does it still work when the sampler is random?</a>
+  <a href="#fork">Why does the greedy text sometimes change?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Decode is close to the memory ceiling; reading the weights once for several tokens is the way past it.">What are we trying to do here?</h2>
+<p>After the speed work that followed Phase 8, decoding Qwen2.5-0.5B in Q4_0 ran at about 180 tokens per second on cores 2–7. Each token reads the 278 MB of weights, so that is about 50 GB/s <span class="tag c">calculated</span>, close to the 61–67 GB/s Phase 1 measured as the phone’s memory bandwidth. A faster kernel cannot give much more.</p>
+<p>The way past the ceiling is to get more than one token out of each read of the weights. <strong>Speculative decoding</strong> does that: something cheap proposes the next few tokens, called <strong>draft tokens</strong>, and the real model, the <strong>target</strong>, checks all of them in one batched pass, the way it reads a prompt.</p>
+<p>This page covers the two kinds of drafts the engine has (copied from earlier text, or from a smaller model), the rule that decides which drafts to keep, why it still works with a random sampler, and what each one measured on the phone. The code is <code>Session::generate_speculative</code> in <code>src/session.rs</code>; the CLI flags are <code>--lookup K</code> and <code>--draft PATH</code>, and the app has a “lookup” checkbox.</p>
+
+<h2 id="why" data-short="Why it can pay" data-step="A batched pass reads each weight once for all its tokens, so a few extra tokens add little time.">Why can checking five tokens cost about as much as one?</h2>
+<p>A decode step multiplies each weight matrix by one vector. A batched pass, as in prefill, multiplies it by several vectors at once, and each weight loaded from memory is used for all of them. Decode is limited by bytes, not by arithmetic, so the extra vectors mostly use arithmetic units that were waiting anyway.</p>
+<div class="quiz" data-quiz="predict" data-for="why" id="g-why">
+  <p>A decode step of Qwen2.5-0.5B Q4_0 took 5.5 ms. About how long did a batched pass of 4 tokens take?</p>
+  <ul>
+    <li data-right>About 8 ms <div class="why">The weights are read once for all four tokens; only the arithmetic and attention grow.</div></li>
+    <li>About 22 ms, four steps <div class="why">That would be four separate reads of the weights; a batch shares one read.</div></li>
+    <li>About 5.5 ms, the same <div class="why">Close, but the arithmetic for four tokens is not free; it adds a few milliseconds.</div></li>
+  </ul>
+</div>
+<p>Measured on cores 2–7 <span class="tag m">measured</span>: a batch of 2 tokens took 5.8 ms and a batch of 4 took 7.8 ms, against 5.5 ms for one decode step. Four tokens for 1.4 steps’ time.</p>
+<p>That took a fix first. The <code>smmla</code> tiles of <a href="../phase-6/dot-products.html">Phase 6</a> always covered 8 tokens, so a batch of 2 paid for 8 (11.3 ms). Tiles of 2, 4 and 6 tokens brought small batches down to the numbers above.</p>
+<p><strong>Takeaway: a batched pass of a few tokens costs little more than one decode step, because the weights are read once.</strong></p>
+<div class="quiz" data-quiz="check" data-for="why" id="c-why">
+  <p>Why does the same trick not help prefill much more than it already does?</p>
+  <ul>
+    <li data-right>Prefill already shares every weight read across many prompt tokens <div class="why">A prompt is one large batch; speculative decoding brings that sharing to the tokens the model generates.</div></li>
+    <li>Prefill has no KV cache <div class="why">Prefill fills the KV cache; that is not what limits it.</div></li>
+    <li>Prefill cannot run batched passes <div class="why">Prefill is the batched pass; decode is the part that was one token at a time.</div></li>
+  </ul>
+</div>
+
+<h2 id="accept" data-short="Keeping guesses" data-step="Row r of the pass predicts the token after input r; drafts are kept while they match.">How does one pass tell which guesses were right?</h2>
+<p>Say the last certain token is <code>c</code> and the drafts are <code>d1 d2 d3</code>. The target runs <code>c d1 d2 d3</code> as one batch and returns one row of logits per input. Row r is the model’s prediction for the token after input r, computed as if every input before it were true.</p>
+<pre><code>inputs:   c     d1    d2    d3
+row:      0     1     2     3
+predicts: d1?   d2?   d3?   next
+</code></pre>
+<p>With greedy decoding, the rule is:</p>
+<ol>
+  <li>Keep <code>d1</code> if it equals the argmax (highest logit) of row 0.</li>
+  <li>If <code>d1</code> was kept, keep <code>d2</code> if it equals the argmax of row 1, and so on.</li>
+  <li>At the first draft that does not match, take the argmax of the row before it instead. That token is certain too.</li>
+</ol>
+<div class="quiz" data-quiz="predict" data-for="accept" id="g-accept">
+  <p>All three drafts match. How many new certain tokens does that pass produce?</p>
+  <ul>
+    <li data-right>Four <div class="why">The three drafts, plus row 3’s argmax: the prediction after d3 comes for free.</div></li>
+    <li>Three <div class="why">The last row still predicts one more token, and it is as certain as a decode step’s.</div></li>
+    <li>One <div class="why">One is the worst case, when the first draft is wrong: row 0’s argmax is still certain.</div></li>
+  </ul>
+</div>
+<p>Every pass yields at least one certain token (row 0’s argmax, exactly what a plain decode step would give) and at most K + 1. The rejected drafts left keys and values in the KV cache; those positions are simply overwritten by the next pass. A test checks that on stories15M the output is byte for byte llama2.c’s greedy text.</p>
+<p><strong>Takeaway: drafts are kept while each matches the row before it, so a pass gives between 1 and K + 1 tokens and never a wrong one.</strong></p>
+<div class="quiz" data-quiz="check" data-for="accept" id="c-accept">
+  <p>Drafts <code>d1 d2 d3</code>: d1 matches row 0, d2 does not match row 1. What does the pass produce?</p>
+  <ul>
+    <li data-right>d1 and row 1’s argmax <div class="why">Keep matching drafts; the first mismatch is replaced by the target’s own choice from the row before it.</div></li>
+    <li>d1 only <div class="why">Row 1’s argmax is certain too, so it is kept as well.</div></li>
+    <li>d1, row 1’s argmax and d3 <div class="why">d3 was predicted after the wrong d2, so row 2 and later rows are discarded.</div></li>
+  </ul>
+</div>
+
+<h2 id="lookup" data-short="Prompt lookup" data-step="Copy drafts from the last place the recent tokens appeared; it wins when text repeats.">Where do guesses come from without a second model?</h2>
+<p>Qwen2.5-0.5B is the smallest model of its family, so there is no smaller Qwen to make drafts. <strong>Prompt lookup</strong> needs no model at all. It takes the last N tokens (the <strong>n-gram</strong>, 2 by default), finds the most recent earlier place in the prompt or the output where the same N tokens occurred, and copies up to K tokens that followed them there.</p>
+<pre><code>... the function returns the sum of a and b ...
+                         ^^^^^^^^^^^^^ earlier
+now: "returns the"  -> drafts: "sum of a"
+</code></pre>
+<div class="quiz" data-quiz="predict" data-for="lookup" id="g-lookup">
+  <p>Which task should speed up most with prompt lookup?</p>
+  <ul>
+    <li data-right>“Add comments to this function”, with the function in the prompt <div class="why">The answer copies the code back, so the drafts are nearly always right.</div></li>
+    <li>Writing a new short story <div class="why">Fresh prose rarely repeats earlier text, so lookup finds few drafts that match.</div></li>
+    <li>Both equally <div class="why">The drafts are only as good as the repetition between the text and what came before.</div></li>
+  </ul>
+</div>
+<p>Qwen2.5-0.5B Q4_0, cores 2–7, two rounds, decode tokens per second <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>prompt, sampler</th><th>plain</th><th><code>--lookup 3</code></th><th><code>--lookup 4</code></th></tr></thead>
+  <tbody>
+    <tr><td>code (copying), greedy</td><td class="num">162–169</td><td class="num">264–293</td><td class="num">258–288</td></tr>
+    <tr><td>code, temperature 0.7, top-p 0.9</td><td class="num">156–163</td><td class="num">149–245</td><td class="num">195–240</td></tr>
+    <tr><td>story, greedy</td><td class="num">146–174</td><td class="num">166–172</td><td class="num">164–177</td></tr>
+    <tr><td>story, temperature 0.7, top-p 0.9</td><td class="num">147–156</td><td class="num">142–152</td><td class="num">137–146</td></tr>
+  </tbody>
+</table>
+<p>Copying gains 60–75 % with greedy decoding. Fresh prose is about neutral: within −10 % to +15 %, inside the run-to-run spread. A longer n-gram (3) found too few matches to pay for its passes.</p>
+<p><strong>Takeaway: prompt lookup costs nothing to draft and pays when the output repeats earlier text.</strong></p>
+
+<h2 id="draft" data-short="Draft model" data-step="A small model's drafts are good, but at 2x the target's speed they cost too much.">Why didn’t a small draft model help more?</h2>
+<p>The classic version uses a <strong>draft model</strong>: a smaller model with the same vocabulary that decodes K tokens on its own, which the target then checks. SmolLM2 comes in 135M and 360M sizes, so the 135M model drafted for the 360M one.</p>
+<div class="quiz" data-quiz="predict" data-for="draft" id="g-draft">
+  <p>The drafts were accepted 70–95 % of the time. Q4_0, prose prompt: plain decode of the 360M model ran at 179–196 tok/s. What did drafting with K = 3 reach?</p>
+  <ul>
+    <li data-right>About 230 tok/s, +17–29 % <div class="why">Drafting costs more than the 135M model’s size suggests, which eats most of the gain.</div></li>
+    <li>About 500 tok/s, nearly 3× <div class="why">That would need free drafts; the draft model’s own steps are a large share of each round.</div></li>
+    <li>About 150 tok/s, slower <div class="why">It did not gain on the code prompt, but on prose it gained a little.</div></li>
+  </ul>
+</div>
+<p>The cost model explains it. The 135M model decoded only about twice as fast as the 360M one, not the 2.7× their sizes suggest: both have about 30 layers, and at this size a fixed cost per layer is a large share. A round with K = 3 costs about three draft steps (half a target step each) plus a batched check of 4 tokens (1.4 target steps): about 2.9 target steps for at most 4 tokens <span class="tag c">calculated</span>. At 90 % acceptance that is about 3.6 tokens, so +25 % at best, which is what the prose prompt got.</p>
+<table>
+  <thead><tr><th>SmolLM2-360M Q4_0, decode tok/s</th><th>plain</th><th>draft K = 3</th><th><code>--lookup 3</code></th></tr></thead>
+  <tbody>
+    <tr><td>code (116 tokens)</td><td class="num">184–199</td><td class="num">180–201</td><td class="num">255–280</td></tr>
+    <tr><td>“The history of the printing press begins”</td><td class="num">179–196</td><td class="num">230</td><td class="num">348–444</td></tr>
+  </tbody>
+</table>
+<p>Lookup did even better on prose here, because the 360M base model loops on that prompt, and repeating text is what lookup accepts for free. A draft model pays when the target is much bigger than the draft.</p>
+<p><strong>Takeaway: a draft model only pays when its steps are much cheaper than the target’s; at 2× it barely does.</strong></p>
+<div class="quiz" data-quiz="check" data-for="draft" id="c-draft">
+  <p>The same pair stored in Q8_0 (twice the bytes) gained a little more often. Why?</p>
+  <ul>
+    <li data-right>The target got slower per step, so each draft step became relatively cheaper <div class="why">What matters is the ratio between draft and target step costs, not their absolute speed.</div></li>
+    <li>Q8_0 drafts are more often accepted <div class="why">Acceptance was high in both formats; the cost ratio moved more.</div></li>
+    <li>Q8_0 has no batched pass <div class="why">Both formats check drafts with the same batched pass.</div></li>
+  </ul>
+</div>
+
+<h2 id="sampling" data-short="With sampling" data-step="Keep draft d with probability p(d), otherwise draw from p without d: the result follows p exactly.">Does it still work when the sampler is random?</h2>
+<p>With temperature and top-p, the next token is drawn at random from a distribution p (see <a href="../phase-2/sampling.html">sampling</a>). “Keep the draft if it is the argmax” would change which tokens come out. The rule that keeps the output distributed exactly as p is <strong>speculative sampling</strong>:</p>
+<ol>
+  <li>Compute p from the row, exactly as the sampler would.</li>
+  <li>Keep the draft d with probability p(d).</li>
+  <li>Otherwise, draw a token from p with d removed (the rest scaled up to sum to 1).</li>
+</ol>
+<p>Why it is exact, for a token t other than d: it comes out only on the reject path, with probability (1 − p(d)) × p(t) / (1 − p(d)) = p(t). And d comes out with probability p(d). Greedy decoding is the temperature-0 case of the same call (<code>Sampler::sample_draft</code>). A test draws 200,000 times and compares against the closed-form probabilities, within 0.005 <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: speculative sampling keeps a draft with probability p(d), so the output follows exactly the distribution plain sampling would.</strong></p>
+<div class="quiz" data-quiz="check" data-for="sampling" id="c-sampling">
+  <p>Why does lookup gain less with sampling than with greedy on the code task (+25–50 % against +60–75 %)?</p>
+  <ul>
+    <li data-right>A draft is kept only with probability p(d), so even a likely draft is sometimes rejected <div class="why">With greedy, a draft that is the argmax is always kept; sampling turns some of those into rejections.</div></li>
+    <li>Sampling changes the drafts lookup finds <div class="why">Lookup copies from the text either way; what changes is how often a draft is kept.</div></li>
+    <li>Sampling makes the batched pass slower <div class="why">The pass costs the same; the sampler runs after it.</div></li>
+  </ul>
+</div>
+
+<h2 id="fork" data-short="Forking text" data-step="Batched and single-token passes round differently, and tiny margins let greedy text fork.">Why does the greedy text sometimes change?</h2>
+<p>On the copying prompts, lookup produced the same text as plain greedy decoding. On the story, the two texts went apart after about 80 tokens. No draft was kept wrongly: the batched pass and the single-token step compute the logits by different routes.</p>
+<div class="quiz" data-quiz="predict" data-for="fork" id="g-fork">
+  <p>On the f32 model, the two routes agreed to within 0.00005 in every logit. On Q4_0, how far apart were they?</p>
+  <ul>
+    <li data-right>Up to 0.4–0.65 in a logit <div class="why">Activations are rounded to int8 before every product, and a tiny float difference sometimes flips one int8 value.</div></li>
+    <li>Still about 0.00005 <div class="why">That holds for f32 only; quantizing the activations amplifies small differences.</div></li>
+    <li>Far apart: the routes compute different things <div class="why">They compute the same model; only the order of additions and the rounding points differ.</div></li>
+  </ul>
+</div>
+<p>Before each matrix product, the Q4_0 path rounds the activations to int8. A difference of 1e-7 from another summation order now and then pushes one value across a rounding boundary, and 24 layers carry that on. Meanwhile the gap between the best and second-best token was as small as 0.02 at some steps, so the argmax can flip. The result is “greedy under the batched path’s numbers”: equally valid, not the same digits. llama.cpp’s own batched and single-token paths differ the same way.</p>
+<p><strong>Takeaway: quantized activations make the batched and single-token passes differ slightly, and where two tokens are nearly tied, greedy text forks.</strong></p>
+<div class="quiz" data-quiz="check" data-for="fork" id="c-fork">
+  <p>How was lookup decoding’s correctness tested, given this?</p>
+  <ul>
+    <li data-right>On stories15M in f32, where the routes agree, against llama2.c’s greedy text <div class="why">An f32 model has no int8 rounding, so the output must match the reference byte for byte.</div></li>
+    <li>By comparing it with plain greedy on Qwen Q4_0 <div class="why">Those legitimately fork, so equality there is not a valid test.</div></li>
+    <li>It was not tested <div class="why">Tests <code>lookup_decoding_gives_llama2c_greedy_text</code> and <code>draft_model_decoding_gives_llama2c_greedy_text</code> check it.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Decode is bandwidth-bound, so checking several guessed tokens in one batched pass costs little more than one step. Guesses are kept while each matches the target’s own choice, so the output is never wrong.</p>
+<p>Prompt lookup pays when text repeats; a draft model only when it is much cheaper than the target.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-6.md, “Prompt lookup decoding” and “Speculative decoding with a draft model”) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

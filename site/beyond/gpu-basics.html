@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the GPU runs our code · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">After Phase 8 · 02</p>
+
+<h1>How the GPU runs our code</h1>
+<p class="lede">The phone’s Adreno 830 GPU has hundreds of lanes that run one small program side by side. This page covers how the engine hands it work through Vulkan, how a matrix-vector product is split across its lanes, and what that measured.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../phase-1/bandwidth.html">bandwidth</a>, <a href="../phase-3/gemv.html">GEMV</a> and <a href="../phase-6/blocks.html">Q4_0 blocks</a>. <a href="../start/machine.html">Inside the machine</a> animates GPU threads.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#lanes">How is a GPU organised?</a>
+  <a href="#vulkan">How does the engine hand work to the GPU?</a>
+  <a href="#memory">Can the GPU read the weights faster than the CPU?</a>
+  <a href="#gemv">How is a matrix-vector product split across lanes?</a>
+  <a href="#small">Why are small matrices slow on the GPU?</a>
+  <a href="#subgroup">What went wrong on the PC’s GPU?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Run the model's arithmetic on the GPU, written from scratch through Vulkan.">What are we trying to do here?</h2>
+<p>The SoC has a GPU (graphics processor) next to the CPU cores. The engine can run a whole decode step on it (built with <code>--features vulkan</code>). The code is <code>src/kernels/vulkan.rs</code> (the device, buffers, kernels), <code>src/model/gpu.rs</code> (the model) and <code>shaders/*.comp</code> (the programs the GPU runs).</p>
+<p><strong>Vulkan</strong> is the standard interface for talking to GPUs on Android. The engine calls it through the <code>ash</code> crate, which only declares Vulkan’s C functions; the phone’s own <code>libvulkan.so</code> does the work. No GPU library does the arithmetic for us.</p>
+<p>By the end you can explain how work reaches the GPU, why it reads memory no faster than the CPU, and how 32 lanes share one row of a matrix.</p>
+
+<h2 id="lanes" data-short="GPU shape" data-step="Lanes run one program in lockstep groups (subgroups) inside workgroups.">How is a GPU organised?</h2>
+<p>A CPU core runs one stream of instructions fast, with NEON doing 4 floats per instruction. A GPU runs one small program, called a <strong>shader</strong>, on many <strong>lanes</strong> (also called invocations) at once. Three levels matter:</p>
+<ul>
+  <li>A <strong>subgroup</strong> (a “wave”) is a set of lanes that execute the same instruction together. On the Adreno 830 a subgroup has 64 lanes (128 is also possible) <span class="tag m">measured</span>.</li>
+  <li>A <strong>workgroup</strong> is a set of lanes, chosen by the shader (64, 128, 256…), that can share fast on-chip memory, called <strong>shared memory</strong> (32 KB here), and wait for each other at a <code>barrier()</code>.</li>
+  <li>A <strong>dispatch</strong> launches a grid of workgroups. They run in any order and cannot wait for each other.</li>
+</ul>
+<pre><code>dispatch: workgroup 0  workgroup 1  ...  workgroup 151
+          [128 lanes]  [128 lanes]       [128 lanes]
+             = 2 subgroups of 64 on the Adreno
+</code></pre>
+<div class="quiz" data-quiz="predict" data-for="lanes" id="g-lanes">
+  <p>Lanes of one subgroup want to add their 32 partial sums. What can they use that lanes in different workgroups cannot?</p>
+  <ul>
+    <li data-right>Subgroup operations that pass values between lanes directly <div class="why">Lanes in one subgroup run in lockstep, so a shuffle can read another lane’s register.</div></li>
+    <li>Nothing: every lane is independent <div class="why">Lanes of a subgroup execute together and can exchange values without memory.</div></li>
+    <li>A barrier across the whole dispatch <div class="why">There is no barrier across workgroups inside one dispatch; that needs a second dispatch.</div></li>
+  </ul>
+</div>
+<p>Lanes of one subgroup can exchange registers with <strong>subgroup operations</strong>, such as <code>subgroupShuffleXor(v, m)</code>: each lane gets <code>v</code> from the lane whose index differs from its own in the bits of <code>m</code>. A whole workgroup can share values through shared memory and a barrier. Different workgroups can only communicate through ordinary memory, in a later dispatch.</p>
+<p><strong>Takeaway: lanes run in lockstep subgroups inside workgroups; only lanes of the same workgroup can wait for each other.</strong></p>
+<div class="quiz" data-quiz="check" data-for="lanes" id="c-lanes">
+  <p>Step A writes a vector that step B reads in full. Why must they be two dispatches with a barrier between them?</p>
+  <ul>
+    <li data-right>Workgroups of one dispatch cannot wait for each other, so B’s lanes could read before A’s are done <div class="why">The barrier between dispatches makes all of A’s writes visible before B starts.</div></li>
+    <li>A shader can only write one buffer <div class="why">A shader can write several buffers; the problem is ordering between workgroups.</div></li>
+    <li>They could share one dispatch with <code>barrier()</code> <div class="why"><code>barrier()</code> only waits for the lanes of one workgroup.</div></li>
+  </ul>
+</div>
+
+<h2 id="vulkan" data-short="Handing work over" data-step="Shaders compiled at build time, buffers both sides see, commands recorded once and submitted per token.">How does the engine hand work to the GPU?</h2>
+<p>Shaders are written in GLSL (a C-like shading language). <code>build.rs</code> compiles each <code>shaders/*.comp</code> file with the NDK’s <code>glslc</code> into SPIR-V, the GPU-neutral bytecode Vulkan accepts, and the bytes are built into the binary. At start-up the engine turns each into a <strong>pipeline</strong>: the driver compiles SPIR-V into the Adreno’s own instructions. One of these is a <code>Kernel</code> in <code>vulkan.rs</code>.</p>
+<p>Data lives in <strong>buffers</strong>. On this phone, “GPU memory” is the same LPDDR5X RAM the CPU uses: one heap, so a buffer is one allocation both sides see, with no copies. The CPU writes the token’s embedding straight into the input buffer and reads the logits straight out.</p>
+<p>The work for one token is <strong>recorded</strong> once into a command buffer: for each stage, bind the kernel with its buffers, push a few constants (sizes, offsets), dispatch, barrier. Per token, the engine writes the position and the RoPE table into a small <code>params</code> buffer, <strong>submits</strong> the command buffer, and waits on a <strong>fence</strong>, a flag the GPU sets when it is done.</p>
+<pre><code>// per token (GpuModel::forward, simplified)
+embedding_row(token, x);   // CPU writes the input
+params.pos = pos;          // and the position, RoPE table
+gpu.submit(&amp;step);         // the recorded step; waits on
+                           // its fence
+read(logits);              // CPU reads the output
+</code></pre>
+<ul>
+  <li>Nothing is recorded per token, so the CPU’s side of a step is a few microseconds plus the wait.</li>
+  <li><strong>Specialization constants</strong> are values fixed when a pipeline is created, such as the rows per lane group below. The driver compiles a separate, specialised program for each value.</li>
+</ul>
+<p><strong>Takeaway: the step is recorded once; per token the CPU writes a position, submits and waits.</strong></p>
+<div class="quiz" data-quiz="check" data-for="vulkan" id="c-vulkan">
+  <p>Why does the position go into a buffer the shaders read, rather than into the recorded commands?</p>
+  <ul>
+    <li data-right>The commands are recorded once and reused for every position <div class="why">Values that change per token have to come from memory the CPU rewrites before each submit.</div></li>
+    <li>Shaders cannot take constants <div class="why">They take push constants, but those are fixed at recording time here.</div></li>
+    <li>The GPU computes the position itself <div class="why">The CPU writes it, together with the RoPE table it computes exactly as the CPU path does.</div></li>
+  </ul>
+</div>
+
+<h2 id="memory" data-short="Memory speed" data-step="The GPU reads RAM at ~66 GB/s, the same as all eight CPU cores: one memory controller.">Can the GPU read the weights faster than the CPU?</h2>
+<p>Decode is limited by how fast the weights come from memory (<a href="../phase-0/decode-ceiling.html">the decode ceiling</a>). Phase 1 measured about 67 GB/s for all eight CPU cores together.</p>
+<div class="quiz" data-quiz="predict" data-for="memory" id="g-memory">
+  <p>A GPU has far more lanes than the CPU. How fast did a read shader stream a 16 MB buffer?</p>
+  <ul>
+    <li data-right>About 66 GB/s, the same as the CPU <div class="why">GPU and CPU share one memory controller and one set of RAM chips.</div></li>
+    <li>About 300 GB/s <div class="why">Desktop GPUs have their own fast memory; this one reads the phone’s shared RAM.</div></li>
+    <li>About 20 GB/s <div class="why">With enough workgroups the GPU reaches the memory’s limit.</div></li>
+  </ul>
+</div>
+<p><code>examples/vk_bandwidth.rs</code> measured 65–68 GB/s for 4–64 MB buffers <span class="tag m">measured</span>. The GPU and the CPU read the same RAM through the same controller, so for decode the GPU cannot be faster than the CPU. It can do two other things: take the work off the CPU (heat and energy), and prefill, where arithmetic is the limit.</p>
+<p>The same tool measured the fixed cost of a dispatch: an empty one with a barrier after it takes 1.7 µs, plus about 18 ns per workgroup <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: on a phone the GPU shares the CPU’s memory, so it cannot make decode faster, only take it off the CPU.</strong></p>
+
+<h2 id="gemv" data-short="Splitting a GEMV" data-step="32 lanes share R rows: one Q4_0 block per lane per row, then shuffles add the 32 sums.">How is a matrix-vector product split across lanes?</h2>
+<p>A Q4_0 row of Qwen2.5-0.5B has 896 columns, which is 28 blocks of 32 weights (<a href="../phase-6/blocks.html">blocks</a>). Each block is 16 bytes of 4-bit values plus one f16 scale. At upload the engine splits llama.cpp’s 18-byte blocks into the 16 value bytes and the scales, so a lane can fetch a whole block’s values in one aligned 16-byte load.</p>
+<p>The first version gave each row 64 lanes, half a block each, and added the 64 sums in shared memory with 6 barriers: 15–25 GB/s, half the CPU’s <span class="tag m">measured</span>. Most lanes did one load and then waited at barriers.</p>
+<div class="quiz" data-quiz="predict" data-for="gemv" id="g-gemv">
+  <p>What should each lane do so that every load is used more and barriers disappear?</p>
+  <ul>
+    <li data-right>Take a whole block, for several rows at once, and add sums with subgroup shuffles <div class="why">The lane’s 32 activations then serve R rows, and shuffles need no shared memory.</div></li>
+    <li>Take a single weight each <div class="why">That makes the loads smaller and the additions longer.</div></li>
+    <li>Use one lane per row <div class="why">A row would then be one long chain, and there would be too few rows to fill the GPU.</div></li>
+  </ul>
+</div>
+<p><code>shaders/q4_0_gemv.comp</code>: a group of 32 lanes computes R rows together. Lane l takes blocks l, l + 32, … of each row, loads that block’s 32 activations once and uses them for all R rows. Then the 32 partial sums of each row are added in five shuffle steps:</p>
+<pre><code>for m in [16, 8, 4, 2, 1]:
+    sum += subgroupShuffleXor(sum, m)
+// after 5 steps every lane holds the total
+// lane 0 writes it
+</code></pre>
+<ul>
+  <li>XOR with 16, 8, 4, 2, 1 never leaves an aligned group of 32 lanes, so the four groups of a 128-lane workgroup each add their own rows.</li>
+  <li>R is a specialization constant, so each matrix gets its best R. R sums held as R/4 <code>vec4</code>s ran 15 % faster than R separate floats: one shuffle then moves four sums.</li>
+  <li>A first version used <code>subgroupClusteredAdd</code>. The Adreno 830 does not support clustered subgroup operations, and its driver’s compiler crashed (SIGSEGV) instead of reporting an error.</li>
+</ul>
+<p>On the 77 MB classifier this reaches 62 GB/s at R = 16, 94 % of the read test and 24 % above the CPU <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: 32 lanes share R rows, one block per lane, and five shuffles add the sums with no barriers.</strong></p>
+<div class="quiz" data-quiz="check" data-for="gemv" id="c-gemv">
+  <p>A row has 28 blocks and each group has 32 lanes. What happens to lanes 28–31?</p>
+  <ul>
+    <li data-right>They have no block, contribute 0 to the sum and wait <div class="why">An 896-column row leaves 4 of 32 lanes idle; bigger rows give some lanes several blocks.</div></li>
+    <li>They wrap around to block 0 <div class="why">That would add block 0 twice; the loop stops at the row’s end.</div></li>
+    <li>They start the next row <div class="why">Rows are assigned per group of 32, not per lane.</div></li>
+  </ul>
+</div>
+
+<h2 id="small" data-short="Small matrices" data-step="Each dispatch costs ~10 µs beyond its bytes, so small matrices run far below the bandwidth limit.">Why are small matrices slow on the GPU?</h2>
+<p>Qwen2.5-0.5B’s layers have matrices of very different sizes. <code>examples/vk_gemv.rs</code> times each shape with a barrier between dispatches, as in the model, GB/s of Q4_0 bytes <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>matrix (rows × columns)</th><th>bytes</th><th>GPU</th><th>CPU, 6 threads</th></tr></thead>
+  <tbody>
+    <tr><td>wk, wv: 128 × 896</td><td class="num">0.06 MB</td><td class="num">8–9</td><td class="num">10</td></tr>
+    <tr><td>wq, wo: 896 × 896</td><td class="num">0.45 MB</td><td class="num">22–29</td><td class="num">29–31</td></tr>
+    <tr><td>gate, up: 4864 × 896</td><td class="num">2.5 MB</td><td class="num">41–47</td><td class="num">39–45</td></tr>
+    <tr><td>classifier: 151936 × 896</td><td class="num">77 MB</td><td class="num">62</td><td class="num">50–51</td></tr>
+  </tbody>
+</table>
+<div class="quiz" data-quiz="predict" data-for="small" id="g-small">
+  <p>A 2.5 MB matrix at 66 GB/s would take 37 µs. It takes about 50. What does that suggest?</p>
+  <ul>
+    <li data-right>Each dispatch has a fixed cost of roughly 10 µs on top of its bytes <div class="why">Starting, filling and draining the GPU takes time that a small job cannot hide.</div></li>
+    <li>The shader reads each byte twice <div class="why">Each weight is read once; the same shader reaches 62 GB/s on a big matrix.</div></li>
+    <li>The memory is slower for small buffers <div class="why">The read test reaches full speed from 4 MB, and the extra time is about the same size for every matrix.</div></li>
+  </ul>
+</div>
+<p>About 10 µs per dispatch is a small share of the classifier’s 1.2 ms and most of wk’s 7.5 µs. The fix that worked was fewer, bigger dispatches: wq, wk and wv stacked into one 1152-row matrix (32.2 → 20.4 µs), and gate over up as one 9728-row matrix (104.6 → 93.3 µs) <span class="tag m">measured</span>. Their outputs share one buffer, and the shaders after them read views at offsets into it. Two other ideas were measured and dropped: unrolling the row loop (slower everywhere, likely too many registers) and splitting a row’s blocks across several groups of 32 lanes (never faster).</p>
+<p><strong>Takeaway: a GPU dispatch has a fixed cost, so small matrices run far below the bandwidth limit, and stacking them helps.</strong></p>
+<div class="quiz" data-quiz="check" data-for="small" id="c-small">
+  <p>Why does stacking wq, wk and wv not change any result?</p>
+  <ul>
+    <li data-right>Each output row is still the same dot product of the same weights and input <div class="why">Stacking only changes which dispatch computes a row, not how it is computed.</div></li>
+    <li>It does change results slightly <div class="why">The GPU perplexities stayed identical to the last digit.</div></li>
+    <li>The shader sorts the rows back <div class="why">No sorting: the stacked outputs are simply q, then k, then v in one buffer.</div></li>
+  </ul>
+</div>
+
+<h2 id="subgroup" data-short="The PC's GPU" data-step="Intel may run a shader with 8 or 16 lanes, so the 32-lane shuffles broke until 32 was required.">What went wrong on the PC’s GPU?</h2>
+<p>The development PC has an Intel GPU, so the GPU tests can run there too. The GEMV test failed on it, with errors near 86 %. The shader relies on 32 lanes staying in one subgroup.</p>
+<div class="quiz" data-quiz="predict" data-for="subgroup" id="g-subgroup">
+  <p>Intel reports a subgroup size of 32. Why would 32-lane shuffles still go wrong?</p>
+  <ul>
+    <li data-right>Intel may compile a shader for 8 or 16 lanes, and then a shuffle by 16 reaches past the subgroup <div class="why">The reported size is the largest; the driver picks the size per shader unless told otherwise.</div></li>
+    <li>Intel has no shuffles <div class="why">It supports shuffles, and even clustered operations.</div></li>
+    <li>Intel rounds floats differently <div class="why">Rounding differences are tiny; an 86 % error means wrong values were added.</div></li>
+  </ul>
+</div>
+<p>Vulkan lets a pipeline require a subgroup size (<code>VK_EXT_subgroup_size_control</code>). On devices that may go below 32 lanes, the engine now asks for exactly 32. The Adreno never runs fewer than 64 lanes, so nothing changes on the phone. With that, every GPU test passes on the PC, and the GPU perplexities there match the phone’s to four decimals (SmolLM2-135M 27.6910, Qwen2.5-0.5B 19.7193) <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: a shader that assumes a subgroup size must ask for it; the size a driver reports is not a promise.</strong></p>
+<div class="quiz" data-quiz="check" data-for="subgroup" id="c-subgroup">
+  <p>Why is it useful that the GPU path now runs on the PC?</p>
+  <ul>
+    <li data-right>Shader changes can be checked against llama.cpp’s perplexity without the phone <div class="why">Correctness can be tested anywhere; only the speed has to be measured on the phone.</div></li>
+    <li>The PC’s numbers replace the phone’s <div class="why">Speed on the Intel GPU says nothing about the Adreno; only correctness carries over.</div></li>
+    <li>It makes the phone faster <div class="why">The phone path is unchanged.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A GPU runs one shader on lockstep subgroups inside workgroups; work reaches it as recorded dispatches separated by barriers.</p>
+<p>On a phone it reads the same RAM as the CPU at the same speed, so it cannot speed up decode. Each dispatch has a fixed cost, which makes small matrices slow.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md, steps 1, 2 and 6) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where the time goes · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · 06</p>
+
+<h1>Where the time goes</h1>
+<p class="lede">At the end of Phase 7, Qwen2.5 decoded about as fast as llama.cpp but read prompts 2 to 6 times slower. A week later our prefill was ahead. This page explains why the two speeds have different limits, what closed the prefill gap, and why the same program can measure 20 % slower for no reason in the code.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="benchmarking.html">Benchmarking like llama-bench</a> (pp, tg and depth), <a href="../phase-1/roofline.html">the roofline</a> and <a href="../phase-6/dot-products.html">quantized dot products</a> (<code>sdot</code>).</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#decode">What limits decode?</a>
+  <a href="#prefill">What limits prefill?</a>
+  <a href="#smmla">How did prefill catch up?</a>
+  <a href="#depth">What does a long context add?</a>
+  <a href="#caps">Why did the same program get slower?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Explain each speed by its limit: bytes for decode, arithmetic for prefill, and the clock for both.">What are we trying to do here?</h2>
+<p>Every piece of work on a processor is limited by something: how fast data arrives from memory, how fast the arithmetic units run, or how fast the clock ticks. Knowing which limit applies tells you which change can help and which cannot. The numbers here are Qwen2.5-0.5B on cores 2–7 of this phone, from <code>results/phase-7.md</code> (2026-10-21) and <code>results/phase-6.md</code> (2026-10-24 to 29), all in tokens per second.</p>
+<p>By the end you can say, from a model’s size and a measured speed, how close decode is to its limit, and explain why prefill needed a different instruction rather than more threads.</p>
+
+<h2 id="decode" data-short="Decode" data-step="Each token reads every weight once, so decode is limited by memory bandwidth: bytes per token × tokens per second.">What limits decode?</h2>
+<p>Decode makes one token per pass, and each pass multiplies one activation vector by every weight matrix. Each weight is read once and used for one multiply-add. The arithmetic is cheap; fetching the weights from DRAM is not.</p>
+<div class="quiz" data-quiz="predict" data-for="decode" id="g-decode">
+  <p>Q8_0 weights are 525 MB, Q4_0 278 MB: 1.9× smaller. How much faster does Q4_0 decode?</p>
+  <ul>
+    <li data-right>Less than 1.9×: about 1.6× <div class="why">Fewer bytes help, but Q4_0 also spends instructions unpacking nibbles, so it is not purely bandwidth-bound.</div></li>
+    <li>Exactly 1.9×: decode is all bandwidth <div class="why">Nearly, but not entirely; the unpacking work is visible.</div></li>
+    <li>No faster: the arithmetic is the same <div class="why">The multiply-adds are the same, but decode time is mostly spent waiting for bytes.</div></li>
+  </ul>
+</div>
+<p>Measured on 2026-10-29: Q4_0 158–163 tok/s, Q8_0 101–102, a ratio of about 1.6. Multiplying bytes per token by tokens per second gives the bandwidth decode actually used:</p>
+<pre><code>Q4_0  278 MB × 160 tok/s ≈ 44 GB/s
+Q8_0  525 MB × 101 tok/s ≈ 53 GB/s
+all-core DRAM read (Phase 1)   ~67 GB/s</code></pre>
+<ul>
+  <li>Q4_0 uses about two thirds of the measured DRAM ceiling and Q8_0 about four fifths: decode is mostly waiting for memory.</li>
+  <li>Q8_0 gets closer to the ceiling because each byte needs less work. Q4_0 reads fewer bytes but does more per byte.</li>
+  <li>That is why decode got faster only through fewer bytes (quantization) and less work per byte (repacked weights, fewer instructions), not through more raw arithmetic.</li>
+</ul>
+<p><strong>Takeaway: decode reads every weight for every token, so its speed is bytes per second divided by bytes per token.</strong></p>
+
+<h2 id="prefill" data-short="Prefill" data-step="A prompt of N tokens reuses each weight N times, so prefill is limited by arithmetic, not bytes.">What limits prefill?</h2>
+<p>Prefill multiplies the same matrices by all N prompt tokens at once. Each weight is fetched once and used N times, so the bytes per token shrink as N grows. The limit moves from memory to the multiply units.</p>
+<div class="quiz" data-quiz="predict" data-for="prefill" id="g-prefill">
+  <p>In prefill, which is faster: Q8_0 or Q4_0?</p>
+  <ul>
+    <li data-right>Q8_0, slightly <div class="why">Bytes hardly matter in prefill; Q4_0’s extra unpacking work does.</div></li>
+    <li>Q4_0, by about 1.6×, as in decode <div class="why">That gain came from fewer bytes, and in prefill each byte is reused many times.</div></li>
+    <li>Exactly the same <div class="why">Same multiply-adds, but Q4_0 adds nibble unpacking on top.</div></li>
+  </ul>
+</div>
+<p>Measured at full clock caps, 2026-10-29: pp256 Q8_0 845 tok/s, Q4_0 761–782. The order is the opposite of decode. Once the work is arithmetic, the format that needs fewer instructions per weight wins, and Q4_0 needs extra ones to turn each 4-bit value into a byte.</p>
+<p><strong>Takeaway: prefill reuses each weight across the whole prompt, so it is limited by arithmetic, and the cheaper-to-unpack format wins.</strong></p>
+<div class="quiz" data-quiz="check" data-for="prefill" id="c-prefill">
+  <p>Doubling DRAM bandwidth (and nothing else). Which speeds up most?</p>
+  <ul>
+    <li data-right>Decode <div class="why">Decode waits for bytes; prefill waits for arithmetic.</div></li>
+    <li>Prefill <div class="why">Prefill already reuses each byte hundreds of times; more bandwidth barely helps it.</div></li>
+    <li>Both by 2× <div class="why">Only work limited by bandwidth gets faster with bandwidth.</div></li>
+  </ul>
+</div>
+
+<h2 id="smmla" data-short="smmla" data-step="One smmla multiplies two weight rows by two tokens; with weights repacked once at load, prefill went past llama.cpp.">How did prefill catch up?</h2>
+<p>In Phase 7, prefill multiplied the weights with <code>sdot</code>, which computes dot products of four int8 pairs per lane for one token. llama.cpp used <code>smmla</code> (from the i8mm extension): one instruction multiplies a 2×8 block of int8 weights by a 2×8 block of int8 activations and adds the 2×2 result. Each weight loaded into a register serves two tokens instead of one.</p>
+<p>Item 6.5 brought <code>smmla</code> into our engine in three steps, each an alternating A/B on the phone:</p>
+<ul>
+  <li><strong>2 rows × 2 tokens</strong>: Q4_0 prefill +22–37 %, because nibbles are unpacked once per pair of tokens.</li>
+  <li><strong>4 rows × 4 tokens</strong>: more results per loaded value.</li>
+  <li><strong>Repacked weights</strong>: at load, four rows are stored interleaved 8 bytes at a time with their scales together, llama.cpp’s layout. The loop no longer shuffles weights into place, which also helped decode (Q4_0 tg64 113 → 149).</li>
+</ul>
+<p>Prefill on Q4_0 went from 165 tok/s (pp512, 2026-10-21) to 715–718 at full caps on 2026-10-29, against llama.cpp’s 540 in the same session. Both engines use the same instruction now, so the remaining differences are in how the loops around it are arranged.</p>
+<p><strong>Takeaway: prefill caught up by using an instruction that serves two tokens per weight load, and by arranging the weights for it once, at load time.</strong></p>
+<div class="quiz" data-quiz="check" data-for="smmla" id="c-smmla">
+  <p>Why does <code>smmla</code> not help decode the same way?</p>
+  <ul>
+    <li data-right>Decode has one token, so there is no second token to share each weight with <div class="why">Its gain is reuse across tokens, and decode has only one.</div></li>
+    <li>Decode uses f32, not int8 <div class="why">Decode also uses int8 dot products (<code>sdot</code>) on quantized activations.</div></li>
+    <li>The phone cannot run <code>smmla</code> on all cores <div class="why">All eight Oryon cores support i8mm; the limit is the single token.</div></li>
+  </ul>
+</div>
+
+<h2 id="depth" data-short="Long context" data-step="The KV cache adds few bytes, but attention work grows with every position.">What does a long context add?</h2>
+<p>At depth D, each new token also reads D earlier keys and values from the KV cache and computes attention over them. For Qwen2.5 the cache holds 24 layers × 2 (keys and values) × 128 numbers × 4 bytes = 24.6 KB per position <span class="tag c">calculated</span>.</p>
+<div class="quiz" data-quiz="predict" data-for="depth" id="g-depth">
+  <p>At depth 512 the cache is 12.6 MB, against 278 MB of Q4_0 weights. How much slower should decode be, if bytes were the only cost?</p>
+  <ul>
+    <li data-right>About 5 % <div class="why">12.6 MB more on top of 278 MB per token is about 4.5 % more bytes.</div></li>
+    <li>About 2× <div class="why">That would need the cache to be as big as the weights.</div></li>
+    <li>Not at all <div class="why">The cache is read every token, so it adds some bytes.</div></li>
+  </ul>
+</div>
+<p>The measured loss was larger: in the Phase 7 A/B, scalar attention cost about 2.5 ms per token at depth 512 on top of 9.0 ms at depth 0, NEON attention about 1.5 ms. Attention is not just reading: for every position it computes a dot product per head, an exponential for the softmax and a weighted sum, and the 14 query heads did not split evenly over 6 threads. Splitting each head’s positions into 64-position chunks (flash-decoding, <code>results/phase-6.md</code>) cut decode cycles at depth 1,024 by 18 %.</p>
+<p><strong>Takeaway: a long context adds few bytes but a lot of attention arithmetic, so it shows up as compute, not bandwidth.</strong></p>
+
+<h2 id="caps" data-short="Clock caps" data-step="The phone lowers the prime cores’ clock limit during long runs; the same binary then measures 20 % slower.">Why did the same program get slower?</h2>
+<p>On the night of 2026-10-29, pp512 seemed to regress from about 540 to 440 tok/s. Bisecting the commits found no culprit: the same binary, byte for byte, gave either speed from one process to the next. Sampling the kernel’s <code>scaling_max_freq</code> every 0.25 s found the cause. Partway through the slow runs, the prime cores’ clock limit dropped from 1.69 GHz to 1.02 GHz and stayed there. This is a thermal and power cap applied after the earlier tests had warmed the phone.</p>
+<ul>
+  <li>Cycle counts did not change; only the clock did. A measurement in cycles (from <code>simpleperf</code>) is immune; one in seconds is not.</li>
+  <li>The benchmark script now records the lowest caps seen during each run, and capped runs are left out of comparisons.</li>
+  <li>The comparison above (715 vs 540) uses only runs where both engines had the full caps.</li>
+</ul>
+<p><strong>Takeaway: on a phone the clock limit itself moves, so a timed result needs the caps recorded with it, or a cycle count instead.</strong></p>
+<div class="quiz" data-quiz="check" data-for="caps" id="c-caps">
+  <p>A change makes pp512 15 % slower in seconds, but the cycle count is unchanged. What is the likeliest reading?</p>
+  <ul>
+    <li data-right>The clock was lower during that run; the change did not slow the code <div class="why">Same cycles at a lower frequency take longer; check the recorded caps.</div></li>
+    <li>The change added 15 % more instructions <div class="why">More instructions would show up as more cycles.</div></li>
+    <li>The cycle counter is wrong <div class="why">Possible in principle, but a moving clock cap is the measured, common cause here.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Decode is limited by bytes: every weight, every token, so fewer bytes and less work per byte make it faster. Prefill is limited by arithmetic, and it caught up through <code>smmla</code>, which shares each weight load between two tokens, on weights repacked at load. On a phone, also record the clock caps, because the same code runs at different speeds when they move.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) between 2026-10-21 and 2026-10-29 (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

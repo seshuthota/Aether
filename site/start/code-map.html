@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code map · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Start here · 07</p>
+
+<h1>Code map</h1>
+<p class="lede">The engine is about 45 Rust files in <code>src/</code>. This page lists them in the order a prompt meets them, from the command line to the next token, with each file’s job in one line and the page that explains it.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="llm.html">How an LLM makes text</a> (tokens, weights, the forward pass).</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#entry">Where does a run start?</a>
+  <a href="#load">How do the weights get into memory?</a>
+  <a href="#text">Where does text become tokens and back?</a>
+  <a href="#compute">Where is the arithmetic?</a>
+  <a href="#lab">What are the other files for?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="A map of src/, in the order one prompt passes through it, with a page for each file.">What are we trying to do here?</h2>
+<p>When you read the engine for the first time, the hard part is not any one file but knowing which file to open. A prompt passes through the files in a fixed order: it is read from the command line or the app, the model file is loaded, the text becomes tokens, the tokens go through the layers, and a token comes out and becomes text again.</p>
+<p>The sections below follow that order. Line counts are from 2026-10-29 and include each file’s tests. The library (<code>src/lib.rs</code>) only lists the modules; nothing runs there.</p>
+
+<h2 id="entry" data-short="Entry points" data-step="The CLI (main.rs) and the app (ffi.rs) both open a Session, which holds the model and its tokenizer.">Where does a run start?</h2>
+<p>There are two ways in: the <code>aether</code> command-line program and the Android app. Both end up in the same place.</p>
+<div class="quiz" data-quiz="predict" data-for="entry" id="g-entry">
+  <p>The app (Kotlin) and the command line both generate text. How much of the engine do they share?</p>
+  <ul>
+    <li data-right>All of it below a thin entry layer <div class="why">Both open the same <code>Session</code>; only argument parsing and the C bridge differ.</div></li>
+    <li>Nothing; the app has its own engine in Kotlin <div class="why">The app calls the Rust engine through a C interface; no inference code is in Kotlin.</div></li>
+    <li>Only the tokenizer <div class="why">Everything from loading to sampling is the same Rust code.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>main.rs</code></td><td class="num">252</td><td>The <code>aether</code> CLI: flags, generate or score, print timings</td><td><a href="../phase-2/baseline.html">First speed</a></td></tr>
+    <tr><td><code>ffi.rs</code></td><td class="num">400</td><td>The C interface the app calls: handles, error codes, a callback per token</td><td><a href="../phase-8/c-abi.html">C ABI</a></td></tr>
+    <tr><td><code>session.rs</code></td><td class="num">515</td><td>A loaded model plus its tokenizer: open any file type, generate, stop, speculative decoding</td><td><a href="../phase-8/app.html">The app</a></td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: every run goes through <code>Session</code>, whichever program started it.</strong></p>
+
+<h2 id="load" data-short="Loading" data-step="Readers for three file formats, a loader per model family, and the formats a matrix can be stored in.">How do the weights get into memory?</h2>
+<p><code>Session::open</code> looks at the path: a <code>.gguf</code> file, a Hugging Face directory or a llama2.c <code>.bin</code>. Each has a reader for the file format and a loader that turns it into the same <code>Config</code> and <code>Weights</code>.</p>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>format/mmap.rs</code></td><td class="num">105</td><td>Maps a file into memory so weights are used in place</td><td><a href="../phase-5/safetensors.html">Weights in place</a></td></tr>
+    <tr><td><code>format/safetensors.rs</code>, <code>json.rs</code></td><td class="num">213, 318</td><td>Hugging Face weight files and the JSON they start with</td><td><a href="../phase-5/safetensors.html">Weights in place</a></td></tr>
+    <tr><td><code>format/gguf.rs</code></td><td class="num">263</td><td>llama.cpp’s file: metadata and a tensor table</td><td><a href="../phase-7/gguf.html">GGUF</a></td></tr>
+    <tr><td><code>format/imatrix.rs</code></td><td class="num">304</td><td>Importance matrices for quantizing (llama-imatrix files)</td><td><a href="../beyond/q4km.html">Q4_K_M</a></td></tr>
+    <tr><td><code>model/config.rs</code></td><td class="num">47</td><td>The numbers that fix every shape: layers, heads, sizes</td><td><a href="../phase-5/config.html">One forward pass, two families</a></td></tr>
+    <tr><td><code>model/llama2c.rs</code>, <code>hf.rs</code>, <code>gguf.rs</code></td><td class="num">355, 153, 160</td><td>One loader per source, all producing the same <code>Weights</code></td><td><a href="../phase-2/model-file.html">Inside a model file</a></td></tr>
+    <tr><td><code>weight.rs</code></td><td class="num">300</td><td>A matrix in any storage format (f32, Q8_0, Q4_0, Q5_0, K-quants), converting and repacking</td><td><a href="../phase-6/blocks.html">Block quantization</a></td></tr>
+    <tr><td><code>quant.rs</code></td><td class="num">1,244</td><td>The quantized block layouts and quantizers, byte-identical to llama.cpp</td><td><a href="../phase-6/blocks.html">Block quantization</a></td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: three readers and three loaders end in one <code>Weights</code> type, so everything after loading is the same for every model.</strong></p>
+<div class="quiz" data-quiz="check" data-for="load" id="c-load">
+  <p>You want to support a new file format that stores the same kind of Llama model. Which files change?</p>
+  <ul>
+    <li data-right>A new reader in <code>format/</code> and a loader in <code>model/</code>; nothing after loading <div class="why">The loader’s output is the shared <code>Weights</code>, which the forward pass already handles.</div></li>
+    <li><code>transformer.rs</code>, to read the new file <div class="why">The forward pass never sees files, only <code>Weights</code>.</div></li>
+    <li>Every kernel <div class="why">Kernels see only matrices in known storage formats; a new file format does not change them.</div></li>
+  </ul>
+</div>
+
+<h2 id="text" data-short="Text and tokens" data-step="Two tokenizers, NFC and the chat template turn text into ids; the sampler picks the next id.">Where does text become tokens and back?</h2>
+<p>Before the model runs, the prompt has to become token ids, in exactly the way the model’s own tokenizer does it. After each step, one id has to be chosen and turned back into text.</p>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>chat.rs</code></td><td class="num">39</td><td>Wraps a question in the ChatML template</td><td><a href="../phase-7/chat.html">Chat models</a></td></tr>
+    <tr><td><code>tokenizer/llama2c.rs</code></td><td class="num">173</td><td>stories15M’s SentencePiece-style tokenizer</td><td><a href="../phase-2/tokenizer.html">Text to tokens</a></td></tr>
+    <tr><td><code>tokenizer/bytelevel.rs</code></td><td class="num">593</td><td>SmolLM2’s and Qwen’s byte-level BPE</td><td><a href="../phase-5/bytelevel.html">Byte-level BPE</a></td></tr>
+    <tr><td><code>tokenizer/nfc.rs</code>, <code>unicode_tables.rs</code></td><td class="num">144, 4,671</td><td>Unicode normalization, and generated letter and mark tables</td><td><a href="../phase-7/nfc.html">One text, two spellings</a></td></tr>
+    <tr><td><code>model/sampler.rs</code></td><td class="num">234</td><td>Greedy, temperature, top-k, top-p; checks draft tokens</td><td><a href="../phase-2/sampling.html">Choosing the next token</a></td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><code>unicode_tables.rs</code> is the biggest file and has no logic: it is data written by <code>tools/gen_unicode_tables.py</code> from Python’s <code>unicodedata</code>.</li>
+</ul>
+<p><strong>Takeaway: text handling is about a thousand lines of logic, and its biggest file is generated data.</strong></p>
+<div class="quiz" data-quiz="check" data-for="text" id="c-text">
+  <p>Qwen’s tokenizer splits a word differently from Hugging Face’s. Which file do you open first?</p>
+  <ul>
+    <li data-right><code>tokenizer/bytelevel.rs</code> (and <code>nfc.rs</code> if the word has accents) <div class="why">Qwen uses the byte-level tokenizer, and its text is normalized first.</div></li>
+    <li><code>tokenizer/llama2c.rs</code> <div class="why">That tokenizer is only for stories15M.</div></li>
+    <li><code>model/sampler.rs</code> <div class="why">The sampler picks output ids; it never splits input text.</div></li>
+  </ul>
+</div>
+
+<h2 id="compute" data-short="Arithmetic" data-step="transformer.rs is the forward pass; it calls kernels, which pick scalar, NEON or quantized code, spread over the pool.">Where is the arithmetic?</h2>
+<p>The forward pass is the part that runs for every token, and nearly all the time is spent there.</p>
+<div class="quiz" data-quiz="predict" data-for="compute" id="g-compute">
+  <p>Where does the forward pass code decide whether to use NEON instructions or plain Rust?</p>
+  <ul>
+    <li data-right>Not in the forward pass: it calls <code>kernels</code>, which choose <div class="why">The model code calls op functions; the kernel layer picks the code path for the machine and format.</div></li>
+    <li>In each layer, with an <code>if</code> per matrix <div class="why">That would spread hardware details through the model code; they are kept in one layer instead.</div></li>
+    <li>At compile time only, by building two programs <div class="why">The choice depends on the target, but also on the weight format, so it is made inside the kernels.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>model/transformer.rs</code></td><td class="num">612</td><td>The forward pass: norm, q/k/v, RoPE, attention, MLP, for one token or a batch</td><td><a href="../phase-2/forward.html">The forward pass in code</a></td></tr>
+    <tr><td><code>kernels/mod.rs</code></td><td class="num">878</td><td>The op functions the model calls; picks the code path</td><td><a href="../phase-3/dispatch.html">One API, two machines</a></td></tr>
+    <tr><td><code>kernels/scalar.rs</code></td><td class="num">216</td><td>Plain Rust versions of every op (runs on the PC)</td><td><a href="../phase-2/attention.html">Attention</a></td></tr>
+    <tr><td><code>kernels/neon.rs</code></td><td class="num">559</td><td>f32 NEON kernels: matmul, GEMM tiles, attention</td><td><a href="../phase-3/simd.html">SIMD and NEON</a></td></tr>
+    <tr><td><code>kernels/neon_quant.rs</code></td><td class="num">1,013</td><td>Quantized dot products with <code>sdot</code> and <code>smmla</code></td><td><a href="../phase-6/dot-products.html">Quantized dot products</a></td></tr>
+    <tr><td><code>pool.rs</code></td><td class="num">376</td><td>Pinned worker threads that split each op</td><td><a href="../phase-4/pool.html">Threads that stay</a></td></tr>
+    <tr><td><code>kernels/vulkan.rs</code>, <code>model/gpu.rs</code></td><td class="num">763, 473</td><td>The GPU path: Vulkan setup, and a whole decode step on the GPU</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a></td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the model code says what to compute, and the kernel layer decides how, for this machine and this weight format.</strong></p>
+<div class="quiz" data-quiz="check" data-for="compute" id="c-compute">
+  <p>A faster Q4_0 dot product is written. Which file does it go in, and what else changes?</p>
+  <ul>
+    <li data-right><code>kernels/neon_quant.rs</code>, and nothing in the model code <div class="why">The model calls the same op; only the kernel behind it is new.</div></li>
+    <li><code>transformer.rs</code>, next to the matrix it speeds up <div class="why">The forward pass never contains format-specific code.</div></li>
+    <li><code>quant.rs</code>, with every caller updated <div class="why"><code>quant.rs</code> holds layouts and quantizers; the dot products are kernels.</div></li>
+  </ul>
+</div>
+
+<h2 id="lab" data-short="The lab" data-step="Measurement, scoring and test files: they never run in an answer, but every number on this site comes from them.">What are the other files for?</h2>
+<p>About a third of <code>src/</code> never runs while the engine answers a question. It is the lab: the code that measures the phone, scores the model and checks the results.</p>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>bench.rs</code></td><td class="num">168</td><td>Warm-up, repeated timing, robust statistics</td><td><a href="../phase-0/measuring-time.html">Measuring time</a></td></tr>
+    <tr><td><code>membench.rs</code></td><td class="num">193</td><td>Memory-bandwidth kernels (read, copy, scale, add)</td><td><a href="../phase-1/bandwidth.html">Bandwidth</a></td></tr>
+    <tr><td><code>monitor.rs</code></td><td class="num">347</td><td>Samples clocks, temperatures and battery power during a run</td><td><a href="../phase-7/heat.html">Heat and energy</a></td></tr>
+    <tr><td><code>sys/affinity.rs</code>, <code>cpu.rs</code>, <code>sysfs.rs</code></td><td class="num">112, 32, 252</td><td>Pinning threads to cores; reading <code>/sys</code> for clocks, heat and battery</td><td><a href="../phase-1/rust-pinning.html">Pinning</a>, <a href="../phase-1/rust-sysfs.html">/sys</a></td></tr>
+    <tr><td><code>eval.rs</code></td><td class="num">156</td><td>Perplexity and KL divergence</td><td><a href="../phase-6/perplexity.html">Perplexity and KL</a></td></tr>
+    <tr><td><code>testutil.rs</code>, <code>model/reference.rs</code></td><td class="num">106, 66</td><td>Finding golden files, reading reference dumps</td><td><a href="right.html">How we know it’s right</a></td></tr>
+    <tr><td><code>aligned.rs</code>, <code>tensor.rs</code></td><td class="num">223, 274</td><td>A 64-byte-aligned buffer, and Phase 0’s first tensor type</td><td><a href="../phase-1/alignment.html">Alignment</a>, <a href="../phase-0/tensors.html">Tensors</a></td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: a third of the code measures and checks the rest, and every number on this site comes from it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="lab" id="c-lab">
+  <p>A timed run looks 20 % slower than yesterday. Which file’s output do you read first?</p>
+  <ul>
+    <li data-right><code>monitor.rs</code>’s: the clocks and temperatures during the run <div class="why">A lower clock cap is the common cause of such a change on this phone.</div></li>
+    <li><code>transformer.rs</code>, to find the slow code <div class="why">If the code did not change, look at the conditions first.</div></li>
+    <li><code>eval.rs</code>’s perplexity <div class="why">Perplexity measures accuracy, not speed.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A prompt enters through <code>main.rs</code> or <code>ffi.rs</code> and goes through <code>Session</code>. Loading ends in one <code>Weights</code> type for every model; the forward pass in <code>transformer.rs</code> calls kernels that choose the code for the machine and format. About a third of the code is the lab that measures and checks the rest.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Line counts are from the engine on 2026-10-29, tests included. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

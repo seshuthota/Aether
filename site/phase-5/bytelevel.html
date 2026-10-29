@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Byte-level BPE · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 5 · 03</p>
+
+<h1>Byte-level BPE</h1>
+<p class="lede">SmolLM2’s tokenizer starts from the bytes of the text, not its characters, so no input is ever unknown. Before any merging it cuts the text into words with a regular expression, and that needs to know which characters are letters, in every script.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-2/tokenizer.html">the Phase 2 tokenizer</a>, which explains what a token and a merge are.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#utf8">Why start from bytes instead of characters?</a>
+  <a href="#special">What happens to tokens like &lt;|im_start|&gt;?</a>
+  <a href="#split">Where may a merge never cross?</a>
+  <a href="#unicode">How does the code know what a letter is?</a>
+  <a href="#merge">In what order are pairs merged?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Encode any text into SmolLM2’s ids exactly as Hugging Face does, from the rules in tokenizer.json.">What are we trying to do here?</h2>
+<p>A model only understands the ids it was trained with, so the engine must split text exactly the way the model’s own tokenizer does. One different id in a prompt changes everything after it. For SmolLM2 the rules are in <code>tokenizer.json</code>: a vocabulary of 49,152 tokens, a list of merges, the special tokens and the pre-tokenizer settings.</p>
+<p>Encoding takes four steps, and this page goes through them in order:</p>
+<ol>
+  <li>Cut out the special tokens.</li>
+  <li>Split the rest into words (pre-tokenization).</li>
+  <li>Turn each word’s bytes into stand-in characters.</li>
+  <li>Merge pairs of symbols, best rank first.</li>
+</ol>
+<p>The code is <code>src/tokenizer/bytelevel.rs</code>, about 600 lines with its tests. By the end you can split a sentence into words by hand and apply merges in the right order.</p>
+
+<h2 id="utf8" data-short="Bytes first" data-step="UTF-8 writes every character as 1 to 4 bytes; starting from the 256 byte values leaves nothing unknown.">Why start from bytes instead of characters?</h2>
+<p>Text in a file is <strong>UTF-8</strong>: each character is written as 1 to 4 bytes. English letters are 1 byte, “é” is 2, “中” is 3, and most emoji are 4. Unicode has over 150,000 characters, far more than a vocabulary of 49,152 can hold.</p>
+<div class="quiz" data-quiz="predict" data-for="utf8" id="g-utf8">
+  <p>A character-based tokenizer meets a character that is not in its vocabulary. What can it do?</p>
+  <ul>
+    <li data-right>Replace it with an “unknown” token, losing what it was <div class="why">Without a smaller unit to fall back on, the character has no id, so its meaning is gone.</div></li>
+    <li>Split it into bytes <div class="why">Only if bytes are in its vocabulary; that is exactly the byte-level idea.</div></li>
+    <li>Nothing goes wrong; every character has an id <div class="why">No vocabulary of tens of thousands can hold every Unicode character.</div></li>
+  </ul>
+</div>
+<p>A <strong>byte-level</strong> tokenizer starts from the 256 possible byte values, and all 256 are in the vocabulary. Any text, in any script, is a sequence of bytes, so it always has a starting point. Merges then join bytes into longer tokens wherever the merge list allows.</p>
+<p>There is one problem: many byte values (space, newline, control codes) are not printable, and <code>tokenizer.json</code> stores tokens as text. GPT-2’s answer, which SmolLM2 inherits, is a table that gives every byte a printable stand-in character:</p>
+<pre><code>fn bytes_to_unicode() -&gt; [char; 256] {
+    // printable Latin-1 bytes stand for themselves;
+    // the other 68 get U+0100, U+0101, ... in order
+    let printable = |b: u32| (0x21..=0x7E).contains(&amp;b)
+        || (0xA1..=0xAC).contains(&amp;b)
+        || (0xAE..=0xFF).contains(&amp;b);
+    // ...
+}</code></pre>
+<ul>
+  <li>188 bytes are printable and keep their own character, so ordinary English tokens look like English in the vocabulary.</li>
+  <li>The space byte, 0x20, is the 33rd non-printable one, so it becomes U+0100 + 32 = U+0120, which is <code>Ġ</code>. A newline becomes <code>Ċ</code>. That is why SmolLM2’s vocabulary has tokens like <code>Ġthe</code>.</li>
+  <li>Decoding runs the table backwards: stand-ins become bytes, bytes become text.</li>
+</ul>
+<p><strong>Takeaway: starting from the 256 bytes means every text has ids, and a fixed table makes each byte printable inside tokenizer.json.</strong></p>
+<div class="quiz" data-quiz="check" data-for="utf8" id="c-utf8">
+  <p>Before any merge, how many symbols does “héllo” start as?</p>
+  <ul>
+    <li data-right>6 <div class="why">h, l, l and o are one byte each, and é is two bytes in UTF-8.</div></li>
+    <li>5 <div class="why">That counts characters; a byte-level tokenizer counts bytes.</div></li>
+    <li>1 <div class="why">That would be the result after merges, if the whole word were one token.</div></li>
+  </ul>
+</div>
+
+<h2 id="special" data-short="Special tokens" data-step="Special tokens are matched as whole strings first and get their ids directly.">What happens to tokens like &lt;|im_start|&gt;?</h2>
+<p>Chat models mark turns with <strong>special tokens</strong> such as <code>&lt;|im_start|&gt;</code> and <code>&lt;|endoftext|&gt;</code>. Each is one id. If BPE saw them as plain text, it would split them into <code>&lt;</code>, <code>|</code>, <code>im</code> and so on, and the model would never see its turn marker.</p>
+<p>So <code>encode</code> searches for the special tokens first, takes the earliest one in the text (the longest, if two start at the same place), and gives it its id directly. Only the text between special tokens goes through the other three steps.</p>
+<p><strong>Takeaway: special tokens are cut out before anything else, so they always become their own single id.</strong></p>
+<div class="quiz" data-quiz="check" data-for="special" id="c-special">
+  <p>A user types the text <code>&lt;|im_end|&gt;</code> into a chat box, and the app encodes it with special tokens on. What does the model see?</p>
+  <ul>
+    <li data-right>The real end-of-turn id, as if the turn had ended <div class="why">Matching is by string, so typed text matches too; apps that care must escape it.</div></li>
+    <li>Ordinary characters, because a user typed them <div class="why">The tokenizer does not know where text came from; it only matches strings.</div></li>
+    <li>An unknown token <div class="why">Byte-level BPE has no unknown token, and this string is in the vocabulary.</div></li>
+  </ul>
+</div>
+
+<h2 id="split" data-short="Words first" data-step="A regular expression cuts text into words; SmolLM2 also splits every digit on its own.">Where may a merge never cross?</h2>
+<p>If BPE ran on a whole sentence, a merge could join the end of one word to the start of the next, and the same word would get different ids depending on its neighbour. <strong>Pre-tokenization</strong> prevents that: it cuts the text into words first, and merges happen only inside a word.</p>
+<p>The rule is GPT-2’s regular expression. At each position, the first alternative that matches wins:</p>
+<pre><code>'s|'t|'re|'ve|'m|'ll|'d   contractions
+ ?\p{L}+                  optional space, then letters
+ ?\p{N}+                  optional space, then numbers
+ ?[^\s\p{L}\p{N}]+        optional space, then symbols
+\s+(?!\S)                 spaces not followed by text
+\s+                       any other run of spaces</code></pre>
+<p><code>\p{L}</code> means “any letter” and <code>\p{N}</code> “any number”, in every script. The space is glued to the front of the word after it, which is why tokens start with <code>Ġ</code>.</p>
+<div class="quiz" data-quiz="predict" data-for="split" id="g-split">
+  <p>How does the regex split <code>a␣␣␣b</code> (three spaces)?</p>
+  <ul>
+    <li data-right><code>a</code>, <code>␣␣</code>, <code>␣b</code> <div class="why">The space run gives up its last space, which then prefixes b as “ b”.</div></li>
+    <li><code>a</code>, <code>␣␣␣</code>, <code>b</code> <div class="why"><code>\s+(?!\S)</code> cannot end right before b, so the run stops one space early.</div></li>
+    <li><code>a</code>, <code>␣</code>, <code>␣</code>, <code>␣b</code> <div class="why">Whitespace runs are kept together; only the last space is split off.</div></li>
+  </ul>
+</div>
+<p>The engine has no regex library; <code>gpt2_split</code> implements the alternatives by hand, in order. Its tests are splits checked by hand, for example:</p>
+<pre><code>"it's  ok!!" -&gt; ["it", "'s", " ", " ok", "!!"]
+"x\n\ny"     -&gt; ["x", "\n", "\n", "y"]
+"café 中文"  -&gt; ["café", " 中文"]</code></pre>
+<ul>
+  <li>Contractions match only in lowercase: <code>'LL</code> is split as <code>'</code> and <code>LL</code>.</li>
+  <li>SmolLM2’s <code>tokenizer.json</code> puts a <code>Digits</code> step first, with <code>individual_digits</code> set. Every digit becomes its own word, so “2026” is four tokens and the model sees numbers digit by digit.</li>
+  <li>Qwen2 (Phase 7) uses a different regex, with its own function <code>qwen2_split</code>. The loader reads which one a file asks for.</li>
+</ul>
+<p><strong>Takeaway: the text is cut into words first, and merges never cross a word boundary.</strong></p>
+<div class="quiz" data-quiz="check" data-for="split" id="c-split">
+  <p>With SmolLM2’s settings, how is “in 1999” split into words?</p>
+  <ul>
+    <li data-right><code>in</code>, <code>␣</code>, <code>1</code>, <code>9</code>, <code>9</code>, <code>9</code> <div class="why">The Digits step cuts out each digit first, leaving “in ” for the regex.</div></li>
+    <li><code>in</code>, <code>␣1999</code> <div class="why">That is plain GPT-2; SmolLM2 splits digits off before the regex runs.</div></li>
+    <li><code>in</code>, <code>␣1</code>, <code>9</code>, <code>9</code>, <code>9</code> <div class="why">The digits are cut out before the regex, so the space cannot attach to the 1.</div></li>
+  </ul>
+</div>
+
+<h2 id="unicode" data-short="Unicode letters" data-step="\p{L} needs Unicode’s letter list; a generated table of 677 ranges answers it by binary search.">How does the code know what a letter is?</h2>
+<p>The regex treats letters, numbers and everything else differently, in every script: “é”, “中” and “ж” are letters; “١” (Arabic one) is a number. Rust’s <code>char::is_alphabetic</code> is not the same set as <code>\p{L}</code>: it also counts some marks and symbols. A split that differs in one character gives different ids.</p>
+<div class="quiz" data-quiz="predict" data-for="unicode" id="g-unicode">
+  <p>Where should the engine get its list of letters from?</p>
+  <ul>
+    <li data-right>From the Unicode database, generated into a table <div class="why">The regex is defined by Unicode’s categories, so the list must be Unicode’s own.</div></li>
+    <li>From Rust’s <code>is_alphabetic</code> <div class="why">It covers a slightly different set, so some splits would differ from Hugging Face.</div></li>
+    <li>Only A–Z and a–z <div class="why">Then “é” would split a French word in two.</div></li>
+  </ul>
+</div>
+<p><code>tools/gen_unicode_tables.py</code> reads Python’s <code>unicodedata</code> (Unicode 16.0.0) and writes <code>src/tokenizer/unicode_tables.rs</code>. Its <code>LETTER</code> table is a sorted list of 677 ranges of code points, and <code>is_letter</code> finds a character with a binary search:</p>
+<pre><code>pub fn is_letter(c: char) -&gt; bool {
+    let c = c as u32;
+    LETTER.binary_search_by(|&amp;(lo, hi)| {
+        if hi &lt; c { Less }
+        else if lo &gt; c { Greater }
+        else { Equal }
+    }).is_ok()
+}</code></pre>
+<ul>
+  <li>A range like <code>(0x00C0, 0x00D6)</code> covers À to Ö in one entry, so 677 ranges cover more than 140,000 letters.</li>
+  <li>The binary search takes about 10 comparisons per character.</li>
+  <li>The same file holds the tables for NFC normalisation, which Qwen2’s tokenizer needs in Phase 7.</li>
+</ul>
+<p><strong>Takeaway: “letter” means Unicode’s category L, so the engine generates the table from the Unicode database instead of guessing.</strong></p>
+
+<h2 id="merge" data-short="Merge by rank" data-step="Repeatedly merge the adjacent pair with the lowest rank in the list, leftmost on ties.">In what order are pairs merged?</h2>
+<p>Each word starts as one symbol per byte. The <strong>merge list</strong> in <code>tokenizer.json</code> is ordered: the first entry was the most common pair in the training text, and its position is its <strong>rank</strong>. Phase 2’s tokenizer picked the pair with the best <em>score</em>; this one picks the pair with the lowest rank.</p>
+<div class="callout"><span class="lbl">Illustration, not SmolLM2’s real ranks</span><p>Merges: rank 0 <code>Ġ t</code>, rank 1 <code>h e</code>, rank 2 <code>Ġt he</code>. The word is <code>Ġthe</code>, starting as <code>Ġ t h e</code>.</p></div>
+<div class="quiz" data-quiz="predict" data-for="merge" id="g-merge">
+  <p>With those merges, what are the steps?</p>
+  <ul>
+    <li data-right><code>Ġt h e</code>, then <code>Ġt he</code>, then <code>Ġthe</code> <div class="why">Each step takes the lowest-ranked adjacent pair: rank 0, then 1, then 2.</div></li>
+    <li><code>Ġ t he</code> first <div class="why">“h e” has rank 1; “Ġ t” has rank 0, so it merges first.</div></li>
+    <li>Straight to <code>Ġthe</code> <div class="why">Each step merges one pair of adjacent symbols; it takes three steps here.</div></li>
+  </ul>
+</div>
+<pre><code>loop {
+    // the best-ranked adjacent pair, leftmost on ties
+    let best = syms.windows(2).enumerate()
+        .filter_map(|(i, w)| self.merges
+            .get(&amp;(w[0], w[1]))
+            .map(|&amp;(rank, id)| (rank, i, id)))
+        .min();
+    let Some((_, i, id)) = best else { break };
+    syms[i] = id;
+    syms.remove(i + 1);
+}</code></pre>
+<ul>
+  <li><code>merges</code> maps a pair of ids to its rank and the id of the merged token, built once at load.</li>
+  <li><code>.min()</code> on <code>(rank, i, id)</code> picks the lowest rank, and the leftmost position when the same pair appears twice.</li>
+  <li>The loop stops when no adjacent pair is in the list. A word with no merges stays as single bytes, which is how an unusual emoji becomes several tokens.</li>
+</ul>
+<p>This is not the fastest way to do BPE: each step scans the whole word. Words are short, and the tokenizer runs once per prompt, so it does not show up next to the forward pass.</p>
+<p><strong>Takeaway: merges are applied one at a time, lowest rank first, and stop when no listed pair is left.</strong></p>
+<div class="quiz" data-quiz="check" data-for="merge" id="c-merge">
+  <p>A word is <code>a b a b</code>, and the only merge is <code>a b</code> at rank 0. What is the result?</p>
+  <ul>
+    <li data-right><code>ab ab</code> <div class="why">The leftmost pair merges first, then the second; there is no merge for “ab ab”.</div></li>
+    <li><code>abab</code> <div class="why">That needs a merge of “ab ab”, which is not in the list.</div></li>
+    <li><code>ab a b</code> <div class="why">The loop repeats until no listed pair is left, so the second “a b” merges too.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Byte-level BPE starts from the 256 bytes, so no text is unknown; a fixed table makes every byte printable.</p>
+<p>Special tokens are cut out first, then a regex splits words, using Unicode’s own list of letters.</p>
+<p>Inside each word, pairs merge lowest rank first until no listed pair is left.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

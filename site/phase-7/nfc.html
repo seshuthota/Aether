@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One text, two spellings · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 7 · 03</p>
+
+<h1>One text, two spellings</h1>
+<p class="lede">The word “café” can be stored as two different byte sequences that look identical on screen. Qwen’s tokenizer first rewrites every text into one agreed spelling, called NFC, so both get the same tokens. This page builds that rewrite from <code>src/tokenizer/nfc.rs</code>.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-5/bytelevel.html">byte-level BPE</a>, which explains UTF-8 bytes and how a tokenizer merges them.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#two">How can one word have two spellings?</a>
+  <a href="#decompose">What is the first step of the rewrite?</a>
+  <a href="#order">In what order do the accents go?</a>
+  <a href="#compose">When do the pieces join back together?</a>
+  <a href="#where">When does the engine run NFC?</a>
+  <a href="#right">How do we know it matches?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Give every text one canonical spelling before tokenizing, exactly as Qwen’s tokenizer.json asks.">What are we trying to do here?</h2>
+<p>Unicode gives every character a number, its <strong>code point</strong>, written like U+00E9. Some characters can also be built from smaller pieces: a plain letter followed by a <strong>combining mark</strong>, such as an accent, that attaches to the letter before it. So one visible word can have several sequences of code points.</p>
+<p>A tokenizer works on bytes, so two sequences mean two sets of tokens, and the model sees two different inputs. <strong>Normalization</strong> rewrites text into one standard form first. Qwen2.5’s <code>tokenizer.json</code> says <code>"normalizer": {"type": "NFC"}</code>. NFC stands for Normalization Form C (“composed”), defined in Unicode Standard Annex #15.</p>
+<p>The rewrite has three steps: take every character apart, put the marks in a fixed order, then join them back wherever a single character exists. The code is <code>src/tokenizer/nfc.rs</code>, 144 lines with tests, plus tables generated from Python. By the end you can work out the NFC of a short string by hand.</p>
+
+<h2 id="two" data-short="Two spellings" data-step="“é” is one code point or two; without normalization they tokenize differently.">How can one word have two spellings?</h2>
+<p>“é” exists as one code point, U+00E9 LATIN SMALL LETTER E WITH ACUTE. It can also be written as “e” (U+0065) followed by U+0301 COMBINING ACUTE ACCENT. Both draw the same glyph. In UTF-8 the first “café” is 5 bytes, the second 6. Text typed on one keyboard and pasted from another program can arrive in either form.</p>
+<div class="quiz" data-quiz="predict" data-for="two" id="g-two">
+  <p>SmolLM2’s tokenizer has no normalizer. Does it give the two spellings of “café” the same token ids?</p>
+  <ul>
+    <li data-right>No: different bytes give different tokens <div class="why">The tokenizer only sees bytes, and the two spellings differ from the fourth byte on.</div></li>
+    <li>Yes: they show the same letters, so the ids match <div class="why">The screen shows glyphs; the tokenizer never sees glyphs, only the bytes underneath.</div></li>
+    <li>Yes: the vocabulary has one entry for “é” <div class="why">It does, for the one-code-point form; the two-piece form has other bytes and matches other entries.</div></li>
+  </ul>
+</div>
+<p>Hugging Face’s <code>tokenizers</code> library, the reference, gives:</p>
+<pre><code>tokenizer  input            ids
+SmolLM2    caf  U+00E9      [83, 1939, 2756]
+SmolLM2    cafe U+0301      [83, 9980, 151, 219]
+Qwen2.5    caf  U+00E9      [924, 58858]
+Qwen2.5    cafe U+0301      [924, 58858]</code></pre>
+<ul>
+  <li>Without normalization the second spelling is split as “afe” plus the two bytes of the accent, so the model sees a word it has met far less often.</li>
+  <li>Qwen normalizes first, so both become U+00E9 and both give the same two ids.</li>
+</ul>
+<p><strong>Takeaway: normalization makes text that looks the same tokenize the same.</strong></p>
+
+<h2 id="decompose" data-short="Take apart" data-step="Step 1: replace every character by its full canonical decomposition, from a table or, for Hangul, by arithmetic.">What is the first step of the rewrite?</h2>
+<p>To compare two spellings, first bring both to their smallest pieces. Unicode lists, for each character that has one, its <strong>canonical decomposition</strong>: U+00E9 → U+0065 U+0301. A decomposition can contain characters that decompose again, so the table the engine uses is already applied fully (2,081 entries, generated by <code>tools/gen_unicode_tables.py</code> from Python’s <code>unicodedata</code>).</p>
+<p>Korean Hangul is handled by a formula instead. There are 11,172 Hangul syllables, and each is built from a leading consonant (19 choices), a vowel (21) and an optional final consonant (27, or none), numbered in that order from U+AC00:</p>
+<pre><code>let s = c - S_BASE;                     // S_BASE = 0xAC00
+out.push(L_BASE + s / N_COUNT);         // consonant
+out.push(V_BASE + (s % N_COUNT) / T_COUNT); // vowel
+if !s.is_multiple_of(T_COUNT) {
+    out.push(T_BASE + s % T_COUNT);     // final consonant
+}</code></pre>
+<ul>
+  <li><code>N_COUNT</code> = 21 × 28 = 588 syllables per leading consonant; <code>T_COUNT</code> = 28 is the 27 finals plus “none”.</li>
+  <li>A formula is a few instructions and needs no table of 11,172 rows.</li>
+  <li>Every other character is looked up by binary search in <code>DECOMP</code>; one with no entry stays as it is.</li>
+</ul>
+<p><strong>Takeaway: step 1 rewrites every character into its smallest canonical pieces.</strong></p>
+<div class="quiz" data-quiz="check" data-for="decompose" id="c-decompose">
+  <p>U+212B ANGSTROM SIGN looks exactly like “Å”. What does step 1 turn it into?</p>
+  <ul>
+    <li data-right>A followed by U+030A COMBINING RING ABOVE <div class="why">Its decomposition is U+00C5, which decomposes again; the table stores the full result.</div></li>
+    <li>U+00C5, the letter Å <div class="why">That is one step of the chain; step 1 goes all the way to the smallest pieces.</div></li>
+    <li>Nothing: a sign is not a letter, so it has no decomposition <div class="why">Decompositions are listed for symbols too whenever Unicode says two forms mean the same.</div></li>
+  </ul>
+</div>
+
+<h2 id="order" data-short="Order marks" data-step="Step 2: sort each run of combining marks by combining class, so marks typed in any order end up in one order.">In what order do the accents go?</h2>
+<p>A letter can carry more than one mark. Vietnamese “ậ” is “a” with a dot below (U+0323) and a circumflex above (U+0302). A user can type the two marks in either order, and both look the same, because one mark sits below and the other above.</p>
+<p>Unicode gives every mark a number, its <strong>combining class</strong>: 220 for marks below, 230 for marks above, and so on. Letters, which marks attach to, have class 0 and are called <strong>starters</strong>.</p>
+<div class="quiz" data-quiz="predict" data-for="order" id="g-order">
+  <p>“a”, then circumflex (class 230), then dot below (class 220). What should step 2 do with the two marks?</p>
+  <ul>
+    <li data-right>Swap them, so the dot below (220) comes first <div class="why">Sorting by class gives 220 before 230, the same as the other typing order.</div></li>
+    <li>Keep them in typed order; the order is the user’s choice <div class="why">Then the two typing orders would stay different, which is what normalization must remove.</div></li>
+    <li>Sort them by code point <div class="why">Code point order has no meaning here; the class says where a mark sits.</div></li>
+  </ul>
+</div>
+<p>Step 2 sorts each run of marks between two starters by class. The sort must be <em>stable</em>: two marks of the same class, such as two accents above, stack in the order typed, and swapping them would change the picture.</p>
+<pre><code>let start = i;
+while i &lt; pairs.len() &amp;&amp; pairs[i].1 != 0 {
+    i += 1;                       // to the end of the run
+}
+pairs[start..i].sort_by_key(|&amp;(_, k)| k); // stable</code></pre>
+<ul>
+  <li><code>pairs</code> holds each code point with its class (from the 934-entry <code>CCC</code> table; anything not listed is class 0).</li>
+  <li>Rust’s <code>sort_by_key</code> is stable, so marks of equal class keep their order.</li>
+  <li>Runs are a few marks long, so the cost is negligible.</li>
+</ul>
+<p><strong>Takeaway: step 2 sorts marks by combining class, which removes the typing order without changing the picture.</strong></p>
+
+<h2 id="compose" data-short="Join back" data-step="Step 3: each mark joins the last starter if a composed character exists and no mark in between blocks it.">When do the pieces join back together?</h2>
+<p>After step 2, every spelling of the same text is the same sequence of pieces. That form is called NFD (“decomposed”). NFC goes one step further and joins pieces back into single characters wherever Unicode defines one, because that is the shorter form most text already uses.</p>
+<p>The loop walks the pieces and remembers the last starter. Each mark tries to join it, using the 961-pair <code>COMPOSE</code> table (Hangul again by formula). A mark is <strong>blocked</strong> if a mark between it and the starter has the same or a higher class:</p>
+<pre><code>let blocked = matches!(last_class,
+    Some(p) if p == 0 || p &gt;= k);
+if !blocked
+    &amp;&amp; let Some(comp) = compose_pair(out[si], c) {
+    out[si] = comp;   // the starter absorbs the mark
+    continue;
+}</code></pre>
+<ul>
+  <li>For “a” + dot below + circumflex: “a” + dot gives “ạ” (U+1EA1), then “ạ” + circumflex gives “ậ” (U+1EAD). One code point.</li>
+  <li>Blocking keeps the meaning. If an accent above already failed to join, a second accent above may not jump over it, because that would change which accent sits nearer the letter.</li>
+  <li>A mark that joins nothing stays where it is, so NFC can still contain combining marks.</li>
+</ul>
+<p><strong>Takeaway: step 3 joins each mark into the letter wherever a single character exists and nothing blocks it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="compose" id="c-compose">
+  <p>“q” + U+0301 (acute). Unicode has no “q with acute” character. What is the NFC?</p>
+  <ul>
+    <li data-right>“q” + U+0301, unchanged <div class="why">The pair is not in the composition table, so the mark stays separate.</div></li>
+    <li>“q” alone; a mark that cannot join is dropped <div class="why">NFC never removes text; it only chooses among spellings of the same text.</div></li>
+    <li>An error: the input is not valid Unicode <div class="why">Any letter may carry any mark; there is just no single character for this pair.</div></li>
+  </ul>
+</div>
+
+<h2 id="where" data-short="When it runs" data-step="Only when the tokenizer asks for it, and ASCII text skips it entirely.">When does the engine run NFC?</h2>
+<p>NFC is part of the tokenizer’s definition, not something the engine adds on its own. The byte-level tokenizer reads the <code>normalizer</code> field from <code>tokenizer.json</code> and sets a flag. A GGUF file has no such field, so there the flag follows the pre-tokenizer name: <code>tokenizer.ggml.pre = "qwen2"</code> means NFC. Qwen2.5 has it; SmolLM2 does not, so its text is never changed.</p>
+<pre><code>let normalized = if self.nfc {
+    super::nfc::nfc(text)
+} else {
+    Cow::Borrowed(text)
+};</code></pre>
+<ul>
+  <li><code>nfc</code> returns a <code>Cow</code> (“copy on write”): either the original text, borrowed, or a new string.</li>
+  <li>Pure ASCII text has no marks and no composed letters, so <code>nfc</code> returns it borrowed without looking further. Most English prompts take this path and cost nothing.</li>
+</ul>
+<p><strong>Takeaway: NFC runs only for tokenizers that ask for it, and ASCII text passes through untouched.</strong></p>
+<div class="quiz" data-quiz="check" data-for="where" id="c-where">
+  <p>The engine applied NFC to SmolLM2’s input too, “to be safe”. What would change?</p>
+  <ul>
+    <li data-right>Some inputs would get different ids from SmolLM2’s own tokenizer <div class="why">SmolLM2 was trained on unnormalized tokenization, so changing the text changes ids it expects.</div></li>
+    <li>Nothing; NFC only makes text more correct <div class="why">The goal is to match the model’s tokenizer exactly, and SmolLM2’s does not normalize.</div></li>
+    <li>Only speed would change <div class="why">For non-ASCII text the ids change too, as the café table shows.</div></li>
+  </ul>
+</div>
+
+<h2 id="right" data-short="Checked" data-step="17,253 cases identical to Python’s unicodedata, tables generated from the same source.">How do we know it matches?</h2>
+<p>Normalization has many rare cases, so checking a handful by hand proves little. The reference is Python’s <code>unicodedata.normalize("NFC", ·)</code>, which implements the standard (Unicode 16.0 in the Python used here). <code>tools/gen_nfc_tests.py</code> writes the test cases:</p>
+<ul>
+  <li>every code point whose NFC differs from itself, and every character with a canonical decomposition;</li>
+  <li>4,000 random strings of letters (Latin, Greek, Cyrillic, Japanese kana), combining marks in scrambled order, and Hangul pieces.</li>
+</ul>
+<p>That gives 17,253 pairs of input and expected output. The test <code>matches_python_unicodedata</code> runs every one through our <code>nfc</code> and requires identical output. The tables come from the same Python, so they and the tests describe the same Unicode version. The full tokenizer is checked on top of that: 433 strings give the same ids as Hugging Face.</p>
+<p><strong>Takeaway: our NFC is right because it gives Python’s output on 17,253 cases chosen to hit every table entry.</strong></p>
+<div class="quiz" data-quiz="check" data-for="right" id="c-right">
+  <p>A new Unicode version adds a composed character. What must happen for the engine to handle it?</p>
+  <ul>
+    <li data-right>Regenerate the tables and the test cases with a Python that knows the new version <div class="why">Both come from <code>unicodedata</code>; the code itself does not change.</div></li>
+    <li>Edit the composition loop <div class="why">The loop is the same for every version; only the table data changes.</div></li>
+    <li>Nothing; the Hangul formula covers new characters <div class="why">The formula covers Hangul syllables only, which do not change between versions.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>The same visible text can be different code points, and a tokenizer sees only the bytes. NFC rewrites text into one spelling: take characters apart, sort the marks by class, join them back where a single character exists. The engine does it only when the tokenizer asks, and checks it against Python on 17,253 cases.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Token ids are from Hugging Face <code>tokenizers</code> on the models’ own <code>tokenizer.json</code>. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

@@ -11,7 +11,9 @@ window.AETHER_PAGES = [
       { href: "start/roadmap.html", num: "02", title: "The roadmap", desc: "All nine phases on one page, and which part of the engine each one builds." },
       { href: "start/outline.html", num: "03", title: "Course outline", desc: "Every page still to write, phase by phase, and which of them the engine already has code and numbers for." },
       { href: "glossary.html", num: "04", title: "Glossary", desc: "Every term the notes use, in one or two plain sentences." },
-      { href: "start/machine.html", num: "05", title: "Inside the machine", desc: "One multiply-add followed from the math through memory, NEON lanes, caches, GPU threads and NPU tiles. Animated, with controls." }
+      { href: "start/machine.html", num: "05", title: "Inside the machine", desc: "One multiply-add followed from the math through memory, NEON lanes, caches, GPU threads and NPU tiles. Animated, with controls." },
+      { href: "start/right.html", num: "06", title: "How we know it’s right", desc: "The external-reference rule: numpy, llama2.c, Hugging Face and llama.cpp; identical or within a bound; golden files." },
+      { href: "start/code-map.html", num: "07", title: "Code map", desc: "Every file in src/, in the order a prompt meets them, with its job and the page that explains it." }
     ]
   },
   {
@@ -107,7 +109,11 @@ window.AETHER_PAGES = [
     section: "Phase 5 · real model files",
     crumb: "Phase 5",
     pages: [
-      { href: "phase-5/index.html", title: "Overview" }
+      { href: "phase-5/index.html", title: "Overview" },
+      { href: "phase-5/safetensors.html", num: "01", title: "Reading weights in place", desc: "A JSON header, packed bytes and mmap; why bf16 to f32 is one shift and f16 is not." },
+      { href: "phase-5/config.html", num: "02", title: "One forward pass, two families", desc: "Shapes from config.json, tied embeddings, 9 query heads sharing 3 key/value heads, and RoPE's two pairings." },
+      { href: "phase-5/bytelevel.html", num: "03", title: "Byte-level BPE", desc: "Bytes first so nothing is unknown, GPT-2's word-splitting regex, Unicode letters, and merges by rank." },
+      { href: "phase-5/matching-hf.html", num: "04", title: "Matching Hugging Face", desc: "Forward hooks, a tolerance for reordered sums, exact tokens, a repetition-penalty trap, and 433 tokenizer strings." }
     ]
   },
   {
@@ -126,14 +132,33 @@ window.AETHER_PAGES = [
     pages: [
       { href: "phase-7/index.html", title: "Overview" },
       { href: "phase-7/gguf.html", num: "01", title: "GGUF: one file for everything", desc: "Header, typed metadata, the tensor table, alignment, and weights used straight from the file." },
-      { href: "phase-7/attention-ab.html", num: "02", title: "NEON attention, measured honestly", desc: "A speed-up a single run got wrong, and the alternating A/B that got it right." }
+      { href: "phase-7/attention-ab.html", num: "02", title: "NEON attention, measured honestly", desc: "A speed-up a single run got wrong, and the alternating A/B that got it right." },
+      { href: "phase-7/nfc.html", num: "03", title: "One text, two spellings", desc: "Unicode normalization (NFC): why “é” can be two code points, and how the tokenizer picks one spelling." },
+      { href: "phase-7/chat.html", num: "04", title: "Talking to a chat model", desc: "ChatML: why an instruct model needs its template to answer, and how it ends its own reply." },
+      { href: "phase-7/benchmarking.html", num: "05", title: "Benchmarking like llama-bench", desc: "Prefill and decode apart, depths, synthetic tokens, repeats and fair conditions, with Phase 7’s numbers." },
+      { href: "phase-7/time.html", num: "06", title: "Where the time goes", desc: "Decode waits for bytes, prefill for arithmetic; how smmla closed the prefill gap; clock caps that move." },
+      { href: "phase-7/heat.html", num: "07", title: "Heat and energy", desc: "Five minutes of decoding as a chart, joules per token from the battery, and when the GPU is the better choice." }
     ]
   },
   {
     section: "Phase 8 · the app",
     crumb: "Phase 8",
     pages: [
-      { href: "phase-8/index.html", title: "Overview" }
+      { href: "phase-8/index.html", title: "Overview" },
+      { href: "phase-8/c-abi.html", num: "01", title: "A C door into Rust", desc: "extern \"C\", an opaque handle freed once, panics caught at the door, error codes and a streaming callback." },
+      { href: "phase-8/app.html", num: "02", title: "Inside the Android app", desc: "JNI with real UTF-8, one engine thread, half an emoji held back, 348 MB of memory, and the CLI's speed." }
+    ]
+  },
+  {
+    section: "After Phase 8 · faster decoding and the GPU",
+    crumb: "After Phase 8",
+    pages: [
+      { href: "beyond/index.html", title: "Overview" },
+      { href: "beyond/speculative.html", num: "01", title: "Several tokens per weight read", desc: "Draft tokens checked in one batched pass: prompt lookup, a draft model, and speculative sampling, measured." },
+      { href: "beyond/gpu-basics.html", num: "02", title: "How the GPU runs our code", desc: "Lanes, workgroups and Vulkan; 32 lanes per row group; why the GPU reads no faster than the CPU." },
+      { href: "beyond/gpu-decode.html", num: "03", title: "Decoding on the GPU", desc: "The whole step with llama.cpp's perplexity, attention in chunks, clock swings, and less energy per token." },
+      { href: "beyond/gpu-prompt.html", num: "04", title: "Who reads the prompt?", desc: "The CPU reads it and hands the KV cache to the GPU; a measurement that pointed the wrong way; a batched GPU pass." },
+      { href: "beyond/q4km.html", num: "05", title: "Q4_K_M files", desc: "llama.cpp's most common mix: Q5_0, super-blocks with scales of scales, accuracy against llama.cpp, and two speed fixes." }
     ]
   }
 ];

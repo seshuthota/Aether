@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading weights in place · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">Phase 5 · 01</p>
+
+<h1>Reading weights in place</h1>
+<p class="lede">A Hugging Face model keeps its weights in a safetensors file: a short JSON header, then the raw numbers. The engine maps that file into memory, reads each tensor where it lies, and widens the 16-bit numbers to f32 without losing a bit.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page builds on <a href="../phase-2/model-file.html">the llama2.c model file</a> and <a href="../phase-1/memory.html">the memory hierarchy</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#layout">How does the file say where each tensor is?</a>
+  <a href="#checks">What can a bad header do, and how is it caught?</a>
+  <a href="#mmap">Why map the file instead of reading it?</a>
+  <a href="#bf16">Why is bf16 to f32 a single shift?</a>
+  <a href="#f16">Why is f16 harder?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Load SmolLM2’s weights from its safetensors file without copying them, and turn 16-bit numbers into f32 exactly.">What are we trying to do here?</h2>
+<p>Phase 2 read stories15M from a llama2.c file: a fixed list of numbers in a fixed order, all in f32. SmolLM2-135M comes from Hugging Face as <code>model.safetensors</code>, a file that names every tensor and says where its bytes are. Its numbers are stored in <strong>bf16</strong>, a 16-bit float format, while the engine’s kernels compute in <strong>f32</strong>, the ordinary 32-bit float.</p>
+<p>A <strong>tensor</strong> here is one named block of weights, such as one layer’s query matrix, with a shape like [576, 576]. The <strong>dtype</strong> (data type) says how each number is stored: <code>F32</code>, <code>BF16</code> or <code>F16</code>.</p>
+<p>By the end of this page you can read a safetensors header by hand, say what <code>mmap</code> gives a program on a phone, and convert a bf16 or f16 number to f32 in your head. The code is in <code>src/format/safetensors.rs</code>, <code>src/format/mmap.rs</code> and <code>src/format/json.rs</code>.</p>
+
+<h2 id="layout" data-short="The layout" data-step="Eight bytes of length, a JSON header, then packed data; offsets count from the end of the header.">How does the file say where each tensor is?</h2>
+<p>The file has three parts. The first 8 bytes are a number N, the length of the header. The next N bytes are a JSON text that lists every tensor. Everything after that is the tensors’ bytes, packed one after another.</p>
+<pre><code>offset 0      8 bytes  N, a u64, little-endian
+offset 8      N bytes  JSON: name, dtype, shape, data_offsets
+offset 8 + N  rest     tensor bytes, packed, no padding</code></pre>
+<p>One entry of the header, for SmolLM2’s final norm:</p>
+<pre><code>{"model.norm.weight": {"dtype": "BF16",
+  "shape": [576], "data_offsets": [0, 1152]}}</code></pre>
+<div class="quiz" data-quiz="predict" data-for="layout" id="g-layout">
+  <p>The header is 9,000 bytes long (N = 9000). At which byte of the file does <code>model.norm.weight</code> start?</p>
+  <ul>
+    <li data-right>9,008 <div class="why">Offsets count from the end of the header: 8 bytes of length plus 9,000 of JSON, plus 0.</div></li>
+    <li>0 <div class="why">0 is its offset in the data part, not in the file; the file starts with the length.</div></li>
+    <li>9,000 <div class="why">That forgets the 8 bytes that hold N before the header.</div></li>
+  </ul>
+</div>
+<ul>
+  <li><strong>Offsets are relative to the data part.</strong> The tensor starts at byte 8 + N + 0 of the file. Reading from byte 0 would read the length and the JSON as if they were weights.</li>
+  <li><strong>The shape gives the size.</strong> 576 numbers × 2 bytes per bf16 = 1,152 bytes <span class="tag c">calculated</span>, which is the end offset.</li>
+  <li><strong>The header is JSON, so the engine needs a JSON parser.</strong> Phase 5 writes one by hand in <code>src/format/json.rs</code> (about 300 lines). The same parser reads <code>config.json</code> and <code>tokenizer.json</code>.</li>
+</ul>
+<p><strong>Takeaway: a safetensors file is a length, a JSON table of contents, and packed bytes whose offsets start after the header.</strong></p>
+<div class="quiz" data-quiz="check" data-for="layout" id="c-layout">
+  <p>A tensor has dtype <code>F32</code> and shape [49152, 576]. How long should its <code>data_offsets</code> range be?</p>
+  <ul>
+    <li data-right>113,246,208 bytes <div class="why">49,152 × 576 numbers × 4 bytes each.</div></li>
+    <li>28,311,552 bytes <div class="why">That is the number of values; each f32 takes 4 bytes.</div></li>
+    <li>56,623,104 bytes <div class="why">That is 2 bytes per number, the size in bf16, not f32.</div></li>
+  </ul>
+</div>
+
+<h2 id="checks" data-short="Header checks" data-step="Every range must lie in the file and match its shape; a bad file fails at open.">What can a bad header do, and how is it caught?</h2>
+<p>The header is just text that someone wrote. The engine cannot trust it: a wrong offset could point past the end of the file, or two numbers could disagree with each other.</p>
+<div class="quiz" data-quiz="predict" data-for="checks" id="g-checks">
+  <p>A tensor’s range is 1,000 bytes too short for its shape. What happens if the engine does not check?</p>
+  <ul>
+    <li data-right>It reads the next tensor’s bytes as the end of this one <div class="why">Packed data has no gaps, so a short range runs into its neighbour without any error.</div></li>
+    <li>The kernel crashes with an error <div class="why">Nothing marks where a tensor ends; the bytes after it are valid memory too.</div></li>
+    <li>The JSON parser rejects it <div class="why">The JSON is well formed; only the numbers inside it disagree.</div></li>
+  </ul>
+</div>
+<p>So <code>SafeTensors::open</code> checks every entry while it reads the header, before any weight is used:</p>
+<ul>
+  <li>The range must lie inside the data part. An offset past the end would read memory the mapping does not own.</li>
+  <li>The range’s length must equal the product of the shape times the size of one element. A mismatch is reported with the tensor’s name.</li>
+  <li>The dtype must be one the engine knows (<code>F32</code>, <code>BF16</code>, <code>F16</code>).</li>
+</ul>
+<p>The model loader then checks each shape against what <code>config.json</code> says it should be. Together, the two checks turn a broken file into an error at open, instead of a model that runs and writes nonsense.</p>
+<p><strong>Takeaway: check every offset and shape when the file opens, because a wrong one does not crash later, it just gives wrong numbers.</strong></p>
+
+<h2 id="mmap" data-short="mmap" data-step="mmap makes the file appear in memory; pages are read on first touch and can be dropped again.">Why map the file instead of reading it?</h2>
+<p>The plain way to load weights is to allocate a buffer and read the whole file into it. Another way is <strong>mmap</strong> (memory mapping): ask the operating system to make the file appear as a range of addresses. Nothing is read at that moment. The first time the program touches a <strong>page</strong> (a 4 KB piece of memory), the kernel reads that piece from storage.</p>
+<pre><code>// SAFETY: a fresh private read-only mapping of an open
+// file; the kernel checks the arguments and reports
+// failure as MAP_FAILED.
+let ptr = unsafe {
+    libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ,
+        libc::MAP_PRIVATE, file.as_raw_fd(), 0)
+};</code></pre>
+<ul>
+  <li><code>PROT_READ</code> makes the range read-only. A stray write crashes the program instead of changing a weight.</li>
+  <li><code>MAP_PRIVATE</code> means no change could ever reach the file on disk.</li>
+  <li>The <code>Mmap</code> type calls <code>munmap</code> when it is dropped, so the mapping lives exactly as long as the tensors that borrow from it.</li>
+</ul>
+<div class="quiz" data-quiz="predict" data-for="mmap" id="g-mmap">
+  <p>The phone runs low on memory. What can the kernel do with mapped weight pages that it cannot do with a heap buffer?</p>
+  <ul>
+    <li data-right>Drop them, and read them again from the file when they are next touched <div class="why">The file already holds the same bytes, so a clean mapped page costs nothing to give back.</div></li>
+    <li>Compress them <div class="why">Android may compress heap memory too; that is not the difference.</div></li>
+    <li>Nothing; both count the same <div class="why">Heap memory has no copy elsewhere, so the kernel cannot drop it, only kill the process.</div></li>
+  </ul>
+</div>
+<p>That is the reason the comment in <code>mmap.rs</code> gives for phones. A heap copy is <strong>anonymous memory</strong>: it exists nowhere else, so under pressure Android’s low-memory killer may stop the app. A mapped file’s pages are <strong>file-backed</strong>: they can be dropped and re-read.</p>
+<p>There is a cost. The first use of each page waits for storage. In Phase 8, the app’s first prompt after loading took 262 ms against about 200 ms once warm <span class="tag m">measured</span>, because the first prefill touched the pages for the first time.</p>
+<p>Inside the engine, <code>SafeTensors::get</code> returns a <code>View</code>: the dtype, the shape and a slice that points into the mapping. No bytes are copied until a caller asks for numbers.</p>
+<p><strong>Takeaway: mmap reads weights in place, lazily, and lets the phone drop and re-read them, at the price of a slow first touch.</strong></p>
+<div class="quiz" data-quiz="check" data-for="mmap" id="c-mmap">
+  <p>The engine opens a 270 MB file with mmap and has not run a token yet. About how much of the file has been read from storage?</p>
+  <ul>
+    <li data-right>Only the pages the loader touched, such as the header <div class="why">mmap reads a page on first touch; untouched weights stay on storage.</div></li>
+    <li>All 270 MB <div class="why">That is what a plain read would do; mmap reads nothing up front.</div></li>
+    <li>None, not even the header <div class="why">Parsing the header touches its pages, so those are read.</div></li>
+  </ul>
+</div>
+
+<h2 id="bf16" data-short="bf16 to f32" data-step="bf16 is the top half of an f32, so widening is a 16-bit shift and loses nothing.">Why is bf16 to f32 a single shift?</h2>
+<p>An f32 has 1 sign bit, 8 exponent bits (the power of two) and 23 mantissa bits (the digits). <strong>bf16</strong> (“brain float 16”) keeps the sign, the same 8 exponent bits, and only the top 7 mantissa bits.</p>
+<pre><code>f32:  s eeeeeeee mmmmmmm mmmmmmmmmmmmmmmm
+bf16: s eeeeeeee mmmmmmm</code></pre>
+<div class="quiz" data-quiz="predict" data-for="bf16" id="g-bf16">
+  <p>How do you turn the 16 bits of a bf16 into the 32 bits of an f32?</p>
+  <ul>
+    <li data-right>Put them in the top 16 bits and fill the bottom 16 with zeros <div class="why">bf16 is the top half of an f32, so the missing mantissa digits are zeros.</div></li>
+    <li>Put them in the bottom 16 bits <div class="why">That puts the sign and exponent where the mantissa goes; the value becomes tiny.</div></li>
+    <li>Re-bias the exponent, then shift <div class="why">bf16 uses f32’s own exponent bias, so nothing needs re-biasing.</div></li>
+  </ul>
+</div>
+<pre><code>pub fn bf16_to_f32(b: u16) -&gt; f32 {
+    f32::from_bits((b as u32) &lt;&lt; 16)
+}</code></pre>
+<ul>
+  <li>Example: bf16 <code>0x3F80</code> becomes <code>0x3F800000</code>, which is exactly 1.0. A unit test checks this and three other values.</li>
+  <li>The conversion is exact: every bf16 value is also an f32 value. The rounding happened when the model was saved, not here.</li>
+  <li>The cost is memory. A weight takes 2 bytes in the file and 4 after widening <span class="tag c">calculated</span>, and the widened copy is heap memory, not a mapping. Phase 6 quantizes the weights at load instead.</li>
+</ul>
+<p><strong>Takeaway: bf16 to f32 is a 16-bit shift and is exact; the price is twice the memory, in a copy the phone cannot drop.</strong></p>
+<div class="quiz" data-quiz="check" data-for="bf16" id="c-bf16">
+  <p>What f32 value does the bf16 <code>0xC000</code> become?</p>
+  <ul>
+    <li data-right>−2.0 <div class="why">It becomes <code>0xC0000000</code>: sign set, exponent one above 1.0’s, mantissa zero.</div></li>
+    <li>2.0 <div class="why">The top bit of 0xC is the sign bit, so the value is negative.</div></li>
+    <li>It cannot be known without rounding <div class="why">Widening never rounds; the low 16 bits are simply zero.</div></li>
+  </ul>
+</div>
+
+<h2 id="f16" data-short="f16 to f32" data-step="f16 has a 5-bit exponent with its own bias, so the exponent is re-biased and tiny values renormalised.">Why is f16 harder?</h2>
+<p>Some checkpoints use <strong>f16</strong>, IEEE half precision, instead. It has 1 sign bit, 5 exponent bits and 10 mantissa bits. Its exponent is stored with a bias of 15, where f32 uses 127, so the bits cannot simply be shifted into place.</p>
+<pre><code>let bits = match exp {
+    0 if man == 0 =&gt; sign, // ±0
+    // subnormal: man · 2^-24, renormalised
+    0 =&gt; { /* shift the top set bit up */ }
+    0x1F =&gt; sign | (0xFF &lt;&lt; 23) | (man &lt;&lt; 13),
+    _ =&gt; sign | ((exp + 127 - 15) &lt;&lt; 23) | (man &lt;&lt; 13),
+};</code></pre>
+<ul>
+  <li><strong>Normal numbers:</strong> add 127 − 15 = 112 to the exponent, and move the 10 mantissa bits to the top of f32’s 23.</li>
+  <li><strong>Exponent 31</strong> means infinity or NaN in f16, so it maps to f32’s exponent 255.</li>
+  <li><strong>Subnormals</strong>, exponent 0 with a non-zero mantissa, are numbers too small for the normal form. f32 can hold them as normal numbers, so the code moves the top set bit up and lowers the exponent to match.</li>
+</ul>
+<p>Every f16 value is also an f32 value, so this conversion is exact too. The unit test in <code>safetensors.rs</code> covers normal values, the largest finite value (65,504), the smallest and largest subnormals, infinity, NaN and negative zero.</p>
+<p><strong>Takeaway: f16 widens exactly as well, but its exponent must be re-biased and its smallest values renormalised.</strong></p>
+<div class="quiz" data-quiz="check" data-for="f16" id="c-f16">
+  <p>An f16 has exponent bits 15 and mantissa 0. What f32 exponent field does it get?</p>
+  <ul>
+    <li data-right>127, the value 1.0 <div class="why">15 + 112 = 127: both are the bias, so the number is 2⁰ = 1.0.</div></li>
+    <li>15 <div class="why">Copying the field keeps f16’s bias; in f32, field 15 is a tiny number.</div></li>
+    <li>142 <div class="why">That adds 127 without subtracting f16’s own bias of 15.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A safetensors file is a length, a JSON table of contents and packed bytes. Check every offset and shape when it opens.</p>
+<p>mmap reads the weights in place and lets the phone drop them under pressure; the first touch of each page is slow.</p>
+<p>bf16 and f16 widen to f32 exactly. The f32 copy doubles the memory, which is what Phase 6 removes.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Phase 5 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=34"></script>
+<script src="../js/glossary.js?v=33"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>
