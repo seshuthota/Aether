@@ -273,8 +273,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       speculative sampling (`Sampler::sample_draft`); `smmla` tiles of 1–3 pairs for small
       batches. +60–75 % on a copying task, about neutral on fresh prose. Draft model too
       (`--draft PATH`, `Drafter`; results/phase-6.md "Speculative decoding with a draft
-      model"): SmolLM2-135M for 360M, about neutral on Q4_0 and +12–29 % on Q8_0, because the
-      135M model decodes only 1.2× faster (both ~30 layers, sync-bound at this size).
+      model"): SmolLM2-135M for 360M, 0 to +29 % at 81–95 % acceptance, because the 135M
+      model decodes only 2× faster, and a K = 3 pass costs ~2.9 target steps.
 - [ ] **L.3 Vulkan** (Adreno), **L.5** NPU: not started.
 
 ---

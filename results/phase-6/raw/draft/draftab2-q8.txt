@@ -1,0 +1,12 @@
+r1 code [plain] 42300: prefill: 116 tokens in 133.8 ms (867.2 tok/s) | decode: 140 tokens in 1087.9 ms (128.7 tok/s) 0c7d3f04 
+r1 code [draft135] 42600: prefill: 116 tokens in 60.1 ms (1931.2 tok/s) | decode: 140 tokens in 506.9 ms (276.2 tok/s) c4c87e3d 
+r1 code [--draft-k 2] 42600: speculative: 49 passes, 91 of 98 drafts accepted prefill: 116 tokens in 189.6 ms (611.7 tok/s) | decode: 140 tokens in 914.2 ms (153.1 tok/s) 0c7d3f04 
+r1 code [--draft-k 3] 42600: speculative: 39 passes, 101 of 117 drafts accepted prefill: 116 tokens in 193.3 ms (600.2 tok/s) | decode: 140 tokens in 881.5 ms (158.8 tok/s) 0c7d3f04 
+r1 code [--draft-k 4] 43000: speculative: 32 passes, 108 of 125 drafts accepted prefill: 116 tokens in 188.6 ms (615.1 tok/s) | decode: 140 tokens in 915.4 ms (152.9 tok/s) 0c7d3f04 
+r1 code [--lookup 3] 43000: speculative: 33 passes, 29 of 98 drafts accepted prefill: 116 tokens in 136.3 ms (851.0 tok/s) | decode: 140 tokens in 954.0 ms (146.7 tok/s) 0c7d3f04 
+r1 prose [plain] 43000: prefill: 7 tokens in 14.8 ms (472.6 tok/s) | decode: 249 tokens in 1898.2 ms (131.2 tok/s) d0005536 
+r1 prose [draft135] 43400: prefill: 7 tokens in 9.3 ms (754.5 tok/s) | decode: 249 tokens in 851.1 ms (292.6 tok/s) 179bcde9 
+r1 prose [--draft-k 2] 43000: speculative: 93 passes, 155 of 186 drafts accepted prefill: 7 tokens in 21.3 ms (328.3 tok/s) | decode: 249 tokens in 1628.1 ms (152.9 tok/s) 43eae96a 
+r1 prose [--draft-k 3] 43000: speculative: 75 passes, 174 of 224 drafts accepted prefill: 7 tokens in 21.6 ms (323.9 tok/s) | decode: 249 tokens in 1653.1 ms (150.6 tok/s) 43eae96a 
+r1 prose [--draft-k 4] 43400: speculative: 65 passes, 184 of 257 drafts accepted prefill: 7 tokens in 21.5 ms (325.2 tok/s) | decode: 249 tokens in 1647.4 ms (151.1 tok/s) 43eae96a 
+r1 prose [--lookup 3] 43400: speculative: 42 passes, 93 of 125 drafts accepted prefill: 7 tokens in 18.4 ms (379.4 tok/s) | decode: 249 tokens in 1279.5 ms (194.6 tok/s) 9bade9bf 
