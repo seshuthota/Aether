@@ -139,16 +139,16 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         engine.execute {
             try {
-                val key = "${file.path}|${if (onGpu) "gpu" else coreList}"
+                val key = "${file.path}|${if (onGpu) "gpu " else ""}$coreList"
                 if (session == null || loaded != key) {
                     session?.close()
                     session = null
                     ui { status.text = "Loading ${file.name}…" }
                     val t0 = System.nanoTime()
-                    session = if (onGpu) Aether.openGpu(file.path, MAX_SEQ) else Aether.open(file.path, coreList, MAX_SEQ)
+                    session = if (onGpu) Aether.openGpu(file.path, coreList, MAX_SEQ) else Aether.open(file.path, coreList, MAX_SEQ)
                     loaded = key
                     val ms = (System.nanoTime() - t0) / 1e6
-                    ui { status.text = "Loaded in %.0f ms (%s)".format(ms, if (onGpu) "GPU" else "CPU $coreList") }
+                    ui { status.text = "Loaded in %.0f ms (%s)".format(ms, if (onGpu) "GPU, prompt on CPU $coreList" else "CPU $coreList") }
                 }
                 session!!.setLookup(draft)
                 val utf8 = Utf8Stream()

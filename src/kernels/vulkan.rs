@@ -601,11 +601,19 @@ impl Gpu {
     /// the shader; 8 is fastest for big matrices, 4 for small ones). It
     /// adds partial sums across 32 subgroup lanes by shuffles.
     pub fn q4_0_gemv_kernel(&self, rows_per_32: u32) -> Result<Kernel> {
+        self.q4_0_gemv_kernel_fused(rows_per_32, false, false)
+    }
+
+    /// [`Gpu::q4_0_gemv_kernel`] that, with `accum`, adds the product to
+    /// `out` (`out += W x`: the residual add fused in) and, with `glu`,
+    /// reads x as gate then up (twice the columns) and multiplies by
+    /// silu(gate) · up (the SwiGLU fused in).
+    pub fn q4_0_gemv_kernel_fused(&self, rows_per_32: u32, accum: bool, glu: bool) -> Result<Kernel> {
         assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
         if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
             return Err(format!("q4_0_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
         }
-        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 4, 8, &[rows_per_32 / 4])
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 4, 8, &[rows_per_32 / 4, accum.into(), glu.into()])
     }
 }
 

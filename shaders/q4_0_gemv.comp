@@ -20,16 +20,30 @@
 // 64 or 128 lanes, so the 32 never span two subgroups. (Adreno 830's
 // driver offers no clustered subgroup ops; a shader using them crashed its
 // compiler.)
+//
+// Two specialization constants fuse the step's neighbours in: ACCUM adds
+// the product to `o` (the residual stream) instead of storing it, and GLU
+// takes x as gate then up (2 · 32·nb values) and multiplies by
+// silu(gate) · up (silu(g) = g / (1 + e^(−g))) while loading it.
 #extension GL_KHR_shader_subgroup_shuffle : enable
 layout(local_size_x = 128) in;
 layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
 layout(std430, binding = 1) readonly buffer D { uint dh[]; };
 layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
-layout(std430, binding = 3) writeonly buffer O { float o[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
 layout(push_constant) uniform P { uint rows; uint nb; };
 
 layout(constant_id = 0) const uint RV = 1;
+layout(constant_id = 1) const bool ACCUM = false;
+layout(constant_id = 2) const bool GLU = false;
 const uint R = 4 * RV;
+
+// x's i-th vec4, through silu(gate) · up with GLU.
+vec4 xin(uint i, uint nb) {
+    if (!GLU) return x[i];
+    vec4 g = x[i];
+    return g / (1.0 + exp(-g)) * x[8 * nb + i];
+}
 
 vec4 lo(uint w) { return vec4(uvec4(w, w >> 8, w >> 16, w >> 24) & 15u) - 8.0; }
 vec4 hi(uint w) { return vec4(uvec4(w >> 4, w >> 12, w >> 20, w >> 28) & 15u) - 8.0; }
@@ -44,8 +58,8 @@ void main() {
     for (uint v = 0; v < RV; v++) acc[v] = vec4(0.0);
     uint nr = min(R, rows - min(rows, row0));
     for (uint b = lane; b < nb; b += 32) {
-        vec4 x0 = x[8 * b], x1 = x[8 * b + 1], x2 = x[8 * b + 2], x3 = x[8 * b + 3];
-        vec4 x4 = x[8 * b + 4], x5 = x[8 * b + 5], x6 = x[8 * b + 6], x7 = x[8 * b + 7];
+        vec4 x0 = xin(8 * b, nb), x1 = xin(8 * b + 1, nb), x2 = xin(8 * b + 2, nb), x3 = xin(8 * b + 3, nb);
+        vec4 x4 = xin(8 * b + 4, nb), x5 = xin(8 * b + 5, nb), x6 = xin(8 * b + 6, nb), x7 = xin(8 * b + 7, nb);
         for (uint r = 0; r < nr; r++) {
             uint i = (row0 + r) * nb + b;
             uvec4 w = qs[i];
@@ -59,6 +73,9 @@ void main() {
         for (uint m = 16; m > 0; m >>= 1) acc[v] += subgroupShuffleXor(acc[v], m);
     }
     if (lane == 0) {
-        for (uint r = 0; r < nr; r++) o[row0 + r] = acc[r / 4][r % 4];
+        for (uint r = 0; r < nr; r++) {
+            if (ACCUM) o[row0 + r] += acc[r / 4][r % 4];
+            else o[row0 + r] = acc[r / 4][r % 4];
+        }
     }
 }

@@ -134,11 +134,20 @@ impl GpuModel {
         let final_norm = f32buf(&weights.final_norm)?;
 
         let x = zeros(dim)?;
-        // q, k, v: one buffer, the output of wqkv; hb (gate) then hb2 (up)
-        // likewise. The kernels after them bind views into it.
+        // q, k, v: one buffer, the output of wqkv, which the kernels after
+        // it bind views into; gate then up likewise, read whole by down.
         let (xb, xb2, qkv, hb12) = (zeros(dim)?, zeros(dim)?, zeros(dim + 2 * kv_dim)?, zeros(2 * hid)?);
-        let (k_at, v_at, up_at) = (4 * dim, 4 * (dim + kv_dim), 4 * hid);
-        let logits = zeros(c.vocab_size)?;
+        let (k_at, v_at) = (4 * dim, 4 * (dim + kv_dim));
+        // The CPU reads all the logits after every step: from memory it
+        // caches (coherent, so no invalidation), not uncached memory, when
+        // the device offers that for storage buffers (Adreno: type 6).
+        let logits = {
+            use ash::vk::MemoryPropertyFlags as M;
+            match gpu.buffer_with(c.vocab_size * 4, M::DEVICE_LOCAL | M::HOST_VISIBLE | M::HOST_COHERENT | M::HOST_CACHED) {
+                Ok(b) => b,
+                Err(_) => zeros(c.vocab_size)?,
+            }
+        };
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
         let parts = zeros(c.n_heads * chunks * (hs + 2))?;
@@ -149,8 +158,10 @@ impl GpuModel {
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 20)?;
         let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 20)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
-        let add = Kernel::new(gpu, crate::spirv!("add"), 2, 4)?;
-        let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
+        // wo adds its product to the residual stream x; down does too, and
+        // reads gate and up, applying the SwiGLU as it loads them.
+        let wo_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, false)?;
+        let down_k = gpu.q4_0_gemv_kernel_fused(gemv_r(dim), true, true)?;
         let gemvs = [4, 8, 16].map(|r| gpu.q4_0_gemv_kernel(r));
         let gemvs: Vec<Kernel> = gemvs.into_iter().collect::<Result<_>>()?;
         let gemv_k = |rows: usize| &gemvs[match gemv_r(rows) {
@@ -162,7 +173,6 @@ impl GpuModel {
         let eps = c.norm_eps.to_bits();
         let halves = u32::from(c.rope_layout == RopeLayout::Halves);
         let one = [1, 1, 1];
-        let elems = |n: usize| [n.div_ceil(256) as u32, 1, 1];
         // Bind everything first (binding can fail; recording cannot).
         struct Bl {
             norm1: Bound,
@@ -171,12 +181,9 @@ impl GpuModel {
             attn: Bound,
             merge: Bound,
             o: Bound,
-            add1: Bound,
             norm2: Bound,
             gate_up: Bound,
-            swiglu: Bound,
             down: Bound,
-            add2: Bound,
         }
         let gemv_bind = |m: &MatQ4_0, input: &Buffer, out: &Buffer| gemv_k(m.rows).bind(gpu, &[&m.qs, &m.d, input, out]);
         let mut bound = Vec::new();
@@ -187,13 +194,10 @@ impl GpuModel {
                 post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
                 attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
-                o: gemv_bind(&ly.wo, &xb2, &xb)?,
-                add1: add.bind(gpu, &[&x, &xb])?,
+                o: wo_k.bind(gpu, &[&ly.wo.qs, &ly.wo.d, &xb2, &x])?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
                 gate_up: gemv_bind(&ly.w_gate_up, &xb, &hb12)?,
-                swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, up_at)])?,
-                down: gemv_bind(&ly.w_down, &hb12, &xb)?,
-                add2: add.bind(gpu, &[&x, &xb])?,
+                down: down_k.bind(gpu, &[&ly.w_down.qs, &ly.w_down.d, &hb12, &x])?,
             });
         }
         let fnorm = rms.bind(gpu, &[&x, &final_norm, &xb])?;
@@ -222,19 +226,13 @@ impl GpuModel {
                 r.dispatch(&b.merge, &push(&[hs as u32, chunks as u32]), [c.n_heads as u32, 1, 1]);
                 end(r, "attention merge");
                 r.dispatch(&b.o, &gemv_push(&ly.wo), gemv_groups(&ly.wo));
-                end(r, "wo");
-                r.dispatch(&b.add1, &push(&[dim as u32]), elems(dim));
-                end(r, "add");
+                end(r, "wo + add");
                 r.dispatch(&b.norm2, &push(&[dim as u32, eps]), one);
                 end(r, "rmsnorm");
                 r.dispatch(&b.gate_up, &gemv_push(&ly.w_gate_up), gemv_groups(&ly.w_gate_up));
                 end(r, "gate/up");
-                r.dispatch(&b.swiglu, &push(&[hid as u32]), elems(hid));
-                end(r, "swiglu");
                 r.dispatch(&b.down, &gemv_push(&ly.w_down), gemv_groups(&ly.w_down));
-                end(r, "down");
-                r.dispatch(&b.add2, &push(&[dim as u32]), elems(dim));
-                end(r, "add");
+                end(r, "swiglu + down + add");
             }
             r.dispatch(&fnorm, &push(&[dim as u32, eps]), one);
             end(r, "rmsnorm");
@@ -249,7 +247,7 @@ impl GpuModel {
 
         let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm];
         keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, merge, add, swiglu];
+        let mut kernels = vec![rms, post, attn, merge, wo_k, down_k];
         kernels.extend(gemvs);
         Ok(GpuModel { config, weights, x, logits, kc, vc, params, step, stages, spin: false, _keep: keep, _mats: vec![cls], _layers: layers, _kernels: kernels })
     }
