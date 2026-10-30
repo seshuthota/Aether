@@ -61,6 +61,11 @@ screen off or kept awake by keyevents), GPU prefill (plan in L.3), L.5 step 5b o
 
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 
+Items 9–13 ran on the phone on 2026-10-30, 22:00–23:15 (results/phase-l5.md "Step 6"):
+all three engines in the app, DSP sessions from an app work; GPU lookup slower (off in the
+C ABI); DSP lookup +6–28 % with the few-token pass by DMA; Q4_K_M on the DSP at llama.cpp's
+PPL after a VTCM slot fix (`c68da0a`).
+
 Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "Step 5b" and
 "Every engine", results/phase-l3.md step 11; one bug found and fixed, `3ab2966`):
 
@@ -78,14 +83,14 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    time a token (Q4_0 9.0, unchanged).
 8. [x] `backends-bench.sh` (`results/backends/raw`), and `SUSTAIN=300` on battery for Qwen Q4_0:
    CPU 107 tok/s 0.030 J/token, GPU 78 / 0.029, DSP 131 / 0.025.
-9. [ ] **The app's CPU / GPU / DSP selector** (replaces the GPU checkbox). Installed on the
+9. [x] **The app's CPU / GPU / DSP selector** (replaces the GPU checkbox). Installed on the
    phone (2026-10-30, with `5003b5e`); `libcdsprpc.so` is in `/vendor/etc/public.libraries.txt`.
    `qwen2.5-0.5b-instruct-q4_0.gguf` (internal) and `qwen2.5-0.5b-q4_k_m.gguf` (external files
    dir, a base model: Chat off) are on the phone. Try each of CPU, GPU and DSP on the instruct
    model, then GPU on the Q4_K_M one: the reply streams and the status line shows load time and
    prefill / decode tok/s. Open question: can an app process start an unsigned DSP session from
    its files directory? If not, the DSP option shows the error and CPU and GPU still work.
-10. [ ] **Prompt lookup on the GPU** (written 2026-10-30 after the run above, PC-verified;
+10. [x] **Prompt lookup on the GPU** (written 2026-10-30 after the run above, PC-verified;
    results/phase-l3.md step 12). `cargo test … --features vulkan --lib qx_gemv_n gpu_lookup`;
    `--example vk_gemv_n` (few-token shader against one decode step: on the Intel GPU 2 tokens
    cost 3.7–4.3 steps; on the Adreno, where decode is bound by memory, it should be far less);
@@ -94,7 +99,7 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    fresh prose: tok/s and drafts
    accepted. The app's lookup checkbox in GPU mode. If lookup is slower on the Adreno, turn it
    off for GPU sessions in the C ABI again.
-11. [ ] **Prompt lookup on the DSP** (written 2026-10-30 after the run above; the HVX product
+11. [x] **Prompt lookup on the DSP** (written 2026-10-30 after the run above; the HVX product
    for several tokens verified on the Hexagon simulator, the rest phone-only). `cargo test …
    --features hexagon --lib few_tokens dsp_lookup` (the few-token pass's logits must equal the
    decode step's bit for bit); `dsp_ppl SMOLLM 20 512 6 1f 1 few` and the same on Qwen (PPL
@@ -103,7 +108,7 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    the copying prompts and on prose; the app's lookup checkbox in DSP mode. The pass reads
    weights by l2fetch, not DMA: if 2 tokens cost much more than one decode step, DMA is the
    next thing to try.
-12. [ ] **Q4_K_M on the DSP** (written 2026-10-30; the products of every format verified on the
+12. [x] **Q4_K_M on the DSP** (written 2026-10-30; the products of every format verified on the
    simulator, the model phone-only). `cargo test … --features hexagon --lib few_tokens` now
    also runs SmolLM2 Q4_K_M (few-token logits = decode logits). `dsp_ppl` on
    `smollm2-135m-q4_k_m.gguf` and `qwen2.5-0.5b-q4_k_m.gguf` (decode, and `… 1 few`): llama.cpp
@@ -111,7 +116,7 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    ~1.4× Q4_0's, so expect it slower), the stage profile, and with DMA mask 0 against 1f.
    `aether qwen…q4_k_m.gguf --dsp`: the text, and the prompt speed (8 tokens a call on HVX:
    no HMX prefill for these formats yet). The app's DSP mode on the Q4_K_M file.
-13. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
+13. [x] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
    `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -402,9 +407,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
           152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
           after a CPU prompt 63–66 → 96–101 (no gap left).
-  - [~] Prompt lookup on the GPU (`GpuModel::forward_few`, the decode shader for up to 8
-        tokens, `GpuSession::generate_lookup`; correct on the PC, slower there; phone pending,
-        step 12).
+  - [x] Prompt lookup on the GPU (`GpuModel::forward_few`, the decode shader for up to 8
+        tokens, `GpuSession::generate_lookup`): correct, but 2.4× slower on the Adreno (each
+        extra token costs about a whole dispatch); the C ABI ignores lookup for GPU sessions.
+        A shader that shares the weights across tokens on the Adreno would be needed.
   - [~] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
         f16 shaders on the phone (step 11): 771 at pp256, 812 at 128; the gap is ~1.7×. Left:
         the texel-buffer path for the activations.
@@ -486,7 +492,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         To check on the phone: all tests; `dsp_ppl` batch 128 on SmolLM2 and Qwen against
         llama.cpp's PPL (fp16 activations in the products may cost a little); the greedy text;
         decode PPL unchanged with the transposed keys; `dsp_gemm` again (prefetch); `--dsp`.
-  - [~] Prompt lookup on the DSP (2026-10-30, phone pending, waiting item 11):
+  - [x] Prompt lookup on the DSP (2026-10-30; phone: +6–28 %, text unchanged, results/phase-l5.md step 6):
         `model_few` (dsp/model.c) runs up to 8 tokens through every layer with every token's
         logits. Its products (`q4_0_rows_n_on`, dsp/q4_0_hvx.h) split each block of weights
         into nibbles once and use it for every token, adding the same block sums in the same
@@ -496,7 +502,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         quant_batch goldens) for 1, 3 and 8 tokens on the PC. `DspModel::few`,
         `DspSession::generate_lookup`, `aether --dsp --lookup K`, the C ABI's lookup for DSP
         sessions, `dsp_ppl … few`.
-  - [~] Q4_K_M on the DSP (2026-10-30, phone pending, waiting item 12): products for Q5_0,
+  - [x] Q4_K_M on the DSP (2026-10-30; phone: PPL 20.7241 / 16.7381, Qwen 92–98 tok/s): products for Q5_0,
         Q8_0, Q4_K and Q6_K (dsp/qx_hvx.h), each laid out like Q4_0 (32-row groups, a piece
         as whole vectors; `repack_qx`), checked on the simulator against llama.cpp's bytes
         (`sim_qx_rows_n_matches_reference`, 20 shapes, 1/3/8 tokens). A product is up to

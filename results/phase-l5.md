@@ -455,3 +455,78 @@ slow enough that its energy per token about equals the CPU's.
 
 The power monitor's numbers from the short runs (5–20 s) are not
 meaningful: the charge counter updates too rarely for them.
+
+## Step 6: prompt lookup and Q4_K_M on the DSP, and the app (2026-10-30, evening; `raw/lookup/`, `raw/dsp-q4km-*.txt`)
+
+Written the same afternoon while the phone was away, run in the evening
+(phone on battery, 37–62 °C).
+
+**A pass of a few tokens.** Speculative decoding checks a certain token
+and up to 7 drafts in one call (`model_few`): every layer for up to 8
+tokens, each group of weights read once and used for every token. Its
+sums are added in the decode step's order, so its logits equal the decode
+step's bit for bit (`few_tokens_get_the_decode_logits`, Q4_0 and Q4_K_M).
+First version fetched weights by `l2fetch`; with DMA into VTCM as decode
+does (Qwen2.5-0.5B Q4_0, DSP time):
+
+| tokens | 1 | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- |
+| one decode step | 6.4 ms | | | |
+| pass, `l2fetch` | 13.9 | 14.4 | 17.0 | 28.0 |
+| pass, DMA | 6.5 | 7.8 | 12.1 | 23.0 |
+
+**Lookup** (`aether --lookup 4`, Qwen2.5-0.5B-Instruct Q4_0, greedy, the
+phase-6 prompts; decode tok/s):
+
+| prompt | CPU plain → lookup | GPU plain → lookup | DSP plain → lookup |
+| --- | --- | --- | --- |
+| add comments to a function (copies it) | 151 → 224 | 69 → 28 | 119 → 149 |
+| why is the sky blue | 137 → 180 | 50 → 28 | 111 → 142 |
+| short story | 164 → 198 | 69 → 24 | 111 → 118 |
+
+On the DSP and the GPU the text with lookup equals the text without in
+all three. (The CPU's story differs after ~80 tokens, as in phase 6: its
+batched path rounds differently.) On the GPU lookup is a loss: on the
+Adreno each extra token of the few-token shader costs about a whole
+one-token dispatch (`../phase-l3/raw/vk-gemv-n-adreno.txt`), so the C ABI
+now ignores lookup for GPU sessions.
+
+**Q4_K_M** (llama.cpp's mix: q/k/o/gate/up Q5_0, v Q5_0 or Q8_0, down
+Q4_K or Q6_K, classifier Q8_0). Each format has its own HVX product
+(`dsp/qx_hvx.h`), checked on the SDK's simulator against llama.cpp's
+bytes before the phone. Perplexity (wikitext-2, 20 × 512):
+
+| | DSP decode | DSP few-token pass | our CPU | llama.cpp |
+| --- | --- | --- | --- | --- |
+| SmolLM2-135M Q4_K_M | 20.7241 | 20.7241 | 20.7201 | 20.7784 ± 0.85 |
+| Qwen2.5-0.5B Q4_K_M | 16.7381 | 16.7381 | 16.7088 | 16.7657 ± 0.69 |
+
+Decode: SmolLM2 256 tok/s (Q4_0 271), Qwen 92–98 tok/s (Q4_0 123; the
+weights are ~1.4× the bytes). The prompt runs in passes of 8 tokens on
+HVX (no HMX prefill for these formats): 272 tok/s against 755 for Q4_0
+on HMX, 241 tokens.
+
+**A bug the new test found.** The first phone run of Q4_K_M gave PPL
+47,530 through decode and 16.30 through the few-token pass. Only q/k/v
+broke, and only with DMA: in this file q/k/v is a Q5_0 run then a Q8_0
+run with no barrier between them, and each thread's VTCM slots were
+placed by the product's size, so a thread on the Q8_0 run copied over a
+neighbour's slots still in use. Each thread now has a fixed eighth of
+VTCM. Q4_0 numbers unchanged (27.7876 / 19.7560, 124 tok/s).
+
+**The app** (Qwen2.5-0.5B-Instruct Q4_0 and Qwen2.5-0.5B Q4_K_M, the
+app's sampling at temperature 0.7). All three engines answer. The app
+opens an unsigned DSP session from its own files directory: FastRPC
+falls back from the default device node (denied to apps) to the HAL and
+creates the user PD in 28 ms; the denials around it (kernel
+optimisations, folder watchers, properties) are not needed.
+
+| run | prompt | decode |
+| --- | --- | --- |
+| DSP, "Why is the sky blue?" | 35 tok, 462 tok/s | 183 tok, 112 tok/s |
+| DSP, repeat a sentence, lookup off / on | 50 tok, 568 tok/s | 14 tok, 116 / 146 tok/s |
+| CPU, Q4_K_M base, lookup on | 6 tok | 512 tok, 171 tok/s |
+| GPU, Q4_K_M base | 6 tok, 243 tok/s | 219 tok, 53 tok/s |
+
+The DSP on Q4_K_M ran in the app (session opened and closed with no
+errors) but its status line was not captured.
