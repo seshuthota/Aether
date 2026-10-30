@@ -386,20 +386,28 @@ pub struct GpuSession {
 #[cfg(feature = "vulkan")]
 impl GpuSession {
     pub fn open(path: &Path, max_seq: usize) -> io::Result<GpuSession> {
+        GpuSession::open_with(path, max_seq, crate::model::gpu::Options::default())
+    }
+
+    fn open_with(path: &Path, max_seq: usize, opt: crate::model::gpu::Options) -> io::Result<GpuSession> {
         let (config, weights, g) = gguf::load(path, max_seq)?;
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
-        let model = crate::model::gpu::GpuModel::new(&gpu, config, weights, false).map_err(io::Error::other)?;
+        let model = crate::model::gpu::GpuModel::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
         Ok(GpuSession { model, gpu, text, cpu: None })
     }
 
     /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
     /// prompt, whose KV cache is then copied over (~24 KB per token for
-    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is the
-    /// fastest (~630 tok/s against ~90 for the GPU token by token,
-    /// results/phase-l3.md). Costs a second copy of the weights in memory.
+    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is as fast
+    /// as the GPU's f16 one for chat-length prompts (64 tokens: 777 against
+    /// 691 tok/s for Qwen2.5-0.5B Q4_0; at 128, 669 against 813;
+    /// results/backends). Costs a second copy of the weights in memory.
+    /// The GPU's prompt pass never runs, so its f16 copy of the matrices
+    /// is not built (`f32_gemm`): ~280 MB and ~2.5 s of loading less for
+    /// Qwen2.5-0.5B Q4_0 on the phone.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
-        let mut s = GpuSession::open(path, max_seq)?;
+        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
         let (config, weights, _) = gguf::load(path, max_seq)?;
         let mut cpu = Transformer::new(config, weights);
         cpu.set_pool(ThreadPool::new(cores)?);
