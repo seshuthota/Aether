@@ -328,6 +328,11 @@ out:
     return vtcm;
 }
 
+// Each thread's share of VTCM for its DMA slots: fixed, not sized by the
+// product, as a thread may start a product of another format (the next
+// run of q/k/v) while the others still use their slots for the last.
+#define VTCM_SHARE (vtcm_bytes / MAX_THREADS)
+
 static qurt_mutex_t busy_lock = QURT_MUTEX_INIT;
 void dsp_busy(void) { qurt_mutex_lock(&busy_lock); }
 void dsp_free(void) { qurt_mutex_unlock(&busy_lock); }
@@ -339,10 +344,10 @@ void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *o
     const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
     uint32 g = g0, pair = 2 * nb * 640;
     char *v = fetch == FETCH_DMA ? vtcm : NULL;
-    if (v && 2 * pair * (t + 1) <= vtcm_bytes && g + 2 <= g1) {
-        // Two VTCM slots per thread: the DMA fills one with the next pair
-        // of groups while the vector unit works on the other.
-        char *slot[2] = {v + 2 * pair * t, v + 2 * pair * t + pair};
+    if (v && 2 * pair <= VTCM_SHARE && g + 2 <= g1) {
+        // Two VTCM slots in thread t's share: the DMA fills one with the
+        // next pair of groups while the vector unit works on the other.
+        char *slot[2] = {v + VTCM_SHARE * t, v + VTCM_SHARE * t + pair};
         uint32 n = (g1 - g) / 2;
         struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * nb * 5, pair), NULL};
         for (uint32 p = 0; p < n; p++, g += 2) {
@@ -373,8 +378,8 @@ void qx_rows(uint32 fmt, const HVX_Vector *wall, const char *xqb, uint32 nb, HVX
     const uint32 gv = piece_vectors(fmt) * nb, pair = 2 * gv * 128;
     uint32 g = g0;
     char *v = fetch == FETCH_DMA ? vtcm : NULL;
-    if (v && 2 * pair * (t + 1) <= vtcm_bytes && g + 2 <= g1) {
-        char *slot[2] = {v + 2 * pair * t, v + 2 * pair * t + pair};
+    if (v && 2 * pair <= VTCM_SHARE && g + 2 <= g1) {
+        char *slot[2] = {v + VTCM_SHARE * t, v + VTCM_SHARE * t + pair};
         uint32 n = (g1 - g) / 2;
         struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * gv, pair), NULL};
         for (uint32 p = 0; p < n; p++, g += 2) {
