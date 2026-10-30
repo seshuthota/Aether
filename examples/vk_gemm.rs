@@ -1,6 +1,7 @@
 //! The Q4_0 matrix-matrix product (prefill) on the GPU, f32
 //! (`shaders/q4_0_gemm.comp`) and f16 (`shaders/q4_0_gemm_h.comp`, its
-//! time without the activations' transpose) against the CPU's (`linear_batch_on`: int8
+//! time without the activations' transpose), the multi-format
+//! `qx_gemm.comp` on the same matrix in Q4_0 and Q5_0, against the CPU's (`linear_batch_on`: int8
 //! activations and `smmla`, six threads, repacked rows), at Qwen2.5-0.5B
 //! shapes. GFLOP/s = 2 · rows · cols · tokens / time.
 //!
@@ -11,7 +12,7 @@
 
 use aether::aligned::AlignedBuf;
 use aether::bench::bench;
-use aether::kernels::vulkan::{Gpu, MatQ4_0, MatQ4_0T};
+use aether::kernels::vulkan::{Gpu, MatQ, MatQ4_0, MatQ4_0T};
 use aether::pool::ThreadPool;
 use aether::weight::{Format, Weight};
 use std::hint::black_box;
@@ -23,7 +24,7 @@ fn main() {
     let pool = if cfg!(target_arch = "aarch64") { Some(ThreadPool::new(&[2, 3, 4, 5, 6, 7]).unwrap()) } else { None };
     println!("# {} | {t} tokens | CPU: cores 2-7", gpu.info.name);
     let f16 = gpu.to_f16t_kernel(false).and_then(|t| Ok((t, gpu.q4_0_gemm_h_kernel(false)?))).ok();
-    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,cpu_ms,cpu_gflops");
+    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,cpu_ms,cpu_gflops");
     for (d, n, what) in [(896, 896, "wq/wo"), (4864, 896, "gate/up"), (896, 4864, "down")] {
         let mut w = AlignedBuf::zeros(d * n);
         for (i, v) in w.iter_mut().enumerate() {
@@ -62,6 +63,16 @@ fn main() {
                 cols += &format!("{:.2},{:.0},", s * 1e3, flops / s / 1e9);
             }
             None => cols += ",,",
+        }
+
+        // The multi-format shader (`qx_gemm.comp`, for Q4_K_M files) on the
+        // same matrix in Q4_0 and in Q5_0 (most of a Q4_K_M file).
+        for f in [Format::Q4_0, Format::Q5_0] {
+            let mq = MatQ::new(&gpu, &Weight::from(w.clone_buf()).convert(n, f), d).unwrap();
+            let k = gpu.qx_gemm_kernel(mq.ty, false, false).unwrap();
+            gpu.qx_gemm(&k, &mq, &xb, t, &out, 0, 5).unwrap();
+            let s = gpu.qx_gemm(&k, &mq, &xb, t, &out, 0, 21).unwrap() / 21.0;
+            cols += &format!("{:.2},{:.0},", s * 1e3, flops / s / 1e9);
         }
 
         // The CPU's repacked kernels are the phone's (NEON); elsewhere the

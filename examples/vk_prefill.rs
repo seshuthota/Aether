@@ -3,7 +3,7 @@
 //! sizes, from position 0.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_prefill -- \
-//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf
+//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf   (or any Q4_K_M file: qx_gemm)
 
 use aether::kernels::vulkan::Gpu;
 use aether::model::gpu::{GpuModel, Options};

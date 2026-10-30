@@ -45,6 +45,6 @@ for m in "${MODELS[@]}"; do
     name="$(basename "$m" .gguf)-$b"
     wait_cool; adb shell input keyevent KEYCODE_WAKEUP
     { conditions; cargo run -q --release --target aarch64-linux-android --features "vulkan hexagon" --example bench_suite -- "$m" --backend $b "${extra[@]}" "${FLAGS[@]}" 2>&1 | grep -v pushed; } > "$OUT/$name.txt"
-    echo ">>> $name"; grep -E '^(pp|tg|ttft)|RSS|sustained|energy|token by token' "$OUT/$name.txt" || tail -3 "$OUT/$name.txt"
+    echo ">>> $name"; grep -E '^(pp|tg|ttft)|RSS|sustained|energy' "$OUT/$name.txt" || tail -3 "$OUT/$name.txt"
   done
 done

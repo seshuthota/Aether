@@ -10,7 +10,8 @@
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
 //! token by token through the decode step; f16 products where the GPU has
-//! fp16 arithmetic, with `batch-f32` the f32 shader.
+//! fp16 arithmetic and the model is all Q4_0, with `batch-f32` the f32
+//! shader (the shader used is printed).
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
@@ -93,5 +94,5 @@ fn main() {
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
-    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}{}", m.batch, if f32_gemm || !gpu.info.fp16 { ", f32 products" } else { ", f16 products" }) } else { String::new() });
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else { String::new() });
 }

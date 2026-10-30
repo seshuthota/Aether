@@ -800,6 +800,28 @@ impl Gpu {
 }
 
 impl Gpu {
+    /// `out[t][r] = W[r] · x[t]` for a [`MatQ`] of any format and `tokens`
+    /// activations, `reps` times; `kernel` from [`Gpu::qx_gemm_kernel`].
+    /// Each token's row of `out` is `ostride` floats long (0: the matrix's
+    /// rows). Returns the GPU time of all reps.
+    pub fn qx_gemm(&self, kernel: &Kernel, w: &MatQ, x: &Buffer, tokens: usize, out: &Buffer, ostride: usize, reps: u32) -> Result<f64> {
+        assert!(x.size >= tokens * w.nb * 32 * 4 && out.size >= tokens * ostride.max(w.rows) * 4);
+        assert_eq!(kernel.spec[2], w.ty, "a kernel for another format");
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32, tokens as u32, ostride as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let [gx, gy] = [w.rows.div_ceil(64) as u32, tokens.div_ceil(64) as u32];
+        assert!(gx <= 65535 && gy <= 65535, "too many rows or tokens for one dispatch");
+        self.run(kernel, &[&w.qs, &w.sc, x, out], &push, [gx, gy, 1], reps)
+    }
+
+    /// The prefill shader for matrices of ggml type `ty` (see [`MatQ`]),
+    /// with `accum` and `glu` as in [`Gpu::q4_0_gemm_kernel_fused`].
+    pub fn qx_gemm_kernel(&self, ty: u32, accum: bool, glu: bool) -> Result<Kernel> {
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        Kernel::with_spec(self, crate::spirv!("qx_gemm"), 4, 16, &[accum.into(), glu.into(), ty])
+    }
+}
+
+impl Gpu {
     /// `out[t][r] = W[r] · x[t]` for `tokens` activations (row-major in
     /// `x`, `out` is tokens × rows), `reps` times; `kernel` from
     /// [`Gpu::q4_0_gemm_kernel`]. Returns the GPU time of all reps.
@@ -1032,6 +1054,48 @@ mod tests {
             cases += 1;
         }
         assert!(cases >= 21, "only {cases} golden cases");
+    }
+
+    /// The multi-format prefill shader against X @ dequant(W)ᵀ in float64:
+    /// Q4_0, Q5_0, Q8_0 on llama.cpp's bytes (`quant_batch/`, odd row and
+    /// token counts, so tiles have tails), Q4_K and Q6_K on random blocks
+    /// dequantized by the gguf package (`quant_k/`).
+    #[test]
+    fn qx_gemm_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let mut out = gpu.buffer(want.len() * 4).unwrap();
+            out.as_mut_slice::<f32>().fill(f32::NAN);
+            let k = gpu.qx_gemm_kernel(m.ty, false, false).unwrap();
+            gpu.qx_gemm(&k, &m, &x, tokens, &out, 0, 1).unwrap();
+            let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}: rel {rel:.2e}", dir.display());
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 20, "only {cases} golden cases");
     }
 
     /// The Q4_0 prefill shader on llama.cpp's Q4_0 bytes against

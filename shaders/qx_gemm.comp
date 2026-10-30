@@ -1,0 +1,132 @@
+#version 450
+// out[t][row] = W[row] · X[t] for a matrix W in any format of a llama.cpp
+// Q4_K_M file (FMT, ggml's type id: Q4_0 2, Q5_0 6, Q8_0 8, Q4_K 12, Q6_K
+// 14), laid out as qx_gemv.comp describes, and `tokens` f32 activations X
+// (tokens × 32·nb): the prefill product for models that are not all Q4_0.
+//
+// The tiling is q4_0_gemm.comp's (read that first): a workgroup of 64
+// computes 64 rows × 64 tokens one 32-value piece at a time, each thread
+// dequantizing one row's piece into shared memory and copying one token's
+// activations, then 8 rows × 8 tokens of outer products per thread.
+//
+// `ostride` is the length of a token's row of `o` (0: rows): a matrix that
+// is one part of a stacked output (q, k and v in different formats) writes
+// its rows into a wider row, its first column at the binding's offset.
+// ACCUM and GLU as in q4_0_gemm.comp.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
+layout(std430, binding = 1) readonly buffer S { uint sc[]; };
+layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; uint tokens; uint ostride; };
+layout(constant_id = 0) const bool ACCUM = false;
+layout(constant_id = 1) const bool GLU = false;
+layout(constant_id = 2) const uint FMT = 2;
+
+shared vec4 ws[32][16];
+shared vec4 xs[32][16];
+
+uint word(uint k) { return qs[k / 4][k % 4]; }
+float half_d(uint i) { return unpackHalf2x16(sc[i / 2] >> (16 * (i & 1))).x; }
+uint ubyte(uint at, uint k) { return (sc[at + k / 4] >> (8 * (k % 4))) & 255u; }
+int sbyte(uint at, uint k) { return bitfieldExtract(int(sc[at + k / 4]), int(8 * (k % 4)), 8); }
+
+// Value j (0..31) of W's piece i, given the piece's words (see qx_gemv.comp).
+// n = rows · nb, where the extra bits start.
+void dequant(uint i, uint n, out float v[32]) {
+    if (FMT == 8) {
+        uvec4 a = qs[2 * i], b = qs[2 * i + 1];
+        float d = half_d(i);
+        for (uint j = 0; j < 16; j++) {
+            v[j] = float(bitfieldExtract(int(a[j / 4]), int(8 * (j % 4)), 8)) * d;
+            v[j + 16] = float(bitfieldExtract(int(b[j / 4]), int(8 * (j % 4)), 8)) * d;
+        }
+        return;
+    }
+    uvec4 w = qs[i];
+    float nib[32];
+    for (uint j = 0; j < 16; j++) {
+        uint byte = (w[j / 4] >> (8 * (j % 4))) & 255u;
+        nib[j] = float(byte & 15u);
+        nib[j + 16] = float(byte >> 4);
+    }
+    if (FMT == 2) {
+        float d = half_d(i);
+        for (uint j = 0; j < 32; j++) v[j] = (nib[j] - 8.0) * d;
+        return;
+    }
+    if (FMT == 6) {
+        uint h = word(4 * n + i);
+        float d = half_d(i);
+        for (uint j = 0; j < 32; j++) v[j] = (nib[j] + 16.0 * float((h >> j) & 1u) - 16.0) * d;
+        return;
+    }
+    uint at = 5 * (i / 8), k = i % 8;
+    vec2 dd = unpackHalf2x16(sc[at]);
+    if (FMT == 12) {
+        float d1 = dd.x * float(ubyte(at + 1, k)), m1 = dd.y * float(ubyte(at + 3, k));
+        for (uint j = 0; j < 32; j++) v[j] = d1 * nib[j] - m1;
+        return;
+    }
+    // FMT == 14: values 0–15 with scale 2k, 16–31 with 2k + 1.
+    uint h0 = word(4 * n + 2 * i), h1 = word(4 * n + 2 * i + 1);
+    float s0 = dd.x * float(sbyte(at + 1, 2 * k)), s1 = dd.x * float(sbyte(at + 1, 2 * k + 1));
+    for (uint j = 0; j < 16; j++) {
+        v[j] = s0 * (nib[j] + 16.0 * float((h0 >> (2 * j)) & 3u) - 32.0);
+        v[j + 16] = s1 * (nib[j + 16] + 16.0 * float((h1 >> (2 * j)) & 3u) - 32.0);
+    }
+}
+
+void main() {
+    uint id = gl_LocalInvocationID.x;
+    uint row0 = gl_WorkGroupID.x * 64, tok0 = gl_WorkGroupID.y * 64;
+    uint tr = id % 8, tt = id / 8;
+    uint stride = ostride == 0 ? rows : ostride;
+    vec4 acc[8][2];
+    for (uint t = 0; t < 8; t++) acc[t] = vec4[2](vec4(0.0), vec4(0.0));
+    uint row = row0 + id, tok = tok0 + id;
+    for (uint b = 0; b < nb; b++) {
+        if (row < rows) {
+            float v[32];
+            dequant(row * nb + b, rows * nb, v);
+            for (uint j = 0; j < 32; j++) ws[j][id / 4][id % 4] = v[j];
+        } else {
+            for (uint j = 0; j < 32; j++) ws[j][id / 4][id % 4] = 0.0;
+        }
+        for (uint q = 0; q < 8; q++) {
+            vec4 v = vec4(0.0);
+            if (tok < tokens) {
+                if (GLU) {
+                    vec4 g = x[(2 * tok * nb + b) * 8 + q];
+                    v = g / (1.0 + exp(-g)) * x[((2 * tok + 1) * nb + b) * 8 + q];
+                } else {
+                    v = x[(tok * nb + b) * 8 + q];
+                }
+            }
+            for (uint c = 0; c < 4; c++) xs[4 * q + c][id / 4][id % 4] = v[c];
+        }
+        barrier();
+        for (uint k = 0; k < 32; k++) {
+            vec4 w0 = ws[k][2 * tr], w1 = ws[k][2 * tr + 1];
+            vec4 x0 = xs[k][2 * tt], x1 = xs[k][2 * tt + 1];
+            for (uint t = 0; t < 4; t++) {
+                acc[t][0] += w0 * x0[t];
+                acc[t][1] += w1 * x0[t];
+                acc[t + 4][0] += w0 * x1[t];
+                acc[t + 4][1] += w1 * x1[t];
+            }
+        }
+        barrier();
+    }
+    for (uint t = 0; t < 8; t++) {
+        uint tk = tok0 + 8 * tt + t;
+        if (tk >= tokens) break;
+        for (uint r = 0; r < 8; r++) {
+            uint rw = row0 + 8 * tr + r;
+            if (rw < rows) {
+                if (ACCUM) o[tk * stride + rw] += acc[t][r / 4][r % 4];
+                else o[tk * stride + rw] = acc[t][r / 4][r % 4];
+            }
+        }
+    }
+}

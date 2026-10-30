@@ -18,8 +18,7 @@
 //! `--features hexagon`, both a GGUF), --dsp-threads N (default 6).
 //!
 //! On the GPU and the DSP a prompt runs in passes of the model's batch
-//! size; a GPU model that is not all Q4_0 (a Q4_K_M file) has no batched
-//! pass and runs its prompt token by token (said in the header). With
+//! size. With
 //! --sustain, energy per token is battery power × time / tokens for any
 //! backend (the phone unplugged, adb over Wi-Fi).
 //!
@@ -112,15 +111,6 @@ impl Engine {
         }
     }
 
-    /// Whether a prompt goes through a batched pass (else token by token).
-    fn batched(&self) -> bool {
-        match self {
-            #[cfg(feature = "vulkan")]
-            Engine::Gpu(m, _) => m.batched(),
-            _ => true,
-        }
-    }
-
     /// Runs `tokens` as a prompt from position `pos` and returns the most
     /// likely next token.
     fn prefill(&mut self, tokens: &[usize], pos: usize) -> usize {
@@ -128,12 +118,6 @@ impl Engine {
             Engine::Cpu(m) => aether::kernels::argmax(m.forward_batch(tokens, pos)),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(m, gpu) => {
-                if !m.batched() {
-                    for (i, &t) in tokens.iter().enumerate() {
-                        m.forward(gpu, t, pos + i).unwrap();
-                    }
-                    return m.greedy();
-                }
                 for (i, c) in tokens.chunks(m.batch).enumerate() {
                     m.forward_batch(gpu, c, pos + i * m.batch).unwrap();
                 }
@@ -239,9 +223,6 @@ fn main() {
     });
 
     println!("# bench_suite {} | {quant} | weights {weight_mb:.1} MB | backend {backend} | cores {:?} ({threads} threads) | load {load_ms:.0} ms", path.display(), cores.as_deref().unwrap_or(&[]));
-    if !model.batched() {
-        println!("# prompts token by token: this backend has no batched pass for {quant}");
-    }
     println!("test,tok_per_s,ms");
     let mut prefill_json = Vec::new();
     for &p in &pp {

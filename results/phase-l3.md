@@ -567,3 +567,40 @@ ratio of 1.46 for 1.41× the bytes. The Adreno numbers wait for the phone.
 
 `bench_suite --backend cpu|gpu|dsp` and `scripts/backends-bench.sh` now
 run the same measurements on every engine.
+
+**Prompt pass for Q4_K_M** (same day): `shaders/qx_gemm.comp` is
+`q4_0_gemm.comp`'s tiling (64 rows × 64 tokens, f32) with each piece
+dequantized from `MatQ`'s layout, plus an output row stride, so a q/k/v
+part writes into the stacked row. A Q4_0 model keeps `q4_0_gemm` /
+`q4_0_gemm_h`; any other model now runs `forward_batch` with `qx_gemm`
+for every part.
+
+Test `qx_gemm_matches_reference`: 11 batch goldens (Q4_0, Q5_0, Q8_0) and
+9 K-quant goldens, bound 1e-6 · √cols.
+
+Perplexity through the batched pass (`vk_ppl … batch`, PC):
+
+| Model | Shader | PPL |
+|---|---|---|
+| SmolLM2 Q4_K_M | `qx_gemm` | 20.6876 (decode step: 20.6876) |
+| Qwen2.5 Q4_K_M | `qx_gemm` | 16.7167 (decode step: 16.7167) |
+| SmolLM2 Q4_0 | `q4_0_gemm_h` | 27.6961 (unchanged) |
+| Qwen2.5 Q4_0 | `q4_0_gemm_h` | 19.7256 (unchanged) |
+
+Speed on the Intel GPU (`vk_gemm 128`, GFLOP/s):
+
+| Shape | `q4_0_gemm` f32 | `q4_0_gemm_h` f16 | `qx_gemm` Q4_0 | `qx_gemm` Q5_0 |
+|---|---|---|---|---|
+| wq/wo | 14 | 46 | 8 | 13 |
+| gate/up | 16 | 94 | 9 | 15 |
+| down | 14 | 47 | 8 | 14 |
+
+`qx_gemm` on Q5_0, most of a Q4_K_M file, runs at the f32 Q4_0 shader's
+speed. On this GPU the f32 tiles are slow: Qwen Q4_K_M's prompt runs at
+19 tok/s at 128 tokens (`vk_prefill`), below its decode (30 tok/s token by
+token). On the Adreno the f32 Q4_0 shader beat decode (251–267 against
+~100 tok/s, step 7), so whether `qx_gemm` helps is a phone question.
+
+Next, if it does not help: an f16 multi-format shader like
+`q4_0_gemm_h`. (`qx_gemm`'s Q4_0 case is slower than its Q5_0 case; a
+mixed file has no Q4_0 matrices, and Q4_0 models do not use it.)
