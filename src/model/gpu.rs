@@ -166,6 +166,16 @@ fn push(v: &[u32]) -> Vec<u8> {
 /// as many tokens as fit (at most 128).
 const PARTS_BUDGET: usize = 32 << 20;
 
+/// [`GpuModel::forward_few`] takes at most this many tokens. Its products
+/// run the decode shader for several tokens (`qx_gemv_n_kernel`): each
+/// weight is read once, against a whole 64-token tile of the prefill
+/// shaders. Where decode is limited by reading the weights, a pass of a
+/// few tokens should cost little more than one decode step. On the PC's
+/// Intel GPU, where decode is limited by arithmetic (~11 GB/s), it costs
+/// 4-20 steps (`vk_gemv_n`), so `forward_batch` does not use it; the
+/// phone decides.
+pub const FEW: usize = 8;
+
 struct Layer {
     /// wq, wk and wv stacked (dim + 2·kv_dim rows), and w_gate over w_up
     /// (2·hidden_dim rows): one dispatch each instead of three and two.
@@ -201,6 +211,27 @@ struct Bl {
     /// q/k/v, wo, gate/up, down: `q4_0_gemm` for a Q4_0 model, else
     /// `qx_gemm` per part.
     mm: [Vec<Bound>; 4],
+    /// The same for 2 to [`FEW`] tokens, per part.
+    few: [Vec<Bound>; 4],
+}
+
+/// Which logits [`GpuModel::pass`] writes; [`Logits`] with the binding.
+#[derive(Clone, Copy)]
+enum Want {
+    Last,
+    All,
+    Few,
+}
+
+/// Which logits a pass writes.
+#[derive(Clone, Copy)]
+enum Logits<'a> {
+    /// The last token's, into `logits`, and their argmax.
+    Last,
+    /// Every token's, by this prefill product (`Options::all_logits`).
+    All(&'a Bound),
+    /// Every token's, by the few-token product into `logits_few`.
+    Few,
 }
 
 /// What [`GpuModel::with`] builds.
@@ -311,6 +342,10 @@ pub struct GpuModel {
     logits: Buffer,
     /// `batch × vocab` logits with [`Options::all_logits`].
     logits_all: Option<Buffer>,
+    /// `few × vocab` logits for [`GpuModel::forward_few`].
+    logits_few: Buffer,
+    /// Tokens a few-token pass takes: [`FEW`], or the batch if smaller.
+    pub few: usize,
     kc: Buffer,
     vc: Buffer,
     params: Buffer,
@@ -332,6 +367,7 @@ pub struct GpuModel {
     fcls: Bound,
     fcls_b: Bound,
     fcls_mm: Option<Bound>,
+    fcls_few: Bound,
     /// The two passes of the argmax of `logits` into `best`.
     amax: Bound,
     best: Buffer,
@@ -419,6 +455,8 @@ impl GpuModel {
         };
         let logits = cached(c.vocab_size)?;
         let logits_all = if opt.all_logits { Some(cached(batch * c.vocab_size)?) } else { None };
+        let few = FEW.min(batch);
+        let logits_few = cached(few * c.vocab_size)?;
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
         let parts = zeros(batch * parts_per_token)?;
@@ -476,6 +514,22 @@ impl GpuModel {
             gemm_ks[i].1.bind_at(gpu, &[(q, 0), (d, 0), (x_in, 0), out])
         };
 
+        // The few-token products, by format and fusion (the kernel takes up
+        // to `few` tokens; at least 2 for the shader, unused if `few` < 2).
+        let mut few_ks: Vec<((u32, bool, bool), Kernel)> = Vec::new();
+        let mut few_bind = |m: &Mat, accum: bool, glu: bool, x_in: &Buffer, out: (&Buffer, usize)| -> Result<Bound> {
+            let key = (m.ty(), accum, glu);
+            let i = match few_ks.iter().position(|(k, _)| *k == key) {
+                Some(i) => i,
+                None => {
+                    few_ks.push((key, gpu.qx_gemv_n_kernel(m.ty(), accum, glu, few.max(2) as u32)?));
+                    few_ks.len() - 1
+                }
+            };
+            let [q, d] = m.bufs();
+            few_ks[i].1.bind_at(gpu, &[(q, 0), (d, 0), (x_in, 0), out, (x_in, 0)])
+        };
+
         // Bind everything first (binding can fail; recording cannot).
         let mut bound = Vec::new();
         for ly in &layers {
@@ -495,6 +549,12 @@ impl GpuModel {
                     vec![gemm_bind(&ly.w_down, true, true, &hb12, (&x, 0))?],
                 ]
             };
+            let few = [
+                ly.wqkv.iter().map(|(m, at)| few_bind(m, false, false, &xb, (&qkv, *at))).collect::<Result<_>>()?,
+                vec![few_bind(&ly.wo, true, false, &xb2, (&x, 0))?],
+                ly.w_gate_up.iter().map(|(m, at)| few_bind(m, false, false, &xb, (&hb12, *at))).collect::<Result<_>>()?,
+                vec![few_bind(&ly.w_down, true, true, &hb12, (&x, 0))?],
+            ];
             bound.push(Bl {
                 norm1: rms.bind(gpu, &[&x, &ly.attn_norm, &xb])?,
                 qkv: ly.wqkv.iter().map(|(m, at)| gemv_bind(m, false, Some(&ly.attn_norm), &x, (&qkv, *at))).collect::<Result<_>>()?,
@@ -507,6 +567,7 @@ impl GpuModel {
                 swiglu: swiglu.bind_at(gpu, &[(&hb12, 0), (&hb12, 4 * hid)])?,
                 down: gemv_bind(&ly.w_down, true, None, &hb12, (&x, 0))?,
                 mm,
+                few,
             });
         }
         let fnorm = rms.bind(gpu, &[&x, &final_norm, &xb])?;
@@ -517,6 +578,7 @@ impl GpuModel {
             (Some(l), _) => Some(gemm_bind(&cls, false, false, &xb, (l, 0))?),
             (None, _) => None,
         };
+        let fcls_few = few_bind(&cls, false, false, &xb, (&logits_few, 0))?;
 
         let f16 = if gpu.info.fp16 && !opt.f32_gemm {
             let (tk, tk_glu) = (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?);
@@ -554,6 +616,7 @@ impl GpuModel {
         kernels.append(&mut f16_kernels);
         kernels.extend(gemv_ks.into_iter().map(|(_, k)| k));
         kernels.extend(gemm_ks.into_iter().map(|(_, k)| k));
+        kernels.extend(few_ks.into_iter().map(|(_, k)| k));
         let mut m = GpuModel {
             config,
             batch,
@@ -561,6 +624,8 @@ impl GpuModel {
             x,
             logits,
             logits_all,
+            logits_few,
+            few,
             kc,
             vc,
             params,
@@ -575,6 +640,7 @@ impl GpuModel {
             fcls,
             fcls_b,
             fcls_mm,
+            fcls_few,
             amax,
             best,
             _keep: keep,
@@ -585,7 +651,7 @@ impl GpuModel {
             _kernels: kernels,
         };
         let mut stages = Vec::new();
-        let rec_all = |r: &mut Recorder, stages: &mut Vec<&'static str>| (0..opt.repeat.max(1)).for_each(|_| m.record_pass(r, 1, 0, None, stages));
+        let rec_all = |r: &mut Recorder, stages: &mut Vec<&'static str>| (0..opt.repeat.max(1)).for_each(|_| m.record_pass(r, 1, 0, Logits::Last, stages));
         let step = if opt.profile { gpu.record_timed(|r| rec_all(r, &mut stages))? } else { gpu.record(|r| rec_all(r, &mut stages))? };
         if !opt.profile {
             stages.clear();
@@ -597,11 +663,11 @@ impl GpuModel {
 
     /// Records one forward pass over `n` tokens, the first at position
     /// `pos0` (with `n` = 1: the decode step; the position comes from
-    /// `params` either way, `pos0` only sizes the attention). The last
-    /// token's logits go to `logits`, or with `all` every token's to that
-    /// buffer's binding. Each stage ends with a barrier and a timestamp
-    /// (which only a timed recording writes).
-    fn record_pass(&self, r: &mut Recorder, n: usize, pos0: usize, all: Option<&Bound>, stages: &mut Vec<&'static str>) {
+    /// `params` either way, `pos0` only sizes the attention), writing the
+    /// logits `out` says ([`Logits::Few`] runs the few-token products).
+    /// Each stage ends with a barrier and a timestamp (which only a timed
+    /// recording writes).
+    fn record_pass(&self, r: &mut Recorder, n: usize, pos0: usize, out: Logits, stages: &mut Vec<&'static str>) {
         let c = &self.config;
         let (dim, kv_dim, hs) = (c.dim, c.kv_dim(), c.head_size());
         let eps = c.norm_eps.to_bits();
@@ -626,12 +692,18 @@ impl GpuModel {
             let p = if pure { push(&[m.rows() as u32, m.nb() as u32, nt]) } else { push(&[m.rows() as u32, m.nb() as u32, nt, stride as u32]) };
             r.dispatch(k, &p, [m.rows().div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
         };
+        // With Logits::Few: the decode shader for several tokens, 4 rows per
+        // 32 lanes (`stride` as for `qx_gemm`; 0 is the matrix's rows).
+        let few = n > 1 && matches!(out, Logits::Few);
+        let gemv_n = |r: &mut Recorder, k: &Bound, m: &Mat, stride: usize| r.dispatch(k, &push(&[m.rows() as u32, m.nb() as u32, 0, nt, stride as u32]), groups_for(m.rows(), 16));
         // With f16 products, product i of layer l (q/k/v, wo, gate/up,
         // down) transposes its input (`t`) and runs the f16 shaders.
-        let f16 = self.f16.as_ref().filter(|_| n > 1);
-        let product = |r: &mut Recorder, gemv_b: &[Bound], gemm_b: &[Bound], ms: &[&Mat], stride: usize, h: Option<(&Bound, &[HPart])>| {
+        let f16 = self.f16.as_ref().filter(|_| n > 1 && !few);
+        let product = |r: &mut Recorder, gemv_b: &[Bound], gemm_b: &[Bound], few_b: &[Bound], ms: &[&Mat], stride: usize, h: Option<(&Bound, &[HPart])>| {
             if n == 1 {
                 gemv_b.iter().zip(ms).for_each(|(k, m)| gemv(r, k, m));
+            } else if few {
+                few_b.iter().zip(ms).for_each(|(k, m)| gemv_n(r, k, m, stride));
             } else if let Some((t, ps)) = h {
                 F16::record(r, t, ps, n);
             } else {
@@ -649,7 +721,7 @@ impl GpuModel {
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
             }
-            product(r, &b.qkv, &b.mm[0], &mats(&ly.wqkv), qkv_dim as usize, h(l, 0, |f| &f.t_xb));
+            product(r, &b.qkv, &b.mm[0], &b.few[0], &mats(&ly.wqkv), qkv_dim as usize, h(l, 0, |f| &f.t_xb));
             end(r, "q/k/v");
             r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
             end(r, "bias + RoPE + cache");
@@ -657,25 +729,25 @@ impl GpuModel {
             end(r, "attention");
             r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
             end(r, "attention merge");
-            product(r, std::slice::from_ref(&b.o), &b.mm[1], &[&ly.wo], 0, h(l, 1, |f| &f.t_xb2));
+            product(r, std::slice::from_ref(&b.o), &b.mm[1], &b.few[1], &[&ly.wo], 0, h(l, 1, |f| &f.t_xb2));
             end(r, "wo + add");
             r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
             end(r, "rmsnorm");
-            product(r, &b.gate_up, &b.mm[2], &mats(&ly.w_gate_up), 2 * c.hidden_dim, h(l, 2, |f| &f.t_xb));
+            product(r, &b.gate_up, &b.mm[2], &b.few[2], &mats(&ly.w_gate_up), 2 * c.hidden_dim, h(l, 2, |f| &f.t_xb));
             end(r, "gate/up");
             // The GEMM applies the SwiGLU as it loads gate and up.
             if n == 1 {
                 r.dispatch(&b.swiglu, &push(&[c.hidden_dim as u32]), [c.hidden_dim.div_ceil(256) as u32, 1, 1]);
                 end(r, "swiglu");
-                product(r, std::slice::from_ref(&b.down), &b.mm[3], &[&ly.w_down], 0, None);
+                product(r, std::slice::from_ref(&b.down), &b.mm[3], &b.few[3], &[&ly.w_down], 0, None);
                 end(r, "down + add");
             } else {
-                product(r, std::slice::from_ref(&b.down), &b.mm[3], &[&ly.w_down], 0, h(l, 3, |f| &f.t_glu));
+                product(r, std::slice::from_ref(&b.down), &b.mm[3], &b.few[3], &[&ly.w_down], 0, h(l, 3, |f| &f.t_glu));
                 end(r, "swiglu + down + add");
             }
         }
-        match all {
-            Some(cls_mm) => {
+        match out {
+            Logits::All(cls_mm) => {
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
                 match f16.and_then(|f| f.cls_mm.as_ref().map(|mm| (f, mm))) {
@@ -683,8 +755,13 @@ impl GpuModel {
                     None => gemm(r, cls_mm, &self.cls, 0),
                 }
             }
-            None if n == 1 => gemv(r, &self.fcls, &self.cls),
-            None => {
+            Logits::Few => {
+                r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
+                end(r, "rmsnorm");
+                gemv_n(r, &self.fcls_few, &self.cls, 0);
+            }
+            Logits::Last if n == 1 => gemv(r, &self.fcls, &self.cls),
+            Logits::Last => {
                 // Only the last token: its row of x, normalized into row 0.
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, nt - 1]), [1, 1, 1]);
                 end(r, "rmsnorm");
@@ -692,7 +769,7 @@ impl GpuModel {
             }
         }
         end(r, "classifier");
-        if all.is_none() {
+        if let Logits::Last = out {
             let v = c.vocab_size as u32;
             r.dispatch(&self.amax, &push(&[v, 0]), [AMAX_GROUPS as u32, 1, 1]);
             r.barrier();
@@ -750,6 +827,31 @@ impl GpuModel {
     /// (`tokens.len() × vocab`). The pass is recorded for this call: its
     /// size depends on the number of tokens and the position.
     pub fn forward_batch(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        self.pass(gpu, tokens, pos, if self.logits_all.is_some() { Want::All } else { Want::Last })?;
+        let v = self.config.vocab_size;
+        Ok(match &self.logits_all {
+            Some(l) => &l.as_slice::<f32>()[..tokens.len() * v],
+            None => &self.logits.as_slice::<f32>()[..v],
+        })
+    }
+
+    /// Runs 1 to [`GpuModel::few`] tokens at positions `pos ..` in one
+    /// pass and returns every token's logits (`tokens.len() × vocab`):
+    /// speculative decoding's check of its draft tokens, at about the cost
+    /// of one decode step.
+    pub fn forward_few(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        let n = tokens.len();
+        assert!(n <= self.few, "{n} tokens, at most {}", self.few);
+        if n == 1 {
+            return self.forward(gpu, tokens[0], pos);
+        }
+        self.pass(gpu, tokens, pos, Want::Few)?;
+        Ok(&self.logits_few.as_slice::<f32>()[..n * self.config.vocab_size])
+    }
+
+    /// Records and runs one pass over `tokens`, writing the logits `want`
+    /// says.
+    fn pass(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize, want: Want) -> Result<()> {
         let n = tokens.len();
         assert!(n > 0 && n <= self.batch && pos + n <= self.config.seq_len, "{n} tokens at {pos}: batch {}, seq_len {}", self.batch, self.config.seq_len);
         for (i, &t) in tokens.iter().enumerate() {
@@ -757,17 +859,18 @@ impl GpuModel {
         }
         self.params.as_mut_slice::<u32>()[0] = pos as u32;
         let mut stages = Vec::new();
-        let rec = |r: &mut Recorder| self.record_pass(r, n, pos, self.fcls_mm.as_ref(), &mut stages);
+        let logits = match (want, &self.fcls_mm) {
+            (Want::All, Some(b)) => Logits::All(b),
+            (Want::Few, _) => Logits::Few,
+            _ => Logits::Last,
+        };
+        let rec = |r: &mut Recorder| self.record_pass(r, n, pos, logits, &mut stages);
         let cmds = if self.profile { gpu.record_timed(rec)? } else { gpu.record(rec)? };
         gpu.submit(&cmds, self.spin)?;
         if self.profile {
             self.batch_profile = per_stage(&stages, &gpu.stamps(&cmds)?);
         }
-        let v = self.config.vocab_size;
-        Ok(match &self.logits_all {
-            Some(l) => &l.as_slice::<f32>()[..n * v],
-            None => &self.logits.as_slice::<f32>()[..v],
-        })
+        Ok(())
     }
 
     /// Copies positions `0..n` of a CPU [`super::Transformer`]'s KV cache

@@ -27,7 +27,7 @@ pub const AETHER_ERR_LOAD: c_int = 2;
 pub const AETHER_ERR_PANIC: c_int = 3;
 
 /// What C holds: a loaded model on the CPU or the GPU, and the prompt
-/// lookup settings (`aether_set_lookup`; draft length 0 = off; CPU only).
+/// lookup settings (`aether_set_lookup`; draft length 0 = off; CPU and GPU).
 pub struct AetherSession {
     engine: Engine,
     lookup_k: usize,
@@ -219,6 +219,8 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) if *lookup_k > 0 => s.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
             Engine::Cpu(s) => s.generate(&text, &mut sampler, steps, false, emit),
             #[cfg(feature = "vulkan")]
+            Engine::Gpu(g) if *lookup_k > 0 => g.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
+            #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => g.generate(&text, &mut sampler, steps, emit),
             #[cfg(feature = "hexagon")]
             Engine::Dsp(d) => d.generate(&text, &mut sampler, steps, emit),
@@ -345,8 +347,9 @@ pub unsafe extern "C" fn aether_open_dsp(path: *const c_char, dir: *const c_char
 /// earlier place where the last `ngram` tokens occurred, and checked in one
 /// batched pass (`Session::generate_lookup`). Faster when the reply repeats
 /// the prompt (code edits, quoting); the output keeps the sampler's
-/// distribution. `k` = 0 turns it off; `ngram` must be at least 1. Only the
-/// CPU path uses it (a GPU session accepts and ignores it).
+/// distribution. `k` = 0 turns it off; `ngram` must be at least 1. CPU
+/// and GPU sessions use it (the GPU checks up to 7 drafts in one few-token
+/// pass, `GpuSession::generate_lookup`); a DSP session ignores it.
 ///
 /// # Safety
 /// `session` must come from `aether_open` and not be closed.

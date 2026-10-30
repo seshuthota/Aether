@@ -5,13 +5,17 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f32]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f32|few]
 //!
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
 //! token by token through the decode step; f16 products where the GPU has
 //! fp16 arithmetic, with `batch-f32` the f32 shaders (the shader used is
 //! printed).
+//!
+//! `few`: score each chunk `GpuModel::few` tokens at a time through
+//! `GpuModel::forward_few` (the decode shader for several tokens, as
+//! speculative decoding checks its drafts).
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
@@ -27,7 +31,7 @@ fn main() {
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let mode = args.next().unwrap_or_default();
-    let (batched, f32_gemm) = (mode.starts_with("batch"), mode == "batch-f32");
+    let (batched, f32_gemm, few) = (mode.starts_with("batch"), mode == "batch-f32", mode == "few");
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
@@ -74,11 +78,11 @@ fn main() {
                 s.count += 1;
             }
         };
-        if batched {
+        if batched || few {
             let mut p = 0;
             while p < ctx - 1 {
-                let n = m.batch.min(ctx - 1 - p);
-                let all = m.forward_batch(&gpu, &chunk[p..p + n], p).unwrap().to_vec();
+                let n = if few { m.few } else { m.batch }.min(ctx - 1 - p);
+                let all = if few { m.forward_few(&gpu, &chunk[p..p + n], p) } else { m.forward_batch(&gpu, &chunk[p..p + n], p) }.unwrap().to_vec();
                 for i in 0..n {
                     score(p + i, &all[i * vocab..(i + 1) * vocab]);
                 }
@@ -94,5 +98,5 @@ fn main() {
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
-    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else { String::new() });
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else if few { format!(", {} tokens a pass, qx_gemv_n", m.few) } else { String::new() });
 }

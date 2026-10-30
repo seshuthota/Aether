@@ -30,9 +30,10 @@
 //!             it too): up to --draft-k K (default 4) greedy draft tokens,
 //!             checked like --lookup's
 //!   --gpu     decode on the GPU through Vulkan (builds with --features
-//!             vulkan; a --pure Q4_0 GGUF). With -c, the prompt runs on the
-//!             CPU (batched) and its KV cache goes to the GPU; without, on
-//!             the GPU (batched as well)
+//!             vulkan; a Q4_0 or Q4_K_M GGUF). With -c, the prompt runs on
+//!             the CPU (batched) and its KV cache goes to the GPU; without,
+//!             on the GPU (batched as well). --lookup K works here too (up
+//!             to 7 drafts, checked in one few-token pass)
 //!   --times   with --gpu: print the time of every decode token
 //!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
 //!             --pure Q4_0 GGUF): the prompt in batches on HMX, then one
@@ -135,7 +136,7 @@ fn main() {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times);
+        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -213,7 +214,7 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool) {
+fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram): (usize, usize)) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
@@ -229,12 +230,19 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     // --times: the time between emitted tokens (one GPU step plus
     // sampling), to see whether decode starts slow and speeds up.
     let mut stamps = times.then(Vec::new);
-    let st = s.generate(prompt, &mut sampler, steps, |piece| {
+    let emit = |piece: &[u8]| {
         if let Some(v) = &mut stamps {
             v.push(std::time::Instant::now());
         }
         out.write_all(piece).and_then(|_| out.flush()).is_ok()
-    });
+    };
+    let st = if lookup > 0 {
+        let (st, look) = s.generate_lookup(prompt, &mut sampler, steps, lookup, ngram, emit);
+        eprintln!("\nspeculative: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        st
+    } else {
+        s.generate(prompt, &mut sampler, steps, emit)
+    };
     writeln!(out).unwrap();
     if let Some(v) = stamps {
         let ms: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
@@ -271,7 +279,7 @@ fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize) {
 }
 
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool) {
+fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize)) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

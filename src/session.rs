@@ -425,17 +425,7 @@ impl GpuSession {
         let np = tokens.len().min(steps);
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
         let t0 = Instant::now();
-        let mut logits = Vec::new();
-        if let Some(cpu) = &mut self.cpu {
-            logits = cpu.forward_batch(&tokens[..np], 0).to_vec();
-            let (k, v) = cpu.kv_cache();
-            self.model.load_kv(k, v, cpu.config.seq_len, np);
-        } else {
-            let b = self.model.batch;
-            for (i, part) in tokens[..np].chunks(b).enumerate() {
-                logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
-            }
-        }
+        let mut logits = self.prompt(&tokens[..np]);
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
         // Greedy decoding takes the GPU's argmax instead of reading the
@@ -458,6 +448,86 @@ impl GpuSession {
         stats.decode = t1.elapsed();
         stats.decode_tokens = pos - np;
         stats
+    }
+
+    /// Runs the prompt from position 0 on the CPU model if there is one
+    /// (batched, then its KV cache is copied to the GPU), otherwise
+    /// batched on the GPU; returns the last token's logits.
+    fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
+        if let Some(cpu) = &mut self.cpu {
+            let logits = cpu.forward_batch(tokens, 0).to_vec();
+            let (k, v) = cpu.kv_cache();
+            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len());
+            return logits;
+        }
+        let b = self.model.batch;
+        let mut logits = Vec::new();
+        for (i, part) in tokens.chunks(b).enumerate() {
+            logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
+        }
+        logits
+    }
+
+    /// Prompt lookup decoding as [`Session::generate_lookup`]: up to `k`
+    /// draft tokens (at most [`crate::model::gpu::GpuModel::few`] − 1)
+    /// copied from the last earlier match of the last `ngram` tokens,
+    /// checked in one pass of the decode shader for several tokens
+    /// ([`crate::model::gpu::GpuModel::forward_few`]). Greedy text is the
+    /// GPU's greedy text under those products' numbers; sampled text keeps
+    /// the sampler's distribution.
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let steps = steps.min(self.model.config.seq_len);
+        let k = k.min(self.model.few.saturating_sub(1));
+        let mut hist = self.text.encode(prompt);
+        let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let np = hist.len().min(steps);
+        let t0 = Instant::now();
+        let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
+        stats.prefill = t0.elapsed();
+        stats.prefill_tokens = np;
+        let t1 = Instant::now();
+        let vocab = self.model.config.vocab_size;
+        // `pos`: positions in the cache; `next` is certain but not yet in it.
+        let mut pos = np;
+        if np == hist.len() {
+            'tokens: loop {
+                if self.text.is_stop(next) || !emit(&self.text.piece(hist[pos - 1], next)) || pos >= steps {
+                    break;
+                }
+                hist.push(next);
+                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                if draft.is_empty() {
+                    next = sampler.sample(&mut self.model.forward(&self.gpu, next, pos).expect("GPU step").to_vec());
+                    pos += 1;
+                    continue;
+                }
+                let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
+                let mut rows = self.model.forward_few(&self.gpu, &input, pos).expect("GPU check").to_vec();
+                look.passes += 1;
+                look.drafted += draft.len();
+                pos += 1;
+                // Row r follows input[r]; draft[r] = input[r + 1].
+                let mut rows = rows.chunks_exact_mut(vocab);
+                for &d in &draft {
+                    let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
+                    if !accepted {
+                        next = t;
+                        continue 'tokens;
+                    }
+                    if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
+                        break 'tokens;
+                    }
+                    look.accepted += 1;
+                    hist.push(d);
+                    pos += 1;
+                }
+                // Every draft accepted: the last row gives the next token.
+                next = sampler.sample(rows.next().unwrap());
+            }
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        (stats, look)
     }
 }
 
@@ -613,5 +683,33 @@ mod tests {
             next = argmax(s.model.forward(&s.gpu, next, pos).unwrap());
             assert_eq!(s.model.greedy(), next, "at {pos}");
         }
+    }
+
+    /// Prompt lookup on the GPU leaves greedy text as it is: the same text
+    /// as plain GPU decoding of the same file, with drafts proposed (the
+    /// reply repeats itself) and some accepted, checked by the few-token
+    /// pass. A different text would mean a wrong KV position or row.
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn gpu_lookup_keeps_the_greedy_text() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let Ok(mut s) = GpuSession::open(&model, 96) else {
+            assert!(!cfg!(target_os = "android"), "no GPU");
+            return;
+        };
+        let prompt = "The capital of France is";
+        let mut plain = Vec::new();
+        s.generate(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, |b| {
+            plain.extend_from_slice(b);
+            true
+        });
+        let mut looked = Vec::new();
+        let (stats, look) = s.generate_lookup(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, 4, 2, |b| {
+            looked.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8_lossy(&looked), String::from_utf8_lossy(&plain));
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 96);
+        assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
     }
 }

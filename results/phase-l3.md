@@ -731,3 +731,55 @@ CPU.
 `GpuSession::open` without cores (`aether --gpu`) still runs the prompt on
 the GPU in f16. That is the faster choice for prompts of 128+ tokens if
 memory allows.
+
+## Step 12: prompt lookup on the GPU (2026-10-30, PC only; `raw/vk-gemv-n-intel.txt`)
+
+Prompt lookup (results/phase-6.md) checks k draft tokens in one pass of
+k + 1 tokens. On the GPU the prompt pass's shaders work in 64-token tiles,
+so 4 tokens would cost a whole tile, many decode steps. So the decode
+shader `qx_gemv.comp` got a variant for up to NT tokens (a specialization
+constant; `Gpu::qx_gemv_n_kernel`). It reads each weight once for all
+tokens: each lane dequantizes its 32-value piece of 4 rows and dots it with
+every token's values. Q4_0's `MatQ4_0` holds the same bytes as `MatQ`'s
+Q4_0, so one shader serves every format.
+
+`GpuModel::forward_few` runs 1 to 8 tokens through it and returns every
+token's logits (`logits_few`). `GpuSession::generate_lookup` is the CPU's
+loop around it. `aether --gpu --lookup K` and `aether_set_lookup` (so the
+app's "lookup" checkbox) now work in GPU mode.
+
+**Correct**:
+- `qx_gemv_n_matches_reference`: all five formats on the batch goldens,
+  2, 3 and 8 tokens a dispatch, against numpy's X @ dequant(W)ᵀ (bound
+  1e-6 · √cols, as for one token).
+- Perplexity through `forward_few` (`vk_ppl … few`, 8 tokens a pass, Intel)
+  equals the decode step's to the last digit: SmolLM2 Q4_0 27.6910, Q4_K_M
+  20.6876.
+- `gpu_lookup_keeps_the_greedy_text`: greedy text with lookup equals plain
+  GPU decoding (SmolLM2 Q4_0). The CLI gives the same text on SmolLM2 and
+  Qwen Q4_K_M too, with 50 of 60 and 19 of 76 drafts accepted.
+
+**Not faster on the Intel GPU**. GPU time per dispatch against one token
+of the decode shader (`vk_gemv_n`):
+
+| Shape | 1 token (decode) | 2 tokens (NT 2) | 8 tokens (NT 8) |
+|---|---|---|---|
+| wq/wo Q4_0 | 45 µs | 165 µs (3.7×) | 655 µs (14.5×) |
+| gate/up Q4_0 | 312 µs | 1351 µs (4.3×) | 6282 µs (20×) |
+| down Q4_0 | 154 µs | 653 µs (4.2×) | 2752 µs (18×) |
+
+The shader is not to blame. On this GPU the decode shader reads the
+896 × 896 matrix at ~11 GB/s, so decode is limited by arithmetic and
+registers, not by reading memory. More tokens per weight then only add
+work. Also, a kernel compiled for more tokens is slower even when it runs
+one: its unrolled loops hold more registers, and with 32-lane subgroups an
+Intel thread has room for ~32 floats per lane before it spills. The first
+version indexed its accumulators with runtime bounds (they went to memory:
+another 2×); now the loops run to constants with guards.
+
+Where decode is limited by reading the weights, one pass over a few tokens
+should cost little more than one step. The Adreno is that case: its
+products run at 30–40 GB/s of its ~66. Whether lookup pays off there is a
+phone question (`vk_gemv_n`, then `aether --gpu --lookup 4` on a copying
+prompt). `forward_batch` does not use the few-token shader (short prompts
+keep the prefill shaders) until the phone says it should.

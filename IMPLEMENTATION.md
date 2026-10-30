@@ -85,7 +85,16 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    model, then GPU on the Q4_K_M one: the reply streams and the status line shows load time and
    prefill / decode tok/s. Open question: can an app process start an unsigned DSP session from
    its files directory? If not, the DSP option shows the error and CPU and GPU still work.
-10. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
+10. [ ] **Prompt lookup on the GPU** (written 2026-10-30 after the run above, PC-verified;
+   results/phase-l3.md step 12). `cargo test … --features vulkan --lib qx_gemv_n gpu_lookup`;
+   `--example vk_gemv_n` (few-token shader against one decode step: on the Intel GPU 2 tokens
+   cost 3.7–4.3 steps; on the Adreno, where decode is bound by memory, it should be far less);
+   `aether GGUF --gpu -c 2-7 -t 0 --lookup 4` against without, on a prompt the reply copies
+   (results/phase-6/raw/lookup/, on the phone `/data/local/tmp/aether/prompt-*.txt`) and on
+   fresh prose: tok/s and drafts
+   accepted. The app's lookup checkbox in GPU mode. If lookup is slower on the Adreno, turn it
+   off for GPU sessions in the C ABI again.
+11. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
    `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -376,6 +385,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
           152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
           after a CPU prompt 63–66 → 96–101 (no gap left).
+  - [~] Prompt lookup on the GPU (`GpuModel::forward_few`, the decode shader for up to 8
+        tokens, `GpuSession::generate_lookup`; correct on the PC, slower there; phone pending,
+        step 12).
   - [~] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
         f16 shaders on the phone (step 11): 771 at pp256, 812 at 128; the gap is ~1.7×. Left:
         the texel-buffer path for the activations.

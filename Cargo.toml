@@ -57,6 +57,10 @@ name = "vk_gemv"
 required-features = ["vulkan"]
 
 [[example]]
+name = "vk_gemv_n"
+required-features = ["vulkan"]
+
+[[example]]
 name = "vk_gemm"
 required-features = ["vulkan"]
 
