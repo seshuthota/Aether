@@ -5,11 +5,12 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f32]
 //!
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
-//! token by token through the decode step.
+//! token by token through the decode step; f16 products where the GPU has
+//! fp16 arithmetic, with `batch-f32` the f32 shader.
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
@@ -24,14 +25,15 @@ fn main() {
     let path = PathBuf::from(args.next().expect("usage: vk_ppl MODEL.gguf [CHUNKS] [CTX]"));
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
-    let batched = args.next().is_some_and(|a| a == "batch");
+    let mode = args.next().unwrap_or_default();
+    let (batched, f32_gemm) = (mode.starts_with("batch"), mode == "batch-f32");
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
     let (config, weights, _) = aether::model::gguf::load(&path, ctx).unwrap();
     let gpu = Gpu::new().unwrap();
     let t0 = Instant::now();
-    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, f32_gemm, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
     let vocab = m.config.vocab_size;
     println!("# {} on {} | upload + record {:.0} ms", path.display(), gpu.info.name, t0.elapsed().as_secs_f64() * 1e3);
 
@@ -91,5 +93,5 @@ fn main() {
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
-    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}", m.batch) } else { String::new() });
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}{}", m.batch, if f32_gemm || !gpu.info.fp16 { ", f32 products" } else { ", f16 products" }) } else { String::new() });
 }

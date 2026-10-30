@@ -1,0 +1,28 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+// The activations for q4_0_gemm_h.comp: x (tokens rows of `cols` f32)
+// transposed to f16, xt[k][t] = x[t][k], `npad` tokens per row (a multiple
+// of 8; zeros past `tokens`). With GLU, x's rows are gate then up (2 ·
+// cols each) and xt gets silu(gate) · up, computed in f32.
+// Workgroup (k, j) does column k for tokens 64j .. 64j + 63.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer X { float x[]; };
+layout(std430, binding = 1) writeonly buffer T { float16_t xt[]; };
+layout(push_constant) uniform P { uint cols; uint tokens; uint npad; };
+layout(constant_id = 0) const bool GLU = false;
+
+void main() {
+    uint k = gl_WorkGroupID.x, t = gl_WorkGroupID.y * 64 + gl_LocalInvocationID.x;
+    if (t >= npad) return;
+    float v = 0.0;
+    if (t < tokens) {
+        if (GLU) {
+            float g = x[t * 2 * cols + k];
+            v = g / (1.0 + exp(-g)) * x[t * 2 * cols + cols + k];
+        } else {
+            v = x[t * cols + k];
+        }
+    }
+    xt[k * npad + t] = float16_t(v);
+}

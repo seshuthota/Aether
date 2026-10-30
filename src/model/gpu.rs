@@ -19,7 +19,7 @@
 
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
-use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ4_0, Recorder, Result, groups_for};
+use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ4_0, MatQ4_0T, Recorder, Result, groups_for};
 use crate::quant::BlockQ4_0;
 use crate::weight::Weight;
 
@@ -96,6 +96,29 @@ pub struct Options {
     /// [`GpuModel::forward_batch`] returns the logits of every token, not
     /// only the last (perplexity), at `batch × vocab` floats of memory.
     pub all_logits: bool,
+    /// The prompt's products with the f32 shader (`q4_0_gemm.comp`) even
+    /// where the f16 one (`q4_0_gemm_h.comp`, [`F16`]) could run.
+    pub f32_gemm: bool,
+}
+
+/// The prompt's products in f16 (`shaders/q4_0_gemm_h.comp`), where the
+/// GPU has fp16 arithmetic: a second copy of every matrix in that
+/// shader's layout, and the activations transposed to f16 in `xt` before
+/// each product.
+struct F16 {
+    /// Per layer: q/k/v, wo, gate/up, down; then the classifier.
+    mats: Vec<[MatQ4_0T; 4]>,
+    cls: MatQ4_0T,
+    /// The transpose from xb, from xb2 (attention's output) and from
+    /// gate/up (with the SwiGLU).
+    t_xb: Bound,
+    t_xb2: Bound,
+    t_glu: Bound,
+    /// Per layer, the four products (reading xt); the classifier's with
+    /// every token's logits.
+    mm: Vec<[Bound; 4]>,
+    cls_mm: Option<Bound>,
+    _xt: Buffer,
 }
 
 pub struct GpuModel {
@@ -137,6 +160,7 @@ pub struct GpuModel {
     _keep: Vec<Buffer>,
     cls: MatQ4_0,
     layers: Vec<Layer>,
+    f16: Option<F16>,
     _kernels: Vec<Kernel>,
 }
 
@@ -243,6 +267,7 @@ impl GpuModel {
         let gemvs: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel(r)).into_iter().collect::<Result<_>>()?;
         let normed: Vec<Kernel> = rs.map(|r| gpu.q4_0_gemv_kernel_fused(r, false, false, true)).into_iter().collect::<Result<_>>()?;
         let (mm, mm_acc, mm_glu) = (gpu.q4_0_gemm_kernel()?, gpu.q4_0_gemm_kernel_fused(true, false)?, gpu.q4_0_gemm_kernel_fused(true, true)?);
+        let mut f16_kernels = Vec::new();
 
         // Bind everything first (binding can fail; recording cannot).
         // The GEMV's binding 4 is the norm's weights, unused (any buffer)
@@ -275,6 +300,55 @@ impl GpuModel {
             None => None,
         };
 
+        let f16 = if gpu.info.fp16 && !opt.f32_gemm {
+            let (tk, tk_glu, mh, mh_acc) = (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?, gpu.q4_0_gemm_h_kernel(false)?, gpu.q4_0_gemm_h_kernel(true)?);
+            let xt = gpu.buffer(dim.max(hid) * Gpu::f16t_pad(batch) * 2)?;
+            let mat_t = |w: &Weight, rows: usize, what: &str| MatQ4_0T::new(gpu, q4_0(w, what)?, rows);
+            let stacked_t = |ws: &[(&Weight, usize)], what: &str| -> Result<MatQ4_0T> {
+                let mut blocks = Vec::new();
+                for (w, _) in ws {
+                    blocks.extend_from_slice(q4_0(w, what)?);
+                }
+                MatQ4_0T::new(gpu, &blocks, ws.iter().map(|w| w.1).sum())
+            };
+            let mut mats = Vec::new();
+            let mut mm = Vec::new();
+            for (l, lw) in weights.layers.iter().enumerate() {
+                let m = [
+                    stacked_t(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"))?,
+                    mat_t(&lw.wo, dim, "wo")?,
+                    stacked_t(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up")?,
+                    mat_t(&lw.w_down, dim, "w_down")?,
+                ];
+                mm.push([
+                    mh.bind(gpu, &[&m[0].q, &m[0].d, &xt, &qkv])?,
+                    mh_acc.bind(gpu, &[&m[1].q, &m[1].d, &xt, &x])?,
+                    mh.bind(gpu, &[&m[2].q, &m[2].d, &xt, &hb12])?,
+                    mh_acc.bind(gpu, &[&m[3].q, &m[3].d, &xt, &x])?,
+                ]);
+                mats.push(m);
+            }
+            let cls_t = mat_t(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size, "classifier")?;
+            let cls_mm = match &logits_all {
+                Some(l) => Some(mh.bind(gpu, &[&cls_t.q, &cls_t.d, &xt, l])?),
+                None => None,
+            };
+            let f = F16 {
+                t_xb: tk.bind(gpu, &[&xb, &xt])?,
+                t_xb2: tk.bind(gpu, &[&xb2, &xt])?,
+                t_glu: tk_glu.bind(gpu, &[&hb12, &xt])?,
+                mats,
+                cls: cls_t,
+                mm,
+                cls_mm,
+                _xt: xt,
+            };
+            f16_kernels = vec![tk, tk_glu, mh, mh_acc];
+            Some(f)
+        } else {
+            None
+        };
+
         // (value, index) per argmax workgroup; the index read by the CPU.
         let (amax_parts, best) = (zeros(2 * AMAX_GROUPS)?, cached(1)?);
         let amax = argmax.bind(gpu, &[&logits, &amax_parts, &best])?;
@@ -282,6 +356,7 @@ impl GpuModel {
         let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm, amax_parts];
         keep.shrink_to_fit();
         let mut kernels = vec![rms, post, attn, merge, swiglu, argmax, wo_k, mm, mm_acc, mm_glu];
+        kernels.append(&mut f16_kernels);
         kernels.extend(gemvs);
         kernels.extend(normed);
         let mut m = GpuModel {
@@ -310,6 +385,7 @@ impl GpuModel {
             _keep: keep,
             cls,
             layers,
+            f16,
             _kernels: kernels,
         };
         let mut stages = Vec::new();
@@ -346,13 +422,19 @@ impl GpuModel {
         };
         // A matrix product: GEMV for one token, GEMM for several.
         let gemv = |r: &mut Recorder, k: &Bound, m: &MatQ4_0| r.dispatch(k, &push(&[m.rows as u32, m.nb as u32, eps]), groups_for(m.rows, 4 * gemv_r(m.rows) as usize));
-        let product = |r: &mut Recorder, gemv_b: &Bound, gemm: &Bound, m: &MatQ4_0| {
+        // With f16 products, product i of layer l (q/k/v, wo, gate/up,
+        // down) transposes its input (`t`) and runs the f16 shader.
+        let f16 = self.f16.as_ref().filter(|_| n > 1);
+        let product = |r: &mut Recorder, gemv_b: &Bound, gemm: &Bound, m: &MatQ4_0, h: Option<(&Bound, &Bound, &MatQ4_0T)>| {
             if n == 1 {
                 gemv(r, gemv_b, m);
+            } else if let Some((t, mm, mt)) = h {
+                Gpu::record_q4_0_gemm_h(r, t, mm, mt, n);
             } else {
                 r.dispatch(gemm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
             }
         };
+        let h = |l: usize, i: usize, t: fn(&F16) -> &Bound| f16.map(|f| (t(f), &f.mm[l][i], &f.mats[l][i]));
         for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
             let layer_off = (l * c.seq_len * kv_dim) as u32;
             // In decode the first norm is part of q/k/v.
@@ -360,7 +442,7 @@ impl GpuModel {
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
             }
-            product(r, &b.qkv, &b.qkv_mm, &ly.wqkv);
+            product(r, &b.qkv, &b.qkv_mm, &ly.wqkv, h(l, 0, |f| &f.t_xb));
             end(r, "q/k/v");
             r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
             end(r, "bias + RoPE + cache");
@@ -368,20 +450,20 @@ impl GpuModel {
             end(r, "attention");
             r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
             end(r, "attention merge");
-            product(r, &b.o, &b.o_mm, &ly.wo);
+            product(r, &b.o, &b.o_mm, &ly.wo, h(l, 1, |f| &f.t_xb2));
             end(r, "wo + add");
             r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
             end(r, "rmsnorm");
-            product(r, &b.gate_up, &b.gate_up_mm, &ly.w_gate_up);
+            product(r, &b.gate_up, &b.gate_up_mm, &ly.w_gate_up, h(l, 2, |f| &f.t_xb));
             end(r, "gate/up");
             // The GEMM applies the SwiGLU as it loads gate and up.
             if n == 1 {
                 r.dispatch(&b.swiglu, &push(&[c.hidden_dim as u32]), [c.hidden_dim.div_ceil(256) as u32, 1, 1]);
                 end(r, "swiglu");
-                product(r, &b.down, &b.down_mm, &ly.w_down);
+                product(r, &b.down, &b.down_mm, &ly.w_down, None);
                 end(r, "down + add");
             } else {
-                product(r, &b.down, &b.down_mm, &ly.w_down);
+                product(r, &b.down, &b.down_mm, &ly.w_down, h(l, 3, |f| &f.t_glu));
                 end(r, "swiglu + down + add");
             }
         }
@@ -389,8 +471,13 @@ impl GpuModel {
             Some(cls_mm) => {
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
-                let m = &self.cls;
-                r.dispatch(cls_mm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
+                match f16.and_then(|f| f.cls_mm.as_ref().map(|mm| (f, mm))) {
+                    Some((f, mm)) => Gpu::record_q4_0_gemm_h(r, &f.t_xb, mm, &f.cls, n),
+                    None => {
+                        let m = &self.cls;
+                        r.dispatch(cls_mm, &push(&[m.rows as u32, m.nb as u32, nt]), [m.rows.div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
+                    }
+                }
             }
             None if n == 1 => gemv(r, &self.fcls, &self.cls),
             None => {

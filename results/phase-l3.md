@@ -486,3 +486,27 @@ and Hexagon (its NPU backend, Hexagon SDK 6.4.0.2), `llama-bench -t 6
 - **Unsigned code on the NPU works on this phone**: llama.cpp opens a
   `cdsp` session with `DSPRPC_CONTROL_UNSIGNED_MODULE` and loads its own
   `libggml-htp-v79.so`. So L.5 can run our own DSP code without signing.
+
+## Step 9: an f16 prefill shader, on the PC only (2026-10-30)
+
+The phone was away; everything here ran on the PC's Intel GPU (RPL-P),
+whose numbers say nothing about the Adreno's speed. The shader follows
+the way llama.cpp's Adreno kernel is organized (step 8): no shared
+memory, 4 rows × 8 tokens per thread, weights repacked so neighbouring
+threads read neighbouring words (`MatQ4_0T`), activations transposed to
+f16 first (`to_f16t.comp`, with the SwiGLU for down), arithmetic in f16
+within each 32-input block, then summed in f32.
+
+**Correct**: `q4_0_gemm_h_matches_reference` on the batch goldens, rel
+error 0 to 1.67e-3 (f16's 2⁻¹¹ is 4.9e-4; bound 4 · 2⁻¹¹). Perplexity
+through `GpuModel::forward_batch` (`vk_ppl … batch`, 20 chunks of 512):
+
+| model | f32 products | f16 products | llama.cpp |
+| --- | --- | --- | --- |
+| SmolLM2-135M | 27.6910 | 27.6961 | 27.7412 ± 1.177 |
+| Qwen2.5-0.5B | 19.7193 | 19.7256 | 19.7283 ± 0.836 |
+
+**On the PC** (`vk_gemm 256`, Intel; GFLOP/s, f32 → f16): wq/wo 14 → 79,
+gate/up 16 → 109, down 14 → 80; SmolLM2's perplexity run 217.8 → 50.0 s.
+The phone's numbers are the ones that count (llama.cpp's OpenCL: 1,387
+tok/s at pp256 against our 267).

@@ -1,0 +1,69 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+// out[t][row] = W[row] · X[t] for a Q4_0 matrix W and `tokens`
+// activations, in fp16 arithmetic: the prefill product, after the way
+// llama.cpp's Adreno OpenCL kernel is organized (results/phase-l3.md).
+//
+// Each thread computes 4 rows × 8 tokens with no shared memory and no
+// barriers:
+// - the weights are stored for it at load (`MatQ4_0T`): word h of block b
+//   of row r (inputs 32b + 8h .. + 7, nibble j = input 8h + j) at
+//   q[(4b + h) · rows4 + r] with rows rounded up to rows4 (a multiple of
+//   4), so a thread's 4 rows are one uvec4 and neighbouring threads read
+//   neighbouring memory; the f16 scales likewise, d[b · rows4 + r];
+// - the activations come transposed to f16 (`to_f16t.comp`), xt[k][t]
+//   with `npad` tokens per row, so the 8 tokens of input k are two
+//   f16vec4 loads, the same for every thread of a workgroup;
+// - each input multiplies the 4 rows' weights into 8 tokens' sums, in
+//   f16; after each block of 32 inputs the f16 sums are added into f32
+//   ones, which bounds the rounding over long rows.
+// Workgroup (i, j): rows 256i .. 256i + 255, tokens 8j .. 8j + 7.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 q[]; };
+layout(std430, binding = 1) readonly buffer D { f16vec4 d[]; };
+layout(std430, binding = 2) readonly buffer X { f16vec4 xt[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; uint tokens; uint npad; };
+layout(constant_id = 0) const bool ACCUM = false;
+
+void main() {
+    uint quad = gl_GlobalInvocationID.x, rq = (rows + 3) / 4;
+    if (quad >= rq) return;
+    uint t0 = gl_WorkGroupID.y * 8, n4 = npad / 4;
+    vec4 acc[8];
+    for (uint t = 0; t < 8; t++) acc[t] = vec4(0.0);
+    for (uint b = 0; b < nb; b++) {
+        f16vec4 s = d[b * rq + quad];
+        f16vec4 part[8];
+        for (uint t = 0; t < 8; t++) part[t] = f16vec4(0.0);
+        for (uint h = 0; h < 4; h++) {
+            uvec4 w = q[(4 * b + h) * rq + quad];
+            for (uint j = 0; j < 8; j++) {
+                uint k = 32 * b + 8 * h + j;
+                f16vec4 wv = (f16vec4((w >> (4 * j)) & 15u) - float16_t(8.0)) * s;
+                f16vec4 xa = xt[k * n4 + t0 / 4], xb = xt[k * n4 + t0 / 4 + 1];
+                part[0] += wv * xa.x;
+                part[1] += wv * xa.y;
+                part[2] += wv * xa.z;
+                part[3] += wv * xa.w;
+                part[4] += wv * xb.x;
+                part[5] += wv * xb.y;
+                part[6] += wv * xb.z;
+                part[7] += wv * xb.w;
+            }
+        }
+        for (uint t = 0; t < 8; t++) acc[t] += vec4(part[t]);
+    }
+    for (uint t = 0; t < 8; t++) {
+        uint tok = t0 + t;
+        if (tok >= tokens) break;
+        for (uint c = 0; c < 4; c++) {
+            uint row = 4 * quad + c;
+            if (row < rows) {
+                uint i = tok * rows + row;
+                o[i] = ACCUM ? o[i] + acc[t][c] : acc[t][c];
+            }
+        }
+    }
+}
