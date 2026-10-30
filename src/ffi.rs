@@ -27,7 +27,7 @@ pub const AETHER_ERR_LOAD: c_int = 2;
 pub const AETHER_ERR_PANIC: c_int = 3;
 
 /// What C holds: a loaded model on the CPU or the GPU, and the prompt
-/// lookup settings (`aether_set_lookup`; draft length 0 = off; CPU only).
+/// lookup settings (`aether_set_lookup`; draft length 0 = off).
 pub struct AetherSession {
     engine: Engine,
     lookup_k: usize,
@@ -38,6 +38,8 @@ enum Engine {
     Cpu(Session),
     #[cfg(feature = "vulkan")]
     Gpu(Box<crate::session::GpuSession>),
+    #[cfg(feature = "hexagon")]
+    Dsp(Box<crate::session::DspSession>),
 }
 
 impl AetherSession {
@@ -202,6 +204,8 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) => (&s.text, s.model.config.seq_len),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => (&g.text, g.model.config.seq_len),
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(d) => (&d.text, d.model.config.seq_len),
         };
         let prompt_len = tok.encode(&text).len();
         let steps = prompt_len + max_tokens as usize;
@@ -216,6 +220,10 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) => s.generate(&text, &mut sampler, steps, false, emit),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => g.generate(&text, &mut sampler, steps, emit),
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(d) if *lookup_k > 0 => d.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(d) => d.generate(&text, &mut sampler, steps, emit),
         };
         if !stats.is_null() {
             // SAFETY: non-null and writable (caller's contract).
@@ -232,13 +240,14 @@ pub unsafe extern "C" fn aether_generate(
     })
 }
 
-/// Loads a `--pure` Q4_0 `.gguf` for decoding on the GPU (Vulkan). With
+/// Loads a Q4_0 or Q4_K_M `.gguf` for decoding on the GPU (Vulkan). With
 /// `cores` (as in `aether_open`), a second copy of the model on those CPU
 /// cores runs each prompt as one batch and hands its KV cache to the GPU;
 /// with null or "", the prompt runs on the GPU, batched as well.
 /// `max_seq` as in `aether_open`. Fails with `AETHER_ERR_LOAD` when the
 /// library was built without the `vulkan` feature, there is no usable GPU,
-/// or a matrix is not Q4_0.
+/// or a matrix is in a format the GPU does not read (other than Q4_0,
+/// Q5_0, Q8_0, Q4_K, Q6_K).
 ///
 /// # Safety
 /// As for `aether_open`.
@@ -285,13 +294,67 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, cores: *const c_ch
     })
 }
 
+/// Loads a `--pure` Q4_0 `.gguf` (or a Q4_K_M one) for the Hexagon DSP:
+/// prompts in batches on its matrix unit (HMX; for Q4_K_M, 8 tokens a
+/// call on the vector units), then one DSP call per token. `dir` is a
+/// writable directory the DSP library is written to and loaded from (an
+/// app's files directory). `max_seq` as in `aether_open`. Fails with
+/// `AETHER_ERR_LOAD` when the library was built without the `hexagon`
+/// feature, the DSP cannot be opened, or a matrix is in another format
+/// (Q4_0, Q5_0, Q8_0, Q4_K and Q6_K work).
+///
+/// # Safety
+/// `path` and `dir` must be valid NUL-terminated strings; `out` as in
+/// `aether_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_open_dsp(path: *const c_char, dir: *const c_char, max_seq: u32, out: *mut *mut AetherSession) -> c_int {
+    guard(|| {
+        if out.is_null() {
+            set_error("out is null");
+            return AETHER_ERR_ARGUMENT;
+        }
+        // SAFETY: caller's contract.
+        let path = match unsafe { str_arg(path, "path") } {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        // SAFETY: caller's contract.
+        let dir = match unsafe { str_arg(dir, "dir") } {
+            Ok(d) => d,
+            Err(code) => return code,
+        };
+        #[cfg(feature = "hexagon")]
+        match crate::session::DspSession::open(Path::new(path), max_seq as usize, Path::new(dir), 6) {
+            Ok(d) => {
+                // SAFETY: `out` is non-null and writable (caller's contract).
+                unsafe { *out = AetherSession::new(Engine::Dsp(Box::new(d))) };
+                AETHER_OK
+            }
+            Err(e) => {
+                set_error(format!("{path}: {e}"));
+                AETHER_ERR_LOAD
+            }
+        }
+        #[cfg(not(feature = "hexagon"))]
+        {
+            let _ = (max_seq, dir);
+            set_error(format!("{path}: this library was built without the DSP (hexagon) feature"));
+            AETHER_ERR_LOAD
+        }
+    })
+}
+
 /// Turns prompt lookup decoding on for later `aether_generate` calls:
 /// after each token, up to `k` draft tokens are copied from the last
 /// earlier place where the last `ngram` tokens occurred, and checked in one
 /// batched pass (`Session::generate_lookup`). Faster when the reply repeats
 /// the prompt (code edits, quoting); the output keeps the sampler's
-/// distribution. `k` = 0 turns it off; `ngram` must be at least 1. Only the
-/// CPU path uses it (a GPU session accepts and ignores it).
+/// distribution. `k` = 0 turns it off; `ngram` must be at least 1. The DSP
+/// checks up to 7 drafts in one few-token pass
+/// (`DspSession::generate_lookup`). A GPU session ignores it: on the
+/// Adreno each extra token of the few-token shader costs about a whole
+/// decode dispatch, and lookup made decoding 2.4× slower
+/// (results/phase-l3.md, step 12).
 ///
 /// # Safety
 /// `session` must come from `aether_open` and not be closed.

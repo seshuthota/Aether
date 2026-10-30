@@ -45,11 +45,19 @@ name = "dsp_ppl"
 required-features = ["hexagon"]
 
 [[example]]
+name = "dsp_gemm"
+required-features = ["hexagon"]
+
+[[example]]
 name = "vk_bandwidth"
 required-features = ["vulkan"]
 
 [[example]]
 name = "vk_gemv"
+required-features = ["vulkan"]
+
+[[example]]
+name = "vk_gemv_n"
 required-features = ["vulkan"]
 
 [[example]]

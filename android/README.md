@@ -47,6 +47,10 @@ adb shell "cat /data/local/tmp/model.gguf | run-as dev.aether.chat sh -c 'cat > 
 - **cores**: CPU list the engine spreads over, one thread each. `2-7` was
   fastest for Qwen2.5-0.5B Q4_0 decode on the iQOO 13 (`results/phase-7.md`).
 - **chat**: wrap the prompt in the ChatML template (instruct models).
+- **CPU / GPU / DSP**: where the model runs. GPU decodes on the GPU
+  (Vulkan) and runs the prompt on the CPU cores; DSP runs everything on the
+  Hexagon DSP (a `--pure` Q4_0 model only; its code is written to the app's
+  files directory and loaded from there). Changing it reloads the model.
 
 Sampling is temperature 0.7, top-p 0.9; replies stop at 512 tokens or the
 model's end token; **Stop** ends generation early.

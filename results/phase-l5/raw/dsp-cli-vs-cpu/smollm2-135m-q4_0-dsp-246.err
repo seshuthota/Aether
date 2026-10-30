@@ -1,0 +1,3 @@
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 479.5 MB/s (11507560 bytes in 0.023s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+prefill (DSP): 45 tokens in 30.9 ms (1457.5 tok/s) | decode: 51 tokens in 166.2 ms (306.8 tok/s)

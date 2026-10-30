@@ -1,0 +1,23 @@
+# 2026-10-30T20:22:37+05:30, commit 3ab2966
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 87
+# Capacity level: -1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf | q5_0+q8_0+q6_k+q4_k | weights 391.7 MB | backend gpu | cores [] (1 threads) | load 2950 ms
+test,tok_per_s,ms
+pp64,507.1,126.2
+pp128,568.3,225.2
+pp256,546.4,468.5
+pp512,494.5,1035.4
+tg64@d0,74.2,862.1
+# tg64@d0 per token: median 12.88 ms, p95 15.64 ms (192 samples)
+tg64@d256,47.5,1347.3
+# tg64@d256 per token: median 13.24 ms, p95 22.11 ms (192 samples)
+tg64@d512,53.8,1190.0
+# tg64@d512 per token: median 13.57 ms, p95 18.27 ms (192 samples)
+ttft_pp64,7.7,129.1
+# peak RSS 1108880 kB
+# monitor: 45 samples over 21.75 s, max temp 52.3 °C, energy 37.08 J, avg power 1.70 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf","quantization":"q5_0+q8_0+q6_k+q4_k","context_length":577},"configuration":{"backend":"gpu","threads":1,"cores":[],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":2950,"prefill":[{"prompt_tokens":64,"median_ms":126.2,"p95_ms":195.1,"tokens_per_second":507.1},{"prompt_tokens":128,"median_ms":225.2,"p95_ms":228.2,"tokens_per_second":568.3},{"prompt_tokens":256,"median_ms":468.5,"p95_ms":470.4,"tokens_per_second":546.4},{"prompt_tokens":512,"median_ms":1035.4,"p95_ms":1237.9,"tokens_per_second":494.5}],"decode":[{"context_depth":0,"median_ms_per_token":12.88,"p95_ms_per_token":15.64,"tokens_per_second":74.2},{"context_depth":256,"median_ms_per_token":13.24,"p95_ms_per_token":22.11,"tokens_per_second":47.5},{"context_depth":512,"median_ms_per_token":13.57,"p95_ms_per_token":18.27,"tokens_per_second":53.8}],"ttft_pp64_ms":129.1,"peak_memory_mb":1083},"system_state":{"battery_status":"Discharging","max_temp_c":52.3,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1017600,"cpu7":1017600},"avg_power_w":1.70}}

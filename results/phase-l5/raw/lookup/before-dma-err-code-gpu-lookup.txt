@@ -1,0 +1,4 @@
+GPU: Adreno (TM) 830
+
+speculative: 21 passes, 61 of 84 drafts accepted
+prefill (on the CPU): 129 tokens in 220.4 ms (585.4 tok/s) | decode: 87 tokens in 3096.4 ms (28.1 tok/s)

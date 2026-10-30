@@ -39,14 +39,23 @@ typedef int (*AetherTokenCallback)(const uint8_t *bytes, size_t len, void *user)
  * thread. max_seq: longest prompt + reply in tokens. */
 int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
-/* Loads a --pure Q4_0 .gguf for decoding on the GPU (Vulkan). cores as in
+/* Loads a Q4_0 or Q4_K_M .gguf for decoding on the GPU (Vulkan). cores as in
  * aether_open: if given, a second copy of the model on those CPU cores runs
  * each prompt as one batch and hands its KV cache to the GPU (the CPU runs
  * prompts faster than the GPU on the phone; twice the memory); NULL / ""
  * runs the prompt on the GPU, batched as well. Fails with AETHER_ERR_LOAD if the library was built
- * without the vulkan feature, there is no usable GPU, or a matrix is not
- * Q4_0. */
+ * without the vulkan feature, there is no usable GPU, or a matrix is in a
+ * format the GPU does not read (other than Q4_0, Q5_0, Q8_0, Q4_K, Q6_K). */
 int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
+
+/* Loads a --pure Q4_0 .gguf (or a Q4_K_M one) for the Hexagon DSP: prompts
+ * in batches on its matrix unit (HMX; for Q4_K_M, 8 tokens a call on the
+ * vector units), then one DSP call per token. dir: a writable directory
+ * the DSP library is written to and loaded from (an app's files directory).
+ * Fails with AETHER_ERR_LOAD if the library was built without the hexagon
+ * feature, the DSP cannot be opened, or a matrix is in another format
+ * (Q4_0, Q5_0, Q8_0, Q4_K and Q6_K work). */
+int aether_open_dsp(const char *path, const char *dir, uint32_t max_seq, AetherSession **out);
 
 /* Generates a reply. chat != 0 wraps the prompt in the ChatML template.
  * temperature 0 = greedy. stats may be NULL. */
@@ -58,7 +67,8 @@ int aether_generate(AetherSession *session, const char *prompt, int chat,
  * tokens copied from the last earlier match of the last `ngram` tokens,
  * checked in one batched pass. Faster when the reply repeats the prompt
  * (code edits, quoting). k = 0 turns it off; ngram >= 1 (2 is a good default).
- * CPU sessions only (a GPU session ignores it). */
+ * The DSP checks up to 7 drafts per pass; a GPU session ignores it (slower
+ * there). */
 int aether_set_lookup(AetherSession *session, uint32_t k, uint32_t ngram);
 
 /* Message for the last error on this thread; valid until the next call. */

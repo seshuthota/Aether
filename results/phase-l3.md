@@ -486,3 +486,300 @@ and Hexagon (its NPU backend, Hexagon SDK 6.4.0.2), `llama-bench -t 6
 - **Unsigned code on the NPU works on this phone**: llama.cpp opens a
   `cdsp` session with `DSPRPC_CONTROL_UNSIGNED_MODULE` and loads its own
   `libggml-htp-v79.so`. So L.5 can run our own DSP code without signing.
+
+## Step 9: an f16 prefill shader, on the PC only (2026-10-30)
+
+The phone was away; everything here ran on the PC's Intel GPU (RPL-P),
+whose numbers say nothing about the Adreno's speed. The shader follows
+the way llama.cpp's Adreno kernel is organized (step 8): no shared
+memory, 4 rows × 8 tokens per thread, weights repacked so neighbouring
+threads read neighbouring words (`MatQ4_0T`), activations transposed to
+f16 first (`to_f16t.comp`, with the SwiGLU for down), arithmetic in f16
+within each 32-input block, then summed in f32.
+
+**Correct**: `q4_0_gemm_h_matches_reference` on the batch goldens, rel
+error 0 to 1.67e-3 (f16's 2⁻¹¹ is 4.9e-4; bound 4 · 2⁻¹¹). Perplexity
+through `GpuModel::forward_batch` (`vk_ppl … batch`, 20 chunks of 512):
+
+| model | f32 products | f16 products | llama.cpp |
+| --- | --- | --- | --- |
+| SmolLM2-135M | 27.6910 | 27.6961 | 27.7412 ± 1.177 |
+| Qwen2.5-0.5B | 19.7193 | 19.7256 | 19.7283 ± 0.836 |
+
+**On the PC** (`vk_gemm 256`, Intel; GFLOP/s, f32 → f16): wq/wo 14 → 79,
+gate/up 16 → 109, down 14 → 80; SmolLM2's perplexity run 217.8 → 50.0 s.
+The phone's numbers are the ones that count (llama.cpp's OpenCL: 1,387
+tok/s at pp256 against our 267).
+
+## Step 10: Q4_K_M files on the GPU, decode (2026-10-30, PC only)
+
+A llama.cpp Q4_K_M file of these models is a mix of formats (results/phase-6.md):
+
+| Matrix | Format |
+|---|---|
+| q, k, o, gate, up | Q5_0 |
+| v | Q5_0 or Q8_0, by layer |
+| down | Q4_K or Q6_K, by layer |
+| embedding (= classifier) | Q8_0 |
+
+`shaders/qx_gemv.comp` reads all of these plus Q4_0. Its work split is
+`q4_0_gemv.comp`'s: lanes over 32-value pieces, rows in registers, shuffles
+to add.
+
+At upload (`MatQ`), every piece is laid out like a Q4_0 block: 16 bytes,
+byte k = value k | value k+16 << 4, or 32 int8s for Q8_0. The extra bits
+come after:
+- Q5_0: one uint of fifth bits per piece.
+- Q6_K: two uints of 2-bit highs per piece.
+
+The K-quants' scales stay per super-block, unpacked to bytes, so each
+format reads close to its file size (Q4_K 0.58 bytes a weight against 0.56;
+Q6_K 0.83 against 0.82).
+
+`GpuModel` keeps the tuned Q4_0 shader for Q4_0 matrices. When q/k/v or
+gate/up differ in format, they are split into parts that write their rows
+at a byte offset of the shared output. The prompt pass stays Q4_0-only.
+
+**Test:** `qx_gemv_matches_reference` runs all five formats against
+X @ dequant(W)ᵀ in float64 from numpy:
+- Q4_0, Q5_0 and Q8_0 use llama.cpp's quantizer bytes (12 cases).
+- Q4_K and Q6_K use random blocks dequantized by the gguf package (9 cases,
+  every token). `tools/gen_quant.py` now also writes `out_q4_k_a` and
+  `out_q6_k_a`.
+- Bound 1e-6 · √cols, as for Q4_0.
+
+**Perplexity** through the GPU decode step (`vk_ppl`, wikitext-2, 20 × 512,
+Intel RPL-P):
+
+| Model | GPU (ours) | CPU (ours, phone) | llama.cpp |
+|---|---|---|---|
+| SmolLM2-135M Q4_K_M | 20.6876 | 20.7201 | 20.7784 ± 0.851 |
+| Qwen2.5-0.5B Q4_K_M | 16.7167 | 16.7088 | 16.7657 ± 0.688 |
+| SmolLM2-135M Q4_0 (regression) | 27.6910 | | unchanged from step 7 |
+| Qwen2.5-0.5B Q4_0 (regression) | 19.7193 | | unchanged from step 7 |
+
+Our CPU quantizes the activations to Q8_0; the GPU keeps them in f32. Both
+are within llama.cpp's error bars.
+
+**Speed** (Intel, only to see that the cost follows the bytes): Qwen decode
+33.3 ms a token for Q4_K_M (392 MB) against 22.8 ms for Q4_0 (278 MB), a
+ratio of 1.46 for 1.41× the bytes. The Adreno numbers wait for the phone.
+
+`bench_suite --backend cpu|gpu|dsp` and `scripts/backends-bench.sh` now
+run the same measurements on every engine.
+
+**Prompt pass for Q4_K_M** (same day): `shaders/qx_gemm.comp` is
+`q4_0_gemm.comp`'s tiling (64 rows × 64 tokens, f32) with each piece
+dequantized from `MatQ`'s layout, plus an output row stride, so a q/k/v
+part writes into the stacked row. A Q4_0 model keeps `q4_0_gemm` /
+`q4_0_gemm_h`; any other model now runs `forward_batch` with `qx_gemm`
+for every part.
+
+Test `qx_gemm_matches_reference`: 11 batch goldens (Q4_0, Q5_0, Q8_0) and
+9 K-quant goldens, bound 1e-6 · √cols.
+
+Perplexity through the batched pass (`vk_ppl … batch`, PC):
+
+| Model | Shader | PPL |
+|---|---|---|
+| SmolLM2 Q4_K_M | `qx_gemm` | 20.6876 (decode step: 20.6876) |
+| Qwen2.5 Q4_K_M | `qx_gemm` | 16.7167 (decode step: 16.7167) |
+| SmolLM2 Q4_0 | `q4_0_gemm_h` | 27.6961 (unchanged) |
+| Qwen2.5 Q4_0 | `q4_0_gemm_h` | 19.7256 (unchanged) |
+
+Speed on the Intel GPU (`vk_gemm 128`, GFLOP/s):
+
+| Shape | `q4_0_gemm` f32 | `q4_0_gemm_h` f16 | `qx_gemm` Q4_0 | `qx_gemm` Q5_0 |
+|---|---|---|---|---|
+| wq/wo | 14 | 46 | 8 | 13 |
+| gate/up | 16 | 94 | 9 | 15 |
+| down | 14 | 47 | 8 | 14 |
+
+`qx_gemm` on Q5_0, most of a Q4_K_M file, runs at the f32 Q4_0 shader's
+speed. On this GPU the f32 tiles are slow: Qwen Q4_K_M's prompt runs at
+19 tok/s at 128 tokens (`vk_prefill`), below its decode (30 tok/s token by
+token). On the Adreno the f32 Q4_0 shader beat decode (251–267 against
+~100 tok/s, step 7), so whether `qx_gemm` helps is a phone question.
+
+Next, if it does not help: an f16 multi-format shader like
+`q4_0_gemm_h`. (`qx_gemm`'s Q4_0 case is slower than its Q5_0 case; a
+mixed file has no Q4_0 matrices, and Q4_0 models do not use it.)
+
+**An f16 prompt shader for every format** (same day, PC only):
+`shaders/qx_gemm_h.comp` is `q4_0_gemm_h.comp`'s organization (4 rows × 8
+tokens a thread, no shared memory, f16 sums per 32-value piece added into
+f32) for all five formats. It needs its own copy of each matrix (`MatQT`),
+laid out as `MatQ4_0T` is: per piece, the words of 4 neighbouring rows side
+by side.
+- Low 4 bits: 4 words, value 8h + j in bits 4j of word h.
+- Q5_0: one more word of fifth bits.
+- Q6_K: two more words of 2-bit highs.
+- Q8_0: 8 words of int8s.
+- Scales: one f16 per piece (Q4_0, Q5_0, Q8_0). The K-quants' are
+  multiplied out per piece and rounded to f16: Q4_K's d · scale and dmin ·
+  min, Q6_K's two d · scale.
+
+`GpuModel` uses it for the prompt of any model that is not all Q4_0 when
+the GPU has fp16 (`batch-f32` keeps `qx_gemm`), one part per format as in
+decode.
+
+Test `qx_gemm_h_matches_reference`, on the same goldens as `qx_gemm`:
+- 32-value formats: max error < 4 · 2⁻¹¹ of the largest output, as for
+  `q4_0_gemm_h`; measured up to 1.7e-3.
+- K-quant random blocks: one output (1x256) is a sum that cancels, with
+  error 2.3e-2 of itself, because Q4_K's mins make a whole row lean one
+  way. So each output is checked against Σ|w|·|x| (W from the gguf
+  package's dequantization), the scale its f16 roundings grow with: bound
+  2⁻¹¹, measured up to 0.53 · 2⁻¹¹.
+
+Perplexity through the f16 batched pass (`vk_ppl … batch`, Intel):
+
+| Model | `qx_gemm_h` (f16) | `qx_gemm` (f32) | llama.cpp |
+|---|---|---|---|
+| SmolLM2 Q4_K_M | 20.6939 | 20.6876 | 20.7784 ± 0.851 |
+| Qwen2.5 Q4_K_M | 16.7150 | 16.7167 | 16.7657 ± 0.688 |
+
+Speed on the Intel GPU (`vk_gemm 128`, GFLOP/s; f16 columns exclude the
+activations' transpose):
+
+| Shape | `q4_0_gemm_h` | `qx_gemm_h` Q4_0 | `qx_gemm_h` Q5_0 | `qx_gemm` Q5_0 |
+|---|---|---|---|---|
+| wq/wo | 46 | 51 | 33 | 14 |
+| gate/up | 94 | 107 | 70 | 15 |
+| down | 47 | 51 | 33 | 15 |
+
+Q5_0 costs a third more than Q4_0 here: one more word per piece, and one
+more shift, mask and OR per weight for the fifth bit.
+
+Qwen Q4_K_M prompt (`vk_prefill`, Intel):
+
+| Tokens | f32 `qx_gemm` | f16 `qx_gemm_h` | token by token |
+|---|---|---|---|
+| 128 | 19 tok/s | 83 tok/s | ~30 tok/s |
+
+So on this GPU the prompt pass now beats decode. Whole-file perplexity
+runs went from 238 s / 738 s to 67 s / 169 s (SmolLM2 / Qwen). The Adreno
+numbers wait for the phone.
+
+## Step 11: steps 9–10 on the phone (2026-10-30, on battery, 40–49 °C; `raw/*-phone.txt`)
+
+**f16 prompt products, Q4_0** (`vk_gemm 128`, Adreno 830, GFLOP/s):
+
+| Shape | `q4_0_gemm` f32 | `q4_0_gemm_h` f16 | `qx_gemm_h` Q4_0 | `qx_gemm_h` Q5_0 | `qx_gemm` Q5_0 | CPU (6 cores) |
+|---|---|---|---|---|---|---|
+| wq/wo | 147 | **590** | 516 | 354 | 145 | 212 |
+| gate/up | 228 | **817** | 729 | 514 | 224 | 457 |
+| down | 149 | **613** | 543 | 318 | 148 | 410 |
+
+f16 is 4× f32 on the Adreno, against 3–6× on the Intel GPU. For the first
+time the GPU's prompt products beat the CPU's int8 `smmla` ones.
+
+**Qwen2.5-0.5B prompt** (`vk_prefill`, tok/s):
+
+| Tokens | Q4_0 (`q4_0_gemm_h`) | Q4_K_M (`qx_gemm_h`) | Q4_0 f32, step 7 |
+|---|---|---|---|
+| 16 | 291 | 199 | |
+| 64 | 661 | 476 | |
+| 128 | **812** | **563** | 251–267 |
+
+gate/up and swiglu + down are 77 % of the 128-token pass. llama.cpp's
+OpenCL does 1387 at pp256 (step 8). The gap went from 5× to about 1.7×.
+
+**Correct** (`vk_ppl`, 20 × 512):
+
+| Model | decode step | batch f16 | batch f32 | llama.cpp |
+|---|---|---|---|---|
+| SmolLM2 Q4_0 | | 27.6924 | 27.6910 | 27.7412 |
+| Qwen2.5 Q4_0 | | 19.7190 | 19.7193 | 19.7283 |
+| SmolLM2 Q4_K_M | 20.6876 | 20.6906 | 20.6876 | 20.7784 |
+| Qwen2.5 Q4_K_M | 16.7167 | 16.7173 | 16.7167 | 16.7657 |
+
+The decode and f32 numbers equal the Intel GPU's to the last digit. The
+f16 ones differ from Intel's f16 in the third decimal: each GPU rounds the
+f16 sums in its own way. Whole-file runs, f32 → f16: Qwen Q4_0 66 → 28 s,
+Qwen Q4_K_M 66 → 36 s.
+
+**Q4_K_M decode** (`vk_decode`, GPU time per token, cool phone):
+
+| Depth | Qwen Q4_K_M | Qwen Q4_0 |
+|---|---|---|
+| 0 | 12.3 ms | 9.0 ms |
+| 256 | 12.5 ms | 9.8 ms |
+| 1024 | 14.0 ms | 10.5 ms |
+
+Q4_0 is unchanged from step 6. Q4_K_M costs 35 % more, about its 41 % more
+bytes. The classifier (Q8_0, 152k rows) takes 3.2 ms against Q4_0's 1.8.
+On the GPU's own time Q4_K_M runs at ~75 tok/s, so the CPU (104–111) is
+the faster engine for its decode. In `bench_suite`, wall-time tg64 is
+74 tok/s at depth 0.
+
+**Loading cost of the f16 path**: `upload + record` takes 2.4–3.6 s for
+Q4_0 with the f16 matrices against ~1 s without, and 6–7 s for Qwen
+Q4_K_M. Peak RSS in `bench_suite --backend gpu` (prompt on the GPU) is
+838 MB for Qwen Q4_0 and 1.1 GB for Q4_K_M, against 344 / 465 MB on the
+CPU.
+
+**The app's GPU mode keeps the prompt on the CPU** (`5003b5e`):
+- Chat-length prompts are as fast on the CPU (64 tokens: 777 against 691
+  tok/s, results/phase-l5.md "Every engine").
+- The KV handoff costs nothing measurable (step 7).
+- `GpuSession::open_hybrid` therefore no longer builds the f16 matrices
+  (`Options::f32_gemm`). `aether --gpu -c 2-7` on Qwen Q4_0, old and new
+  binaries alternating: peak RSS 1134–1137 → 938 MB, a 20-token run
+  2.0–5.0 s → 1.5–2.1 s, the same greedy text (`raw/hybrid-no-f16-text.txt`).
+
+`GpuSession::open` without cores (`aether --gpu`) still runs the prompt on
+the GPU in f16. That is the faster choice for prompts of 128+ tokens if
+memory allows.
+
+## Step 12: prompt lookup on the GPU (2026-10-30, PC only; `raw/vk-gemv-n-intel.txt`)
+
+Prompt lookup (results/phase-6.md) checks k draft tokens in one pass of
+k + 1 tokens. On the GPU the prompt pass's shaders work in 64-token tiles,
+so 4 tokens would cost a whole tile, many decode steps. So the decode
+shader `qx_gemv.comp` got a variant for up to NT tokens (a specialization
+constant; `Gpu::qx_gemv_n_kernel`). It reads each weight once for all
+tokens: each lane dequantizes its 32-value piece of 4 rows and dots it with
+every token's values. Q4_0's `MatQ4_0` holds the same bytes as `MatQ`'s
+Q4_0, so one shader serves every format.
+
+`GpuModel::forward_few` runs 1 to 8 tokens through it and returns every
+token's logits (`logits_few`). `GpuSession::generate_lookup` is the CPU's
+loop around it. `aether --gpu --lookup K` and `aether_set_lookup` (so the
+app's "lookup" checkbox) now work in GPU mode.
+
+**Correct**:
+- `qx_gemv_n_matches_reference`: all five formats on the batch goldens,
+  2, 3 and 8 tokens a dispatch, against numpy's X @ dequant(W)ᵀ (bound
+  1e-6 · √cols, as for one token).
+- Perplexity through `forward_few` (`vk_ppl … few`, 8 tokens a pass, Intel)
+  equals the decode step's to the last digit: SmolLM2 Q4_0 27.6910, Q4_K_M
+  20.6876.
+- `gpu_lookup_keeps_the_greedy_text`: greedy text with lookup equals plain
+  GPU decoding (SmolLM2 Q4_0). The CLI gives the same text on SmolLM2 and
+  Qwen Q4_K_M too, with 50 of 60 and 19 of 76 drafts accepted.
+
+**Not faster on the Intel GPU**. GPU time per dispatch against one token
+of the decode shader (`vk_gemv_n`):
+
+| Shape | 1 token (decode) | 2 tokens (NT 2) | 8 tokens (NT 8) |
+|---|---|---|---|
+| wq/wo Q4_0 | 45 µs | 165 µs (3.7×) | 655 µs (14.5×) |
+| gate/up Q4_0 | 312 µs | 1351 µs (4.3×) | 6282 µs (20×) |
+| down Q4_0 | 154 µs | 653 µs (4.2×) | 2752 µs (18×) |
+
+The shader is not to blame. On this GPU the decode shader reads the
+896 × 896 matrix at ~11 GB/s, so decode is limited by arithmetic and
+registers, not by reading memory. More tokens per weight then only add
+work. Also, a kernel compiled for more tokens is slower even when it runs
+one: its unrolled loops hold more registers, and with 32-lane subgroups an
+Intel thread has room for ~32 floats per lane before it spills. The first
+version indexed its accumulators with runtime bounds (they went to memory:
+another 2×); now the loops run to constants with guards.
+
+Where decode is limited by reading the weights, one pass over a few tokens
+should cost little more than one step. The Adreno is that case: its
+products run at 30–40 GB/s of its ~66. Whether lookup pays off there is a
+phone question (`vk_gemv_n`, then `aether --gpu --lookup 4` on a copying
+prompt). `forward_batch` does not use the few-token shader (short prompts
+keep the prefill shaders) until the phone says it should.

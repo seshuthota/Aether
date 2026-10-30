@@ -1,0 +1,34 @@
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | batch up to 128
+16 tokens: 55.0 ms wall (291 tok/s), 53.5 ms on the GPU
+  rmsnorm                 0.629 ms    1.2 %
+  q/k/v                   5.117 ms    9.6 %
+  bias + RoPE + cache     0.315 ms    0.6 %
+  attention               0.657 ms    1.2 %
+  attention merge         0.243 ms    0.5 %
+  wo + add                5.178 ms    9.7 %
+  gate/up                12.140 ms   22.7 %
+  swiglu + down + add    26.103 ms   48.8 %
+  classifier              3.078 ms    5.8 %
+  argmax                  0.043 ms    0.1 %
+64 tokens: 96.9 ms wall (661 tok/s), 94.6 ms on the GPU
+  rmsnorm                 1.097 ms    1.2 %
+  q/k/v                   7.376 ms    7.8 %
+  bias + RoPE + cache     0.647 ms    0.7 %
+  attention               3.093 ms    3.3 %
+  attention merge         0.664 ms    0.7 %
+  wo + add                7.156 ms    7.6 %
+  gate/up                33.890 ms   35.8 %
+  swiglu + down + add    38.020 ms   40.2 %
+  classifier              2.583 ms    2.7 %
+  argmax                  0.039 ms    0.0 %
+128 tokens: 157.6 ms wall (812 tok/s), 154.6 ms on the GPU
+  rmsnorm                 1.295 ms    0.8 %
+  q/k/v                  11.725 ms    7.6 %
+  bias + RoPE + cache     0.689 ms    0.4 %
+  attention               9.773 ms    6.3 %
+  attention merge         1.127 ms    0.7 %
+  wo + add                9.445 ms    6.1 %
+  gate/up                64.686 ms   41.8 %
+  swiglu + down + add    54.100 ms   35.0 %
+  classifier              1.710 ms    1.1 %
+  argmax                  0.030 ms    0.0 %

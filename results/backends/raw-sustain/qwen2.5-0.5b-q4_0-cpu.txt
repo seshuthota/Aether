@@ -1,0 +1,56 @@
+# 2026-10-30T20:23:36+05:30, commit 3ab2966
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 86
+# Capacity level: -1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 187 ms
+test,tok_per_s,ms
+pp64,764.1,83.8
+pp128,763.8,167.6
+pp256,753.9,339.6
+pp512,690.3,741.7
+tg64@d0,188.1,340.2
+# tg64@d0 per token: median 5.27 ms, p95 5.71 ms (192 samples)
+tg64@d256,167.8,381.5
+# tg64@d256 per token: median 5.71 ms, p95 7.84 ms (192 samples)
+tg64@d512,124.6,513.5
+# tg64@d512 per token: median 7.98 ms, p95 8.30 ms (192 samples)
+ttft_pp64,8.1,123.0
+# peak RSS 345124 kB
+# monitor: 25 samples over 11.79 s, max temp 87.6 °C, energy 16.68 J, avg power 1.41 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/qwen2.5-0.5b-q4_0.gguf","quantization":"q4_0","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":187,"prefill":[{"prompt_tokens":64,"median_ms":83.8,"p95_ms":119.3,"tokens_per_second":764.1},{"prompt_tokens":128,"median_ms":167.6,"p95_ms":189.1,"tokens_per_second":763.8},{"prompt_tokens":256,"median_ms":339.6,"p95_ms":351.1,"tokens_per_second":753.9},{"prompt_tokens":512,"median_ms":741.7,"p95_ms":742.1,"tokens_per_second":690.3}],"decode":[{"context_depth":0,"median_ms_per_token":5.27,"p95_ms_per_token":5.71,"tokens_per_second":188.1},{"context_depth":256,"median_ms_per_token":5.71,"p95_ms_per_token":7.84,"tokens_per_second":167.8},{"context_depth":512,"median_ms_per_token":7.98,"p95_ms_per_token":8.30,"tokens_per_second":124.6}],"ttft_pp64_ms":123.0,"peak_memory_mb":337},"system_state":{"battery_status":"Discharging","max_temp_c":87.6,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1017600,"cpu7":1017600},"avg_power_w":1.41}}
+sustain_t_s,tok_per_s
+11,102.1
+21,106.9
+31,104.0
+42,107.3
+52,110.1
+63,107.8
+73,97.8
+84,114.4
+94,107.0
+104,123.2
+115,104.1
+126,106.3
+136,115.0
+146,100.7
+157,109.3
+167,107.9
+177,116.9
+187,107.8
+197,102.3
+208,107.3
+218,99.8
+228,110.7
+239,104.2
+249,100.0
+259,125.7
+270,116.2
+280,103.1
+290,101.6
+301,93.0
+# sustained: 32256 tokens in 301 s = 107.3 tok/s average
+# monitor: 602 samples over 300.55 s, max temp 85.3 °C, energy 1018.57 J, avg power 3.39 W, charge counter: 494.9 J over a 153 s window = 3.23 W
+# energy per token: 0.030 J (3.23 W from charge counter)

@@ -49,15 +49,24 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         fun open(path: String, cores: String, maxSeq: Int) = Aether(nativeOpen(path.toByteArray(), cores.toByteArray(), maxSeq))
 
         /**
-         * Loads a --pure Q4_0 .gguf to decode on the GPU (Vulkan). With [cores] (like "2-7"),
+         * Loads a Q4_0 or Q4_K_M .gguf to decode on the GPU (Vulkan). With [cores] (like "2-7"),
          * a CPU copy of the model runs each prompt in one batch; with "" the GPU runs the
          * prompt, batched as well.
          */
         fun openGpu(path: String, cores: String, maxSeq: Int) = Aether(nativeOpenGpu(path.toByteArray(), cores.toByteArray(), maxSeq))
 
+        /**
+         * Loads a --pure Q4_0 .gguf for the Hexagon DSP: the prompt on its matrix unit, then
+         * one DSP call per token. [dir] is a writable directory the DSP's code is written to
+         * and loaded from (the app's files directory).
+         */
+        fun openDsp(path: String, dir: String, maxSeq: Int) = Aether(nativeOpenDsp(path.toByteArray(), dir.toByteArray(), maxSeq))
+
         @JvmStatic private external fun nativeOpen(path: ByteArray, cores: ByteArray, maxSeq: Int): Long
 
         @JvmStatic private external fun nativeOpenGpu(path: ByteArray, cores: ByteArray, maxSeq: Int): Long
+
+        @JvmStatic private external fun nativeOpenDsp(path: ByteArray, dir: ByteArray, maxSeq: Int): Long
 
         @JvmStatic private external fun nativeGenerate(
             handle: Long, prompt: ByteArray, chat: Boolean, temperature: Float, topP: Float,

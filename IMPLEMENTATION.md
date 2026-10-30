@@ -49,8 +49,75 @@ Qwen2.5-0.5B. The GPU reads DRAM as fast as the CPU (~66 GB/s), so decode is not
 tok/s sustained), but it takes ~2.3 W instead of 4.5 W: 0.021–0.024 J/token vs 0.029, 68 vs 89 °C.
 99 tests on the phone with `--features vulkan` (96 without).
 
+**The NPU** (2026-10-29 / 30, results/phase-l5.md, `--features hexagon`): our own code on the
+Hexagon DSP, unsigned. The whole decode step in one FastRPC call (HVX across 6 threads, weights by
+DMA into VTCM): Qwen2.5-0.5B 6.75 ms a token (123 tok/s) against llama.cpp's NPU backend 74, PPL
+matching llama.cpp. Matrix × matrix products on HMX for prompts: Qwen's layer products at 1512
+tok/s for 128 tokens (llama.cpp's NPU prefill ~330 for the whole model). Prefill through the whole
+model on the DSP is written and waits for the phone (L.5 step 5b).
+
 Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), GPU prefill, L.5 (NPU).
+screen off or kept awake by keyevents), GPU prefill (plan in L.3), L.5 step 5b on the phone.
+
+### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
+
+Items 9–13 ran on the phone on 2026-10-30, 22:00–23:15 (results/phase-l5.md "Step 6"):
+all three engines in the app, DSP sessions from an app work; GPU lookup slower (off in the
+C ABI); DSP lookup +6–28 % with the few-token pass by DMA; Q4_K_M on the DSP at llama.cpp's
+PPL after a VTCM slot fix (`c68da0a`).
+
+Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "Step 5b" and
+"Every engine", results/phase-l3.md step 11; one bug found and fixed, `3ab2966`):
+
+1. [x] Tests: hexagon 112/112 (three runs, after the VTCM lock), vulkan 113/113.
+2. [x] `dsp_gemm -- 128 6`: 1656 tok/s (was 1543).
+3. [x] DSP decode with transposed keys: PPL 27.7876 / 19.7560 (reordered adds; v3 27.7429 /
+   19.7584), Qwen over a 512-token run 72 → 86 tok/s.
+4. [x] DSP prefill: PPL 27.6893 / 19.7174 (llama.cpp 27.7412 / 19.7283); 1608 / 778 tok/s at 128.
+5. [x] `aether --dsp`: agrees with the CPU for 2–40 tokens, then f16 vs int8 rounding picks a
+   different word at a near-tie (the PPL in 4 is the check).
+6. [x] GPU f16 Q4_0: 590–817 GFLOP/s (f32 147–228); Qwen prompt 812 tok/s at 128 (was 267);
+   PPL 27.6924 / 19.7190. The app keeps the prompt on the CPU; its hybrid session no longer
+   builds the f16 matrices (`5003b5e`: −196 MB, faster load).
+7. [x] Q4_K_M on the GPU: PPL equal to the PC's; prompt 563 tok/s at 128; decode 12.3 ms of GPU
+   time a token (Q4_0 9.0, unchanged).
+8. [x] `backends-bench.sh` (`results/backends/raw`), and `SUSTAIN=300` on battery for Qwen Q4_0:
+   CPU 107 tok/s 0.030 J/token, GPU 78 / 0.029, DSP 131 / 0.025.
+9. [x] **The app's CPU / GPU / DSP selector** (replaces the GPU checkbox). Installed on the
+   phone (2026-10-30, with `5003b5e`); `libcdsprpc.so` is in `/vendor/etc/public.libraries.txt`.
+   `qwen2.5-0.5b-instruct-q4_0.gguf` (internal) and `qwen2.5-0.5b-q4_k_m.gguf` (external files
+   dir, a base model: Chat off) are on the phone. Try each of CPU, GPU and DSP on the instruct
+   model, then GPU on the Q4_K_M one: the reply streams and the status line shows load time and
+   prefill / decode tok/s. Open question: can an app process start an unsigned DSP session from
+   its files directory? If not, the DSP option shows the error and CPU and GPU still work.
+10. [x] **Prompt lookup on the GPU** (written 2026-10-30 after the run above, PC-verified;
+   results/phase-l3.md step 12). `cargo test … --features vulkan --lib qx_gemv_n gpu_lookup`;
+   `--example vk_gemv_n` (few-token shader against one decode step: on the Intel GPU 2 tokens
+   cost 3.7–4.3 steps; on the Adreno, where decode is bound by memory, it should be far less);
+   `aether GGUF --gpu -c 2-7 -t 0 --lookup 4` against without, on a prompt the reply copies
+   (results/phase-6/raw/lookup/, on the phone `/data/local/tmp/aether/prompt-*.txt`) and on
+   fresh prose: tok/s and drafts
+   accepted. The app's lookup checkbox in GPU mode. If lookup is slower on the Adreno, turn it
+   off for GPU sessions in the C ABI again.
+11. [x] **Prompt lookup on the DSP** (written 2026-10-30 after the run above; the HVX product
+   for several tokens verified on the Hexagon simulator, the rest phone-only). `cargo test …
+   --features hexagon --lib few_tokens dsp_lookup` (the few-token pass's logits must equal the
+   decode step's bit for bit); `dsp_ppl SMOLLM 20 512 6 1f 1 few` and the same on Qwen (PPL
+   must equal the decode PPL of item 3: 27.7876 / 19.7560; prints the pass's time for 1–8
+   tokens against one decode step); `aether GGUF --dsp -t 0 --lookup 4` against without on
+   the copying prompts and on prose; the app's lookup checkbox in DSP mode. The pass reads
+   weights by l2fetch, not DMA: if 2 tokens cost much more than one decode step, DMA is the
+   next thing to try.
+12. [x] **Q4_K_M on the DSP** (written 2026-10-30; the products of every format verified on the
+   simulator, the model phone-only). `cargo test … --features hexagon --lib few_tokens` now
+   also runs SmolLM2 Q4_K_M (few-token logits = decode logits). `dsp_ppl` on
+   `smollm2-135m-q4_k_m.gguf` and `qwen2.5-0.5b-q4_k_m.gguf` (decode, and `… 1 few`): llama.cpp
+   20.7784 / 16.7657, our CPU 20.7201 / 16.7088. Decode tok/s against Q4_0 (bytes per weight
+   ~1.4× Q4_0's, so expect it slower), the stage profile, and with DMA mask 0 against 1f.
+   `aether qwen…q4_k_m.gguf --dsp`: the text, and the prompt speed (8 tokens a call on HVX:
+   no HMX prefill for these formats yet). The app's DSP mode on the Q4_K_M file.
+13. [x] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
+   `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
@@ -226,7 +293,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 - [x] **6.1 Block formats** (byte-identical to llama.cpp via the `gguf` package; tools/gen_quant.py) Q8_0 (32×i8 + f16 scale = 34 B) and Q4_0 (32×4-bit + f16 scale =
       18 B, value = (q−8)·d), byte-identical to llama.cpp's reference quantizers.
-- [~] **6.2 `quantize` tool** (changed: models are quantized in memory at load, `-q q8_0|q4_0`, like `llama-quantize --pure`; a file writer comes with GGUF in Phase 7) (Rust binary): safetensors → our quantized weights.
+- [x] **6.2 `quantize` tool** (models are also quantized in memory at load, `-q q8_0|q4_0`; 2026-10-30: `aether-quantize [--imatrix FILE] IN.gguf OUT.gguf q8_0|q4_0|q5_0|q4_k_m`, `format::gguf::Writer`; output byte-identical to `llama-quantize --pure [--imatrix]` and to its Q4_K_M mix (with and without imatrix) for SmolLM2 and Qwen2.5, results/phase-6.md) (Rust binary): f32/f16 GGUF → quantized GGUF.
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
@@ -340,6 +407,51 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
           152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
           after a CPU prompt 63–66 → 96–101 (no gap left).
+  - [x] Prompt lookup on the GPU (`GpuModel::forward_few`, the decode shader for up to 8
+        tokens, `GpuSession::generate_lookup`): correct, but 2.4× slower on the Adreno (each
+        extra token costs about a whole dispatch); the C ABI ignores lookup for GPU sessions.
+        A shader that shares the weights across tokens on the Adreno would be needed.
+  - [~] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+        f16 shaders on the phone (step 11): 771 at pp256, 812 at 128; the gap is ~1.7×. Left:
+        the texel-buffer path for the activations.
+        How its Adreno Q4_0 kernel (`mul_mat_Ab_Bi_8x4.cl`) differs from `q4_0_gemm.comp`:
+        - No shared memory and no barriers. The weights are repacked once, transposed in groups
+          of 4 nibbles (a `ushort` holds 4 consecutive inputs of one row) and scales likewise, so
+          neighbouring threads read neighbouring rows: each load is coalesced straight from
+          memory, and every weight is used by 8 tokens in registers.
+        - The activations are transposed to fp16 and read as a 1-D image buffer
+          (`read_imageh`): through the texture cache, 8 tokens a load, shared by every thread
+          that needs them.
+        - fp16 arithmetic (`half8` accumulators, double rate on Adreno) and a small tile per
+          thread: 8 tokens × 4 rows = 32 halves (16 registers) against our 64 f32 accumulators,
+          so many more waves are resident to hide latency. 128-lane subgroups ("full").
+        A Vulkan version: weights repacked as above at load; activations transposed to fp16 in a
+        uniform texel buffer (`texelFetch`, the texture path); `float16_t` arithmetic
+        (`VK_KHR_shader_float16_int8`), accumulating each 32-input block in f16 and adding it
+        into f32 to bound the error over long rows (llama.cpp accumulates whole rows in f16).
+        Check against the batch goldens with an fp16 bound, then PPL through `vk_ppl … batch`.
+        Written 2026-10-30 while the phone was away, checked on the PC's Intel GPU only
+        (results/phase-l3.md step 9): `shaders/q4_0_gemm_h.comp`, `to_f16t.comp`, `MatQ4_0T`,
+        `Info::fp16` (features turned on where the device has them), used by
+        `GpuModel::forward_batch` unless `Options::f32_gemm`. Activations through a storage
+        buffer for now (the texel-buffer path is a next step if the phone wants it). Test
+        `q4_0_gemm_h_matches_reference` (rel ≤ 1.7e-3, bound 4 · 2⁻¹¹); PPL through it SmolLM2
+        27.6961 (f32 27.6910), Qwen2.5 19.7256 (f32 19.7193; llama.cpp 27.7412 / 19.7283).
+        To do on the phone: `vk_gemm` (f16 vs f32 GFLOP/s), `vk_ppl … batch`, `vk_prefill`,
+        and whether the app's GPU mode should now run the prompt on the GPU instead of the CPU.
+  - [x] Q4_K_M files on the GPU, decode and prompt (2026-10-30; phone numbers in
+        results/phase-l3.md step 11: PPL equal to the PC's, prompt 563 tok/s at 128 in f16):
+        `shaders/qx_gemv.comp` takes every format of the mix (Q4_0, Q5_0, Q8_0, Q4_K, Q6_K) with
+        the Q4_0 shader's lane layout; `MatQ` lays each 32-value piece out as nibble pairs (int8s
+        for Q8_0), K-quant scales per super-block, so each reads close to its file size. Test
+        `qx_gemv_matches_reference` (all five, 21 golden cases, against numpy). `GpuModel`
+        keeps the tuned Q4_0 shader for Q4_0 matrices and splits q/k/v or gate/up into parts
+        when their formats differ (Q4_K_M has `attn_v` in Q8_0 on half the layers). PPL on the
+        PC: SmolLM2 20.6876, Qwen2.5 16.7167 (llama.cpp 20.7784 ± 0.85 / 16.7657 ± 0.69).
+        Prompt pass: `shaders/qx_gemm.comp` (q4_0_gemm's f32 tiles, any format, output row
+        stride for parts); test `qx_gemm_matches_reference` (20 cases); PPL through it the same
+        as the decode step. On the Intel GPU it is no faster than decode (f32 tiles ~15
+        GFLOP/s there). To do: phone numbers; an f16 multi-format GEMM if the phone needs it.
 - [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
       6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
@@ -360,7 +472,43 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
   - [x] Step 5a, Q4_0 matrix-matrix product on HMX (fp16 tiles in VTCM; HVX threads dequantize
         while one drives HMX; Qwen's layer products 1512 tok/s at 128 tokens, 2413 at 256).
-  - [ ] Step 5b, prefill on the DSP through the whole model with HMX, PPL again.
+  - [x] Step 5b, prefill on the DSP through the whole model with HMX, PPL again (phone
+        2026-10-30: PPL 27.6893 / 19.7174, 1608 / 778 tok/s at 128; results/phase-l5.md). Written
+        while the phone was away (2026-10-30):
+        - `model_prefill` (dsp/model.c): up to `batch` tokens per call, every layer; products on
+          HMX through `hmx_rows` (all threads, shared barrier), norms / RoPE / KV store a run of
+          tokens per thread, causal attention a run of (token, head) pairs, SwiGLU by blocks.
+          Logits for every token on HMX (`all_logits`, perplexity) or the last on HVX.
+          `DspModel::new(.., batch, all_logits)`, `DspModel::prefill`; `dsp_ppl … BATCH`
+          (perplexity through the prefill, plus prefill tok/s at 32 / 64 / 128 / BATCH).
+        - Attention: keys stored transposed (a row of every position per key element), so 32
+          positions' scores are one vector of multiply-adds with no reduction per position.
+          For the decode slowdown at long positions (72 tok/s over a 512-token run).
+        - HMX dequantization: each worker l2fetches its share of the next chunk's Q4_0 bytes
+          (one thread was waiting on DRAM, ~0.8 GB/s).
+        - `DspSession` (prompt by prefills of 128, then decode), `aether MODEL --dsp`,
+          `aether_open_dsp(path, dir, max_seq, out)` in the C ABI and `include/aether.h`. Not in
+          the app's UI yet (JNI and a checkbox, after the CLI works).
+        To check on the phone: all tests; `dsp_ppl` batch 128 on SmolLM2 and Qwen against
+        llama.cpp's PPL (fp16 activations in the products may cost a little); the greedy text;
+        decode PPL unchanged with the transposed keys; `dsp_gemm` again (prefetch); `--dsp`.
+  - [x] Prompt lookup on the DSP (2026-10-30; phone: +6–28 %, text unchanged, results/phase-l5.md step 6):
+        `model_few` (dsp/model.c) runs up to 8 tokens through every layer with every token's
+        logits. Its products (`q4_0_rows_n_on`, dsp/q4_0_hvx.h) split each block of weights
+        into nibbles once and use it for every token, adding the same block sums in the same
+        order as the decode step, so the logits are the decode step's. The HVX product code
+        moved into `dsp/q4_0_hvx.h` so `dsp/sim/rows_n.c` can run it on the SDK's simulator:
+        `sim_q4_0_rows_n_matches_reference` checks it against llama.cpp's Q4_0 bytes (the
+        quant_batch goldens) for 1, 3 and 8 tokens on the PC. `DspModel::few`,
+        `DspSession::generate_lookup`, `aether --dsp --lookup K`, the C ABI's lookup for DSP
+        sessions, `dsp_ppl … few`.
+  - [x] Q4_K_M on the DSP (2026-10-30; phone: PPL 20.7241 / 16.7381, Qwen 92–98 tok/s): products for Q5_0,
+        Q8_0, Q4_K and Q6_K (dsp/qx_hvx.h), each laid out like Q4_0 (32-row groups, a piece
+        as whole vectors; `repack_qx`), checked on the simulator against llama.cpp's bytes
+        (`sim_qx_rows_n_matches_reference`, 20 shapes, 1/3/8 tokens). A product is up to
+        three runs of one format each (q/k/v and gate/up may mix formats). Decode uses DMA
+        for every format (`qx_rows`); the few-token pass runs them too, and is the prompt
+        pass for files not all Q4_0 (HMX prefill is Q4_0 only).
 
 ---
 

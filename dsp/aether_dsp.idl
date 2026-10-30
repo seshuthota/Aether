@@ -49,4 +49,15 @@ interface aether_dsp : remote_handle64 {
     // nb * 32 f32, out `tokens` rows of `rows` (rounded up to 32) f32.
     // Both are rounded to fp16 for the products.
     long hmx_gemm(in long w_fd, in long x_fd, in long out_fd, in uint32 rows, in uint32 nb, in uint32 tokens, in uint32 threads, rout uint64 us);
+    // A prefill of the loaded model: n tokens at positions pos .. pos + n - 1
+    // (the CPU wrote their embeddings and RoPE tables into rows 0 .. n - 1
+    // of the state), every layer with the products on HMX. With `all`,
+    // every token's logits (n rows), else the last token's; and the greedy
+    // token after the last.
+    long model_prefill(in uint32 pos, in uint32 n, in uint32 threads, in uint32 all, rout uint32 next, rout uint64 us);
+    // A pass of n (at most 8) tokens at positions pos .. pos + n - 1 (rows
+    // 0 .. n - 1 of the state, as for model_prefill) with every token's
+    // logits, the products as in model_decode with the weights read once
+    // for all n tokens: speculative decoding's check of its drafts.
+    long model_few(in uint32 pos, in uint32 n, in uint32 threads, rout uint64 us);
 };

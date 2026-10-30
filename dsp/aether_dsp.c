@@ -13,6 +13,7 @@
 #include "HAP_power.h"
 #include "aether_dsp.h"
 #include "dsp.h"
+#include "qx_hvx.h"
 #include "hexagon_types.h"
 #include "hvx_hexagon_protos.h"
 #include "qurt_barrier.h"
@@ -244,54 +245,6 @@ AEEResult aether_dsp_refresh(remote_handle64 h, int fd, uint32 bytes) {
     return AEE_SUCCESS;
 }
 
-// Asks the L2 for `bytes` from p on (rows of 4 KB), without waiting.
-static inline void prefetch(const void *p, uint32 bytes) {
-    uint32 rows = (bytes + 4095) / 4096;
-    Q6_l2fetch_AP((void *) p, (uint64) 4096 << 32 | 4096 << 16 | (rows > 0xffff ? 0xffff : rows));
-}
-
-static inline HVX_Vector splat_f(float f) {
-    union { float f; int32 i; } u = {f};
-    return Q6_V_vsplat_R(u.i);
-}
-
-// One block of one group: its rows' integer dot products, low and high
-// nibbles in separate sums (two dependency chains, not one).
-static inline HVX_Vector block_dot(const HVX_Vector *w, const int32 *x, int32 xsum, HVX_Vector low) {
-    HVX_Vector s0 = Q6_V_vsplat_R(-8 * xsum), s1 = Q6_V_vzero();
-    for (int k = 0; k < 4; k++) {
-        s0 = Q6_Vw_vrmpyacc_VwVubRb(s0, Q6_V_vand_VV(w[k], low), x[k]);
-        s1 = Q6_Vw_vrmpyacc_VwVubRb(s1, Q6_V_vand_VV(Q6_Vuh_vlsr_VuhR(w[k], 4), low), x[4 + k]);
-    }
-    return Q6_Vw_vadd_VwVw(s0, s1);
-}
-
-// acc + (the block's sums) * (rows' scales) * (x's scale).
-static inline HVX_Vector block_acc(HVX_Vector acc, HVX_Vector s, HVX_Vector scales, HVX_Vector xd) {
-    return Q6_Vsf_vadd_VsfVsf(acc, Q6_Vsf_vmpy_VsfVsf(Q6_Vsf_equals_Vw(s), Q6_Vsf_vmpy_VsfVsf(scales, xd)));
-}
-
-// Two groups (w0, then w1 right after it) into out[0] and out[1]: the
-// vector unit has independent work while each vrmpy's result is still on
-// its way, and x is read once for both.
-static inline void pair_rows(const HVX_Vector *w0, const char *xqb, uint32 nb, HVX_Vector *out, int accumulate) {
-    const int32 *xq = (const int32 *) xqb;
-    const float *xd = (const float *) (xqb + 32 * nb);
-    const int32 *xs = (const int32 *) (xqb + 36 * nb);
-    const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
-    const HVX_Vector *w1 = w0 + (size_t) nb * 5;
-    HVX_Vector a0 = Q6_V_vzero(), a1 = a0;
-    for (uint32 b = 0; b < nb; b++, w0 += 5, w1 += 5) {
-        const int32 *x = xq + 8 * b;
-        HVX_Vector d = splat_f(xd[b]);
-        HVX_Vector s0 = block_dot(w0, x, xs[b], low), s1 = block_dot(w1, x, xs[b], low);
-        a0 = block_acc(a0, s0, w0[4], d);
-        a1 = block_acc(a1, s1, w1[4], d);
-    }
-    out[0] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[0], a0) : a0;
-    out[1] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[1], a1) : a1;
-}
-
 // The DMA engine's one-dimensional descriptor (v73+ layout, as llama.cpp's
 // backend declares it; the SDK's header is older): copy `size` bytes from
 // `src` to `dst`, then go on to `next`. The engine sets `done`. With the
@@ -375,6 +328,15 @@ out:
     return vtcm;
 }
 
+// Each thread's share of VTCM for its DMA slots: fixed, not sized by the
+// product, as a thread may start a product of another format (the next
+// run of q/k/v) while the others still use their slots for the last.
+#define VTCM_SHARE (vtcm_bytes / MAX_THREADS)
+
+static qurt_mutex_t busy_lock = QURT_MUTEX_INIT;
+void dsp_busy(void) { qurt_mutex_lock(&busy_lock); }
+void dsp_free(void) { qurt_mutex_unlock(&busy_lock); }
+
 void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
     const int32 *xq = (const int32 *) xqb;
     const float *xd = (const float *) (xqb + 32 * nb);
@@ -382,10 +344,10 @@ void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *o
     const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
     uint32 g = g0, pair = 2 * nb * 640;
     char *v = fetch == FETCH_DMA ? vtcm : NULL;
-    if (v && 2 * pair * (t + 1) <= vtcm_bytes && g + 2 <= g1) {
-        // Two VTCM slots per thread: the DMA fills one with the next pair
-        // of groups while the vector unit works on the other.
-        char *slot[2] = {v + 2 * pair * t, v + 2 * pair * t + pair};
+    if (v && 2 * pair <= VTCM_SHARE && g + 2 <= g1) {
+        // Two VTCM slots in thread t's share: the DMA fills one with the
+        // next pair of groups while the vector unit works on the other.
+        char *slot[2] = {v + VTCM_SHARE * t, v + VTCM_SHARE * t + pair};
         uint32 n = (g1 - g) / 2;
         struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * nb * 5, pair), NULL};
         for (uint32 p = 0; p < n; p++, g += 2) {
@@ -405,6 +367,34 @@ void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *o
         for (uint32 b = 0; b < nb; b++, w += 5) a = block_acc(a, block_dot(w, xq + 8 * b, xs[b], low), w[4], splat_f(xd[b]));
         out[g] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[g], a) : a;
     }
+}
+
+void qx_rows_n(uint32 fmt, const HVX_Vector *wall, const char *const *xs, uint32 n, uint32 nb, HVX_Vector *out, uint32 ostride, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    // As q4_0_rows, a group at a time by qx_hvx.h's product for n tokens.
+    const uint32 gv = piece_vectors(fmt) * nb, pair = 2 * gv * 128;
+    uint32 g = g0;
+    char *v = fetch == FETCH_DMA ? vtcm : NULL;
+    if (v && 2 * pair <= VTCM_SHARE && g + 2 <= g1) {
+        char *slot[2] = {v + VTCM_SHARE * t, v + VTCM_SHARE * t + pair};
+        uint32 np = (g1 - g) / 2;
+        struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * gv, pair), NULL};
+        for (uint32 p = 0; p < np; p++, g += 2) {
+            if (p + 1 < np) d[(p + 1) % 2] = dma_copy(t, slot[(p + 1) % 2], wall + (size_t) (g + 2) * gv, pair);
+            dma_wait(d[p % 2]);
+            // A group at a time, so nothing l2fetches from VTCM.
+            const HVX_Vector *w = (const HVX_Vector *) slot[p % 2];
+            qx_rows_n_on(fmt, w, xs, n, nb, out + g, ostride, 0, 1, accumulate);
+            qx_rows_n_on(fmt, w + gv, xs, n, nb, out + g + 1, ostride, 0, 1, accumulate);
+        }
+    }
+    if (g < g1) qx_rows_n_on(fmt, wall + (size_t) g * gv, xs, n, nb, out + g, ostride, 0, g1 - g, accumulate);
+}
+
+void qx_rows(uint32 fmt, const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    if (fmt == F_Q4_0)
+        q4_0_rows(wall, xqb, nb, out, g0, g1, fetch, accumulate, t);
+    else
+        qx_rows_n(fmt, wall, &xqb, 1, nb, out, 1, g0, g1, fetch, accumulate, t);
 }
 
 // Q4_0 x Q8_0 matrix-vector product. The weights come in groups of 32
@@ -441,10 +431,12 @@ AEEResult aether_dsp_q4_0_gemv(remote_handle64 h, int w_fd, int x_fd, int out_fd
     int err = AEE_EBADPARM;
     if (w && x && out) {
         cpu_wrote(x, nb * 40);
-        dma_gen++;
         if (prefetch == FETCH_DMA) vtcm_get(&(uint32) {0});
+        dsp_busy();
+        dma_gen++;
         struct gemv_job j = {w, x, out, groups, nb, threads, prefetch};
         err = run_threads(threads, gemv_thread, &j, us);
+        dsp_free();
         cpu_reads(out, groups * 128);
     }
     if (w) release(w_fd);

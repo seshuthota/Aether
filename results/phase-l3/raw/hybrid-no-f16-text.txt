@@ -1,0 +1,10 @@
+== old
+The history of the printing press begins in the fifteenth century, when Johannes Gutenberg combined movable metal type, oil-based ink and a wooden press adapted from wine making. Within fifty years the new technology had spread across Europe, and by the sixteenth century the printing press was the most widely used of all the printing methods. By the seventeenth century, the printing press was the most widely used of all the printing methods. By the eighteenth century, the printing press was the most widely
+
+GPU: Adreno (TM) 830
+prefill (on the CPU): 45 tokens in 139.6 ms (322.4 tok/s) | decode: 51 tokens in 843.1 ms (60.5 tok/s)
+== new
+The history of the printing press begins in the fifteenth century, when Johannes Gutenberg combined movable metal type, oil-based ink and a wooden press adapted from wine making. Within fifty years the new technology had spread across Europe, and by the sixteenth century the printing press was the most widely used of all the printing methods. By the seventeenth century, the printing press was the most widely used of all the printing methods. By the eighteenth century, the printing press was the most widely
+
+GPU: Adreno (TM) 830
+prefill (on the CPU): 45 tokens in 110.1 ms (408.6 tok/s) | decode: 51 tokens in 840.1 ms (60.7 tok/s)

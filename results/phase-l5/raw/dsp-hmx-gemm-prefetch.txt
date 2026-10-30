@@ -1,0 +1,9 @@
+# 2026-10-30, after the l2fetch of the next chunk (ebc094c + 3ab2966), 39.9 C at start, battery
+# cargo run --release --target aarch64-linux-android --features hexagon --example dsp_gemm -- 128 6
+128 tokens, 6 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        172     1536.3        1.3
+        wo        155     1325.9        1.2
+   gate/up       1636     1363.9       12.8
+      down       1257      887.6        9.8
+24 layers: 77.3 ms for 128 tokens, 1656 tok/s (products only)

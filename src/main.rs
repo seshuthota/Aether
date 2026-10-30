@@ -30,10 +30,16 @@
 //!             it too): up to --draft-k K (default 4) greedy draft tokens,
 //!             checked like --lookup's
 //!   --gpu     decode on the GPU through Vulkan (builds with --features
-//!             vulkan; a --pure Q4_0 GGUF). With -c, the prompt runs on the
-//!             CPU (batched) and its KV cache goes to the GPU; without, on
-//!             the GPU (batched as well)
+//!             vulkan; a Q4_0 or Q4_K_M GGUF). With -c, the prompt runs on
+//!             the CPU (batched) and its KV cache goes to the GPU; without,
+//!             on the GPU (batched as well). --lookup K works here too (up
+//!             to 7 drafts, checked in one few-token pass), but is slower
+//!             on the Adreno (results/phase-l3.md step 12)
 //!   --times   with --gpu: print the time of every decode token
+//!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
+//!             --pure Q4_0 GGUF, or Q4_K_M): the prompt in batches on HMX
+//!             (Q4_K_M: 8 tokens a call on HVX), then one DSP call per token. --lookup K works here too (up to 7
+//!             drafts, checked in one few-token pass)
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -70,14 +76,15 @@ fn main() {
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram) = (0usize, 2usize);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
-    let (mut gpu, mut times) = (false, false);
+    let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" {
             match flag.as_str() {
                 "--kl" => kl = true,
                 "--chat" => chat = true,
                 "--times" => times = true,
+                "--dsp" => dsp = true,
                 _ => gpu = true,
             }
             continue;
@@ -121,11 +128,17 @@ fn main() {
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
     }
+    if dsp {
+        if chat {
+            prompt = aether::chat::chatml(&system, &prompt);
+        }
+        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram));
+    }
     if gpu {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times);
+        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -203,7 +216,7 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool) {
+fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram): (usize, usize)) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
@@ -219,12 +232,19 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     // --times: the time between emitted tokens (one GPU step plus
     // sampling), to see whether decode starts slow and speeds up.
     let mut stamps = times.then(Vec::new);
-    let st = s.generate(prompt, &mut sampler, steps, |piece| {
+    let emit = |piece: &[u8]| {
         if let Some(v) = &mut stamps {
             v.push(std::time::Instant::now());
         }
         out.write_all(piece).and_then(|_| out.flush()).is_ok()
-    });
+    };
+    let st = if lookup > 0 {
+        let (st, look) = s.generate_lookup(prompt, &mut sampler, steps, lookup, ngram, emit);
+        eprintln!("\nspeculative: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        st
+    } else {
+        s.generate(prompt, &mut sampler, steps, emit)
+    };
     writeln!(out).unwrap();
     if let Some(v) = stamps {
         let ms: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
@@ -235,8 +255,40 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     eprintln!("prefill ({how}): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
 }
 
+/// `--dsp`: the prompt in batches on the DSP's HMX, then one DSP decode
+/// step per token (`session::DspSession`); sampling on the CPU.
+#[cfg(feature = "hexagon")]
+fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (lookup, ngram): (usize, usize)) {
+    // The DSP library goes next to this program (/data/local/tmp/... on
+    // the phone is writable).
+    let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
+    let mut s = aether::session::DspSession::open(path, steps, &dir, 6).unwrap_or_else(|e| fail(path, e));
+    let mut out = std::io::stdout().lock();
+    let t = s.text.encode(prompt);
+    let _ = out.write_all(&s.text.first_piece(t[0]));
+    for p in 0..t.len() - 1 {
+        let _ = out.write_all(&s.text.piece(t[p], t[p + 1]));
+    }
+    let emit = |piece: &[u8]| out.write_all(piece).and_then(|_| out.flush()).is_ok();
+    let st = if lookup > 0 {
+        let (st, look) = s.generate_lookup(prompt, &mut sampler, steps, lookup, ngram, emit);
+        eprintln!("\nspeculative: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        st
+    } else {
+        s.generate(prompt, &mut sampler, steps, emit)
+    };
+    writeln!(out).unwrap();
+    let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
+    eprintln!("prefill (DSP): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
+}
+
+#[cfg(not(feature = "hexagon"))]
+fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize)) {
+    eprintln!("--dsp needs a build with --features hexagon");
+}
+
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool) {
+fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize)) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

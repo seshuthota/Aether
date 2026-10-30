@@ -1114,3 +1114,56 @@ Qwen2.5-0.5B on the host for 51,200 tokens) and slower quantizing (each
 block tries ~20 scales); the files, the kernels and the decode speed are
 unchanged, since the bytes have the same layout. Not run on the phone (the
 phone check of gpu-pending is on hold); nothing here is phone-specific.
+
+## Writing GGUF: `aether-quantize` (6.2, 2026-10-30, host only)
+
+`src/format/quantize.rs` and `src/bin/aether-quantize.rs`: an f32 (or f16)
+GGUF into Q8_0, Q4_0 or Q5_0, every matrix in that format, as
+`llama-quantize --pure [--imatrix FILE]` does. The GGUF writer
+(`format::gguf::Writer`) copies the metadata byte for byte and follows
+llama.cpp's layout:
+- `general.quantization_version` and `general.file_type` are removed and
+  appended, so they come last, as ggml's `gguf_set_val_*` does. The
+  `quantize.imatrix.*` keys follow when an importance matrix is used.
+- Tensors are ordered by layer, then by name (`weight_name_comparer`).
+- Each tensor's start is aligned to 32 bytes, padded with zeros.
+
+Verified by comparing whole files with llama-quantize's from the same f32
+conversion. Every file is **byte-identical**:
+
+| Model | Formats | Time per file (host, release) |
+|---|---|---|
+| SmolLM2-135M | Q8_0, Q4_0, Q5_0; Q4_0 and Q5_0 with imatrix | tests `writes_llama_quantize_files*` |
+| Qwen2.5-0.5B | Q8_0, Q4_0; Q4_0 and Q5_0 with imatrix | 1.4–3.4 s (`cmp` on the CLI output) |
+
+The bytes being identical carries every earlier check of those files
+(perplexity, KL, decode on all three backends) over to our own output.
+**Q4_K_M** (same day): `aether-quantize … q4_k_m` writes llama.cpp's mix.
+llama.cpp picks a format per matrix (`llama_tensor_get_type`); for these
+dense models the rule comes down to:
+
+| Matrix | Format |
+|---|---|
+| classifier, or the embedding when it is also the classifier | Q6_K (Q8_0 if its rows are not a multiple of 256) |
+| attn_v, ffn_down, on the "more bits" layers | Q6_K |
+| everything else | Q4_K |
+
+- "More bits" layers (`use_more_bits`): the first and last eighth of the
+  layers, and every third layer between. attn_v counts its own tensors in
+  file order; ffn_down counts layers.
+- Fallback: a K-quant needs rows that are a multiple of 256 values. If not,
+  Q4_K falls back to Q5_0 and Q6_K to Q8_0. That is why most of SmolLM2's
+  (576 wide) and Qwen's (896 wide) matrices end up Q5_0.
+
+`q4_k_m_types` reproduces that rule. Fused q/k/v (Q5_K) and its Q5_1
+fallback are refused; neither model has them. The K-quant blocks come from
+our `quantize_q4_k_row` / `quantize_q6_k_row`, already byte-identical row
+by row.
+
+| Model | Q4_K_M | Q4_K_M with imatrix | Time (host) |
+|---|---|---|---|
+| SmolLM2-135M | byte-identical | byte-identical | 1.7 s / 2.7 s |
+| Qwen2.5-0.5B | byte-identical | byte-identical | 6.5 s / 10.5 s |
+
+Test `writes_llama_quantize_q4_k_m` covers SmolLM2 both ways; Qwen was
+checked with `cmp` on the CLI output.

@@ -340,3 +340,193 @@ the cost per matrix is nearly fixed and the tokens share it: 32 tokens
 run at 502 tok/s, 256 at 2413. llama.cpp's NPU prefill of the whole
 model is ~330 tok/s. Next (step 5b): prefill through the whole model on
 the DSP, and perplexity again.
+
+## Step 5b: the prompt through the whole model on the DSP (2026-10-30; `raw/dsp-ppl-v5-*.txt`, `raw/dsp-hmx-gemm-prefetch.txt`, `raw/dsp-cli-vs-cpu/`)
+
+Written while the phone was away, run on it the same evening (on battery
+from step 3 on, 40–57 °C).
+
+`model_prefill` (dsp/model.c) runs up to 128 tokens per FastRPC call
+through every layer:
+- The products run on HMX through step 5a's code, now shared by all
+  threads.
+- Norms, RoPE and the KV store run a batch of tokens per thread.
+- Attention runs a batch of (token, head) pairs per thread.
+- The logits come out for every token (perplexity) or for the last one.
+
+Two changes came with it:
+- **Keys stored transposed:** row e of a layer's cache holds key element e
+  for every position. So 32 positions' scores are one vector of
+  multiply-adds, with no sum across lanes per position. This is aimed at
+  decode at long positions.
+- **HMX dequantization prefetches:** each worker l2fetches its share of
+  the next chunk's Q4_0 bytes.
+
+**A bug the first phone run found**: `dsp_hmx_gemm_matches_reference`
+failed once in the full test run, with one output 10⁴ off, and passed when
+run alone. Each FastRPC call runs on its own DSP thread, and the tests call
+from several threads at once. The gemv (DMA mode), the HMX product, decode
+and prefill all use the one VTCM, the per-thread DMA rings and `dma_gen`,
+so two calls at once overwrote each other's data. `dsp_busy` / `dsp_free`
+now hold a lock around their worker threads (`3ab2966`). The engine makes
+one call at a time, but an app could make two. After the fix, the full run
+passed 112/112 three times (and 113/113 with `--features vulkan`).
+
+**Correct**, perplexity (wikitext-2, 20 × 512, the second half of each
+chunk scored):
+
+| Path | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| DSP prompt pass, batches of 128 (HMX, fp16 products) | **27.6893** | **19.7174** |
+| DSP decode step, token by token (transposed keys) | 27.7876 | 19.7560 |
+| DSP decode step before (v3, step 4) | 27.7429 | 19.7584 |
+| GPU f32 (phase-l3) | 27.6910 | 19.7193 |
+| llama.cpp (CPU) | 27.7412 ± 1.18 | 19.7283 ± 0.84 |
+
+- The HMX path is within 0.05 of llama.cpp. fp16 products cost nothing
+  measurable.
+- The decode step's number moved when only the order of the attention's
+  adds changed. SmolLM2 moved by +0.045 and Qwen by −0.002, the same size as
+  earlier shifts from reordering (scalar `expf` → vector exp moved Qwen by
+  0.035). The activations are rounded to Q8_0 before every product, so a
+  value near a rounding edge can flip and change the logits a little.
+
+**`aether --dsp` against the CPU** (greedy, 96 positions): the same text
+for SmolLM2's short prompt. The other three runs agree for 2–40 tokens,
+then pick a different word at a near-tie and go their own way. The DSP's
+Qwen continuation ("the largest city in the world and the most populous…")
+is word for word the PC GPU's f16 one, so two f16 paths agree and the
+CPU's integer path differs. "The same text as the CPU" was the wrong test;
+perplexity is the right one.
+
+**Speed** (DSP time, prompt from position 0):
+
+| Tokens | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| 32 | 1205 tok/s | 376 tok/s |
+| 64 | 1636 | 596 |
+| 128 | 1608 | 778 |
+| whole perplexity run | 872 | 443 |
+
+llama.cpp's NPU prefill is ~330 tok/s on Qwen (phase-l3 step 8).
+
+- **`dsp_gemm -- 128 6`** with the prefetch: 1656 tok/s for Qwen's layer
+  products, up from 1512–1543. q/k/v went from 308 to 172 µs and wo from
+  239 to 155 µs. gate/up and down barely moved: on those the matrix unit
+  is the limit, not DRAM.
+- **Decode over a 512-token run** (the change the transposed keys were
+  for): Qwen 72 → 86 tok/s, SmolLM2 175. At short positions: 297 / 112
+  tok/s. Qwen's number was taken at 57 °C; on a cool phone it was 123.
+
+## Every engine, one benchmark (2026-10-30; `../backends/raw/`, `../backends/raw-sustain/`)
+
+`scripts/backends-bench.sh` runs `bench_suite` on the CPU (cores 2–7), the
+GPU and the DSP for each model. It waits for the CPU sensors to drop below
+45 °C before each run. Medians of 3, tok/s, Qwen2.5-0.5B Q4_0:
+
+| | CPU | GPU | DSP |
+| --- | --- | --- | --- |
+| pp64 | **777** | 691 | 679 |
+| pp128 | 669 | **813** | 799 |
+| pp512 | 526 | **693** | 641 |
+| tg64 at depth 0 | **136** | 99 | 131 |
+| tg64 at depth 512 | **125** | 89 | 90 |
+| time to first token, 64-token prompt | 116 ms | 93 ms | 94 ms |
+| peak RSS | 344 MB | 838 MB | 373 MB |
+| hottest CPU sensor in the run | 75.7 °C | 54.9 °C | 55.2 °C |
+
+The GPU's RSS includes its f16 copy of the matrices for the prompt pass
+(phase-l3 step 11).
+
+**Five minutes of decode, on battery** (`SUSTAIN=300`, Qwen2.5-0.5B Q4_0,
+screen kept on; power from the battery's charge counter, whole phone):
+
+| | tok/s average | power | J/token | hottest |
+| --- | --- | --- | --- | --- |
+| CPU | 107.3 | 3.23 W | 0.030 | 85 °C |
+| GPU | 78.2 | 2.26 W | 0.029 | 58 °C |
+| **DSP** | **130.6** | 3.28 W | **0.025** | 70 °C |
+
+The CPU starts at 188 tok/s on a cool phone, heats up and slows to an
+average of 107 tok/s. The DSP holds 131. So over minutes the DSP is the
+fastest engine and the most efficient one: about 17 % less energy per token
+than the CPU. The GPU draws the least power and stays coolest, but it is
+slow enough that its energy per token about equals the CPU's.
+
+The power monitor's numbers from the short runs (5–20 s) are not
+meaningful: the charge counter updates too rarely for them.
+
+## Step 6: prompt lookup and Q4_K_M on the DSP, and the app (2026-10-30, evening; `raw/lookup/`, `raw/dsp-q4km-*.txt`)
+
+Written the same afternoon while the phone was away, run in the evening
+(phone on battery, 37–62 °C).
+
+**A pass of a few tokens.** Speculative decoding checks a certain token
+and up to 7 drafts in one call (`model_few`): every layer for up to 8
+tokens, each group of weights read once and used for every token. Its
+sums are added in the decode step's order, so its logits equal the decode
+step's bit for bit (`few_tokens_get_the_decode_logits`, Q4_0 and Q4_K_M).
+First version fetched weights by `l2fetch`; with DMA into VTCM as decode
+does (Qwen2.5-0.5B Q4_0, DSP time):
+
+| tokens | 1 | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- |
+| one decode step | 6.4 ms | | | |
+| pass, `l2fetch` | 13.9 | 14.4 | 17.0 | 28.0 |
+| pass, DMA | 6.5 | 7.8 | 12.1 | 23.0 |
+
+**Lookup** (`aether --lookup 4`, Qwen2.5-0.5B-Instruct Q4_0, greedy, the
+phase-6 prompts; decode tok/s):
+
+| prompt | CPU plain → lookup | GPU plain → lookup | DSP plain → lookup |
+| --- | --- | --- | --- |
+| add comments to a function (copies it) | 151 → 224 | 69 → 28 | 119 → 149 |
+| why is the sky blue | 137 → 180 | 50 → 28 | 111 → 142 |
+| short story | 164 → 198 | 69 → 24 | 111 → 118 |
+
+On the DSP and the GPU the text with lookup equals the text without in
+all three. (The CPU's story differs after ~80 tokens, as in phase 6: its
+batched path rounds differently.) On the GPU lookup is a loss: on the
+Adreno each extra token of the few-token shader costs about a whole
+one-token dispatch (`../phase-l3/raw/vk-gemv-n-adreno.txt`), so the C ABI
+now ignores lookup for GPU sessions.
+
+**Q4_K_M** (llama.cpp's mix: q/k/o/gate/up Q5_0, v Q5_0 or Q8_0, down
+Q4_K or Q6_K, classifier Q8_0). Each format has its own HVX product
+(`dsp/qx_hvx.h`), checked on the SDK's simulator against llama.cpp's
+bytes before the phone. Perplexity (wikitext-2, 20 × 512):
+
+| | DSP decode | DSP few-token pass | our CPU | llama.cpp |
+| --- | --- | --- | --- | --- |
+| SmolLM2-135M Q4_K_M | 20.7241 | 20.7241 | 20.7201 | 20.7784 ± 0.85 |
+| Qwen2.5-0.5B Q4_K_M | 16.7381 | 16.7381 | 16.7088 | 16.7657 ± 0.69 |
+
+Decode: SmolLM2 256 tok/s (Q4_0 271), Qwen 92–98 tok/s (Q4_0 123; the
+weights are ~1.4× the bytes). The prompt runs in passes of 8 tokens on
+HVX (no HMX prefill for these formats): 272 tok/s against 755 for Q4_0
+on HMX, 241 tokens.
+
+**A bug the new test found.** The first phone run of Q4_K_M gave PPL
+47,530 through decode and 16.30 through the few-token pass. Only q/k/v
+broke, and only with DMA: in this file q/k/v is a Q5_0 run then a Q8_0
+run with no barrier between them, and each thread's VTCM slots were
+placed by the product's size, so a thread on the Q8_0 run copied over a
+neighbour's slots still in use. Each thread now has a fixed eighth of
+VTCM. Q4_0 numbers unchanged (27.7876 / 19.7560, 124 tok/s).
+
+**The app** (Qwen2.5-0.5B-Instruct Q4_0 and Qwen2.5-0.5B Q4_K_M, the
+app's sampling at temperature 0.7). All three engines answer. The app
+opens an unsigned DSP session from its own files directory: FastRPC
+falls back from the default device node (denied to apps) to the HAL and
+creates the user PD in 28 ms; the denials around it (kernel
+optimisations, folder watchers, properties) are not needed.
+
+| run | prompt | decode |
+| --- | --- | --- |
+| DSP, "Why is the sky blue?" | 35 tok, 462 tok/s | 183 tok, 112 tok/s |
+| DSP, repeat a sentence, lookup off / on | 50 tok, 568 tok/s | 14 tok, 116 / 146 tok/s |
+| CPU, Q4_K_M base, lookup on | 6 tok | 512 tok, 171 tok/s |
+| GPU, Q4_K_M base | 6 tok, 243 tok/s | 219 tok, 53 tok/s |
+
+The DSP on Q4_K_M ran in the app (session opened and closed with no
+errors) but its status line was not captured.

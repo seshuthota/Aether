@@ -369,9 +369,9 @@ impl Drafter {
     }
 }
 
-/// A model decoding on the GPU (`--features vulkan`, a `--pure` Q4_0
-/// GGUF; see `model::gpu`): every position, prompt included, goes through
-/// the GPU decode step, and sampling runs on the CPU.
+/// A model decoding on the GPU (`--features vulkan`, a Q4_0 or Q4_K_M
+/// GGUF; see `model::gpu`), the prompt batched on the GPU or on a CPU
+/// copy of the model; sampling runs on the CPU.
 #[cfg(feature = "vulkan")]
 pub struct GpuSession {
     // Declared before `gpu`: its buffers must be freed while the device lives.
@@ -386,20 +386,28 @@ pub struct GpuSession {
 #[cfg(feature = "vulkan")]
 impl GpuSession {
     pub fn open(path: &Path, max_seq: usize) -> io::Result<GpuSession> {
+        GpuSession::open_with(path, max_seq, crate::model::gpu::Options::default())
+    }
+
+    fn open_with(path: &Path, max_seq: usize, opt: crate::model::gpu::Options) -> io::Result<GpuSession> {
         let (config, weights, g) = gguf::load(path, max_seq)?;
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
-        let model = crate::model::gpu::GpuModel::new(&gpu, config, weights, false).map_err(io::Error::other)?;
+        let model = crate::model::gpu::GpuModel::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
         Ok(GpuSession { model, gpu, text, cpu: None })
     }
 
     /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
     /// prompt, whose KV cache is then copied over (~24 KB per token for
-    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is the
-    /// fastest (~630 tok/s against ~90 for the GPU token by token,
-    /// results/phase-l3.md). Costs a second copy of the weights in memory.
+    /// Qwen2.5-0.5B). On the phone the CPU's batched prompt pass is as fast
+    /// as the GPU's f16 one for chat-length prompts (64 tokens: 777 against
+    /// 691 tok/s for Qwen2.5-0.5B Q4_0; at 128, 669 against 813;
+    /// results/backends). Costs a second copy of the weights in memory.
+    /// The GPU's prompt pass never runs, so its f16 copy of the matrices
+    /// is not built (`f32_gemm`): ~280 MB and ~2.5 s of loading less for
+    /// Qwen2.5-0.5B Q4_0 on the phone.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
-        let mut s = GpuSession::open(path, max_seq)?;
+        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
         let (config, weights, _) = gguf::load(path, max_seq)?;
         let mut cpu = Transformer::new(config, weights);
         cpu.set_pool(ThreadPool::new(cores)?);
@@ -417,17 +425,7 @@ impl GpuSession {
         let np = tokens.len().min(steps);
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
         let t0 = Instant::now();
-        let mut logits = Vec::new();
-        if let Some(cpu) = &mut self.cpu {
-            logits = cpu.forward_batch(&tokens[..np], 0).to_vec();
-            let (k, v) = cpu.kv_cache();
-            self.model.load_kv(k, v, cpu.config.seq_len, np);
-        } else {
-            let b = self.model.batch;
-            for (i, part) in tokens[..np].chunks(b).enumerate() {
-                logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
-            }
-        }
+        let mut logits = self.prompt(&tokens[..np]);
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
         // Greedy decoding takes the GPU's argmax instead of reading the
@@ -450,6 +448,232 @@ impl GpuSession {
         stats.decode = t1.elapsed();
         stats.decode_tokens = pos - np;
         stats
+    }
+
+    /// Runs the prompt from position 0 on the CPU model if there is one
+    /// (batched, then its KV cache is copied to the GPU), otherwise
+    /// batched on the GPU; returns the last token's logits.
+    fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
+        if let Some(cpu) = &mut self.cpu {
+            let logits = cpu.forward_batch(tokens, 0).to_vec();
+            let (k, v) = cpu.kv_cache();
+            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len());
+            return logits;
+        }
+        let b = self.model.batch;
+        let mut logits = Vec::new();
+        for (i, part) in tokens.chunks(b).enumerate() {
+            logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
+        }
+        logits
+    }
+
+    /// Prompt lookup decoding as [`Session::generate_lookup`]: up to `k`
+    /// draft tokens (at most [`crate::model::gpu::GpuModel::few`] − 1)
+    /// copied from the last earlier match of the last `ngram` tokens,
+    /// checked in one pass of the decode shader for several tokens
+    /// ([`crate::model::gpu::GpuModel::forward_few`]). Greedy text is the
+    /// GPU's greedy text under those products' numbers; sampled text keeps
+    /// the sampler's distribution.
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let steps = steps.min(self.model.config.seq_len);
+        let k = k.min(self.model.few.saturating_sub(1));
+        let mut hist = self.text.encode(prompt);
+        let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let np = hist.len().min(steps);
+        let t0 = Instant::now();
+        let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
+        stats.prefill = t0.elapsed();
+        stats.prefill_tokens = np;
+        let t1 = Instant::now();
+        let vocab = self.model.config.vocab_size;
+        // `pos`: positions in the cache; `next` is certain but not yet in it.
+        let mut pos = np;
+        if np == hist.len() {
+            'tokens: loop {
+                if self.text.is_stop(next) || !emit(&self.text.piece(hist[pos - 1], next)) || pos >= steps {
+                    break;
+                }
+                hist.push(next);
+                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                if draft.is_empty() {
+                    next = sampler.sample(&mut self.model.forward(&self.gpu, next, pos).expect("GPU step").to_vec());
+                    pos += 1;
+                    continue;
+                }
+                let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
+                let mut rows = self.model.forward_few(&self.gpu, &input, pos).expect("GPU check").to_vec();
+                look.passes += 1;
+                look.drafted += draft.len();
+                pos += 1;
+                // Row r follows input[r]; draft[r] = input[r + 1].
+                let mut rows = rows.chunks_exact_mut(vocab);
+                for &d in &draft {
+                    let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
+                    if !accepted {
+                        next = t;
+                        continue 'tokens;
+                    }
+                    if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
+                        break 'tokens;
+                    }
+                    look.accepted += 1;
+                    hist.push(d);
+                    pos += 1;
+                }
+                // Every draft accepted: the last row gives the next token.
+                next = sampler.sample(rows.next().unwrap());
+            }
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        (stats, look)
+    }
+}
+
+/// A model on the Hexagon DSP (`--features hexagon`, a `--pure` Q4_0 GGUF
+/// or a Q4_K_M one; see `model::dsp`): the prompt by prefills of up to
+/// [`DspSession::BATCH`] tokens (products on HMX; Q4_0 only, else passes
+/// of 8 tokens on HVX), then one decode step per token; sampling on the
+/// CPU.
+#[cfg(feature = "hexagon")]
+pub struct DspSession {
+    // Declared before `dsp`: its shared buffers must be freed while the
+    // DSP session lives.
+    pub model: crate::model::dsp::DspModel,
+    pub dsp: crate::kernels::hexagon::Dsp,
+    pub text: Text,
+}
+
+#[cfg(feature = "hexagon")]
+impl DspSession {
+    /// Prompt tokens per prefill call (what Qwen2.5-0.5B's activations
+    /// leave room for in VTCM is ~320).
+    pub const BATCH: usize = 128;
+
+    /// `dir`: a writable directory the DSP library is put in and loaded
+    /// from (see [`crate::kernels::hexagon::Dsp::open`]); `threads`: DSP
+    /// threads (6 is the fastest measured).
+    pub fn open(path: &Path, max_seq: usize, dir: &Path, threads: u32) -> io::Result<DspSession> {
+        let (config, weights, g) = gguf::load(path, max_seq)?;
+        let text = Text::from_gguf(&g)?;
+        let dsp = crate::kernels::hexagon::Dsp::open(dir).map_err(io::Error::other)?;
+        let batch = Self::BATCH.min(config.seq_len);
+        let model = crate::model::dsp::DspModel::new(&dsp, config, weights, threads, batch, false).map_err(io::Error::other)?;
+        Ok(DspSession { model, dsp, text })
+    }
+
+    /// As [`Session::generate`] without echoing the prompt.
+    pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
+        let steps = steps.min(self.model.config.seq_len);
+        let tokens = self.text.encode(prompt);
+        let np = tokens.len().min(steps);
+        let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
+        let t0 = Instant::now();
+        let mut logits = self.prompt(&tokens[..np]);
+        stats.prefill = t0.elapsed();
+        let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+        // Greedy decoding takes the DSP's argmax instead of reading the logits.
+        let mut dsp_next = (sampler.temperature == 0.0).then(|| self.model.greedy());
+        while np == tokens.len() {
+            let next = dsp_next.unwrap_or_else(|| sampler.sample(&mut logits));
+            if self.text.is_stop(next) || !emit(&self.text.piece(token, next)) || pos >= steps {
+                break;
+            }
+            token = next;
+            let l = self.model.forward(&self.dsp, token, pos).expect("DSP step");
+            if sampler.temperature == 0.0 {
+                dsp_next = Some(self.model.greedy());
+            } else {
+                logits.copy_from_slice(l);
+            }
+            pos += 1;
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        stats
+    }
+
+    /// Runs the prompt from position 0 in prefills of up to
+    /// [`DspSession::BATCH`] tokens, or for a model not all in Q4_0 (no
+    /// prefill on HMX) in few-token passes of 8; returns the last token's
+    /// logits.
+    fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
+        let (b, vocab) = (self.model.batch, self.model.config.vocab_size);
+        let mut logits = Vec::new();
+        if !self.model.q4_0_only {
+            let f = crate::kernels::hexagon::MAX_FEW;
+            for (i, part) in tokens.chunks(f).enumerate() {
+                let rows = self.model.few(&self.dsp, part, i * f).expect("DSP prompt pass");
+                logits = rows[rows.len() - vocab..].to_vec();
+            }
+            return logits;
+        }
+        for (i, part) in tokens.chunks(b).enumerate() {
+            logits = self.model.prefill(&self.dsp, part, i * b).expect("DSP prefill").to_vec();
+        }
+        logits
+    }
+
+    /// Prompt lookup decoding as [`Session::generate_lookup`]: up to `k`
+    /// draft tokens (at most [`crate::kernels::hexagon::MAX_FEW`] − 1)
+    /// checked in one few-token pass ([`crate::model::dsp::DspModel::few`]),
+    /// whose products are those of the decode step. Greedy text is the
+    /// DSP's greedy text up to near-ties (the products add in another
+    /// order); sampled text keeps the sampler's distribution.
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let steps = steps.min(self.model.config.seq_len);
+        let k = k.min(crate::kernels::hexagon::MAX_FEW - 1);
+        let mut hist = self.text.encode(prompt);
+        let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let np = hist.len().min(steps);
+        let t0 = Instant::now();
+        let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
+        stats.prefill = t0.elapsed();
+        stats.prefill_tokens = np;
+        let t1 = Instant::now();
+        let vocab = self.model.config.vocab_size;
+        // `pos`: positions in the cache; `next` is certain but not yet in it.
+        let mut pos = np;
+        if np == hist.len() {
+            'tokens: loop {
+                if self.text.is_stop(next) || !emit(&self.text.piece(hist[pos - 1], next)) || pos >= steps {
+                    break;
+                }
+                hist.push(next);
+                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                if draft.is_empty() {
+                    next = sampler.sample(&mut self.model.forward(&self.dsp, next, pos).expect("DSP step").to_vec());
+                    pos += 1;
+                    continue;
+                }
+                let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
+                let mut rows = self.model.few(&self.dsp, &input, pos).expect("DSP check").to_vec();
+                look.passes += 1;
+                look.drafted += draft.len();
+                pos += 1;
+                // Row r follows input[r]; draft[r] = input[r + 1].
+                let mut rows = rows.chunks_exact_mut(vocab);
+                for &d in &draft {
+                    let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
+                    if !accepted {
+                        next = t;
+                        continue 'tokens;
+                    }
+                    if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
+                        break 'tokens;
+                    }
+                    look.accepted += 1;
+                    hist.push(d);
+                    pos += 1;
+                }
+                // Every draft accepted: the last row gives the next token.
+                next = sampler.sample(rows.next().unwrap());
+            }
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        (stats, look)
     }
 }
 
@@ -538,5 +762,63 @@ mod tests {
             next = argmax(s.model.forward(&s.gpu, next, pos).unwrap());
             assert_eq!(s.model.greedy(), next, "at {pos}");
         }
+    }
+
+    /// Prompt lookup on the GPU leaves greedy text as it is: the same text
+    /// as plain GPU decoding of the same file, with drafts proposed (the
+    /// reply repeats itself) and some accepted, checked by the few-token
+    /// pass. A different text would mean a wrong KV position or row.
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn gpu_lookup_keeps_the_greedy_text() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let Ok(mut s) = GpuSession::open(&model, 96) else {
+            assert!(!cfg!(target_os = "android"), "no GPU");
+            return;
+        };
+        let prompt = "The capital of France is";
+        let mut plain = Vec::new();
+        s.generate(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, |b| {
+            plain.extend_from_slice(b);
+            true
+        });
+        let mut looked = Vec::new();
+        let (stats, look) = s.generate_lookup(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, 4, 2, |b| {
+            looked.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8_lossy(&looked), String::from_utf8_lossy(&plain));
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 96);
+        assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
+    }
+
+    /// Prompt lookup on the DSP leaves greedy text as it is: the few-token
+    /// pass's logits are the decode step's (same products, same order; see
+    /// `model::dsp`'s test), so the text equals plain DSP decoding's, with
+    /// drafts proposed and some accepted.
+    #[cfg(feature = "hexagon")]
+    #[test]
+    fn dsp_lookup_keeps_the_greedy_text() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let _one = crate::kernels::hexagon::MODEL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let Ok(mut s) = DspSession::open(&model, 96, &dir, 6) else {
+            assert!(!cfg!(target_os = "android"), "no DSP");
+            return;
+        };
+        let prompt = "The capital of France is";
+        let mut plain = Vec::new();
+        s.generate(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, |b| {
+            plain.extend_from_slice(b);
+            true
+        });
+        let mut looked = Vec::new();
+        let (stats, look) = s.generate_lookup(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, 4, 2, |b| {
+            looked.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8_lossy(&looked), String::from_utf8_lossy(&plain));
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 96);
+        assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
     }
 }

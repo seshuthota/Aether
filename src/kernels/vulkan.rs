@@ -18,7 +18,8 @@
 //! Every Vulkan call is `unsafe` (raw handles, lifetimes the API cannot
 //! check); the types here own their handles and free them in `Drop`.
 
-use crate::quant::BlockQ4_0;
+use crate::quant::{self, BlockQ4_0};
+use crate::weight::Weight;
 use ash::vk;
 use std::ffi::CStr;
 
@@ -66,6 +67,10 @@ pub struct Info {
     pub extensions: Vec<String>,
     /// Nanoseconds per timestamp tick.
     pub timestamp_period: f32,
+    /// fp16 arithmetic and 16-bit storage in shaders are on
+    /// (`shaderFloat16` and `storageBuffer16BitAccess`), as the f16
+    /// prefill shader needs ([`Gpu::q4_0_gemm_h`]).
+    pub fp16: bool,
     /// (size in bytes, flags) per memory heap, and (heap, flags) per type.
     pub heaps: Vec<(u64, vk::MemoryHeapFlags)>,
     pub types: Vec<(u32, vk::MemoryPropertyFlags)>,
@@ -122,6 +127,16 @@ impl Gpu {
                 && sizes.max_subgroup_size >= 32
                 && sizes.required_subgroup_size_stages.contains(vk::ShaderStageFlags::COMPUTE))
             .then_some(32);
+            // fp16 arithmetic (VK_KHR_shader_float16_int8) and f16 values in
+            // storage buffers (16-bit storage, core in Vulkan 1.1).
+            let f16_ext = extensions.iter().any(|e| e == "VK_KHR_shader_float16_int8");
+            let mut f16_feat = vk::PhysicalDeviceShaderFloat16Int8Features::default();
+            let mut s16_feat = vk::PhysicalDevice16BitStorageFeatures::default();
+            if f16_ext {
+                let mut f2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut f16_feat).push_next(&mut s16_feat);
+                instance.get_physical_device_features2(phys, &mut f2);
+            }
+            let fp16 = f16_ext && f16_feat.shader_float16 == vk::TRUE && s16_feat.storage_buffer16_bit_access == vk::TRUE;
             let mem = instance.get_physical_device_memory_properties(phys);
             let heaps: Vec<_> = mem.memory_heaps[..mem.memory_heap_count as usize].iter().map(|h| (h.size, h.flags)).collect();
             let types: Vec<_> = mem.memory_types[..mem.memory_type_count as usize].iter().map(|t| (t.heap_index, t.property_flags)).collect();
@@ -139,17 +154,26 @@ impl Gpu {
                 storage_offset_align: props.limits.min_storage_buffer_offset_alignment,
                 extensions,
                 timestamp_period: props.limits.timestamp_period,
+                fp16,
                 heaps,
                 types,
             };
             let prio = [1.0f32];
             let qinfo = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&prio)];
-            let ext_names = [c"VK_EXT_subgroup_size_control".as_ptr()];
+            let mut ext_names = Vec::new();
             let mut size_feature = vk::PhysicalDeviceSubgroupSizeControlFeaturesEXT::default().subgroup_size_control(true);
+            let mut f16_on = vk::PhysicalDeviceShaderFloat16Int8Features::default().shader_float16(true);
+            let mut s16_on = vk::PhysicalDevice16BitStorageFeatures::default().storage_buffer16_bit_access(true);
             let mut dinfo = vk::DeviceCreateInfo::default().queue_create_infos(&qinfo);
             if required_subgroup_size.is_some() {
-                dinfo = dinfo.enabled_extension_names(&ext_names).push_next(&mut size_feature);
+                ext_names.push(c"VK_EXT_subgroup_size_control".as_ptr());
+                dinfo = dinfo.push_next(&mut size_feature);
             }
+            if fp16 {
+                ext_names.push(c"VK_KHR_shader_float16_int8".as_ptr());
+                dinfo = dinfo.push_next(&mut f16_on).push_next(&mut s16_on);
+            }
+            dinfo = dinfo.enabled_extension_names(&ext_names);
             let device = instance.create_device(phys, &dinfo, None).map_err(vkr("create device"))?;
             let queue = device.get_device_queue(family, 0);
             let pool = device
@@ -606,6 +630,108 @@ impl MatQ4_0 {
     }
 }
 
+/// A matrix in any of the formats of a llama.cpp Q4_K_M file (Q4_0, Q5_0,
+/// Q8_0, Q4_K, Q6_K), in the layout `shaders/qx_gemv.comp` reads: every
+/// 32-value piece as 16 bytes of nibble pairs (32 int8s for Q8_0), then
+/// the Q5_0 fifth bits or Q6_K high bits, and the scales in `sc`.
+pub struct MatQ {
+    /// ggml's type id (the shader's FMT).
+    pub ty: u32,
+    pub qs: Buffer,
+    pub sc: Buffer,
+    pub rows: usize,
+    /// 32-value pieces per row (columns / 32).
+    pub nb: usize,
+}
+
+/// 32 values 0..15 as 16 bytes, byte k = value k | value k + 16 << 4.
+fn nibble_pairs(v: &[u8]) -> [u8; 16] {
+    std::array::from_fn(|k| v[k] | v[k + 16] << 4)
+}
+
+impl MatQ {
+    /// Uploads `w` (`rows` rows, row-major blocks).
+    pub fn new(gpu: &Gpu, w: &Weight, rows: usize) -> Result<MatQ> {
+        let (ty, pieces) = match w {
+            Weight::Q4_0(b) => (2, b.len()),
+            Weight::Q5_0(b) => (6, b.len()),
+            Weight::Q8_0(b) => (8, b.len()),
+            Weight::Q4_K(b) => (12, 8 * b.len()),
+            Weight::Q6_K(b) => (14, 8 * b.len()),
+            _ => return Err(format!("{} matrices are not supported on the GPU", w.format_name())),
+        };
+        assert!(rows > 0 && pieces.is_multiple_of(rows));
+        let qs_bytes = match ty {
+            6 => pieces * 20,
+            8 => pieces * 32,
+            14 => pieces * 24,
+            _ => pieces * 16,
+        };
+        let sc_words = if ty >= 12 { 5 * pieces / 8 } else { pieces.div_ceil(2) };
+        let (mut qs, mut sc) = (gpu.buffer(qs_bytes)?, gpu.buffer(sc_words * 4)?);
+        let (q, s) = (qs.as_mut_slice::<u8>(), sc.as_mut_slice::<u32>());
+        // The f16 scales of the 32-value formats, two per u32 (a new
+        // buffer is not zeroed).
+        let mut halves = |ds: &mut dyn Iterator<Item = u16>| {
+            s.fill(0);
+            for (i, d) in ds.enumerate() {
+                s[i / 2] |= (d as u32) << (16 * (i % 2));
+            }
+        };
+        match w {
+            Weight::Q4_0(b) => {
+                b.iter().zip(q.as_chunks_mut::<16>().0).for_each(|(b, q)| *q = b.qs);
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q5_0(b) => {
+                let (nib, high) = q.split_at_mut(16 * pieces);
+                b.iter().zip(nib.as_chunks_mut::<16>().0).for_each(|(b, q)| *q = b.qs);
+                b.iter().zip(high.as_chunks_mut::<4>().0).for_each(|(b, h)| *h = b.qh);
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q8_0(b) => {
+                b.iter().zip(q.as_chunks_mut::<32>().0).for_each(|(b, q)| *q = b.qs.map(|v| v as u8));
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q4_K(b) => {
+                for (k, (b, q)) in b.iter().zip(q.as_chunks_mut::<128>().0).enumerate() {
+                    let v = quant::q4_k_values(b);
+                    for (j, p) in q.as_chunks_mut::<16>().0.iter_mut().enumerate() {
+                        *p = nibble_pairs(&v[32 * j..]);
+                    }
+                    let (scales, mins) = quant::q4_k_scales_mins(&b.scales);
+                    let word = |a: &[u8]| u32::from_le_bytes(a.try_into().unwrap());
+                    s[5 * k..5 * k + 5].copy_from_slice(&[b.d as u32 | (b.dmin as u32) << 16, word(&scales[..4]), word(&scales[4..]), word(&mins[..4]), word(&mins[4..])]);
+                }
+            }
+            Weight::Q6_K(b) => {
+                let (nib, high) = q.split_at_mut(16 * pieces);
+                let high = high.as_chunks_mut::<4>().0;
+                for (k, b) in b.iter().enumerate() {
+                    // 0..63: four low bits, two high.
+                    let v = quant::q6_k_values(b).map(|v| (v + 32) as u8);
+                    for j in 0..8 {
+                        let (i, p) = (8 * k + j, &v[32 * j..32 * j + 32]);
+                        let low: Vec<u8> = p.iter().map(|v| v & 15).collect();
+                        nib[16 * i..16 * i + 16].copy_from_slice(&nibble_pairs(&low));
+                        for half in 0..2 {
+                            let h = (0..16).fold(0u32, |h, l| h | ((p[16 * half + l] >> 4) as u32) << (2 * l));
+                            high[2 * i + half] = h.to_le_bytes();
+                        }
+                    }
+                    let sb = b.scales.map(|v| v as u8);
+                    s[5 * k] = b.d as u32;
+                    for (n, c) in sb.as_chunks::<4>().0.iter().enumerate() {
+                        s[5 * k + 1 + n] = u32::from_le_bytes(*c);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+        Ok(MatQ { ty, qs, sc, rows, nb: pieces / rows })
+    }
+}
+
 /// Workgroups for `n` items in groups of `per` (rows per workgroup), split
 /// over x and y because one dimension allows at most 65535.
 pub fn groups_for(n: usize, per: usize) -> [u32; 3] {
@@ -650,6 +776,74 @@ impl Gpu {
 }
 
 impl Gpu {
+    /// `out[r] = W[r] · x` for a [`MatQ`] of any format, `reps` times;
+    /// `kernel` from [`Gpu::qx_gemv_kernel`] for that format. Returns the
+    /// GPU time of all reps in seconds.
+    pub fn qx_gemv(&self, kernel: &Kernel, w: &MatQ, x: &Buffer, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(x.size >= w.nb * 32 * 4 && out.size >= w.rows * 4);
+        assert_eq!(kernel.spec[4], w.ty, "a kernel for another format");
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.run(kernel, &[&w.qs, &w.sc, x, out, x], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
+    }
+
+    /// The decode shader for matrices of ggml type `ty` (see [`MatQ`]),
+    /// with the options of [`Gpu::q4_0_gemv_kernel_fused`].
+    pub fn qx_gemv_kernel(&self, ty: u32, rows_per_32: u32, accum: bool, glu: bool, norm: bool) -> Result<Kernel> {
+        assert!(!(glu && norm), "a GLU input is not normalized");
+        assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
+            return Err(format!("qx_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
+        }
+        Kernel::with_spec(self, crate::spirv!("qx_gemv"), 5, 20, &[rows_per_32 / 4, accum.into(), glu.into(), norm.into(), ty, 1])
+    }
+
+    /// The decode shader for up to `max_tokens` tokens per dispatch (4 rows
+    /// per 32 lanes): each weight is read once for all of them. Pushes
+    /// rows, nb, eps (unused), tokens and the output row length (0: rows);
+    /// with `glu` each token's x is gate then up. No norm.
+    pub fn qx_gemv_n_kernel(&self, ty: u32, accum: bool, glu: bool, max_tokens: u32) -> Result<Kernel> {
+        assert!((2..=8).contains(&max_tokens), "2 to 8 tokens");
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
+            return Err(format!("qx_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
+        }
+        Kernel::with_spec(self, crate::spirv!("qx_gemv"), 5, 20, &[1, accum.into(), glu.into(), 0, ty, max_tokens])
+    }
+
+    /// `out[t][r] = W[r] · x[t]` for `tokens` (at most the kernel's)
+    /// activations of a [`MatQ`], with [`Gpu::qx_gemv_n_kernel`], `reps`
+    /// times. Returns the GPU time of all reps in seconds.
+    pub fn qx_gemv_n(&self, kernel: &Kernel, w: &MatQ, x: &Buffer, tokens: usize, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(tokens >= 1 && tokens <= kernel.spec[5] as usize && x.size >= tokens * w.nb * 32 * 4 && out.size >= tokens * w.rows * 4);
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32, 0, tokens as u32, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.run(kernel, &[&w.qs, &w.sc, x, out, x], &push, groups_for(w.rows, 16), reps)
+    }
+}
+
+impl Gpu {
+    /// `out[t][r] = W[r] · x[t]` for a [`MatQ`] of any format and `tokens`
+    /// activations, `reps` times; `kernel` from [`Gpu::qx_gemm_kernel`].
+    /// Each token's row of `out` is `ostride` floats long (0: the matrix's
+    /// rows). Returns the GPU time of all reps.
+    pub fn qx_gemm(&self, kernel: &Kernel, w: &MatQ, x: &Buffer, tokens: usize, out: &Buffer, ostride: usize, reps: u32) -> Result<f64> {
+        assert!(x.size >= tokens * w.nb * 32 * 4 && out.size >= tokens * ostride.max(w.rows) * 4);
+        assert_eq!(kernel.spec[2], w.ty, "a kernel for another format");
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32, tokens as u32, ostride as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let [gx, gy] = [w.rows.div_ceil(64) as u32, tokens.div_ceil(64) as u32];
+        assert!(gx <= 65535 && gy <= 65535, "too many rows or tokens for one dispatch");
+        self.run(kernel, &[&w.qs, &w.sc, x, out], &push, [gx, gy, 1], reps)
+    }
+
+    /// The prefill shader for matrices of ggml type `ty` (see [`MatQ`]),
+    /// with `accum` and `glu` as in [`Gpu::q4_0_gemm_kernel_fused`].
+    pub fn qx_gemm_kernel(&self, ty: u32, accum: bool, glu: bool) -> Result<Kernel> {
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        Kernel::with_spec(self, crate::spirv!("qx_gemm"), 4, 16, &[accum.into(), glu.into(), ty])
+    }
+}
+
+impl Gpu {
     /// `out[t][r] = W[r] · x[t]` for `tokens` activations (row-major in
     /// `x`, `out` is tokens × rows), `reps` times; `kernel` from
     /// [`Gpu::q4_0_gemm_kernel`]. Returns the GPU time of all reps.
@@ -672,6 +866,270 @@ impl Gpu {
     /// [`Gpu::q4_0_gemv_kernel_fused`].
     pub fn q4_0_gemm_kernel_fused(&self, accum: bool, glu: bool) -> Result<Kernel> {
         Kernel::with_spec(self, crate::spirv!("q4_0_gemm"), 4, 12, &[accum.into(), glu.into()])
+    }
+}
+
+/// A Q4_0 matrix in the layout `shaders/q4_0_gemm_h.comp` reads: rows
+/// rounded up to a multiple of 4 (`rows4`, zero weights past `rows`);
+/// word h of block b of row r (8 inputs, one nibble each, input 8h + j in
+/// bits 4j..) at u32 `(4b + h) · rows4 + r`, the f16 scales at
+/// `b · rows4 + r`. Neighbouring rows are neighbouring words, so the
+/// threads of a workgroup read memory in one sweep.
+pub struct MatQ4_0T {
+    pub q: Buffer,
+    pub d: Buffer,
+    pub rows: usize,
+    pub nb: usize,
+}
+
+impl MatQ4_0T {
+    /// Uploads `blocks` (row-major, `rows` rows).
+    pub fn new(gpu: &Gpu, blocks: &[BlockQ4_0], rows: usize) -> Result<MatQ4_0T> {
+        assert!(rows > 0 && blocks.len().is_multiple_of(rows));
+        let nb = blocks.len() / rows;
+        let rows4 = rows.div_ceil(4) * 4;
+        let mut q = gpu.buffer(nb * 4 * rows4 * 4)?;
+        let mut d = gpu.buffer(nb * rows4 * 2)?;
+        let (qv, dv) = (q.as_mut_slice::<u32>(), d.as_mut_slice::<u16>());
+        qv.fill(0);
+        dv.fill(0);
+        for r in 0..rows {
+            for b in 0..nb {
+                let blk = &blocks[r * nb + b];
+                dv[b * rows4 + r] = blk.d;
+                // Input i of the block: byte i's low nibble for i < 16,
+                // byte i - 16's high nibble after.
+                let nib = |i: usize| if i < 16 { blk.qs[i] & 15 } else { blk.qs[i - 16] >> 4 } as u32;
+                for h in 0..4 {
+                    qv[(4 * b + h) * rows4 + r] = (0..8).map(|j| nib(8 * h + j) << (4 * j)).sum();
+                }
+            }
+        }
+        Ok(MatQ4_0T { q, d, rows, nb })
+    }
+}
+
+impl Gpu {
+    /// The f16 prefill shader (`shaders/q4_0_gemm_h.comp`); with `accum`
+    /// it adds to `out`. Needs [`Info::fp16`].
+    pub fn q4_0_gemm_h_kernel(&self, accum: bool) -> Result<Kernel> {
+        if !self.info.fp16 {
+            return Err("q4_0_gemm_h needs fp16 arithmetic and 16-bit storage buffers".into());
+        }
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemm_h"), 4, 16, &[accum.into()])
+    }
+
+    /// Its activations' transpose to f16 (`shaders/to_f16t.comp`); with
+    /// `glu`, from gate and up rows as silu(gate) · up.
+    pub fn to_f16t_kernel(&self, glu: bool) -> Result<Kernel> {
+        if !self.info.fp16 {
+            return Err("to_f16t needs fp16 arithmetic and 16-bit storage buffers".into());
+        }
+        Kernel::with_spec(self, crate::spirv!("to_f16t"), 2, 12, &[glu.into()])
+    }
+
+    /// Tokens per row of the transposed activations: a multiple of 8.
+    pub fn f16t_pad(tokens: usize) -> usize {
+        tokens.div_ceil(8) * 8
+    }
+
+    /// Records `out[t][r] = W[r] · x[t]` for `tokens` rows of `x`
+    /// (f32, `w.nb` · 32 each): the transpose into `xt` (at least
+    /// `w.nb · 32 · f16t_pad(tokens) · 2` bytes), a barrier, the product.
+    pub fn record_q4_0_gemm_h(r: &mut Recorder, t: &Bound, mm: &Bound, w: &MatQ4_0T, tokens: usize) {
+        Gpu::record_f16t(r, t, w.nb * 32, tokens);
+        r.barrier();
+        Gpu::record_q4_0_gemm_h_mm(r, mm, w, tokens);
+    }
+
+    /// Records the transpose of `tokens` rows of `cols` activations to f16
+    /// (`to_f16t.comp`).
+    pub fn record_f16t(r: &mut Recorder, t: &Bound, cols: usize, tokens: usize) {
+        let npad = Gpu::f16t_pad(tokens);
+        r.dispatch(t, &push_u32(&[cols as u32, tokens as u32, npad as u32]), [cols as u32, npad.div_ceil(64) as u32, 1]);
+    }
+
+    /// Records the product alone, from activations already transposed.
+    pub fn record_q4_0_gemm_h_mm(r: &mut Recorder, mm: &Bound, w: &MatQ4_0T, tokens: usize) {
+        let npad = Gpu::f16t_pad(tokens);
+        r.dispatch(mm, &push_u32(&[w.rows as u32, w.nb as u32, tokens as u32, npad as u32]), [w.rows.div_ceil(256) as u32, (npad / 8) as u32, 1]);
+    }
+
+    /// [`Gpu::record_q4_0_gemm_h`] run once on its own, plus the product
+    /// `reps` more times; returns the GPU time of one product (the
+    /// median of those reps' stamps, or of the one if `reps` is 0).
+    pub fn q4_0_gemm_h(&self, t: &Kernel, mm: &Kernel, w: &MatQ4_0T, x: &Buffer, xt: &Buffer, tokens: usize, out: &Buffer, reps: u32) -> Result<f64> {
+        let npad = Gpu::f16t_pad(tokens);
+        assert!(x.size >= tokens * w.nb * 32 * 4 && xt.size >= w.nb * 32 * npad * 2 && out.size >= tokens * w.rows * 4);
+        let (tb, mb) = (t.bind(self, &[x, xt])?, mm.bind(self, &[&w.q, &w.d, xt, out])?);
+        let cmds = self.record_timed(|r| {
+            Gpu::record_q4_0_gemm_h(r, &tb, &mb, w, tokens);
+            r.barrier();
+            r.stamp();
+            let push: Vec<u8> = [w.rows as u32, w.nb as u32, tokens as u32, npad as u32].iter().flat_map(|x| x.to_le_bytes()).collect();
+            for _ in 0..reps {
+                r.dispatch(&mb, &push, [w.rows.div_ceil(256) as u32, (npad / 8) as u32, 1]);
+                r.barrier();
+                r.stamp();
+            }
+        })?;
+        self.submit(&cmds, false)?;
+        let st = self.stamps(&cmds)?;
+        let mut each: Vec<f64> = st.windows(2).skip(1).map(|w| w[1] - w[0]).collect();
+        if each.is_empty() {
+            return Ok(st[1]);
+        }
+        each.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Ok(each[each.len() / 2])
+    }
+}
+
+fn push_u32(v: &[u32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// A matrix in any format of a llama.cpp Q4_K_M file in the layout
+/// `shaders/qx_gemm_h.comp` reads (see there): per 32-value piece of a
+/// row, [`MatQT::words`] u32 words and f16 scales, row-interleaved as in
+/// [`MatQ4_0T`]. The K-quants' scales are multiplied out per piece (a
+/// Q4_K piece's d · scale and dmin · min, a Q6_K piece's two d · scale),
+/// so its scales take 1 bit a weight against the file's 0.19.
+pub struct MatQT {
+    /// ggml's type id (the shader's FMT).
+    pub ty: u32,
+    pub q: Buffer,
+    pub s: Buffer,
+    pub rows: usize,
+    /// 32-value pieces per row.
+    pub nb: usize,
+}
+
+impl MatQT {
+    /// Words and f16 scales per piece of format `ty`.
+    pub fn words(ty: u32) -> (usize, usize) {
+        match ty {
+            2 => (4, 1),
+            6 => (5, 1),
+            8 => (8, 1),
+            12 => (4, 2),
+            14 => (6, 2),
+            _ => panic!("ggml type {ty} has no GPU kernel"),
+        }
+    }
+
+    /// Uploads `w` (`rows` rows, row-major blocks).
+    pub fn new(gpu: &Gpu, w: &Weight, rows: usize) -> Result<MatQT> {
+        let (ty, pieces) = match w {
+            Weight::Q4_0(b) => (2, b.len()),
+            Weight::Q5_0(b) => (6, b.len()),
+            Weight::Q8_0(b) => (8, b.len()),
+            Weight::Q4_K(b) => (12, 8 * b.len()),
+            Weight::Q6_K(b) => (14, 8 * b.len()),
+            _ => return Err(format!("{} matrices are not supported on the GPU", w.format_name())),
+        };
+        assert!(rows > 0 && pieces.is_multiple_of(rows));
+        let nb = pieces / rows;
+        let rows4 = rows.div_ceil(4) * 4;
+        let (nw, ns) = MatQT::words(ty);
+        let (mut q, mut s) = (gpu.buffer(nb * nw * rows4 * 4)?, gpu.buffer(nb * ns * rows4 * 2)?);
+        let (qv, sv) = (q.as_mut_slice::<u32>(), s.as_mut_slice::<u16>());
+        qv.fill(0);
+        sv.fill(0);
+        // Piece i (= row · nb + piece of the row): its words and scales.
+        let mut put = |i: usize, words: &[u32], scales: &[u16]| {
+            let (r, b) = (i / nb, i % nb);
+            words.iter().enumerate().for_each(|(h, &v)| qv[(nw * b + h) * rows4 + r] = v);
+            scales.iter().enumerate().for_each(|(k, &v)| sv[(ns * b + k) * rows4 + r] = v);
+        };
+        // The low 4 bits of 32 values as 4 words, value 8h + j in bits 4j
+        // of word h.
+        let nib = |v: &dyn Fn(usize) -> u8| -> [u32; 4] { std::array::from_fn(|h| (0..8).map(|j| ((v(8 * h + j) & 15) as u32) << (4 * j)).sum()) };
+        // Value k of a Q4_0 / Q5_0 block's nibbles: byte k's low nibble,
+        // then byte k − 16's high one.
+        let lo_hi = |qs: &[u8; 16], k: usize| if k < 16 { qs[k] & 15 } else { qs[k - 16] >> 4 };
+        let half = quant::f32_to_f16;
+        match w {
+            Weight::Q4_0(b) => b.iter().enumerate().for_each(|(i, b)| put(i, &nib(&|k| lo_hi(&b.qs, k)), &[b.d])),
+            Weight::Q5_0(b) => b.iter().enumerate().for_each(|(i, b)| {
+                let n = nib(&|k| lo_hi(&b.qs, k));
+                put(i, &[n[0], n[1], n[2], n[3], u32::from_le_bytes(b.qh)], &[b.d]);
+            }),
+            Weight::Q8_0(b) => b.iter().enumerate().for_each(|(i, b)| {
+                let words: [u32; 8] = std::array::from_fn(|h| u32::from_le_bytes(std::array::from_fn(|j| b.qs[4 * h + j] as u8)));
+                put(i, &words, &[b.d]);
+            }),
+            Weight::Q4_K(b) => b.iter().enumerate().for_each(|(k, b)| {
+                let (v, d, dmin) = (quant::q4_k_values(b), quant::f16_to_f32(b.d), quant::f16_to_f32(b.dmin));
+                for j in 0..8 {
+                    let (sc, m) = quant::q4_k_scale_min(&b.scales, j);
+                    put(8 * k + j, &nib(&|e| v[32 * j + e]), &[half(d * sc as f32), half(dmin * m as f32)]);
+                }
+            }),
+            Weight::Q6_K(b) => b.iter().enumerate().for_each(|(k, b)| {
+                // 0..63: four low bits, two high.
+                let (v, d) = (quant::q6_k_values(b).map(|v| (v + 32) as u8), quant::f16_to_f32(b.d));
+                for j in 0..8 {
+                    let p = &v[32 * j..32 * j + 32];
+                    let n = nib(&|e| p[e]);
+                    let high = |g: usize| (0..16).fold(0u32, |h, l| h | ((p[16 * g + l] >> 4) as u32) << (2 * l));
+                    put(8 * k + j, &[n[0], n[1], n[2], n[3], high(0), high(1)], &[half(d * b.scales[2 * j] as f32), half(d * b.scales[2 * j + 1] as f32)]);
+                }
+            }),
+            _ => unreachable!(),
+        }
+        Ok(MatQT { ty, q, s, rows, nb })
+    }
+}
+
+impl Gpu {
+    /// The f16 prefill shader for matrices of ggml type `ty`
+    /// (`shaders/qx_gemm_h.comp`, a [`MatQT`]); with `accum` it adds to
+    /// `out`. Its input is transposed by [`Gpu::to_f16t_kernel`]. Needs
+    /// [`Info::fp16`].
+    pub fn qx_gemm_h_kernel(&self, ty: u32, accum: bool) -> Result<Kernel> {
+        if !self.info.fp16 {
+            return Err("qx_gemm_h needs fp16 arithmetic and 16-bit storage buffers".into());
+        }
+        MatQT::words(ty);
+        Kernel::with_spec(self, crate::spirv!("qx_gemm_h"), 4, 20, &[accum.into(), ty])
+    }
+
+    /// Records the product from activations already transposed by
+    /// [`Gpu::record_f16t`]; each token's row of `out` is `ostride` floats
+    /// long (0: the matrix's rows).
+    pub fn record_qx_gemm_h(r: &mut Recorder, mm: &Bound, w: &MatQT, tokens: usize, ostride: usize) {
+        let npad = Gpu::f16t_pad(tokens);
+        r.dispatch(mm, &push_u32(&[w.rows as u32, w.nb as u32, tokens as u32, npad as u32, ostride as u32]), [w.rows.div_ceil(256) as u32, (npad / 8) as u32, 1]);
+    }
+
+    /// The transpose and the product once, then the product `reps` more
+    /// times; returns the GPU time of one product as
+    /// [`Gpu::q4_0_gemm_h`] does.
+    pub fn qx_gemm_h(&self, t: &Kernel, mm: &Kernel, w: &MatQT, x: &Buffer, xt: &Buffer, tokens: usize, out: &Buffer, reps: u32) -> Result<f64> {
+        let npad = Gpu::f16t_pad(tokens);
+        assert!(x.size >= tokens * w.nb * 32 * 4 && xt.size >= w.nb * 32 * npad * 2 && out.size >= tokens * w.rows * 4);
+        assert_eq!(mm.spec[1], w.ty, "a kernel for another format");
+        let (tb, mb) = (t.bind(self, &[x, xt])?, mm.bind(self, &[&w.q, &w.s, xt, out])?);
+        let cmds = self.record_timed(|r| {
+            Gpu::record_f16t(r, &tb, w.nb * 32, tokens);
+            r.barrier();
+            Gpu::record_qx_gemm_h(r, &mb, w, tokens, 0);
+            r.barrier();
+            r.stamp();
+            for _ in 0..reps {
+                Gpu::record_qx_gemm_h(r, &mb, w, tokens, 0);
+                r.barrier();
+                r.stamp();
+            }
+        })?;
+        self.submit(&cmds, false)?;
+        let st = self.stamps(&cmds)?;
+        let mut each: Vec<f64> = st.windows(2).skip(1).map(|w| w[1] - w[0]).collect();
+        if each.is_empty() {
+            return Ok(st[1]);
+        }
+        each.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Ok(each[each.len() / 2])
     }
 }
 
@@ -732,6 +1190,143 @@ mod tests {
         assert!(cases >= 12, "only {cases} golden cases");
     }
 
+    /// The multi-format decode shader on llama.cpp's bytes against
+    /// X @ dequant(W)ᵀ in float64: Q4_0, Q5_0, Q8_0 from llama.cpp's
+    /// quantizers (`quant/`), Q4_K and Q6_K random blocks dequantized by
+    /// the gguf package (`quant_k/`), every token of x in turn.
+    #[test]
+    fn qx_gemv_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let cols = *xs.last().unwrap();
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            let mut x = gpu.buffer(cols * 4).unwrap();
+            let mut out = gpu.buffer(rows * 4).unwrap();
+            for r in [4, 8] {
+                let k = gpu.qx_gemv_kernel(m.ty, r, false, false, false).unwrap();
+                // quant/ has x as one vector and out as [rows]; quant_k/ has
+                // tokens × cols and tokens × rows.
+                for (t, x_t) in xv.chunks_exact(cols).enumerate() {
+                    x.as_mut_slice::<f32>().copy_from_slice(x_t);
+                    out.as_mut_slice::<f32>().fill(f32::NAN);
+                    gpu.qx_gemv(&k, &m, &x, &out, 1).unwrap();
+                    let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..rows], &want[t * rows..(t + 1) * rows]);
+                    assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name} R={r} token {t}: rel {rel:.2e}", dir.display());
+                }
+            }
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 21, "only {cases} golden cases");
+    }
+
+    /// The decode shader for several tokens at once (`qx_gemv_n_kernel`,
+    /// up to 8 per dispatch) on the batch goldens, as the prefill shaders:
+    /// each run of up to 8 tokens against X @ dequant(W)ᵀ in float64.
+    /// (`MatQ4_0` holds the same bytes as `MatQ`'s Q4_0, so the model binds
+    /// either.)
+    #[test]
+    fn qx_gemv_n_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            for nt in [2, 3, 8] {
+                let k = gpu.qx_gemv_n_kernel(m.ty, false, false, nt).unwrap();
+                for t0 in (0..tokens).step_by(nt as usize) {
+                    let n = (tokens - t0).min(nt as usize);
+                    let mut x = gpu.buffer(n * cols * 4).unwrap();
+                    x.as_mut_slice::<f32>().copy_from_slice(&xv[t0 * cols..(t0 + n) * cols]);
+                    let out = gpu.buffer(n * rows * 4).unwrap();
+                    gpu.qx_gemv_n(&k, &m, &x, n, &out, 1).unwrap();
+                    let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..n * rows], &want[t0 * rows..(t0 + n) * rows]);
+                    assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}, {nt} a dispatch, tokens {t0}..{}: rel {rel:.2e}", dir.display(), t0 + n);
+                }
+            }
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 20, "only {cases} golden cases");
+    }
+
+    /// The multi-format prefill shader against X @ dequant(W)ᵀ in float64:
+    /// Q4_0, Q5_0, Q8_0 on llama.cpp's bytes (`quant_batch/`, odd row and
+    /// token counts, so tiles have tails), Q4_K and Q6_K on random blocks
+    /// dequantized by the gguf package (`quant_k/`).
+    #[test]
+    fn qx_gemm_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let mut out = gpu.buffer(want.len() * 4).unwrap();
+            out.as_mut_slice::<f32>().fill(f32::NAN);
+            let k = gpu.qx_gemm_kernel(m.ty, false, false).unwrap();
+            gpu.qx_gemm(&k, &m, &x, tokens, &out, 0, 1).unwrap();
+            let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}: rel {rel:.2e}", dir.display());
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 20, "only {cases} golden cases");
+    }
+
     /// The Q4_0 prefill shader on llama.cpp's Q4_0 bytes against
     /// X @ dequant(W)ᵀ in float64 (`out_q4_0_a`, the batch goldens: odd row
     /// and token counts, so tiles have tails).
@@ -759,5 +1354,96 @@ mod tests {
             }
         }
         assert!(cases >= 11, "only {cases} golden cases");
+    }
+
+    /// The f16 prefill shader on llama.cpp's Q4_0 bytes against X @
+    /// dequant(W)ᵀ in float64 (the batch goldens). X, W's scales and each
+    /// product are rounded to f16 (2⁻¹¹ each), and each block's 32
+    /// products are summed in f16 before the f32 sum: the bound is a few
+    /// f16 roundings of the largest output.
+    #[test]
+    fn q4_0_gemm_h_matches_reference() {
+        let Some(root) = crate::testutil::golden("quant_batch") else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let (Ok(t), Ok(mm)) = (gpu.to_f16t_kernel(false), gpu.q4_0_gemm_h_kernel(false)) else { return };
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
+            let blocks = read_q4_0(&dir.join("w_q4_0.bin"));
+            let w = MatQ4_0T::new(&gpu, &blocks, ws[0]).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let xt = gpu.buffer(w.nb * 32 * Gpu::f16t_pad(xs[0]) * 2).unwrap();
+            let mut out = gpu.buffer(want.len() * 4).unwrap();
+            out.as_mut_slice::<f32>().fill(f32::NAN);
+            gpu.q4_0_gemm_h(&t, &mm, &w, &x, &xt, xs[0], &out, 0).unwrap();
+            let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            assert!(rel < 4.0 * 2f32.powi(-11), "{}: rel {rel:.2e}", dir.display());
+        }
+        assert!(cases >= 11, "only {cases} golden cases");
+    }
+
+    /// The f16 multi-format prefill shader against X @ dequant(W)ᵀ in
+    /// float64, on the goldens of `qx_gemm_matches_reference`, with the
+    /// bound of `q4_0_gemm_h_matches_reference` (the K-quants' per-piece
+    /// scales are also rounded to f16 at upload).
+    #[test]
+    fn qx_gemm_h_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let Ok(t) = gpu.to_f16t_kernel(false) else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let tokens = xs[0];
+            let m = MatQT::new(&gpu, &w, rows).unwrap();
+            let mut x = gpu.buffer(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>().copy_from_slice(&xv);
+            let xt = gpu.buffer(m.nb * 32 * Gpu::f16t_pad(tokens) * 2).unwrap();
+            let mut out = gpu.buffer(want.len() * 4).unwrap();
+            out.as_mut_slice::<f32>().fill(f32::NAN);
+            let k = gpu.qx_gemm_h_kernel(m.ty, false).unwrap();
+            gpu.qx_gemm_h(&t, &k, &m, &x, &xt, tokens, &out, 0).unwrap();
+            let deq = dir.join(format!("deq_{name}.npy"));
+            if !deq.exists() {
+                let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+                assert!(rel < 4.0 * 2f32.powi(-11), "{} {name}: rel {rel:.2e}", dir.display());
+                return;
+            }
+            // The K-quant cases: random blocks, where Q4_K's mins can make
+            // a whole row lean one way and a single output a sum that
+            // cancels (1x256: 2.3e-2 of itself). Each output is checked
+            // against the sum of |w| · |x| that its roundings scale with
+            // (W the gguf package's dequantization); measured up to 0.53
+            // · 2⁻¹¹.
+            let (_, wd) = crate::testutil::read_npy(&deq);
+            let cols = wd.len() / rows;
+            for (i, (&got, &r)) in out.as_slice::<f32>().iter().zip(&want).enumerate() {
+                let (t, row) = (i / rows, i % rows);
+                let mag: f32 = (0..cols).map(|k| (wd[row * cols + k] * xv[t * cols + k]).abs()).sum();
+                assert!((got - r).abs() < 2f32.powi(-11) * mag, "{} {name} token {t} row {row}: {got} against {r}", dir.display());
+            }
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 20, "only {cases} golden cases");
     }
 }

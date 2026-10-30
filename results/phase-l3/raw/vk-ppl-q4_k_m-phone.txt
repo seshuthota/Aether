@@ -1,0 +1,30 @@
+== smollm2-135m-q4_k_m decode 41100
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on Adreno (TM) 830 | upload + record 3733 ms
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 492.8 ms: 129.9 tok/s
+[1]10.6511,[2]15.9914,[3]16.0830,[4]16.2777,[5]16.4519,[6]16.5889,[7]17.0080,[8]17.7860,[9]19.0203,[10]19.4000,[11]19.4930,[12]19.6362,[13]19.6443,[14]20.3633,[15]20.8459,[16]21.1786,[17]20.0813,[18]20.3376,[19]20.6527,Final estimate: PPL = 20.6876 +/- 0.84728  (5100 tokens scored, 108.4 s, 94.2 tok/s through the GPU)
+== smollm2-135m-q4_k_m batch 48400
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on Adreno (TM) 830 | upload + record 4084 ms
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 489.4 ms: 130.8 tok/s
+[1]10.6663,[2]15.9952,[3]16.0963,[4]16.2869,[5]16.4570,[6]16.5949,[7]17.0131,[8]17.7899,[9]19.0250,[10]19.4054,[11]19.4973,[12]19.6410,[13]19.6494,[14]20.3671,[15]20.8492,[16]21.1818,[17]20.0845,[18]20.3413,[19]20.6557,Final estimate: PPL = 20.6906 +/- 0.84733  (5100 tokens scored, 15.7 s, 652.0 tok/s through the GPU, batches of 128, qx_gemm_h)
+== smollm2-135m-q4_k_m batch-f32 46100
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on Adreno (TM) 830 | upload + record 2375 ms
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 497.7 ms: 128.6 tok/s
+[1]10.6511,[2]15.9914,[3]16.0830,[4]16.2778,[5]16.4519,[6]16.5889,[7]17.0080,[8]17.7860,[9]19.0203,[10]19.4000,[11]19.4930,[12]19.6362,[13]19.6443,[14]20.3633,[15]20.8459,[16]21.1786,[17]20.0813,[18]20.3376,[19]20.6527,Final estimate: PPL = 20.6876 +/- 0.84728  (5100 tokens scored, 20.9 s, 488.4 tok/s through the GPU, batches of 128, qx_gemm)
+== qwen2.5-0.5b-q4_k_m decode 46100
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 6825 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 1426.6 ms: 44.9 tok/s
+[1]9.8782,[2]13.5216,[3]13.5513,[4]13.4806,[5]13.5818,[6]14.1052,[7]14.4576,[8]15.4642,[9]16.4181,[10]16.9846,[11]17.3025,[12]17.4160,[13]18.2140,[14]17.7032,[15]17.5470,[16]18.0473,[17]16.7691,[18]16.8952,[19]16.7234,[Final estimate: PPL = 16.7167 +/- 0.68578  (5100 tokens scored, 207.6 s, 49.2 tok/s through the GPU)
+== qwen2.5-0.5b-q4_k_m batch 48400
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 6199 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 955.9 ms: 67.0 tok/s
+[1]9.8773,[2]13.5205,[3]13.5501,[4]13.4785,[5]13.5795,[6]14.1025,[7]14.4560,[8]15.4631,[9]16.4173,[10]16.9839,[11]17.3013,[12]17.4160,[13]18.2138,[14]17.7033,[15]17.5469,[16]18.0469,[17]16.7686,[18]16.8953,[19]16.7237,Final estimate: PPL = 16.7173 +/- 0.68575  (5100 tokens scored, 35.6 s, 287.4 tok/s through the GPU, batches of 128, qx_gemm_h)
+== qwen2.5-0.5b-q4_k_m batch-f32 49200
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 2967 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 1085.5 ms: 59.0 tok/s
+[1]9.8782,[2]13.5216,[3]13.5513,[4]13.4806,[5]13.5818,[6]14.1052,[7]14.4576,[8]15.4642,[9]16.4181,[10]16.9846,[11]17.3025,[12]17.4160,[13]18.2140,[14]17.7032,[15]17.5470,[16]18.0473,[17]16.7691,[18]16.8952,[19]16.7234,[Final estimate: PPL = 16.7167 +/- 0.68578  (5100 tokens scored, 66.3 s, 154.1 tok/s through the GPU, batches of 128, qx_gemm)
