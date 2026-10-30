@@ -800,6 +800,7 @@ mod tests {
     #[test]
     fn dsp_lookup_keeps_the_greedy_text() {
         let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let _one = crate::kernels::hexagon::MODEL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         let Ok(mut s) = DspSession::open(&model, 96, &dir, 6) else {
             assert!(!cfg!(target_os = "android"), "no DSP");

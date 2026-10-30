@@ -62,8 +62,8 @@ class MainActivity : Activity() {
         // Prompt lookup decoding: pays when the reply repeats the prompt.
         lookup = CheckBox(this).apply { text = "lookup" }
         // Where the model runs. GPU: decode on the GPU, the prompt on the
-        // CPU cores. DSP: everything on the Hexagon DSP (a --pure Q4_0 or a
-        // Q4_K_M model; cores unused).
+        // CPU cores (lookup ignored: slower on the Adreno). DSP: everything
+        // on the Hexagon DSP (a --pure Q4_0 or a Q4_K_M model; cores unused).
         backend = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, BACKENDS)
         }

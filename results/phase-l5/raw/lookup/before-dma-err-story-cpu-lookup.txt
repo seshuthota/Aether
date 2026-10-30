@@ -1,0 +1,4 @@
+weights: q4_0, 278.0 MB
+
+speculative: 79 passes, 200 of 315 drafts accepted
+prefill: 46 tokens in 79.4 ms (579.0 tok/s) | decode: 466 tokens in 2356.3 ms (197.8 tok/s) | peak RSS 358972 kB

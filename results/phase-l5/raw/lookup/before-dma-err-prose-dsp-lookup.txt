@@ -1,0 +1,3 @@
+
+speculative: 87 passes, 270 of 345 drafts accepted
+prefill (DSP): 41 tokens in 80.5 ms (509.2 tok/s) | decode: 471 tokens in 3748.9 ms (125.6 tok/s)

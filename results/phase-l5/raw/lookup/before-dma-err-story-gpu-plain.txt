@@ -1,0 +1,2 @@
+GPU: Adreno (TM) 830
+prefill (on the CPU): 46 tokens in 75.3 ms (610.9 tok/s) | decode: 466 tokens in 6787.7 ms (68.7 tok/s)

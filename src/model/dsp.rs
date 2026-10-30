@@ -354,6 +354,7 @@ mod tests {
 
     fn few_matches_decode(file: &str) {
         let Some(path) = golden(file) else { return };
+        let _one = crate::kernels::hexagon::MODEL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         let dsp = match Dsp::open(&dir) {
             Ok(d) => d,

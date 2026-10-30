@@ -1,0 +1,94 @@
+== smollm2-135m-q4_k_m  44200
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 513.6 MB/s (11046192 bytes in 0.021s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 368 ms
+#   attn norm + quantize        142.6 us/token   4.5%
+#   q/k/v                       273.9 us/token   8.6%
+#   bias + RoPE + KV store      156.2 us/token   4.9%
+#   attention + quantize        296.7 us/token   9.3%
+#   wo                          201.2 us/token   6.3%
+#   ffn norm + quantize         142.2 us/token   4.4%
+#   gate/up                     674.4 us/token  21.1%
+#   SwiGLU + quantize           221.7 us/token   6.9%
+#   down                        492.5 us/token  15.4%
+#   final norm + quantize         4.7 us/token   0.1%
+#   classifier                  503.1 us/token  15.7%
+#   argmax                       44.4 us/token   1.4%
+#   thread start                 44.1 us/token   1.4%
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 250.5 ms: 255.5 tok/s (3.19 ms per token on the DSP)
+== smollm2-135m-q4_k_m few 56100
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 489.0 MB/s (11046192 bytes in 0.022s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 400 ms
+#   attn norm + quantize        142.7 us/token   4.4%
+#   q/k/v                       276.8 us/token   8.6%
+#   bias + RoPE + KV store      156.4 us/token   4.8%
+#   attention + quantize        300.3 us/token   9.3%
+#   wo                          201.3 us/token   6.2%
+#   ffn norm + quantize         142.5 us/token   4.4%
+#   gate/up                     684.5 us/token  21.2%
+#   SwiGLU + quantize           220.9 us/token   6.8%
+#   down                        497.8 us/token  15.4%
+#   final norm + quantize         4.8 us/token   0.1%
+#   classifier                  508.9 us/token  15.8%
+#   argmax                       45.1 us/token   1.4%
+#   thread start                 44.0 us/token   1.4%
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 257.0 ms: 249.0 tok/s (3.21 ms per token on the DSP)
+# decode step: 3095 us on the DSP (median of 5)
+# few-token pass, 1 tokens:   5089 us on the DSP, 1.64x one decode step, 5089 us per token
+# few-token pass, 2 tokens:   5993 us on the DSP, 1.94x one decode step, 2996 us per token
+# few-token pass, 3 tokens:   6823 us on the DSP, 2.20x one decode step, 2274 us per token
+# few-token pass, 4 tokens:   7488 us on the DSP, 2.42x one decode step, 1872 us per token
+# few-token pass, 5 tokens:   8533 us on the DSP, 2.76x one decode step, 1707 us per token
+# few-token pass, 6 tokens:   9378 us on the DSP, 3.03x one decode step, 1563 us per token
+# few-token pass, 7 tokens:  10458 us on the DSP, 3.38x one decode step, 1494 us per token
+# few-token pass, 8 tokens:  11474 us on the DSP, 3.71x one decode step, 1434 us per token
+== qwen2.5-0.5b-q4_k_m  54900
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 447.6 MB/s (11046192 bytes in 0.024s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 1788 ms
+#   attn norm + quantize        181.2 us/token   2.1%
+#   q/k/v                       356.1 us/token   4.0%
+#   bias + RoPE + KV store      164.8 us/token   1.9%
+#   attention + quantize        285.8 us/token   3.2%
+#   wo                          294.2 us/token   3.3%
+#   ffn norm + quantize         178.4 us/token   2.0%
+#   gate/up                    2516.0 us/token  28.5%
+#   SwiGLU + quantize           476.3 us/token   5.4%
+#   down                       1767.2 us/token  20.0%
+#   final norm + quantize         7.3 us/token   0.1%
+#   classifier                 2421.1 us/token  27.4%
+#   argmax                      137.9 us/token   1.6%
+#   thread start                 45.8 us/token   0.5%
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 655.9 ms: 97.6 tok/s (8.82 ms per token on the DSP)
+== qwen2.5-0.5b-q4_k_m few 61900
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 463.4 MB/s (11046192 bytes in 0.023s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 1809 ms
+#   attn norm + quantize        181.7 us/token   2.1%
+#   q/k/v                       355.7 us/token   4.0%
+#   bias + RoPE + KV store      165.3 us/token   1.9%
+#   attention + quantize        280.1 us/token   3.2%
+#   wo                          293.1 us/token   3.3%
+#   ffn norm + quantize         178.0 us/token   2.0%
+#   gate/up                    2510.7 us/token  28.5%
+#   SwiGLU + quantize           476.4 us/token   5.4%
+#   down                       1764.7 us/token  20.0%
+#   final norm + quantize         7.2 us/token   0.1%
+#   classifier                 2421.9 us/token  27.5%
+#   argmax                      137.9 us/token   1.6%
+#   thread start                 45.6 us/token   0.5%
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 655.5 ms: 97.6 tok/s (8.80 ms per token on the DSP)
+# decode step: 8668 us on the DSP (median of 5)
+# few-token pass, 1 tokens:  18564 us on the DSP, 2.14x one decode step, 18564 us per token
+# few-token pass, 2 tokens:  19781 us on the DSP, 2.28x one decode step, 9890 us per token
+# few-token pass, 3 tokens:  20658 us on the DSP, 2.38x one decode step, 6886 us per token
+# few-token pass, 4 tokens:  21869 us on the DSP, 2.52x one decode step, 5467 us per token
+# few-token pass, 5 tokens:  23570 us on the DSP, 2.72x one decode step, 4714 us per token
+# few-token pass, 6 tokens:  26920 us on the DSP, 3.11x one decode step, 4487 us per token
+# few-token pass, 7 tokens:  29512 us on the DSP, 3.40x one decode step, 4216 us per token
+# few-token pass, 8 tokens:  32224 us on the DSP, 3.72x one decode step, 4028 us per token

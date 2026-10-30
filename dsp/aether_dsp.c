@@ -369,29 +369,32 @@ void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *o
     }
 }
 
-void qx_rows(uint32 fmt, const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
-    if (fmt == F_Q4_0) {
-        q4_0_rows(wall, xqb, nb, out, g0, g1, fetch, accumulate, t);
-        return;
-    }
-    // As q4_0_rows, a group at a time by qx_hvx.h's product for one token.
+void qx_rows_n(uint32 fmt, const HVX_Vector *wall, const char *const *xs, uint32 n, uint32 nb, HVX_Vector *out, uint32 ostride, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    // As q4_0_rows, a group at a time by qx_hvx.h's product for n tokens.
     const uint32 gv = piece_vectors(fmt) * nb, pair = 2 * gv * 128;
     uint32 g = g0;
     char *v = fetch == FETCH_DMA ? vtcm : NULL;
     if (v && 2 * pair <= VTCM_SHARE && g + 2 <= g1) {
         char *slot[2] = {v + VTCM_SHARE * t, v + VTCM_SHARE * t + pair};
-        uint32 n = (g1 - g) / 2;
+        uint32 np = (g1 - g) / 2;
         struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * gv, pair), NULL};
-        for (uint32 p = 0; p < n; p++, g += 2) {
-            if (p + 1 < n) d[(p + 1) % 2] = dma_copy(t, slot[(p + 1) % 2], wall + (size_t) (g + 2) * gv, pair);
+        for (uint32 p = 0; p < np; p++, g += 2) {
+            if (p + 1 < np) d[(p + 1) % 2] = dma_copy(t, slot[(p + 1) % 2], wall + (size_t) (g + 2) * gv, pair);
             dma_wait(d[p % 2]);
             // A group at a time, so nothing l2fetches from VTCM.
             const HVX_Vector *w = (const HVX_Vector *) slot[p % 2];
-            qx_rows_n_on(fmt, w, &xqb, 1, nb, out + g, 1, 0, 1, accumulate);
-            qx_rows_n_on(fmt, w + gv, &xqb, 1, nb, out + g + 1, 1, 0, 1, accumulate);
+            qx_rows_n_on(fmt, w, xs, n, nb, out + g, ostride, 0, 1, accumulate);
+            qx_rows_n_on(fmt, w + gv, xs, n, nb, out + g + 1, ostride, 0, 1, accumulate);
         }
     }
-    if (g < g1) qx_rows_n_on(fmt, wall + (size_t) g * gv, &xqb, 1, nb, out + g, 1, 0, g1 - g, accumulate);
+    if (g < g1) qx_rows_n_on(fmt, wall + (size_t) g * gv, xs, n, nb, out + g, ostride, 0, g1 - g, accumulate);
+}
+
+void qx_rows(uint32 fmt, const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    if (fmt == F_Q4_0)
+        q4_0_rows(wall, xqb, nb, out, g0, g1, fetch, accumulate, t);
+    else
+        qx_rows_n(fmt, wall, &xqb, 1, nb, out, 1, g0, g1, fetch, accumulate, t);
 }
 
 // Q4_0 x Q8_0 matrix-vector product. The weights come in groups of 32

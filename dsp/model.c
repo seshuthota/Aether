@@ -597,7 +597,7 @@ AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint
 // A pass of a few tokens (at most MAX_FEW) at positions pos .. pos + n - 1,
 // every token's logits: speculative decoding's check of a certain token
 // and its drafts. As decode_thread, the products Q4_0 x Q8_0 on HVX, but
-// each group of weights read once for all n tokens (q4_0_rows_n_on), so n
+// each group of weights read once for all n tokens (qx_rows_n, by DMA into VTCM), so n
 // tokens cost little more than one where reading the weights is the cost.
 // Row i of each buffer is token i, its Q8_0 in xq row i. Norms, RoPE and
 // quantizing a run of blocks of every token each; attention a run of
@@ -606,7 +606,7 @@ AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint
 static void product_n(const struct run *r, uint32 nr, uint32 nb, const char *const *xs, uint32 n, float *out, uint32 os, int acc, uint32 t, uint32 T) {
     for (uint32 i = 0; i < nr && r[i].rows; out += r[i].rows, i++) {
         uint32 groups = r[i].rows / 32;
-        qx_rows_n_on(r[i].fmt, r[i].w, xs, n, nb, (HVX_Vector *) out, os / 32, FROM(groups), TO(groups), acc);
+        qx_rows_n(r[i].fmt, r[i].w, xs, n, nb, (HVX_Vector *) out, os / 32, pair_split(groups, t, T), pair_split(groups, t + 1, T), FETCH_DMA, acc, t);
     }
 }
 
@@ -617,8 +617,8 @@ static void few_thread(void *arg, uint32 t) {
     const char *xs[MAX_FEW];
     for (uint32 i = 0; i < n; i++) xs[i] = M.xq + (size_t) i * M.xq_stride;
 #define XQ(i) (M.xq + (size_t) (i) * M.xq_stride)
-    // The runs (up to nr) times every token's xq, a run of groups of each
-    // per thread; token i's into out + i * os floats.
+    // The runs (up to nr) times every token's xq, a run of pairs of groups
+    // of each per thread, by DMA; token i's into out + i * os floats.
 #define ROWS_N(runs, nr, nb, out, os, acc) product_n(runs, nr, nb, xs, n, out, os, acc, t, T)
 #define NORM(w)                                                                                                         \
     for (uint32 i = 0; i < n; i++) norm_quantize_to(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, w, dim, FROM(dim / 32), TO(dim / 32), XQ(i))
@@ -669,6 +669,7 @@ AEEResult aether_dsp_model_few(remote_handle64 h, uint32 pos, uint32 n, uint32 t
     cpu_wrote(M.x, 4 * n * M.dim);
     cpu_wrote(M.rot, 4 * n * M.hs);
     dsp_busy();
+    dma_gen++;
     struct step st = {pos, threads, 0, 0, HAP_perf_get_qtimer_count()};
     st.n = n;
     qurt_barrier_init(&st.bar, threads);

@@ -66,6 +66,11 @@ const HMX_GEMM: u32 = 12;
 const MODEL_PREFILL: u32 = 13;
 const MODEL_FEW: u32 = 14;
 
+/// Held by the tests that load a model on the DSP: the DSP keeps one model
+/// (dsp/model.c's static), which tests running at once would overwrite.
+#[cfg(test)]
+pub(crate) static MODEL_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The most tokens of one [`Dsp::model_few`] (dsp/q4_0_hvx.h's `MAX_FEW`).
 pub const MAX_FEW: usize = 8;
 

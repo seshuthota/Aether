@@ -36,6 +36,9 @@ void q4_0_rows(const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, 
 // As q4_0_rows for a matrix in format fmt (dsp/qx_hvx.h's F_ enum, its
 // layout there); Q4_0 goes to q4_0_rows.
 void qx_rows(uint32 fmt, const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t);
+// The same for n (at most MAX_FEW) tokens' xs[i]: token i's group g into
+// out[i · ostride + g] (any format, Q4_0 too).
+void qx_rows_n(uint32 fmt, const HVX_Vector *w, const char *const *xs, uint32 n, uint32 nb, HVX_Vector *out, uint32 ostride, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t);
 
 // How q4_0_rows gets the weights: plain loads, l2fetch of the next two
 // groups into the L2 while two are computed, or DMA of the next two into

@@ -1,0 +1,8 @@
+== smollm2-135m-q4_k_m 
+Final estimate: PPL = 20.7241 +/- 0.84892  (5100 tokens scored, 61.0 s, 167.6 tok/s through the DSP)
+== smollm2-135m-q4_k_m few
+Final estimate: PPL = 20.7241 +/- 0.84892  (5100 tokens scored, 28.4 s, 360.2 tok/s through the DSP)
+== qwen2.5-0.5b-q4_k_m 
+Final estimate: PPL = 16.7381 +/- 0.68656  (5100 tokens scored, 133.6 s, 76.5 tok/s through the DSP)
+== qwen2.5-0.5b-q4_k_m few
+Final estimate: PPL = 16.7381 +/- 0.68656  (5100 tokens scored, 62.6 s, 163.3 tok/s through the DSP)
