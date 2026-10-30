@@ -56,8 +56,26 @@ matching llama.cpp. Matrix × matrix products on HMX for prompts: Qwen's layer p
 tok/s for 128 tokens (llama.cpp's NPU prefill ~330 for the whole model). Prefill through the whole
 model on the DSP is written and waits for the phone (L.5 step 5b).
 
-Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), GPU prefill (plan in L.3), L.5 step 5b on the phone.
+Since then (2026-10-30, all verified on the phone and merged): prefill on the DSP (HMX, 1608 /
+778 tok/s at 128 tokens), the app's CPU / GPU / DSP selector (DSP sessions work from an app),
+prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llama.cpp).
+
+### Next steps (2026-10-30)
+
+1. **Q4_K_M prompts on HMX.** The DSP runs Q4_K_M prompts in 8-token passes on HVX: 272 tok/s
+   against 755 for Q4_0 on HMX. `hmx.c` dequantizes only Q4_0 into fp16 tiles; the other formats'
+   dequantization (Q5_0, Q8_0, Q4_K, Q6_K) can be checked on the simulator first.
+2. **GPU lookup that pays on the Adreno.** The few-token shader costs about a whole dispatch per
+   extra token there (`results/phase-l3/raw/vk-gemv-n-adreno.txt`); a shader that shares each
+   weight load across the tokens is needed before lookup is turned back on for GPU sessions.
+3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
+   on long prompts; L.3).
+4. **DSP attention at long positions** (decode slows from 123 to ~86 tok/s over 512 tokens):
+   f16 KV cache, or attention on HMX.
+5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
+   write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
+   comparison with the user present.
+6. **Learning track** (with the user): pages and films for what the implementation track built.
 
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 
