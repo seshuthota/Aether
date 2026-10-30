@@ -39,6 +39,7 @@ exercises every bit of the layout; the reference is gguf's dequantizer:
   x.npy [t, n] f32           x_q8_0.bin  x quantized to Q8_0, row by row
   deq_q4_k.npy, deq_q6_k.npy [d, n] gguf's dequantized weights
   out_q4_k_b.npy, out_q6_k_b.npy   [t, d]: dequant(X_q8_0) @ dequant(W)ᵀ
+  out_q4_k_a.npy, out_q6_k_a.npy   [t, d]: X @ dequant(W)ᵀ (f32 activations)
 """
 
 import sys
@@ -109,6 +110,7 @@ def kquants(root):
             wd = quants.dequantize(wq, typ)
             np.save(out / f"deq_{name}.npy", wd.astype(np.float32))
             np.save(out / f"out_{name}_b.npy", (xd @ wd.astype(np.float64).T).astype(np.float32))
+            np.save(out / f"out_{name}_a.npy", (x.astype(np.float64) @ wd.astype(np.float64).T).astype(np.float32))
     print(f"wrote {len(cases)} cases to {root}")
 
 

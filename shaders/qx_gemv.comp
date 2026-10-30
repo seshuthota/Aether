@@ -1,0 +1,149 @@
+#version 450
+// out = W x for a quantized matrix W (rows × 32·nb) and an f32 vector x,
+// in any of the formats a llama.cpp Q4_K_M file mixes: Q4_0, Q5_0, Q8_0,
+// Q4_K, Q6_K (FMT, ggml's type id). The work is split as in q4_0_gemv.comp
+// (read that first): lane l of 32 takes 32-value pieces l, l + 32, … of R
+// rows, loads the piece's 32 x values once, and the partial sums are added
+// by shuffles. ACCUM, GLU and NORM fuse in the residual add, SwiGLU and
+// RMS norm as there.
+//
+// A piece is a block of the 32-value formats, or one of the 8 sub-blocks
+// of a K-quant's 256-value super-block. At upload (`MatQ`) every format is
+// laid out so a piece reads like a Q4_0 block: `qs[i]` (i = row · nb +
+// piece) holds 16 bytes, byte k = value k in the low nibble and value
+// k + 16 in the high one. The rest:
+//
+//   Q4_0 (2)   value = nibble − 8, scale d (f16, two per uint of `sc`)
+//   Q5_0 (6)   value = nibble + 16 · bit − 16; the 32 fifth bits of piece
+//              i are uint 4·n + i of `qs` (n = rows · nb, after the
+//              nibbles); d as Q4_0
+//   Q8_0 (8)   value = an int8: 32 bytes, qs[2i] and qs[2i + 1]; d as Q4_0
+//   Q4_K (12)  value = d · sc_j · nibble − dmin · m_j for sub-block j: per
+//              super-block s, sc[5s] = d, dmin (f16), sc[5s+1..5s+3] the 8
+//              6-bit scales as bytes, sc[5s+3..5s+5] the 8 mins
+//   Q6_K (14)  value = d · scale · (nibble + 16 · high − 32), one int8
+//              scale per 16 values: sc[5s] = d (f16), sc[5s+1..5s+5] the
+//              16 scales; the 2-bit highs of piece i are uints 4·n + 2i
+//              (values 0–15) and 4·n + 2i + 1 (16–31) of `qs`
+//
+// So every format reads close to its file size: the K-quants' scales stay
+// per super-block, unpacked to bytes (Q4_K 0.58 bytes a weight against the
+// file's 0.56; Q6_K 0.83 against 0.82).
+#extension GL_KHR_shader_subgroup_shuffle : enable
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 qs[]; };
+layout(std430, binding = 1) readonly buffer S { uint sc[]; };
+layout(std430, binding = 2) readonly buffer X { vec4 x[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
+layout(std430, binding = 4) readonly buffer NW { vec4 nw[]; };
+layout(push_constant) uniform P { uint rows; uint nb; float eps; };
+
+layout(constant_id = 0) const uint RV = 1;
+layout(constant_id = 1) const bool ACCUM = false;
+layout(constant_id = 2) const bool GLU = false;
+layout(constant_id = 3) const bool NORM = false;
+layout(constant_id = 4) const uint FMT = 2;
+const uint R = 4 * RV;
+
+shared float red[128];
+float inv = 1.0;
+
+vec4 xin(uint i, uint nb) {
+    if (NORM) return nw[i] * (x[i] * inv);
+    if (!GLU) return x[i];
+    vec4 g = x[i];
+    return g / (1.0 + exp(-g)) * x[8 * nb + i];
+}
+
+// The four low / high nibbles of a uint, as 0..15.
+vec4 lo(uint w) { return vec4(uvec4(w, w >> 8, w >> 16, w >> 24) & 15u); }
+vec4 hi(uint w) { return vec4(uvec4(w >> 4, w >> 12, w >> 20, w >> 28) & 15u); }
+// The four int8s of a uint.
+vec4 i8(uint w) { return vec4(ivec4(w << 24, w << 16, w << 8, w) >> 24); }
+// Bits k..k+4 of h (Q5_0's fifth bits), times 16.
+vec4 b1(uint h, uint k) { return vec4(uvec4(h >> k, h >> (k + 1), h >> (k + 2), h >> (k + 3)) & 1u) * 16.0; }
+// 2-bit fields k..k+4 of h (Q6_K's highs), times 16.
+vec4 b2(uint h, uint k) { return vec4(uvec4(h >> 2 * k, h >> 2 * k + 2, h >> 2 * k + 4, h >> 2 * k + 6) & 3u) * 16.0; }
+// The k-th byte of the uints from sc[at], unsigned or signed.
+uint ubyte(uint at, uint k) { return (sc[at + k / 4] >> (8 * (k % 4))) & 255u; }
+int sbyte(uint at, uint k) { return bitfieldExtract(int(sc[at + k / 4]), int(8 * (k % 4)), 8); }
+// The f16 scale of piece i, two per uint.
+float half_d(uint i) { return unpackHalf2x16(sc[i / 2] >> (16 * (i & 1))).x; }
+uint word(uint k) { return qs[k / 4][k % 4]; }
+
+// W's piece i times the 32 x values in xs (values 0–3, 4–7, …, 28–31).
+float piece(uint i, uint n, vec4 xs[8]) {
+    if (FMT == 8) {
+        uvec4 a = qs[2 * i], b = qs[2 * i + 1];
+        return half_d(i) * (dot(i8(a.x), xs[0]) + dot(i8(a.y), xs[1]) + dot(i8(a.z), xs[2]) + dot(i8(a.w), xs[3])
+                          + dot(i8(b.x), xs[4]) + dot(i8(b.y), xs[5]) + dot(i8(b.z), xs[6]) + dot(i8(b.w), xs[7]));
+    }
+    uvec4 w = qs[i];
+    vec4 v[8] = vec4[8](lo(w.x), lo(w.y), lo(w.z), lo(w.w), hi(w.x), hi(w.y), hi(w.z), hi(w.w));
+    if (FMT == 2) {
+        float s = 0.0;
+        for (uint k = 0; k < 8; k++) s += dot(v[k] - 8.0, xs[k]);
+        return half_d(i) * s;
+    }
+    if (FMT == 6) {
+        uint h = word(4 * n + i);
+        float s = 0.0;
+        for (uint k = 0; k < 8; k++) s += dot(v[k] + b1(h, 4 * k) - 16.0, xs[k]);
+        return half_d(i) * s;
+    }
+    uint at = 5 * (i / 8), j = i % 8;
+    vec2 dd = unpackHalf2x16(sc[at]);
+    if (FMT == 12) {
+        float s = 0.0;
+        vec4 sx = vec4(0.0);
+        for (uint k = 0; k < 8; k++) {
+            s += dot(v[k], xs[k]);
+            sx += xs[k];
+        }
+        float d1 = dd.x * float(ubyte(at + 1, j)), m1 = dd.y * float(ubyte(at + 3, j));
+        return d1 * s - m1 * dot(sx, vec4(1.0));
+    }
+    // FMT == 14
+    uint h0 = word(4 * n + 2 * i), h1 = word(4 * n + 2 * i + 1);
+    float s0 = 0.0, s1 = 0.0;
+    for (uint k = 0; k < 4; k++) {
+        s0 += dot(v[k] + b2(h0, 4 * k) - 32.0, xs[k]);
+        s1 += dot(v[k + 4] + b2(h1, 4 * k) - 32.0, xs[k + 4]);
+    }
+    return dd.x * float(sbyte(at + 1, 2 * j)) * s0 + dd.x * float(sbyte(at + 1, 2 * j + 1)) * s1;
+}
+
+void main() {
+    uint lane = gl_LocalInvocationID.x & 31;
+    if (NORM) {
+        uint id = gl_LocalInvocationID.x;
+        float s = 0.0;
+        for (uint i = id; i < 8 * nb; i += 128) s += dot(x[i], x[i]);
+        red[id] = s;
+        barrier();
+        for (uint m = 64; m > 0; m >>= 1) {
+            if (id < m) red[id] += red[id + m];
+            barrier();
+        }
+        inv = 1.0 / sqrt(red[0] / float(32 * nb) + eps);
+    }
+    uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint row0 = (wg * (gl_WorkGroupSize.x / 32) + gl_LocalInvocationID.x / 32) * R;
+    vec4 acc[RV];
+    for (uint v = 0; v < RV; v++) acc[v] = vec4(0.0);
+    uint nr = min(R, rows - min(rows, row0));
+    for (uint b = lane; b < nb; b += 32) {
+        vec4 xs[8];
+        for (uint k = 0; k < 8; k++) xs[k] = xin(8 * b + k, nb);
+        for (uint r = 0; r < nr; r++) acc[r / 4][r % 4] += piece((row0 + r) * nb + b, rows * nb, xs);
+    }
+    for (uint v = 0; v < RV; v++) {
+        for (uint m = 16; m > 0; m >>= 1) acc[v] += subgroupShuffleXor(acc[v], m);
+    }
+    if (lane == 0) {
+        for (uint r = 0; r < nr; r++) {
+            if (ACCUM) o[row0 + r] += acc[r / 4][r % 4];
+            else o[row0 + r] = acc[r / 4][r % 4];
+        }
+    }
+}

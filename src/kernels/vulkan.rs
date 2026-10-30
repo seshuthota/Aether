@@ -18,7 +18,8 @@
 //! Every Vulkan call is `unsafe` (raw handles, lifetimes the API cannot
 //! check); the types here own their handles and free them in `Drop`.
 
-use crate::quant::BlockQ4_0;
+use crate::quant::{self, BlockQ4_0};
+use crate::weight::Weight;
 use ash::vk;
 use std::ffi::CStr;
 
@@ -629,6 +630,108 @@ impl MatQ4_0 {
     }
 }
 
+/// A matrix in any of the formats of a llama.cpp Q4_K_M file (Q4_0, Q5_0,
+/// Q8_0, Q4_K, Q6_K), in the layout `shaders/qx_gemv.comp` reads: every
+/// 32-value piece as 16 bytes of nibble pairs (32 int8s for Q8_0), then
+/// the Q5_0 fifth bits or Q6_K high bits, and the scales in `sc`.
+pub struct MatQ {
+    /// ggml's type id (the shader's FMT).
+    pub ty: u32,
+    pub qs: Buffer,
+    pub sc: Buffer,
+    pub rows: usize,
+    /// 32-value pieces per row (columns / 32).
+    pub nb: usize,
+}
+
+/// 32 values 0..15 as 16 bytes, byte k = value k | value k + 16 << 4.
+fn nibble_pairs(v: &[u8]) -> [u8; 16] {
+    std::array::from_fn(|k| v[k] | v[k + 16] << 4)
+}
+
+impl MatQ {
+    /// Uploads `w` (`rows` rows, row-major blocks).
+    pub fn new(gpu: &Gpu, w: &Weight, rows: usize) -> Result<MatQ> {
+        let (ty, pieces) = match w {
+            Weight::Q4_0(b) => (2, b.len()),
+            Weight::Q5_0(b) => (6, b.len()),
+            Weight::Q8_0(b) => (8, b.len()),
+            Weight::Q4_K(b) => (12, 8 * b.len()),
+            Weight::Q6_K(b) => (14, 8 * b.len()),
+            _ => return Err(format!("{} matrices are not supported on the GPU", w.format_name())),
+        };
+        assert!(rows > 0 && pieces.is_multiple_of(rows));
+        let qs_bytes = match ty {
+            6 => pieces * 20,
+            8 => pieces * 32,
+            14 => pieces * 24,
+            _ => pieces * 16,
+        };
+        let sc_words = if ty >= 12 { 5 * pieces / 8 } else { pieces.div_ceil(2) };
+        let (mut qs, mut sc) = (gpu.buffer(qs_bytes)?, gpu.buffer(sc_words * 4)?);
+        let (q, s) = (qs.as_mut_slice::<u8>(), sc.as_mut_slice::<u32>());
+        // The f16 scales of the 32-value formats, two per u32 (a new
+        // buffer is not zeroed).
+        let mut halves = |ds: &mut dyn Iterator<Item = u16>| {
+            s.fill(0);
+            for (i, d) in ds.enumerate() {
+                s[i / 2] |= (d as u32) << (16 * (i % 2));
+            }
+        };
+        match w {
+            Weight::Q4_0(b) => {
+                b.iter().zip(q.as_chunks_mut::<16>().0).for_each(|(b, q)| *q = b.qs);
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q5_0(b) => {
+                let (nib, high) = q.split_at_mut(16 * pieces);
+                b.iter().zip(nib.as_chunks_mut::<16>().0).for_each(|(b, q)| *q = b.qs);
+                b.iter().zip(high.as_chunks_mut::<4>().0).for_each(|(b, h)| *h = b.qh);
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q8_0(b) => {
+                b.iter().zip(q.as_chunks_mut::<32>().0).for_each(|(b, q)| *q = b.qs.map(|v| v as u8));
+                halves(&mut b.iter().map(|b| b.d));
+            }
+            Weight::Q4_K(b) => {
+                for (k, (b, q)) in b.iter().zip(q.as_chunks_mut::<128>().0).enumerate() {
+                    let v = quant::q4_k_values(b);
+                    for (j, p) in q.as_chunks_mut::<16>().0.iter_mut().enumerate() {
+                        *p = nibble_pairs(&v[32 * j..]);
+                    }
+                    let (scales, mins) = quant::q4_k_scales_mins(&b.scales);
+                    let word = |a: &[u8]| u32::from_le_bytes(a.try_into().unwrap());
+                    s[5 * k..5 * k + 5].copy_from_slice(&[b.d as u32 | (b.dmin as u32) << 16, word(&scales[..4]), word(&scales[4..]), word(&mins[..4]), word(&mins[4..])]);
+                }
+            }
+            Weight::Q6_K(b) => {
+                let (nib, high) = q.split_at_mut(16 * pieces);
+                let high = high.as_chunks_mut::<4>().0;
+                for (k, b) in b.iter().enumerate() {
+                    // 0..63: four low bits, two high.
+                    let v = quant::q6_k_values(b).map(|v| (v + 32) as u8);
+                    for j in 0..8 {
+                        let (i, p) = (8 * k + j, &v[32 * j..32 * j + 32]);
+                        let low: Vec<u8> = p.iter().map(|v| v & 15).collect();
+                        nib[16 * i..16 * i + 16].copy_from_slice(&nibble_pairs(&low));
+                        for half in 0..2 {
+                            let h = (0..16).fold(0u32, |h, l| h | ((p[16 * half + l] >> 4) as u32) << (2 * l));
+                            high[2 * i + half] = h.to_le_bytes();
+                        }
+                    }
+                    let sb = b.scales.map(|v| v as u8);
+                    s[5 * k] = b.d as u32;
+                    for (n, c) in sb.as_chunks::<4>().0.iter().enumerate() {
+                        s[5 * k + 1 + n] = u32::from_le_bytes(*c);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+        Ok(MatQ { ty, qs, sc, rows, nb: pieces / rows })
+    }
+}
+
 /// Workgroups for `n` items in groups of `per` (rows per workgroup), split
 /// over x and y because one dimension allows at most 65535.
 pub fn groups_for(n: usize, per: usize) -> [u32; 3] {
@@ -669,6 +772,30 @@ impl Gpu {
             return Err(format!("q4_0_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
         }
         Kernel::with_spec(self, crate::spirv!("q4_0_gemv"), 5, 12, &[rows_per_32 / 4, accum.into(), glu.into(), norm.into()])
+    }
+}
+
+impl Gpu {
+    /// `out[r] = W[r] · x` for a [`MatQ`] of any format, `reps` times;
+    /// `kernel` from [`Gpu::qx_gemv_kernel`] for that format. Returns the
+    /// GPU time of all reps in seconds.
+    pub fn qx_gemv(&self, kernel: &Kernel, w: &MatQ, x: &Buffer, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(x.size >= w.nb * 32 * 4 && out.size >= w.rows * 4);
+        assert_eq!(kernel.spec[4], w.ty, "a kernel for another format");
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.run(kernel, &[&w.qs, &w.sc, x, out, x], &push, groups_for(w.rows, 16 * kernel.spec[0] as usize), reps)
+    }
+
+    /// The decode shader for matrices of ggml type `ty` (see [`MatQ`]),
+    /// with the options of [`Gpu::q4_0_gemv_kernel_fused`].
+    pub fn qx_gemv_kernel(&self, ty: u32, rows_per_32: u32, accum: bool, glu: bool, norm: bool) -> Result<Kernel> {
+        assert!(!(glu && norm), "a GLU input is not normalized");
+        assert!(rows_per_32 > 0 && rows_per_32.is_multiple_of(4));
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
+            return Err(format!("qx_gemv needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
+        }
+        Kernel::with_spec(self, crate::spirv!("qx_gemv"), 5, 12, &[rows_per_32 / 4, accum.into(), glu.into(), norm.into(), ty])
     }
 }
 
@@ -857,6 +984,54 @@ mod tests {
             }
         }
         assert!(cases >= 12, "only {cases} golden cases");
+    }
+
+    /// The multi-format decode shader on llama.cpp's bytes against
+    /// X @ dequant(W)ᵀ in float64: Q4_0, Q5_0, Q8_0 from llama.cpp's
+    /// quantizers (`quant/`), Q4_K and Q6_K random blocks dequantized by
+    /// the gguf package (`quant_k/`), every token of x in turn.
+    #[test]
+    fn qx_gemv_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut cases = 0;
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_a.npy")));
+            let cols = *xs.last().unwrap();
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            let mut x = gpu.buffer(cols * 4).unwrap();
+            let mut out = gpu.buffer(rows * 4).unwrap();
+            for r in [4, 8] {
+                let k = gpu.qx_gemv_kernel(m.ty, r, false, false, false).unwrap();
+                // quant/ has x as one vector and out as [rows]; quant_k/ has
+                // tokens × cols and tokens × rows.
+                for (t, x_t) in xv.chunks_exact(cols).enumerate() {
+                    x.as_mut_slice::<f32>().copy_from_slice(x_t);
+                    out.as_mut_slice::<f32>().fill(f32::NAN);
+                    gpu.qx_gemv(&k, &m, &x, &out, 1).unwrap();
+                    let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..rows], &want[t * rows..(t + 1) * rows]);
+                    assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name} R={r} token {t}: rel {rel:.2e}", dir.display());
+                }
+            }
+        };
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        assert!(cases >= 21, "only {cases} golden cases");
     }
 
     /// The Q4_0 prefill shader on llama.cpp's Q4_0 bytes against
