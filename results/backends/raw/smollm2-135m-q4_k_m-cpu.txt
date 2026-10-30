@@ -1,0 +1,23 @@
+# 2026-10-30T20:20:29+05:30, commit 3ab2966
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 87
+# Capacity level: -1
+# bench_suite testdata/gguf/smollm2-135m-q4_k_m.gguf | q5_0+q8_0+q6_k+q4_k | weights 103.7 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 71 ms
+test,tok_per_s,ms
+pp64,1583.4,40.4
+pp128,1719.8,74.4
+pp256,1670.3,153.3
+pp512,1490.3,343.5
+tg64@d0,347.9,184.0
+# tg64@d0 per token: median 2.82 ms, p95 3.25 ms (192 samples)
+tg64@d256,292.5,218.8
+# tg64@d256 per token: median 3.38 ms, p95 3.57 ms (192 samples)
+tg64@d512,252.3,253.6
+# tg64@d512 per token: median 3.86 ms, p95 4.35 ms (192 samples)
+ttft_pp64,26.1,38.4
+# peak RSS 168096 kB
+# monitor: 12 samples over 5.36 s, max temp 80.7 °C, energy 1.37 J, avg power 0.26 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/smollm2-135m-q4_k_m.gguf","quantization":"q5_0+q8_0+q6_k+q4_k","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":71,"prefill":[{"prompt_tokens":64,"median_ms":40.4,"p95_ms":60.0,"tokens_per_second":1583.4},{"prompt_tokens":128,"median_ms":74.4,"p95_ms":76.8,"tokens_per_second":1719.8},{"prompt_tokens":256,"median_ms":153.3,"p95_ms":156.6,"tokens_per_second":1670.3},{"prompt_tokens":512,"median_ms":343.5,"p95_ms":350.8,"tokens_per_second":1490.3}],"decode":[{"context_depth":0,"median_ms_per_token":2.82,"p95_ms_per_token":3.25,"tokens_per_second":347.9},{"context_depth":256,"median_ms_per_token":3.38,"p95_ms_per_token":3.57,"tokens_per_second":292.5},{"context_depth":512,"median_ms_per_token":3.86,"p95_ms_per_token":4.35,"tokens_per_second":252.3}],"ttft_pp64_ms":38.4,"peak_memory_mb":164},"system_state":{"battery_status":"Discharging","max_temp_c":80.7,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":2246400,"cpu7":2246400},"avg_power_w":0.26}}

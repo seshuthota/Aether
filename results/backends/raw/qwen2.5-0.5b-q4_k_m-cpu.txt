@@ -1,0 +1,23 @@
+# 2026-10-30T20:21:41+05:30, commit 3ab2966
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 87
+# Capacity level: -1
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf | q5_0+q8_0+q6_k+q4_k | weights 391.7 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 235 ms
+test,tok_per_s,ms
+pp64,601.4,106.4
+pp128,600.3,213.2
+pp256,591.2,433.0
+pp512,547.7,934.8
+tg64@d0,106.4,601.4
+# tg64@d0 per token: median 8.46 ms, p95 13.23 ms (192 samples)
+tg64@d256,82.9,772.1
+# tg64@d256 per token: median 11.50 ms, p95 13.42 ms (192 samples)
+tg64@d512,64.1,997.7
+# tg64@d512 per token: median 11.91 ms, p95 13.43 ms (192 samples)
+ttft_pp64,2.9,347.0
+# peak RSS 464772 kB
+# monitor: 39 samples over 18.85 s, max temp 81.1 °C, energy 39.85 J, avg power 2.11 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf","quantization":"q5_0+q8_0+q6_k+q4_k","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":235,"prefill":[{"prompt_tokens":64,"median_ms":106.4,"p95_ms":135.9,"tokens_per_second":601.4},{"prompt_tokens":128,"median_ms":213.2,"p95_ms":245.1,"tokens_per_second":600.3},{"prompt_tokens":256,"median_ms":433.0,"p95_ms":448.4,"tokens_per_second":591.2},{"prompt_tokens":512,"median_ms":934.8,"p95_ms":963.5,"tokens_per_second":547.7}],"decode":[{"context_depth":0,"median_ms_per_token":8.46,"p95_ms_per_token":13.23,"tokens_per_second":106.4},{"context_depth":256,"median_ms_per_token":11.50,"p95_ms_per_token":13.42,"tokens_per_second":82.9},{"context_depth":512,"median_ms_per_token":11.91,"p95_ms_per_token":13.43,"tokens_per_second":64.1}],"ttft_pp64_ms":347.0,"peak_memory_mb":454},"system_state":{"battery_status":"Discharging","max_temp_c":81.1,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1017600,"cpu7":1017600},"avg_power_w":2.11}}
