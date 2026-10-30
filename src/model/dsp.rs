@@ -212,16 +212,21 @@ impl DspModel {
         let kv = nl * c.seq_len * kv_dim;
         let b = batch.max(1);
         let rows = b.max(MAX_FEW);
+        // Same rule as model_load in dsp/model.c: round the context up to a
+        // vector of positions, then one extra vector when that is a power of
+        // two, so key rows are not a power-of-two distance apart.
+        let round = c.seq_len.div_ceil(32) * 32;
+        let stride = if round.is_power_of_two() { round + 32 } else { round };
         for (i, n) in [
             (d::X, 4 * dim * rows),
             (d::XB, 4 * dim * rows),
             (d::XQ, MAX_FEW * (40 * hid.max(dim) / 32).div_ceil(128) * 128),
             (d::QKV, 4 * (dim + 2 * kv_dim) * rows),
-            (d::ATT, 4 * c.n_heads.max(8) * c.seq_len.div_ceil(32) * 32),
+            (d::ATT, 4 * c.n_heads.max(8) * stride),
             (d::HB, 4 * 2 * hid * rows),
             (d::LOGITS, 4 * vocab * if all_logits { rows } else { MAX_FEW }),
             // Keys transposed: a row of every position per element.
-            (d::KC, 4 * nl * kv_dim * c.seq_len.div_ceil(32) * 32),
+            (d::KC, 4 * nl * kv_dim * stride),
             (d::VC, 4 * kv),
             (d::ROT, 4 * c.head_size() * rows),
             (d::PROF, 8 * STAGES.len()),

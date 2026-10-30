@@ -133,7 +133,11 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     M.vocab = d[D_VOCAB], M.seq_len = d[D_SEQ_LEN], M.halves = d[D_HALVES], M.batch = d[D_BATCH];
     memcpy(&M.eps, &d[D_EPS], 4);
     M.hs = M.dim / M.heads, M.kv_dim = M.hs * M.kv_heads;
+    // Rounded up to a vector. A power-of-two stride lands every key element
+    // on the same cache sets, so add one vector (32 floats). The state
+    // buffer uses the same rule (DspModel in dsp.rs).
     M.att_stride = (M.seq_len + 31) / 32 * 32;
+    if (M.att_stride && (M.att_stride & (M.att_stride - 1)) == 0) M.att_stride += 32;
     M.xq_stride = (40 * (M.hid > M.dim ? M.hid : M.dim) / 32 + 127) / 128 * 128;
     // Every matrix's rows must be whole groups of 32 (the products write
     // whole groups, and add them in place into x), and each head whole

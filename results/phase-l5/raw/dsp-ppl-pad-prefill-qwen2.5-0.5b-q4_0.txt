@@ -1,0 +1,22 @@
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 128 | upload 156 ms
+#   attn norm + quantize        185.2 us/token   2.8%
+#   q/k/v                       278.7 us/token   4.3%
+#   bias + RoPE + KV store      163.3 us/token   2.5%
+#   attention + quantize        253.1 us/token   3.9%
+#   wo                          231.1 us/token   3.5%
+#   ffn norm + quantize         178.5 us/token   2.7%
+#   gate/up                    2107.3 us/token  32.2%
+#   SwiGLU + quantize           478.0 us/token   7.3%
+#   down                       1128.2 us/token  17.2%
+#   final norm + quantize         7.4 us/token   0.1%
+#   classifier                 1342.4 us/token  20.5%
+#   argmax                      141.6 us/token   2.2%
+#   thread start                 51.4 us/token   0.8%
+# greedy: The capital of France is Paris. It is the largest city in France and the second largest in the European Union. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. The capital of the department of the same name is also Paris. The capital
+# 59 positions in 455.6 ms: 129.5 tok/s (6.54 ms per token on the DSP)
+# prefill   32 tokens:     91.6 ms on the DSP,   349.4 tok/s (median of 5)
+# prefill   64 tokens:    113.8 ms on the DSP,   562.5 tok/s (median of 5)
+# prefill  128 tokens:    166.1 ms on the DSP,   770.7 tok/s (median of 5)
+# prefill  128 tokens:    166.6 ms on the DSP,   768.5 tok/s (median of 5)
+[1]10.6993,[2]14.7302,[3]15.4620,[4]15.8384,[5]16.2018,[6]16.8892,[7]17.1731,[8]18.5419,[9]19.8114,[10]20.5337,[11]21.0381,[12]21.0145,[13]21.9175,[14]21.2884,[15]21.0992,[16]21.6918,[17]20.0539,[18]20.0247,[19]19.7854,Final estimate: PPL = 19.7205 +/- 0.83525  (5100 tokens scored, 19.6 s, 522.5 tok/s through the DSP)
+[20]19.7205,

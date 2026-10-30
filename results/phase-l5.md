@@ -629,3 +629,30 @@ baseline's Qwen depth-2048 products were themselves ~10 % quicker than
 its own depth-512 products (gate/up 1877 against 2095 µs), so that one
 window was a fast clock; this run's products sit on the depth-512
 numbers (gate/up 2098). Either way the loop is not where the 17 ms goes.
+
+## Key-stride padding (2026-10-30; `raw/dsp-profile-pow2-*.txt`, `raw/dsp-profile-pad-*.txt`, `raw/dsp-ppl-pad-*.txt`)
+
+The depth profile above uses context 2112, so `att_stride` is 2112 floats
+(8448 bytes). 2112 is not a power of two, and a pad would not change that
+run. Context 512 and 4096 do round to a power of two (2048 and 16384
+bytes between key elements). The pad adds one vector, 32 floats, only in
+that case, and the state buffer grew to match (`dsp.rs` and `model_load`).
+
+Compared at context 4096, before and after, same caps (cpu0 1.79 GHz,
+cpu7 1.96 GHz) and the same gate/up time (2095 µs on Qwen), so the DSP
+was not on a different clock. Attention, µs/token:
+
+| depth | Qwen, stride 4096 | Qwen, 4128 | SmolLM2, 4096 | SmolLM2, 4128 |
+| --- | --- | --- | --- | --- |
+| 512 | 3815 (10.17 ms) | 2902 (9.28 ms) | 3678 (6.04 ms) | 3393 (5.77 ms) |
+| 2048 | 17725 (24.21 ms) | 17372 (23.85 ms) | 15382 (17.67 ms) | 14737 (17.09 ms) |
+
+At depth 512 the pad removes 912 µs on Qwen and 284 µs on SmolLM2: set
+conflicts were a real piece there, about a quarter of Qwen's attention.
+At depth 2048 it is 353 µs and 645 µs, a few percent of a 15–17 ms
+stage. An extra window at depth 4032 (stride still the power of two)
+moved 36000 → 35190 µs on Qwen. Conflicts are not the long-context slope.
+
+Perplexity is the wide-loop number to the last printed digit, as it
+should be: the values did not change, only their spacing. Decode
+27.7623 / 19.7716, prefill 27.6943 / 19.7205. 114/114 tests.

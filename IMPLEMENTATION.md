@@ -75,10 +75,13 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /
    2048). The wide value loop (four accumulators) was measured next: −0.38 ms
    of attention at depth 512, nothing useful at 2048, PPL within a few
-   hundredths (27.7623 / 19.7716 decode). Next: stride padding where the
-   key stride is a power of two, and l2fetch of the next key and value
-   blocks, each measured at 512 and 2048, then the position split and one
-   VTCM read per K/V head. f16 KV only if depth 2048 is still steep.
+   hundredths (27.7623 / 19.7716 decode). Padding a power-of-two key stride
+   by one vector (context 4096, where the stride is 4096 floats; the
+   depth-2048 profile's 2112 is not a power of two) cut Qwen attention
+   3815 → 2902 µs at depth 512 and 17725 → 17372 µs at depth 2048. Set
+   conflicts matter at 512 and are a small piece of the 17 ms. Next:
+   l2fetch of the next key and value blocks, then the position split and
+   one VTCM read per K/V head. f16 KV only if depth 2048 is still steep.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
