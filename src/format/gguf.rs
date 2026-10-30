@@ -16,9 +16,11 @@
 //!
 //! The file is memory-mapped; tensor data is handed out as byte ranges of
 //! the mapping, so quantized weights are used in place without copying.
+//! [`Writer`] writes the same format (used by [`super::quantize`]).
 
 use super::mmap::Mmap;
-use std::io;
+use std::io::{self, Write};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -92,6 +94,21 @@ impl GgmlType {
         }
     }
 
+    /// ggml's id for the type, as stored in the file.
+    pub fn id(self) -> u32 {
+        match self {
+            GgmlType::F32 => 0,
+            GgmlType::F16 => 1,
+            GgmlType::Q4_0 => 2,
+            GgmlType::Q5_0 => 6,
+            GgmlType::Q8_0 => 8,
+            GgmlType::Q4_K => 12,
+            GgmlType::Q6_K => 14,
+            GgmlType::BF16 => 30,
+            GgmlType::Other(id) => id,
+        }
+    }
+
     /// Bytes for `n` elements (n a multiple of the block size for blocks).
     pub fn bytes(self, n: usize) -> Option<usize> {
         match self {
@@ -127,6 +144,10 @@ pub struct Gguf {
     pub map: Arc<Mmap>,
     pub version: u32,
     pub metadata: Vec<(String, Value)>,
+    /// Where each metadata entry's type and value lie in the file, so a
+    /// [`Writer`] can copy it byte for byte (`Value` does not keep the
+    /// integer width).
+    pub metadata_bytes: Vec<Range<usize>>,
     pub tensors: Vec<TensorInfo>,
 }
 
@@ -196,11 +217,13 @@ impl Gguf {
             return Err(bad(format!("GGUF version {version} (only 3 is supported)")));
         }
         let (n_tensors, n_kv) = (r.u64()? as usize, r.u64()? as usize);
-        let mut metadata = Vec::with_capacity(n_kv);
+        let (mut metadata, mut metadata_bytes) = (Vec::with_capacity(n_kv), Vec::with_capacity(n_kv));
         for _ in 0..n_kv {
             let key = r.string()?;
+            let start = r.at;
             let ty = r.u32()?;
             metadata.push((key, r.value(ty)?));
+            metadata_bytes.push(start..r.at);
         }
         let mut infos = Vec::with_capacity(n_tensors);
         for _ in 0..n_tensors {
@@ -211,7 +234,7 @@ impl Gguf {
             let offset = r.u64()? as usize;
             infos.push((name, dims, ty, offset));
         }
-        let mut g = Gguf { map: map.clone(), version, metadata, tensors: Vec::new() };
+        let mut g = Gguf { map: map.clone(), version, metadata, metadata_bytes, tensors: Vec::new() };
         let align = g.get("general.alignment").and_then(Value::as_u64).unwrap_or(32) as usize;
         let data_start = r.at.div_ceil(align) * align;
         for (name, dims, ty, offset) in infos {
@@ -238,6 +261,105 @@ impl Gguf {
     pub fn data(&self, t: &TensorInfo) -> io::Result<&[u8]> {
         let n = t.ty.bytes(t.numel()).ok_or_else(|| bad(format!("{}: unsupported tensor type {:?}", t.name, t.ty)))?;
         Ok(&self.map.as_bytes()[t.offset..t.offset + n])
+    }
+}
+
+/// A GGUF file to write: metadata entries in order, then tensor infos,
+/// then the data, each tensor's start aligned (`general.alignment`,
+/// default 32) and padded with zeros, as ggml's `gguf_write_to_file` and
+/// `llama-quantize` lay it out.
+#[derive(Default)]
+pub struct Writer {
+    /// Key, then the entry's type id and value as stored in the file.
+    metadata: Vec<(String, Vec<u8>)>,
+    tensors: Vec<(String, Vec<usize>, GgmlType)>,
+}
+
+fn put_str(b: &mut Vec<u8>, s: &str) {
+    b.extend((s.len() as u64).to_le_bytes());
+    b.extend(s.as_bytes());
+}
+
+impl Writer {
+    /// A writer that starts with `g`'s metadata, copied byte for byte.
+    pub fn with_metadata_of(g: &Gguf) -> Writer {
+        let bytes = g.map.as_bytes();
+        let metadata = g.metadata.iter().zip(&g.metadata_bytes).map(|((k, _), r)| (k.clone(), bytes[r.clone()].to_vec())).collect();
+        Writer { metadata, tensors: Vec::new() }
+    }
+
+    /// Sets `key` to an encoded type id + value. An existing entry is
+    /// removed first, so the key moves to the end, as ggml's `gguf_set_val_*`
+    /// does (and so `llama-quantize`'s output orders its keys).
+    fn set(&mut self, key: &str, entry: Vec<u8>) {
+        self.remove(key);
+        self.metadata.push((key.to_string(), entry));
+    }
+
+    pub fn set_u32(&mut self, key: &str, v: u32) {
+        let mut b = 4u32.to_le_bytes().to_vec();
+        b.extend(v.to_le_bytes());
+        self.set(key, b);
+    }
+
+    pub fn set_str(&mut self, key: &str, v: &str) {
+        let mut b = 8u32.to_le_bytes().to_vec();
+        put_str(&mut b, v);
+        self.set(key, b);
+    }
+
+    pub fn remove(&mut self, key: &str) {
+        self.metadata.retain(|(k, _)| k != key);
+    }
+
+    /// Adds a tensor; `dims` fastest-varying first, as in [`TensorInfo`].
+    /// Its data comes from the callback of [`Writer::write`], in the order
+    /// tensors were added.
+    pub fn add_tensor(&mut self, name: &str, dims: &[usize], ty: GgmlType) {
+        self.tensors.push((name.to_string(), dims.to_vec(), ty));
+    }
+
+    /// Writes the file. `data(i)` returns tensor `i`'s bytes, which must be
+    /// exactly as many as its type and dimensions take.
+    pub fn write(&self, out: &mut impl Write, mut data: impl FnMut(usize) -> io::Result<Vec<u8>>) -> io::Result<()> {
+        let align = self
+            .metadata
+            .iter()
+            .find(|(k, _)| k == "general.alignment")
+            .map(|(_, e)| u32::from_le_bytes(e[4..8].try_into().unwrap()) as usize)
+            .unwrap_or(32);
+        let pad = |n: usize| n.div_ceil(align) * align;
+        let mut head = b"GGUF".to_vec();
+        head.extend(3u32.to_le_bytes());
+        head.extend((self.tensors.len() as u64).to_le_bytes());
+        head.extend((self.metadata.len() as u64).to_le_bytes());
+        for (k, e) in &self.metadata {
+            put_str(&mut head, k);
+            head.extend(e);
+        }
+        let mut sizes = Vec::with_capacity(self.tensors.len());
+        let mut offset = 0;
+        for (name, dims, ty) in &self.tensors {
+            let n = ty.bytes(dims.iter().product()).ok_or_else(|| bad(format!("{name}: cannot write type {ty:?}")))?;
+            put_str(&mut head, name);
+            head.extend((dims.len() as u32).to_le_bytes());
+            dims.iter().for_each(|&d| head.extend((d as u64).to_le_bytes()));
+            head.extend(ty.id().to_le_bytes());
+            head.extend((offset as u64).to_le_bytes());
+            sizes.push(n);
+            offset += pad(n);
+        }
+        head.resize(pad(head.len()), 0);
+        out.write_all(&head)?;
+        for (i, &n) in sizes.iter().enumerate() {
+            let mut d = data(i)?;
+            if d.len() != n {
+                return Err(bad(format!("{}: {} bytes of data, its type and shape take {n}", self.tensors[i].0, d.len())));
+            }
+            d.resize(pad(n), 0);
+            out.write_all(&d)?;
+        }
+        out.flush()
     }
 }
 
