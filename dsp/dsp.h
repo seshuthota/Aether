@@ -5,6 +5,7 @@
 
 #include "AEEStdDef.h"
 #include "hexagon_types.h"
+#include "qurt_barrier.h"
 
 // The DSP's address of a shared buffer by its fd (a reference that
 // release() drops), or NULL.
@@ -48,6 +49,26 @@ extern uint32 dma_gen;
 char *vtcm_get(uint32 *bytes);
 // The resource context it was got with (for HAP_compute_res_hmx_lock).
 extern unsigned int vtcm_ctx;
+
+// out = X Wᵀ on HMX (hmx.c): W `rows` rows of nb Q4_0 blocks in our
+// layout, X `tokens` rows of nb * 32 f32 (`x_stride` floats apart), out
+// `tokens` rows `out_stride` floats apart (whole groups of 32 written;
+// added to what is there with `accumulate`). X and W are rounded to fp16.
+struct hmx_product {
+    const HVX_Vector *w;
+    uint32 rows, nb;
+    const float *x;
+    uint32 x_stride, tokens;
+    float *out;
+    uint32 out_stride;
+    int accumulate;
+    char *vtcm;  // from vtcm_get, 8 MB
+};
+// Whether X fits VTCM (up to ~320 tokens at nb 152) and a group's tiles a buffer.
+int hmx_fits(uint32 nb, uint32 tokens);
+// Called by all T threads at once (t = 0 .. T - 1, sharing `bar`), which
+// have all finished when it returns. Returns 0 or an AEE error (thread 0).
+int hmx_rows(const struct hmx_product *p, uint32 t, uint32 T, qurt_barrier_t *bar);
 
 // Where thread t of `threads` starts in `groups` row groups: an even
 // group, so groups pair up.

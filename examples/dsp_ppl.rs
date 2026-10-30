@@ -1,11 +1,13 @@
 //! Perplexity of a `--pure` Q4_0 GGUF with every token through the DSP
-//! decode step (`model::dsp::DspModel`), by `llama-perplexity`'s procedure
-//! (wikitext-2 test, chunks of CTX tokens, the second half of each scored),
-//! so the number can be compared with llama.cpp's for the same file. Also
-//! prints a greedy continuation and the decode speed.
+//! decode step (`model::dsp::DspModel`), or with BATCH > 1 through its
+//! prefill (BATCH tokens a call, products on HMX), by `llama-perplexity`'s
+//! procedure (wikitext-2 test, chunks of CTX tokens, the second half of
+//! each scored), so the number can be compared with llama.cpp's for the
+//! same file. Also prints a greedy continuation, the decode speed and,
+//! with BATCH > 1, the prefill speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features hexagon --example dsp_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK] [BATCH]
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::hexagon::Dsp;
@@ -17,12 +19,13 @@ use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK]"));
+    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK] [BATCH]"));
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let threads: u32 = args.next().map_or(6, |v| v.parse().unwrap());
     // Bit k: product k (q/k/v, wo, gate/up, down, classifier) by DMA.
     let dma: u32 = args.next().map_or(aether::model::dsp::DMA_ALL, |v| u32::from_str_radix(v.trim_start_matches("0x"), 16).unwrap());
+    let batch: usize = args.next().map_or(1, |v| v.parse().unwrap());
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
@@ -30,16 +33,27 @@ fn main() {
     let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     let dsp = Dsp::open(&dir).unwrap_or_else(|e| panic!("{e}"));
     let t0 = Instant::now();
-    let mut m = DspModel::new(&dsp, config, weights, threads).unwrap_or_else(|e| panic!("{e}"));
+    let vocab = config.vocab_size;
+    let mut m = DspModel::new(&dsp, config, weights, threads, batch, batch > 1).unwrap_or_else(|e| panic!("{e}"));
     m.dma = dma;
-    println!("# {} on the DSP, {threads} threads, DMA mask {dma:#x} | upload {:.0} ms", path.display(), t0.elapsed().as_secs_f64() * 1e3);
+    println!("# {} on the DSP, {threads} threads, DMA mask {dma:#x}, batch {batch} | upload {:.0} ms", path.display(), t0.elapsed().as_secs_f64() * 1e3);
 
-    // Greedy continuation (eyeball check) and decode speed.
+    // Greedy continuation (eyeball check) and decode speed; with a batch,
+    // the prompt by one prefill.
     let prompt = text.encode("The capital of France is");
     let (mut out, mut tok, mut dsp_us) = (String::new(), 0, 0);
+    let mut start = 0;
+    if batch > 1 {
+        let logits = m.prefill(&dsp, &prompt, 0).unwrap();
+        tok = aether::kernels::argmax(&logits[logits.len() - vocab..]);
+        assert_eq!(tok, m.greedy(), "the DSP's argmax after the prompt");
+        // The decode loop below feeds tok first, and prints it.
+        start = prompt.len();
+        m.take_profile();
+    }
     let t1 = Instant::now();
     let steps = 64;
-    for p in 0..steps {
+    for p in start..steps {
         let next = if p < prompt.len() { prompt[p] } else { tok };
         if p >= prompt.len() {
             out += &String::from_utf8_lossy(&text.piece(prompt.get(p - 1).copied().unwrap_or(next), next));
@@ -50,6 +64,7 @@ fn main() {
         dsp_us += m.last_us;
     }
     let dt = t1.elapsed().as_secs_f64();
+    let steps = steps - start;
     let prof = m.take_profile();
     let total: f64 = prof.iter().sum();
     for (name, us) in aether::model::dsp::STAGES.iter().zip(&prof) {
@@ -62,6 +77,21 @@ fn main() {
     let raw = std::fs::read_to_string(PathBuf::from(data).join("wikitext/wikitext-2-raw/wiki.test.raw")).unwrap();
     let tokens = text.encode(&raw);
     let (first, bos) = (ctx / 2, text.chunk_bos());
+
+    // Prefill speed: the first n tokens of the text at position 0.
+    if batch > 1 {
+        for n in [32, 64, 128, batch].into_iter().filter(|&n| n <= batch && n < ctx) {
+            let mut us: Vec<u64> = (0..5)
+                .map(|_| {
+                    m.prefill(&dsp, &tokens[..n], 0).unwrap();
+                    m.last_us
+                })
+                .collect();
+            us.sort();
+            let u = us[2] as f64;
+            println!("# prefill {n:4} tokens: {:8.1} ms on the DSP, {:7.1} tok/s (median of 5)", u / 1e3, n as f64 / (u / 1e6));
+        }
+    }
     let mut s = Score::default();
     let t2 = Instant::now();
     for ch in 0..chunks.min(tokens.len() / ctx) {
@@ -69,13 +99,26 @@ fn main() {
         if let Some(b) = bos {
             chunk[0] = b;
         }
-        for (p, &t) in chunk[..ctx - 1].iter().enumerate() {
-            let logits = m.forward(&dsp, t, p).unwrap();
+        let mut score = |p: usize, logits: &[f32]| {
             if p >= first {
                 let v = -log_probs(logits)[chunk[p + 1]];
                 s.nll += v;
                 s.nll2 += v * v;
                 s.count += 1;
+            }
+        };
+        if batch > 1 {
+            for p0 in (0..ctx - 1).step_by(batch) {
+                let n = batch.min(ctx - 1 - p0);
+                let logits = m.prefill(&dsp, &chunk[p0..p0 + n], p0).unwrap();
+                for i in 0..n {
+                    score(p0 + i, &logits[i * vocab..][..vocab]);
+                }
+            }
+        } else {
+            for (p, &t) in chunk[..ctx - 1].iter().enumerate() {
+                let logits = m.forward(&dsp, t, p).unwrap();
+                score(p, logits);
             }
         }
         eprint!("[{}]{:.4},", ch + 1, s.ppl());

@@ -4,6 +4,9 @@
 //! embedding and the RoPE table, and the DSP runs every layer and the
 //! classifier and finds the greedy next token.
 //!
+//! A prefill ([`DspModel::prefill`]) runs up to `batch` tokens through
+//! every layer in one call, the matrix products on HMX (dsp/hmx.c).
+//!
 //! Like the GPU path, it needs every matrix in Q4_0 (a `--pure` Q4_0 GGUF).
 
 use crate::kernels::hexagon::{Dsp, Result, Shared, q4_0_bytes, repack_q4_0};
@@ -82,7 +85,8 @@ mod d {
     pub const VC: usize = 23;
     pub const ROT: usize = 24;
     pub const PROF: usize = 25;
-    pub const LAYER0: usize = 26;
+    pub const BATCH: usize = 26;
+    pub const LAYER0: usize = 27;
     pub const L_N: usize = 9;
 }
 
@@ -95,6 +99,10 @@ pub struct DspModel {
     x_at: usize,
     rot_at: usize,
     logits_at: usize,
+    /// The most tokens of a prefill.
+    pub batch: usize,
+    /// Whether the state holds logits for every token of a prefill.
+    all_logits: bool,
     prof_at: usize,
     pub threads: u32,
     /// Which products fetch by DMA ([`Dsp::model_decode`]); all by default.
@@ -105,7 +113,10 @@ pub struct DspModel {
 }
 
 impl DspModel {
-    pub fn new(dsp: &Dsp, config: Config, weights: Weights, threads: u32) -> Result<DspModel> {
+    /// `batch`: the most tokens of a [`DspModel::prefill`] (1 for decode
+    /// only; up to ~320, what fits the DSP's VTCM); `all_logits`: room for
+    /// every prefill token's logits (for perplexity), else the last's.
+    pub fn new(dsp: &Dsp, config: Config, weights: Weights, threads: u32, batch: usize, all_logits: bool) -> Result<DspModel> {
         let c = &config;
         let (dim, kv_dim, hid, vocab) = (c.dim, c.kv_dim(), c.hidden_dim, c.vocab_size);
         let nl = weights.layers.len();
@@ -165,20 +176,24 @@ impl DspModel {
             put_mat(out, desc[d::CLS], &[(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), vocab)], "classifier")?;
         }
 
-        // The state buffer.
+        // The state buffer: `batch` rows of each activation (decode uses the
+        // first); score rows for every head, and for every DSP thread in a
+        // prefill (8 at most).
         let mut sl = Layout::default();
         let kv = nl * c.seq_len * kv_dim;
+        let b = batch.max(1);
         for (i, n) in [
-            (d::X, 4 * dim),
-            (d::XB, 4 * dim),
+            (d::X, 4 * dim * b),
+            (d::XB, 4 * dim * b),
             (d::XQ, 40 * hid.max(dim) / 32),
-            (d::QKV, 4 * (dim + 2 * kv_dim)),
-            (d::ATT, 4 * c.n_heads * c.seq_len.div_ceil(32) * 32),
-            (d::HB, 4 * 2 * hid),
-            (d::LOGITS, 4 * vocab),
-            (d::KC, 4 * kv),
+            (d::QKV, 4 * (dim + 2 * kv_dim) * b),
+            (d::ATT, 4 * c.n_heads.max(8) * c.seq_len.div_ceil(32) * 32),
+            (d::HB, 4 * 2 * hid * b),
+            (d::LOGITS, 4 * vocab * if all_logits { b } else { 1 }),
+            // Keys transposed: a row of every position per element.
+            (d::KC, 4 * nl * kv_dim * c.seq_len.div_ceil(32) * 32),
             (d::VC, 4 * kv),
-            (d::ROT, 4 * c.head_size()),
+            (d::ROT, 4 * c.head_size() * b),
             (d::PROF, 8 * STAGES.len()),
         ] {
             desc[i] = sl.take(n) as u32;
@@ -198,27 +213,54 @@ impl DspModel {
         desc[d::S_FD] = state.fd();
         desc[d::W_BYTES] = wl.0 as u32;
         desc[d::S_BYTES] = sl.0 as u32;
+        desc[d::BATCH] = b as u32;
         dsp.model_load(&desc)?;
         let (x_at, rot_at, logits_at, prof_at) = (desc[d::X] as usize, desc[d::ROT] as usize, desc[d::LOGITS] as usize, desc[d::PROF] as usize);
-        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, prof_at, threads, dma: DMA_ALL, next: 0, last_us: 0 })
+        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, batch: b, all_logits, prof_at, threads, dma: DMA_ALL, next: 0, last_us: 0 })
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
     /// token. Positions must be fed in order, as for the CPU path.
     pub fn forward(&mut self, dsp: &Dsp, token: usize, pos: usize) -> Result<&[f32]> {
-        let c = &self.config;
-        assert!(pos < c.seq_len && token < c.vocab_size);
-        let (dim, hs) = (c.dim, c.head_size());
-        let s = self.state.as_mut_slice::<f32>();
-        self.weights.token_embedding.row_f32(token, &mut s[self.x_at / 4..][..dim]);
-        for (i, (sin, cos)) in crate::kernels::scalar::rotations(pos, hs, c.rope_theta).into_iter().enumerate() {
-            s[self.rot_at / 4 + 2 * i] = sin;
-            s[self.rot_at / 4 + 2 * i + 1] = cos;
-        }
+        assert!(pos < self.config.seq_len && token < self.config.vocab_size);
+        self.put_row(0, token, pos);
         let (next, us) = dsp.model_decode(pos as u32, self.threads, self.dma)?;
         self.next = next as usize;
         self.last_us = us;
         Ok(&self.state.as_slice::<f32>()[self.logits_at / 4..][..self.config.vocab_size])
+    }
+
+    /// Writes `token`'s embedding and the RoPE table of `pos` into row `i`
+    /// of the state.
+    fn put_row(&mut self, i: usize, token: usize, pos: usize) {
+        let c = &self.config;
+        let (dim, hs) = (c.dim, c.head_size());
+        let s = self.state.as_mut_slice::<f32>();
+        self.weights.token_embedding.row_f32(token, &mut s[self.x_at / 4 + i * dim..][..dim]);
+        let rot = self.rot_at / 4 + i * hs;
+        for (k, (sin, cos)) in crate::kernels::scalar::rotations(pos, hs, c.rope_theta).into_iter().enumerate() {
+            s[rot + 2 * k] = sin;
+            s[rot + 2 * k + 1] = cos;
+        }
+    }
+
+    /// Runs `tokens` (at most [`DspModel::batch`]) at positions `pos`..
+    /// in one call, the products on HMX. Returns every token's logits, one
+    /// row of `vocab_size` each, if the model was made with `all_logits`,
+    /// else the last token's. Positions must follow those already run.
+    pub fn prefill(&mut self, dsp: &Dsp, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        let c = &self.config;
+        let n = tokens.len();
+        assert!(n >= 1 && n <= self.batch && pos + n <= c.seq_len);
+        assert!(tokens.iter().all(|&t| t < c.vocab_size));
+        for (i, &t) in tokens.iter().enumerate() {
+            self.put_row(i, t, pos + i);
+        }
+        let (next, us) = dsp.model_prefill(pos as u32, n as u32, self.threads, self.all_logits)?;
+        self.next = next as usize;
+        self.last_us = us;
+        let rows = if self.all_logits { n } else { 1 };
+        Ok(&self.state.as_slice::<f32>()[self.logits_at / 4..][..rows * self.config.vocab_size])
     }
 
     /// Microseconds the DSP spent in each of [`STAGES`] since the last

@@ -34,6 +34,9 @@
 //!             CPU (batched) and its KV cache goes to the GPU; without, on
 //!             the GPU (batched as well)
 //!   --times   with --gpu: print the time of every decode token
+//!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
+//!             --pure Q4_0 GGUF): the prompt in batches on HMX, then one
+//!             DSP call per token
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -70,14 +73,15 @@ fn main() {
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram) = (0usize, 2usize);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
-    let (mut gpu, mut times) = (false, false);
+    let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" {
             match flag.as_str() {
                 "--kl" => kl = true,
                 "--chat" => chat = true,
                 "--times" => times = true,
+                "--dsp" => dsp = true,
                 _ => gpu = true,
             }
             continue;
@@ -120,6 +124,12 @@ fn main() {
     if let Some(file) = ppl_file {
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
+    }
+    if dsp {
+        if chat {
+            prompt = aether::chat::chatml(&system, &prompt);
+        }
+        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps);
     }
     if gpu {
         if chat {
@@ -233,6 +243,31 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
     let how = if s.cpu.is_some() { "on the CPU" } else { "on the GPU" };
     eprintln!("prefill ({how}): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
+}
+
+/// `--dsp`: the prompt in batches on the DSP's HMX, then one DSP decode
+/// step per token (`session::DspSession`); sampling on the CPU.
+#[cfg(feature = "hexagon")]
+fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize) {
+    // The DSP library goes next to this program (/data/local/tmp/... on
+    // the phone is writable).
+    let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
+    let mut s = aether::session::DspSession::open(path, steps, &dir, 6).unwrap_or_else(|e| fail(path, e));
+    let mut out = std::io::stdout().lock();
+    let t = s.text.encode(prompt);
+    let _ = out.write_all(&s.text.first_piece(t[0]));
+    for p in 0..t.len() - 1 {
+        let _ = out.write_all(&s.text.piece(t[p], t[p + 1]));
+    }
+    let st = s.generate(prompt, &mut sampler, steps, |piece| out.write_all(piece).and_then(|_| out.flush()).is_ok());
+    writeln!(out).unwrap();
+    let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
+    eprintln!("prefill (DSP): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
+}
+
+#[cfg(not(feature = "hexagon"))]
+fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize) {
+    eprintln!("--dsp needs a build with --features hexagon");
 }
 
 #[cfg(not(feature = "vulkan"))]

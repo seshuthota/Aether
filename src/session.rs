@@ -453,6 +453,73 @@ impl GpuSession {
     }
 }
 
+/// A model on the Hexagon DSP (`--features hexagon`, a `--pure` Q4_0
+/// GGUF; see `model::dsp`): the prompt by prefills of up to
+/// [`DspSession::BATCH`] tokens (products on HMX), then one decode step
+/// per token; sampling on the CPU.
+#[cfg(feature = "hexagon")]
+pub struct DspSession {
+    // Declared before `dsp`: its shared buffers must be freed while the
+    // DSP session lives.
+    pub model: crate::model::dsp::DspModel,
+    pub dsp: crate::kernels::hexagon::Dsp,
+    pub text: Text,
+}
+
+#[cfg(feature = "hexagon")]
+impl DspSession {
+    /// Prompt tokens per prefill call (what Qwen2.5-0.5B's activations
+    /// leave room for in VTCM is ~320).
+    pub const BATCH: usize = 128;
+
+    /// `dir`: a writable directory the DSP library is put in and loaded
+    /// from (see [`crate::kernels::hexagon::Dsp::open`]); `threads`: DSP
+    /// threads (6 is the fastest measured).
+    pub fn open(path: &Path, max_seq: usize, dir: &Path, threads: u32) -> io::Result<DspSession> {
+        let (config, weights, g) = gguf::load(path, max_seq)?;
+        let text = Text::from_gguf(&g)?;
+        let dsp = crate::kernels::hexagon::Dsp::open(dir).map_err(io::Error::other)?;
+        let batch = Self::BATCH.min(config.seq_len);
+        let model = crate::model::dsp::DspModel::new(&dsp, config, weights, threads, batch, false).map_err(io::Error::other)?;
+        Ok(DspSession { model, dsp, text })
+    }
+
+    /// As [`Session::generate`] without echoing the prompt.
+    pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
+        let steps = steps.min(self.model.config.seq_len);
+        let tokens = self.text.encode(prompt);
+        let np = tokens.len().min(steps);
+        let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
+        let t0 = Instant::now();
+        let mut logits = Vec::new();
+        let b = self.model.batch;
+        for (i, part) in tokens[..np].chunks(b).enumerate() {
+            logits = self.model.prefill(&self.dsp, part, i * b).expect("DSP prefill").to_vec();
+        }
+        stats.prefill = t0.elapsed();
+        let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
+        // Greedy decoding takes the DSP's argmax instead of reading the logits.
+        let mut dsp_next = (sampler.temperature == 0.0).then(|| self.model.greedy());
+        while np == tokens.len() {
+            let next = dsp_next.unwrap_or_else(|| sampler.sample(&mut logits));
+            if self.text.is_stop(next) || !emit(&self.text.piece(token, next)) || pos >= steps {
+                break;
+            }
+            token = next;
+            let l = self.model.forward(&self.dsp, token, pos).expect("DSP step");
+            if sampler.temperature == 0.0 {
+                dsp_next = Some(self.model.greedy());
+            } else {
+                logits.copy_from_slice(l);
+            }
+            pos += 1;
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        stats
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

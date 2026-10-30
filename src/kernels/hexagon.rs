@@ -62,6 +62,7 @@ const MODEL_LOAD: u32 = 9;
 const MODEL_DECODE: u32 = 10;
 const MATH_TEST: u32 = 11;
 const HMX_GEMM: u32 = 12;
+const MODEL_PREFILL: u32 = 13;
 
 /// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
 struct Rpc {
@@ -276,6 +277,17 @@ impl Dsp {
     pub fn model_decode(&self, pos: u32, threads: u32, dma: u32) -> Result<(u32, u64)> {
         let mut out = [0u8; 16];
         self.call(MODEL_DECODE, &[&words(&[pos, threads, dma])], &mut [&mut out])?;
+        Ok((u32::from_le_bytes(out[..4].try_into().unwrap()), u64::from_le_bytes(out[8..].try_into().unwrap())))
+    }
+
+    /// A prefill of the loaded model: `n` tokens at positions `pos`.. (their
+    /// embeddings and RoPE tables in rows 0..n of the state), the products
+    /// on HMX. With `all`, every token's logits, else the last token's.
+    /// Returns the greedy token after the last and the DSP's time in
+    /// microseconds.
+    pub fn model_prefill(&self, pos: u32, n: u32, threads: u32, all: bool) -> Result<(u32, u64)> {
+        let mut out = [0u8; 16];
+        self.call(MODEL_PREFILL, &[&words(&[pos, n, threads, all as u32])], &mut [&mut out])?;
         Ok((u32::from_le_bytes(out[..4].try_into().unwrap()), u64::from_le_bytes(out[8..].try_into().unwrap())))
     }
 

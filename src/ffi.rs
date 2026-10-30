@@ -38,6 +38,8 @@ enum Engine {
     Cpu(Session),
     #[cfg(feature = "vulkan")]
     Gpu(Box<crate::session::GpuSession>),
+    #[cfg(feature = "hexagon")]
+    Dsp(Box<crate::session::DspSession>),
 }
 
 impl AetherSession {
@@ -202,6 +204,8 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) => (&s.text, s.model.config.seq_len),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => (&g.text, g.model.config.seq_len),
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(d) => (&d.text, d.model.config.seq_len),
         };
         let prompt_len = tok.encode(&text).len();
         let steps = prompt_len + max_tokens as usize;
@@ -216,6 +220,8 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) => s.generate(&text, &mut sampler, steps, false, emit),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => g.generate(&text, &mut sampler, steps, emit),
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(d) => d.generate(&text, &mut sampler, steps, emit),
         };
         if !stats.is_null() {
             // SAFETY: non-null and writable (caller's contract).
@@ -280,6 +286,54 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, cores: *const c_ch
         {
             let _ = (max_seq, cores);
             set_error(format!("{path}: this library was built without the GPU (vulkan) feature"));
+            AETHER_ERR_LOAD
+        }
+    })
+}
+
+/// Loads a `--pure` Q4_0 `.gguf` for the Hexagon DSP: prompts in batches
+/// on its matrix unit (HMX), then one DSP call per token. `dir` is a
+/// writable directory the DSP library is written to and loaded from (an
+/// app's files directory). `max_seq` as in `aether_open`. Fails with
+/// `AETHER_ERR_LOAD` when the library was built without the `hexagon`
+/// feature, the DSP cannot be opened, or a matrix is not Q4_0.
+///
+/// # Safety
+/// `path` and `dir` must be valid NUL-terminated strings; `out` as in
+/// `aether_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_open_dsp(path: *const c_char, dir: *const c_char, max_seq: u32, out: *mut *mut AetherSession) -> c_int {
+    guard(|| {
+        if out.is_null() {
+            set_error("out is null");
+            return AETHER_ERR_ARGUMENT;
+        }
+        // SAFETY: caller's contract.
+        let path = match unsafe { str_arg(path, "path") } {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        // SAFETY: caller's contract.
+        let dir = match unsafe { str_arg(dir, "dir") } {
+            Ok(d) => d,
+            Err(code) => return code,
+        };
+        #[cfg(feature = "hexagon")]
+        match crate::session::DspSession::open(Path::new(path), max_seq as usize, Path::new(dir), 6) {
+            Ok(d) => {
+                // SAFETY: `out` is non-null and writable (caller's contract).
+                unsafe { *out = AetherSession::new(Engine::Dsp(Box::new(d))) };
+                AETHER_OK
+            }
+            Err(e) => {
+                set_error(format!("{path}: {e}"));
+                AETHER_ERR_LOAD
+            }
+        }
+        #[cfg(not(feature = "hexagon"))]
+        {
+            let _ = (max_seq, dir);
+            set_error(format!("{path}: this library was built without the DSP (hexagon) feature"));
             AETHER_ERR_LOAD
         }
     })

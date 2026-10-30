@@ -49,8 +49,39 @@ Qwen2.5-0.5B. The GPU reads DRAM as fast as the CPU (~66 GB/s), so decode is not
 tok/s sustained), but it takes ~2.3 W instead of 4.5 W: 0.021–0.024 J/token vs 0.029, 68 vs 89 °C.
 99 tests on the phone with `--features vulkan` (96 without).
 
+**The NPU** (2026-10-29 / 30, results/phase-l5.md, `--features hexagon`): our own code on the
+Hexagon DSP, unsigned. The whole decode step in one FastRPC call (HVX across 6 threads, weights by
+DMA into VTCM): Qwen2.5-0.5B 6.75 ms a token (123 tok/s) against llama.cpp's NPU backend 74, PPL
+matching llama.cpp. Matrix × matrix products on HMX for prompts: Qwen's layer products at 1512
+tok/s for 128 tokens (llama.cpp's NPU prefill ~330 for the whole model). Prefill through the whole
+model on the DSP is written and waits for the phone (L.5 step 5b).
+
 Biggest open items: a screen-on comparison with the user present (all of the above ran with the
-screen off or kept awake by keyevents), GPU prefill, L.5 (NPU).
+screen off or kept awake by keyevents), GPU prefill (plan in L.3), L.5 step 5b on the phone.
+
+### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
+
+Not merged into `master` until these pass. Check the SoC temperature first
+(`adb shell cat /sys/class/thermal/thermal_zone0/temp`), then in this order:
+
+1. **Tests.** `cargo test --release --target aarch64-linux-android --features hexagon --lib`
+   and the same with `--features vulkan` (last run: 109/109). A DSP hang means rebooting the
+   phone, so run the DSP tests before anything long.
+2. **HMX prefetch.** `--example dsp_gemm -- 128 6`: was 1543 tok/s (layer products only);
+   l2fetch of the next chunk should lower the dequantize time.
+3. **DSP decode with the transposed keys.** `--example dsp_ppl -- GGUF 20 512 6`: PPL must
+   stay 27.7429 (SmolLM2) / 19.7584 (Qwen); speed was 271 / 123 tok/s at short positions and
+   Qwen 72 tok/s over a 512-token run, which this change is for.
+4. **DSP prefill (L.5 step 5b).** `--example dsp_ppl -- GGUF 20 512 6 1f 128`: PPL against
+   llama.cpp 27.7412 / 19.7283 (fp16 activations in the products may cost a little); the
+   greedy text; prefill tok/s at 32 / 64 / 128 (llama.cpp NPU ~330, our CPU ~850–970).
+5. **`aether GGUF --dsp`** from the CLI: the same greedy text as the CPU.
+6. **GPU f16 prompt products (L.3).** `--example vk_gemm -- 128` (f16 vs f32 GFLOP/s);
+   `vk_ppl -- GGUF 20 512 batch` (PC: 27.6961 / 19.7256) and `batch-f32`; `vk_prefill` on
+   Qwen (was 267 tok/s; llama.cpp OpenCL 1387 at pp256). If f16 helps, decide whether the
+   app's GPU mode runs the prompt on the GPU.
+7. Then: results/phase-l5.md "Step 5b" and the phone numbers in results/phase-l3.md step 9,
+   tick the boxes, `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
 
@@ -340,6 +371,32 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         - Greedy argmax on the GPU (`argmax.comp`, `GpuModel::greedy`): the CPU no longer reads
           152k logits per token at temperature 0 (~1 ms). CLI GPU decode 77–80 → 97 tok/s,
           after a CPU prompt 63–66 → 96–101 (no gap left).
+  - [ ] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+        How its Adreno Q4_0 kernel (`mul_mat_Ab_Bi_8x4.cl`) differs from `q4_0_gemm.comp`:
+        - No shared memory and no barriers. The weights are repacked once, transposed in groups
+          of 4 nibbles (a `ushort` holds 4 consecutive inputs of one row) and scales likewise, so
+          neighbouring threads read neighbouring rows: each load is coalesced straight from
+          memory, and every weight is used by 8 tokens in registers.
+        - The activations are transposed to fp16 and read as a 1-D image buffer
+          (`read_imageh`): through the texture cache, 8 tokens a load, shared by every thread
+          that needs them.
+        - fp16 arithmetic (`half8` accumulators, double rate on Adreno) and a small tile per
+          thread: 8 tokens × 4 rows = 32 halves (16 registers) against our 64 f32 accumulators,
+          so many more waves are resident to hide latency. 128-lane subgroups ("full").
+        A Vulkan version: weights repacked as above at load; activations transposed to fp16 in a
+        uniform texel buffer (`texelFetch`, the texture path); `float16_t` arithmetic
+        (`VK_KHR_shader_float16_int8`), accumulating each 32-input block in f16 and adding it
+        into f32 to bound the error over long rows (llama.cpp accumulates whole rows in f16).
+        Check against the batch goldens with an fp16 bound, then PPL through `vk_ppl … batch`.
+        Written 2026-10-30 while the phone was away, checked on the PC's Intel GPU only
+        (results/phase-l3.md step 9): `shaders/q4_0_gemm_h.comp`, `to_f16t.comp`, `MatQ4_0T`,
+        `Info::fp16` (features turned on where the device has them), used by
+        `GpuModel::forward_batch` unless `Options::f32_gemm`. Activations through a storage
+        buffer for now (the texel-buffer path is a next step if the phone wants it). Test
+        `q4_0_gemm_h_matches_reference` (rel ≤ 1.7e-3, bound 4 · 2⁻¹¹); PPL through it SmolLM2
+        27.6961 (f32 27.6910), Qwen2.5 19.7256 (f32 19.7193; llama.cpp 27.7412 / 19.7283).
+        To do on the phone: `vk_gemm` (f16 vs f32 GFLOP/s), `vk_ppl … batch`, `vk_prefill`,
+        and whether the app's GPU mode should now run the prompt on the GPU instead of the CPU.
 - [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
       6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
@@ -360,7 +417,25 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
   - [x] Step 5a, Q4_0 matrix-matrix product on HMX (fp16 tiles in VTCM; HVX threads dequantize
         while one drives HMX; Qwen's layer products 1512 tok/s at 128 tokens, 2413 at 256).
-  - [ ] Step 5b, prefill on the DSP through the whole model with HMX, PPL again.
+  - [ ] Step 5b, prefill on the DSP through the whole model with HMX, PPL again. Written while
+        the phone was away (2026-10-30), not yet run:
+        - `model_prefill` (dsp/model.c): up to `batch` tokens per call, every layer; products on
+          HMX through `hmx_rows` (all threads, shared barrier), norms / RoPE / KV store a run of
+          tokens per thread, causal attention a run of (token, head) pairs, SwiGLU by blocks.
+          Logits for every token on HMX (`all_logits`, perplexity) or the last on HVX.
+          `DspModel::new(.., batch, all_logits)`, `DspModel::prefill`; `dsp_ppl … BATCH`
+          (perplexity through the prefill, plus prefill tok/s at 32 / 64 / 128 / BATCH).
+        - Attention: keys stored transposed (a row of every position per key element), so 32
+          positions' scores are one vector of multiply-adds with no reduction per position.
+          For the decode slowdown at long positions (72 tok/s over a 512-token run).
+        - HMX dequantization: each worker l2fetches its share of the next chunk's Q4_0 bytes
+          (one thread was waiting on DRAM, ~0.8 GB/s).
+        - `DspSession` (prompt by prefills of 128, then decode), `aether MODEL --dsp`,
+          `aether_open_dsp(path, dir, max_seq, out)` in the C ABI and `include/aether.h`. Not in
+          the app's UI yet (JNI and a checkbox, after the CLI works).
+        To check on the phone: all tests; `dsp_ppl` batch 128 on SmolLM2 and Qwen against
+        llama.cpp's PPL (fp16 activations in the products may cost a little); the greedy text;
+        decode PPL unchanged with the transposed keys; `dsp_gemm` again (prefetch); `--dsp`.
 
 ---
 

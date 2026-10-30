@@ -42,6 +42,12 @@
 #define OUT_AT (7u << 20)
 #define SCALES_AT (OUT_AT + TILE)
 
+// Asks the L2 for `bytes` from p on (rows of 4 KB), without waiting.
+static inline void prefetch_l2(const void *p, uint32 bytes) {
+    uint32 rows = (bytes + 4095) / 4096;
+    if (rows) Q6_l2fetch_AP((void *) p, (uint64) 4096 << 32 | 4096 << 16 | (rows > 0xffff ? 0xffff : rows));
+}
+
 // The f32 vectors a (token 2j) and b (token 2j + 1) as one activation
 // vector: fp16, interleaved.
 static inline HVX_Vector to_f16_pairs(HVX_Vector a, HVX_Vector b) {
@@ -49,13 +55,14 @@ static inline HVX_Vector to_f16_pairs(HVX_Vector a, HVX_Vector b) {
     return Q6_Vhf_equals_Wqf32(Q6_W_vcombine_VV(Q6_Vqf32_vadd_VsfVsf(b, z), Q6_Vqf32_vadd_VsfVsf(a, z)));
 }
 
-// Rows of X (`tokens` of nb * 32 floats) into activation tiles, tile
-// (r, b) for tokens 32r.. and inputs 32b..; past `tokens`, zeros.
-static void activations(HVX_Vector *a, const float *x, uint32 nb, uint32 tokens, uint32 rows) {
+// Rows of X (`tokens` of nb * 32 floats, `stride` floats apart) into
+// activation tiles, tile (r, b) for tokens 32r.. and inputs 32b..; past
+// `tokens`, zeros.
+static void activations(HVX_Vector *a, const float *x, uint32 stride, uint32 nb, uint32 tokens, uint32 rows) {
     for (uint32 r = 0; r < rows; r += 2)
         for (uint32 b = 0; b < nb; b++) {
-            HVX_Vector v0 = r < tokens ? *(const HVX_Vector *) (x + ((size_t) r * nb + b) * 32) : Q6_V_vzero();
-            HVX_Vector v1 = r + 1 < tokens ? *(const HVX_Vector *) (x + ((size_t) (r + 1) * nb + b) * 32) : Q6_V_vzero();
+            HVX_Vector v0 = r < tokens ? *(const HVX_Vector *) (x + (size_t) r * stride + b * 32) : Q6_V_vzero();
+            HVX_Vector v1 = r + 1 < tokens ? *(const HVX_Vector *) (x + (size_t) (r + 1) * stride + b * 32) : Q6_V_vzero();
             a[((r / 32) * nb + b) * 16 + (r % 32) / 2] = to_f16_pairs(v0, v1);
         }
 }
@@ -84,23 +91,12 @@ static void weights(HVX_Vector *t, const HVX_Vector *w, uint32 nb) {
     }
 }
 
-struct gemm_job {
-    const HVX_Vector *w;
-    const float *x;
-    float *out;
-    char *vtcm;
-    uint32 rows, nb, tokens, threads;
-    uint32 chunk;  // row groups dequantized per step
-    qurt_barrier_t bar;
-    int err;
-};
-
 // HMX on the groups g0 .. g1 whose weight tiles are in wt: for each and
 // each row of 32 tokens, the sum over all nb tiles, into out as f32.
-static void gemm_groups(struct gemm_job *j, const HVX_Vector *wt, uint32 g0, uint32 g1) {
-    const uint32 nb = j->nb, rt = (j->tokens + 31) / 32, stride = (j->rows + 31) / 32 * 32;
-    const HVX_Vector *a = (const HVX_Vector *) (j->vtcm + A_AT);
-    HVX_Vector *o = (HVX_Vector *) (j->vtcm + OUT_AT);
+static void gemm_groups(const struct hmx_product *p, const HVX_Vector *wt, uint32 g0, uint32 g1) {
+    const uint32 nb = p->nb, rt = (p->tokens + 31) / 32;
+    const HVX_Vector *a = (const HVX_Vector *) (p->vtcm + A_AT);
+    HVX_Vector *o = (HVX_Vector *) (p->vtcm + OUT_AT);
     const HVX_Vector one = Q6_Vh_vsplat_R(0x3c00);
     for (uint32 g = g0; g < g1; g++, wt += nb * 16)
         for (uint32 r = 0; r < rt; r++) {
@@ -116,9 +112,12 @@ static void gemm_groups(struct gemm_job *j, const HVX_Vector *wt, uint32 g0, uin
             // interleaved; multiplying by 1.0 into qf32 pairs splits them.
             for (uint32 i = 0; i < 16; i++) {
                 uint32 tok = 32 * r + 2 * i;
-                HVX_VectorPair p = Q6_Wqf32_vmpy_VhfVhf(o[i], one);
-                if (tok < j->tokens) *(HVX_Vector *) (j->out + (size_t) tok * stride + 32 * g) = Q6_Vsf_equals_Vqf32(Q6_V_lo_W(p));
-                if (tok + 1 < j->tokens) *(HVX_Vector *) (j->out + (size_t) (tok + 1) * stride + 32 * g) = Q6_Vsf_equals_Vqf32(Q6_V_hi_W(p));
+                HVX_VectorPair pr = Q6_Wqf32_vmpy_VhfVhf(o[i], one);
+                for (uint32 e = 0; e < 2 && tok + e < p->tokens; e++) {
+                    HVX_Vector *dst = (HVX_Vector *) (p->out + (size_t) (tok + e) * p->out_stride + 32 * g);
+                    HVX_Vector v = Q6_Vsf_equals_Vqf32(e ? Q6_V_hi_W(pr) : Q6_V_lo_W(pr));
+                    *dst = p->accumulate ? Q6_Vsf_vadd_VsfVsf(*dst, v) : v;
+                }
             }
         }
 }
@@ -128,40 +127,82 @@ static void gemm_groups(struct gemm_job *j, const HVX_Vector *wt, uint32 g0, uin
 // on chunk s - 1 in the other. Dequantizing is most of the work (about
 // 7 in 8 parts on one thread), so it is the part spread out. With one
 // thread, thread 0 does both in turn.
-static void gemm_thread(void *arg, uint32 t) {
-    struct gemm_job *j = arg;
-    char *v = j->vtcm;
-    const uint32 nb = j->nb, groups = (j->rows + 31) / 32, chunks = (groups + j->chunk - 1) / j->chunk;
-    const uint32 workers = j->threads > 1 ? j->threads - 1 : 1, wk = j->threads > 1 ? t - 1 : 0;
-    const int drive = t == 0, deq = j->threads == 1 || t > 0;
-    int locked = 0;
+int hmx_rows(const struct hmx_product *p, uint32 t, uint32 T, qurt_barrier_t *bar) {
+    char *v = p->vtcm;
+    const uint32 nb = p->nb, groups = (p->rows + 31) / 32;
+    // As many groups as fit a buffer, but no more than a sixth of them
+    // (so the pipeline fills soon), and a multiple of the workers.
+    const uint32 workers = T > 1 ? T - 1 : 1, wk = T > 1 ? t - 1 : 0;
+    uint32 chunk = W_BUF / (nb * TILE);
+    if (chunk > (groups + 5) / 6) chunk = (groups + 5) / 6;
+    if (chunk > workers) chunk -= chunk % workers;
+    const uint32 chunks = (groups + chunk - 1) / chunk;
+    const int drive = t == 0, deq = T == 1 || t > 0;
+    int locked = 0, err = 0;
     if (drive) {
-        activations((HVX_Vector *) (v + A_AT), j->x, nb, j->tokens, 32 * ((j->tokens + 31) / 32));
+        activations((HVX_Vector *) (v + A_AT), p->x, p->x_stride, nb, p->tokens, 32 * ((p->tokens + 31) / 32));
         // Output scales: each column's 32-bit word is its scale (low half,
         // fp16 1.0) and a bias (high half, 0), then zeros.
         HVX_Vector *sc = (HVX_Vector *) (v + SCALES_AT);
         sc[0] = Q6_V_vsplat_R(0x3c00), sc[1] = Q6_V_vzero();
         if (HAP_compute_res_hmx_lock(vtcm_ctx))
-            j->err = AEE_EFAILED;
+            err = AEE_EFAILED;
         else {
             locked = 1;
             asm volatile("bias = mxmem2(%0)" : : "r"(sc));
         }
     }
+    // Worker wk's groups of chunk s: from .. to.
+    uint32 from = 0, to = 0;
+#define SHARE(s)                                                                    \
+    do {                                                                            \
+        uint32 c0 = (s) * chunk, n = groups - c0 < chunk ? groups - c0 : chunk;     \
+        from = c0 + n * wk / workers, to = c0 + n * (wk + 1) / workers;       \
+    } while (0)
+    if (deq) {
+        SHARE(0);
+        prefetch_l2(p->w + (size_t) from * nb * 5, (to - from) * nb * 640);
+    }
     for (uint32 s = 0; s <= chunks; s++) {
         if (deq && s < chunks) {
-            uint32 g0 = s * j->chunk, n = (groups - g0 < j->chunk ? groups - g0 : j->chunk);
+            // Ask the L2 for this worker's share of the next chunk while
+            // dequantizing this one: without it a thread waits on DRAM
+            // for most of the time (~0.8 GB/s).
+            if (s + 1 < chunks) {
+                SHARE(s + 1);
+                prefetch_l2(p->w + (size_t) from * nb * 5, (to - from) * nb * 640);
+            }
+            SHARE(s);
             HVX_Vector *wt = (HVX_Vector *) (v + W_AT + (s % 2) * W_BUF);
-            for (uint32 g = g0 + n * wk / workers; g < g0 + n * (wk + 1) / workers; g++)
-                weights(wt + (size_t) (g - g0) * nb * 16, j->w + (size_t) g * nb * 5, nb);
+            for (uint32 g = from; g < to; g++)
+                weights(wt + (size_t) (g - s * chunk) * nb * 16, p->w + (size_t) g * nb * 5, nb);
         }
         if (drive && locked && s > 0) {
-            uint32 g0 = (s - 1) * j->chunk, g1 = g0 + j->chunk < groups ? g0 + j->chunk : groups;
-            gemm_groups(j, (const HVX_Vector *) (v + W_AT + ((s - 1) % 2) * W_BUF), g0, g1);
+            uint32 g0 = (s - 1) * chunk, g1 = g0 + chunk < groups ? g0 + chunk : groups;
+            gemm_groups(p, (const HVX_Vector *) (v + W_AT + ((s - 1) % 2) * W_BUF), g0, g1);
         }
-        if (j->threads > 1) qurt_barrier_wait(&j->bar);
+        if (T > 1) qurt_barrier_wait(bar);
     }
+#undef SHARE
     if (locked) HAP_compute_res_hmx_unlock(vtcm_ctx);
+    return err;
+}
+
+int hmx_fits(uint32 nb, uint32 tokens) {
+    return tokens && nb && (size_t) (tokens + 31) / 32 * nb * TILE <= A_MAX && (size_t) nb * TILE <= W_BUF;
+}
+
+struct gemm_job {
+    struct hmx_product p;
+    uint32 threads;
+    qurt_barrier_t bar;
+    int err;
+};
+
+static void gemm_thread(void *arg, uint32 t) {
+    struct gemm_job *j = arg;
+    int err = hmx_rows(&j->p, t, j->threads, &j->bar);
+    if (err) j->err = err;
 }
 
 AEEResult aether_dsp_hmx_gemm(remote_handle64 h, int w_fd, int x_fd, int out_fd, uint32 rows, uint32 nb, uint32 tokens, uint32 threads, uint64 *us) {
@@ -169,20 +210,14 @@ AEEResult aether_dsp_hmx_gemm(remote_handle64 h, int w_fd, int x_fd, int out_fd,
     uint32 bytes = 0;
     char *v = vtcm_get(&bytes);
     if (!v || bytes < (8u << 20)) return AEE_ENOMEMORY;
-    uint32 rt = (tokens + 31) / 32;
-    if (!tokens || !nb || threads < 1 || threads > MAX_THREADS || (size_t) rt * nb * TILE > A_MAX || (size_t) nb * TILE > W_BUF) return AEE_EBADPARM;
+    if (!hmx_fits(nb, tokens) || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
     const HVX_Vector *w = mapped(w_fd);
     float *x = mapped(x_fd), *out = mapped(out_fd);
     int err = AEE_EBADPARM;
     if (w && x && out) {
-        uint32 stride = (rows + 31) / 32 * 32, groups = (rows + 31) / 32;
+        uint32 stride = (rows + 31) / 32 * 32;
         cpu_wrote(x, tokens * nb * 128);
-        // As many groups as fit a buffer, but no more than a sixth of them
-        // (so the pipeline fills soon), and a multiple of the workers.
-        uint32 workers = threads > 1 ? threads - 1 : 1, chunk = W_BUF / (nb * TILE);
-        if (chunk > (groups + 5) / 6) chunk = (groups + 5) / 6;
-        if (chunk > workers) chunk -= chunk % workers;
-        struct gemm_job j = {w, x, out, v, rows, nb, tokens, threads, chunk};
+        struct gemm_job j = {{w, rows, nb, x, nb * 32, tokens, out, stride, 0, v}, threads};
         qurt_barrier_init(&j.bar, threads);
         err = run_threads(threads, gemm_thread, &j, us);
         qurt_barrier_destroy(&j.bar);
