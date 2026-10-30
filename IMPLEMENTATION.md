@@ -70,8 +70,14 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    weight load across the tokens is needed before lookup is turned back on for GPU sessions.
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
-4. **DSP attention at long positions** (decode slows from 123 to ~86 tok/s over 512 tokens):
-   f16 KV cache, or attention on HMX.
+4. **DSP attention at long positions.** Profiled, `attend` unchanged
+   (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md "Decode profile at depth"):
+   the whole slowdown is the attention stage. Qwen2.5-0.5B Q4_0, 64 steps,
+   6.56 → 9.84 → 23.08 ms/token at depths 0 / 512 / 2048, attention
+   0.26 → 3.46 → 17.14 ms. SmolLM2-135M Q4_0: 2.59 → 6.29 → 17.91 ms,
+   attention 0.28 → 3.91 → 15.55 ms. Next, each its own measured commit:
+   wide value loop, then position split, one VTCM read per K/V head, stride
+   padding. f16 KV only if depth 2048 is still steep after those.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
@@ -487,7 +493,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         PPL against llama.cpp. (A request queue as `dspqueue` was not needed: one FastRPC call
         per token is ~150 µs.)
   - [x] Step 4b, weights by DMA into VTCM (products ~36 → ~60 GB/s; Qwen 6.75 ms a token,
-        123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
+        123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Attention at long positions is
+        profiled (results/phase-l5.md, depths 0 / 512 / 2048): the growth is the attention stage.
   - [x] Step 5a, Q4_0 matrix-matrix product on HMX (fp16 tiles in VTCM; HVX threads dequantize
         while one drives HMX; Qwen's layer products 1512 tok/s at 128 tokens, 2413 at 256).
   - [x] Step 5b, prefill on the DSP through the whole model with HMX, PPL again (phone

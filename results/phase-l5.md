@@ -530,3 +530,45 @@ optimisations, folder watchers, properties) are not needed.
 
 The DSP on Q4_K_M ran in the app (session opened and closed with no
 errors) but its status line was not captured.
+
+## Decode profile at depth (2026-10-30; `raw/dsp-profile-depth-*.txt`)
+
+`dsp_ppl MODEL depth 0,512,2048` fills one cache in order, clears
+`DspModel::take_profile`, and times the next 64 decode steps. The stage
+times are the DSP's qtimer. Tokens are the start of wikitext-2. Nothing
+in the step changed; this is the baseline for the long-context work.
+`attend` is untouched, so perplexity was not rerun.
+
+Phone on battery, screen woken. zone0 (`aoss-0`) and the hottest CPU
+sensor, and the scaling cap (`scaling_cur/scaling_max`):
+
+| | Qwen2.5-0.5B Q4_0 | SmolLM2-135M Q4_0 |
+| --- | --- | --- |
+| depth 0 | 38–42 °C, caps 2.75 / 2.65 GHz | 40–45 °C, caps 2.40 / 2.44 GHz |
+| depth 512 | 47–48 °C, same caps | 47 °C, same caps |
+| depth 2048 | 53–55 °C, same caps | 51–53 °C, same caps |
+
+Prime-core cap was already 2.65 GHz (Qwen) and 2.44 GHz (SmolLM2) at the
+start, and cpu7 sat near 1.0 GHz during the DSP work. The matrix-product
+stages did not slow down as the phone warmed (Qwen gate/up 2092 → 1877 µs,
+classifier 1337 → 1209 µs), so the growth below is not the clock cap.
+
+DSP time per token, and the attention stage inside it (µs):
+
+| depth (positions timed) | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 (0–63) | 6.56 (126 tok/s) | 263 | 2.59 (297 tok/s) | 279 |
+| 512 (512–575) | 9.84 (84 tok/s) | 3464 | 6.29 (136 tok/s) | 3911 |
+| 2048 (2048–2111) | 23.08 (39 tok/s) | 17142 | 17.91 (51 tok/s) | 15553 |
+
+Every other stage stays within a few tens of microseconds of its depth-0
+time, apart from the small product speed-up above. From depth 0 to 512
+the step grows 3.28 ms on Qwen and 3.70 ms on SmolLM2, of which attention
+is 3.20 and 3.63 ms. From depth 0 to 2048 the step grows 16.5 and 15.3 ms,
+and attention is all of it (17.1 and 15.6 ms of the step: 74 % and 87 %).
+
+Attention grows with position: about 6.3 µs per extra position on Qwen
+between the depth-0 and depth-512 windows, and 8.9 µs per position from
+512 to 2048; SmolLM2 stays near 7.1 then 7.6 µs. Depth 0 matches the
+earlier short runs (Qwen 6.57 ms, SmolLM2 2.57 ms), so those runs were
+the flat part of this curve.

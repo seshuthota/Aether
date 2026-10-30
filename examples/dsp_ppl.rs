@@ -11,19 +11,120 @@
 //!
 //!   cargo run --release --target aarch64-linux-android --features hexagon --example dsp_ppl -- \
 //!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK] [BATCH] [few]
+//!
+//!   dsp_ppl MODEL.gguf depth 0,512,2048 [THREADS]
+//!
+//! `depth` does not score perplexity. It decodes up to each depth (the
+//! depths must increase), clears the stage profile, and times 64 more
+//! decode steps there, so the print is the same stages as the run above
+//! but for a long cache instead of positions 0–63.
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::hexagon::{Dsp, MAX_FEW};
 use aether::model::dsp::DspModel;
 use aether::session::Session;
 use aether::weight::Format;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// Temperature, CPU clocks and battery status, read on the phone at `when`.
+fn conditions(when: &str) {
+    use aether::sys::sysfs::{self, cpu_cur_freq_khz, cpu_scaling_max_freq_khz};
+    let zones = sysfs::thermal_zones();
+    let one = |z: &sysfs::ThermalZone| format!("{} {:.1} C", z.kind, z.temp_millic().unwrap_or(0) as f64 / 1000.0);
+    let zone0 = zones.iter().find(|z| z.index == 0).map(one).unwrap_or_else(|| "zone0 unread".into());
+    let hot = zones
+        .iter()
+        .filter(|z| z.kind.starts_with("cpu"))
+        .max_by_key(|z| z.temp_millic().unwrap_or(0))
+        .map(|z| format!(", hottest cpu {}", one(z)))
+        .unwrap_or_default();
+    let mhz = |cpu: usize| {
+        let cur = cpu_cur_freq_khz(cpu).unwrap_or(0) / 1000;
+        let cap = cpu_scaling_max_freq_khz(cpu).unwrap_or(0) / 1000;
+        format!("cpu{cpu} {cur}/{cap} MHz")
+    };
+    let battery = sysfs::Battery::find().and_then(|b| b.status().ok()).unwrap_or_else(|| "unknown".into());
+    println!("# {when}: zone0 {zone0}{hot}, {}, {}, battery {battery}", mhz(0), mhz(7));
+    let _ = std::io::stdout().flush();
+}
+
+/// 64 decode steps at each depth, one cache filled in order. The stage
+/// times are the DSP's qtimer (`DspModel::take_profile`), not wall time.
+fn profile_depths(path: PathBuf, spec: &str, threads: u32) {
+    const STEPS: usize = 64;
+    let depths: Vec<usize> = spec.split(',').map(|s| s.parse().expect("depth")).collect();
+    assert!(!depths.is_empty(), "need at least one depth");
+    for w in depths.windows(2) {
+        assert!(w[1] > w[0], "depths must increase: {spec}");
+    }
+    let seq = depths.last().copied().unwrap() + STEPS;
+    let (config, weights, g) = aether::model::gguf::load(&path, seq).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert!(config.seq_len >= seq, "model context {} is shorter than {seq}", config.seq_len);
+    let text = aether::session::Text::from_gguf(&g).unwrap();
+    let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let dsp = Dsp::open(&dir).unwrap_or_else(|e| panic!("{e}"));
+    let t0 = Instant::now();
+    let mut m = DspModel::new(&dsp, config, weights, threads, 1, false).unwrap_or_else(|e| panic!("{e}"));
+    println!("# {} on the DSP, {threads} threads, DMA mask {:#x} | upload {:.0} ms", path.display(), m.dma, t0.elapsed().as_secs_f64() * 1e3);
+    conditions("at start");
+
+    let data = std::env::var("AETHER_TESTDATA").unwrap_or_else(|_| "testdata".into());
+    let raw = std::fs::read_to_string(PathBuf::from(data).join("wikitext/wikitext-2-raw/wiki.test.raw")).unwrap();
+    let tokens = text.encode(&raw);
+    assert!(tokens.len() >= seq, "wikitext has {} tokens, need {seq}", tokens.len());
+
+    let mut pos = 0;
+    for &depth in &depths {
+        if pos < depth {
+            println!("# filling positions {pos}..{depth}");
+            let _ = std::io::stdout().flush();
+            while pos < depth {
+                let logits = m.forward(&dsp, tokens[pos], pos).unwrap();
+                assert_eq!(aether::kernels::argmax(logits), m.greedy(), "the DSP's argmax at position {pos}");
+                pos += 1;
+            }
+        }
+        // Drop the fill. The next decode sees the zeros (`cpu_wrote` on the profile).
+        m.take_profile();
+        conditions(&format!("before depth {depth}"));
+        let t1 = Instant::now();
+        let mut dsp_us = 0u64;
+        for _ in 0..STEPS {
+            let logits = m.forward(&dsp, tokens[pos], pos).unwrap();
+            assert_eq!(aether::kernels::argmax(logits), m.greedy(), "the DSP's argmax at position {pos}");
+            dsp_us += m.last_us;
+            pos += 1;
+        }
+        let wall = t1.elapsed().as_secs_f64();
+        let prof = m.take_profile();
+        let total: f64 = prof.iter().sum();
+        println!("# depth {depth}: 64 decode steps at positions {depth}..{}", depth + STEPS - 1);
+        for (name, us) in aether::model::dsp::STAGES.iter().zip(&prof) {
+            println!("#   {name:24} {:8.1} us/token {:5.1}%", us / STEPS as f64, 100.0 * us / total);
+        }
+        println!(
+            "#   {STEPS} steps in {:.1} ms wall: {:.1} tok/s ({:.2} ms per token on the DSP)",
+            wall * 1e3,
+            STEPS as f64 / wall,
+            dsp_us as f64 / STEPS as f64 / 1e3
+        );
+        conditions(&format!("after depth {depth}"));
+    }
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS] [CTX] [THREADS] [DMA_MASK] [BATCH] [few]"));
-    let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
+    let path = PathBuf::from(args.next().expect("usage: dsp_ppl MODEL.gguf [CHUNKS CTX THREADS DMA_MASK BATCH few | depth 0,512,2048 [THREADS]]"));
+    let first = args.next();
+    if first.as_deref() == Some("depth") {
+        let spec = args.next().expect("depths, comma-separated and ascending, e.g. 0,512,2048");
+        let threads: u32 = args.next().map_or(6, |v| v.parse().unwrap());
+        profile_depths(path, &spec, threads);
+        return;
+    }
+    let chunks: usize = first.map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let threads: u32 = args.next().map_or(6, |v| v.parse().unwrap());
     // Bit k: product k (q/k/v, wo, gate/up, down, classifier) by DMA.
