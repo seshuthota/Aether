@@ -1,0 +1,112 @@
+== vk_prefill qwen q4_k_m 40300
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | batch up to 128
+16 tokens: 80.3 ms wall (199 tok/s), 78.4 ms on the GPU
+  rmsnorm                 0.631 ms    0.8 %
+  q/k/v                   9.423 ms   12.0 %
+  bias + RoPE + cache     0.321 ms    0.4 %
+  attention               0.656 ms    0.8 %
+  attention merge         0.248 ms    0.3 %
+  wo + add                8.112 ms   10.4 %
+  gate/up                18.293 ms   23.3 %
+  swiglu + down + add    34.875 ms   44.5 %
+  classifier              5.772 ms    7.4 %
+  argmax                  0.043 ms    0.1 %
+64 tokens: 134.5 ms wall (476 tok/s), 131.0 ms on the GPU
+  rmsnorm                 1.171 ms    0.9 %
+  q/k/v                  12.865 ms    9.8 %
+  bias + RoPE + cache     0.634 ms    0.5 %
+  attention               3.236 ms    2.5 %
+  attention merge         0.667 ms    0.5 %
+  wo + add                9.435 ms    7.2 %
+  gate/up                54.042 ms   41.3 %
+  swiglu + down + add    44.035 ms   33.6 %
+  classifier              4.829 ms    3.7 %
+  argmax                  0.038 ms    0.0 %
+128 tokens: 227.3 ms wall (563 tok/s), 222.3 ms on the GPU
+  rmsnorm                 1.291 ms    0.6 %
+  q/k/v                  21.006 ms    9.5 %
+  bias + RoPE + cache     0.612 ms    0.3 %
+  attention               9.944 ms    4.5 %
+  attention merge         1.134 ms    0.5 %
+  wo + add               15.082 ms    6.8 %
+  gate/up               101.197 ms   45.5 %
+  swiglu + down + add    68.771 ms   30.9 %
+  classifier              3.200 ms    1.4 %
+  argmax                  0.030 ms    0.0 %
+== vk_decode qwen2.5-0.5b-q4_k_m 39900
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | profiled | fence: slept on
+depth 0: 27.44 ms per token wall (36.4 tok/s), 12.34 ms on the GPU
+  q/k/v                  1.051 ms    8.5 %
+  bias + RoPE + cache    0.201 ms    1.6 %
+  attention              0.546 ms    4.4 %
+  attention merge        0.139 ms    1.1 %
+  wo + add               0.677 ms    5.5 %
+  rmsnorm                0.227 ms    1.8 %
+  gate/up                3.798 ms   30.8 %
+  swiglu                 0.107 ms    0.9 %
+  down + add             2.368 ms   19.2 %
+  classifier             3.198 ms   25.9 %
+  argmax                 0.031 ms    0.2 %
+depth 256: 21.34 ms per token wall (46.9 tok/s), 12.49 ms on the GPU
+  q/k/v                  1.034 ms    8.3 %
+  bias + RoPE + cache    0.195 ms    1.6 %
+  attention              0.817 ms    6.5 %
+  attention merge        0.176 ms    1.4 %
+  wo + add               0.671 ms    5.4 %
+  rmsnorm                0.223 ms    1.8 %
+  gate/up                3.733 ms   29.9 %
+  swiglu                 0.105 ms    0.8 %
+  down + add             2.333 ms   18.7 %
+  classifier             3.172 ms   25.4 %
+  argmax                 0.030 ms    0.2 %
+depth 1024: 27.32 ms per token wall (36.6 tok/s), 13.96 ms on the GPU
+  q/k/v                  1.050 ms    7.5 %
+  bias + RoPE + cache    0.198 ms    1.4 %
+  attention              1.788 ms   12.8 %
+  attention merge        0.288 ms    2.1 %
+  wo + add               0.686 ms    4.9 %
+  rmsnorm                0.225 ms    1.6 %
+  gate/up                3.865 ms   27.7 %
+  swiglu                 0.107 ms    0.8 %
+  down + add             2.394 ms   17.2 %
+  classifier             3.326 ms   23.8 %
+  argmax                 0.031 ms    0.2 %
+== vk_decode qwen2.5-0.5b-q4_0 39900
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | profiled | fence: slept on
+depth 0: 10.51 ms per token wall (95.1 tok/s), 9.00 ms on the GPU
+  q/k/v                  0.801 ms    8.9 %
+  bias + RoPE + cache    0.187 ms    2.1 %
+  attention              0.524 ms    5.8 %
+  attention merge        0.138 ms    1.5 %
+  wo + add               0.493 ms    5.5 %
+  rmsnorm                0.218 ms    2.4 %
+  gate/up                2.978 ms   33.1 %
+  swiglu                 0.105 ms    1.2 %
+  down + add             1.710 ms   19.0 %
+  classifier             1.815 ms   20.2 %
+  argmax                 0.030 ms    0.3 %
+depth 256: 22.53 ms per token wall (44.4 tok/s), 9.77 ms on the GPU
+  q/k/v                  0.843 ms    8.6 %
+  bias + RoPE + cache    0.198 ms    2.0 %
+  attention              0.836 ms    8.6 %
+  attention merge        0.179 ms    1.8 %
+  wo + add               0.515 ms    5.3 %
+  rmsnorm                0.227 ms    2.3 %
+  gate/up                3.152 ms   32.3 %
+  swiglu                 0.108 ms    1.1 %
+  down + add             1.792 ms   18.4 %
+  classifier             1.885 ms   19.3 %
+  argmax                 0.031 ms    0.3 %
+depth 1024: 19.65 ms per token wall (50.9 tok/s), 10.52 ms on the GPU
+  q/k/v                  0.818 ms    7.8 %
+  bias + RoPE + cache    0.189 ms    1.8 %
+  attention              1.775 ms   16.9 %
+  attention merge        0.275 ms    2.6 %
+  wo + add               0.504 ms    4.8 %
+  rmsnorm                0.220 ms    2.1 %
+  gate/up                3.032 ms   28.8 %
+  swiglu                 0.106 ms    1.0 %
+  down + add             1.735 ms   16.5 %
+  classifier             1.833 ms   17.4 %
+  argmax                 0.030 ms    0.3 %
+end 44600

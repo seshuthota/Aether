@@ -1,0 +1,46 @@
+== smollm2-135m-q4_0 47300
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 128 | upload 52 ms
+#   attn norm + quantize        144.1 us/token   5.5%
+#   q/k/v                       217.4 us/token   8.4%
+#   bias + RoPE + KV store      153.5 us/token   5.9%
+#   attention + quantize        308.4 us/token  11.9%
+#   wo                          136.3 us/token   5.2%
+#   ffn norm + quantize         145.0 us/token   5.6%
+#   gate/up                     571.0 us/token  22.0%
+#   SwiGLU + quantize           222.2 us/token   8.6%
+#   down                        326.8 us/token  12.6%
+#   final norm + quantize         4.8 us/token   0.2%
+#   classifier                  277.4 us/token  10.7%
+#   argmax                       45.2 us/token   1.7%
+#   thread start                 44.8 us/token   1.7%
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 59 positions in 196.6 ms: 300.0 tok/s (2.59 ms per token on the DSP)
+# prefill   32 tokens:     26.6 ms on the DSP,  1204.9 tok/s (median of 5)
+# prefill   64 tokens:     39.1 ms on the DSP,  1636.2 tok/s (median of 5)
+# prefill  128 tokens:     79.6 ms on the DSP,  1607.9 tok/s (median of 5)
+# prefill  128 tokens:     79.3 ms on the DSP,  1614.0 tok/s (median of 5)
+[1]14.0413,[2]21.0538,[3]20.2509,[4]20.8688,[5]21.2121,[6]21.4426,[7]22.2852,[8]23.1692,[9]24.9485,[10]25.3813,[11]25.4431,[12]25.9031,[13]26.1303,[14]27.2597,[15]27.9344,[16]28.4126,[17]26.7040,[18]27.0381,[19]27.4912,Final estimate: PPL = 27.6893 +/- 1.17433  (5100 tokens scored, 11.7 s, 872.3 tok/s through the DSP)
+[20]27.6893,
+== qwen2.5-0.5b-q4_0 56500
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 128 | upload 240 ms
+#   attn norm + quantize        183.4 us/token   3.0%
+#   q/k/v                       252.4 us/token   4.2%
+#   bias + RoPE + KV store      161.3 us/token   2.7%
+#   attention + quantize        290.3 us/token   4.8%
+#   wo                          211.0 us/token   3.5%
+#   ffn norm + quantize         177.1 us/token   2.9%
+#   gate/up                    1872.2 us/token  30.9%
+#   SwiGLU + quantize           481.2 us/token   8.0%
+#   down                       1021.1 us/token  16.9%
+#   final norm + quantize         7.4 us/token   0.1%
+#   classifier                 1209.6 us/token  20.0%
+#   argmax                      136.8 us/token   2.3%
+#   thread start                 46.5 us/token   0.8%
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. The capital of the department of the same name is also Paris. The
+# 59 positions in 410.0 ms: 143.9 tok/s (6.04 ms per token on the DSP)
+# prefill   32 tokens:     85.2 ms on the DSP,   375.8 tok/s (median of 5)
+# prefill   64 tokens:    107.5 ms on the DSP,   595.5 tok/s (median of 5)
+# prefill  128 tokens:    165.1 ms on the DSP,   775.5 tok/s (median of 5)
+# prefill  128 tokens:    164.5 ms on the DSP,   778.0 tok/s (median of 5)
+[1]10.6973,[2]14.7301,[3]15.4609,[4]15.8364,[5]16.2001,[6]16.8879,[7]17.1704,[8]18.5390,[9]19.8084,[10]20.5309,[11]21.0352,[12]21.0119,[13]21.9145,[14]21.2854,[15]21.0958,[16]21.6887,[17]20.0517,[18]20.0224,[19]19.7829,Final estimate: PPL = 19.7174 +/- 0.83513  (5100 tokens scored, 23.1 s, 443.0 tok/s through the DSP)
+[20]19.7174,

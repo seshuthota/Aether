@@ -1,0 +1,20 @@
+== smollm2-135m-q4_0 batch 39900
+# testdata/gguf/smollm2-135m-q4_0.gguf on Adreno (TM) 830 | upload + record 2370 ms
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 657.5 ms: 97.3 tok/s
+[1]14.0554,[2]21.0658,[3]20.2622,[4]20.8793,[5]21.2222,[6]21.4517,[7]22.2961,[8]23.1773,[9]24.9553,[10]25.3859,[11]25.4475,[12]25.9077,[13]26.1346,[14]27.2646,[15]27.9395,[16]28.4187,[17]26.7102,[18]27.0430,[19]27.4968,[Final estimate: PPL = 27.6924 +/- 1.17444  (5100 tokens scored, 18.2 s, 562.9 tok/s through the GPU, batches of 128, q4_0_gemm_h)
+== smollm2-135m-q4_0 batch-f32 41100
+# testdata/gguf/smollm2-135m-q4_0.gguf on Adreno (TM) 830 | upload + record 959 ms
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 842.2 ms: 76.0 tok/s
+[1]14.0453,[2]21.0550,[3]20.2511,[4]20.8704,[5]21.2137,[6]21.4448,[7]22.2876,[8]23.1708,[9]24.9501,[10]25.3819,[11]25.4432,[12]25.9039,[13]26.1313,[14]27.2611,[15]27.9363,[16]28.4138,[17]26.7056,[18]27.0401,[19]27.4931,Final estimate: PPL = 27.6910 +/- 1.17439  (5100 tokens scored, 26.0 s, 393.5 tok/s through the GPU, batches of 128, q4_0_gemm)
+== qwen2.5-0.5b-q4_0 batch 43000
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 3617 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 832.2 ms: 76.9 tok/s
+[1]10.6934,[2]14.7235,[3]15.4563,[4]15.8328,[5]16.1968,[6]16.8830,[7]17.1689,[8]18.5371,[9]19.8062,[10]20.5295,[11]21.0345,[12]21.0101,[13]21.9135,[14]21.2849,[15]21.0958,[16]21.6892,[17]20.0527,[18]20.0236,[19]19.7843,[Final estimate: PPL = 19.7190 +/- 0.83520  (5100 tokens scored, 28.4 s, 359.4 tok/s through the GPU, batches of 128, q4_0_gemm_h)
+== qwen2.5-0.5b-q4_0 batch-f32 47300
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 944 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 940.5 ms: 68.1 tok/s
+[1]10.6968,[2]14.7309,[3]15.4634,[4]15.8394,[5]16.2022,[6]16.8899,[7]17.1732,[8]18.5415,[9]19.8104,[10]20.5333,[11]21.0375,[12]21.0138,[13]21.9172,[14]21.2875,[15]21.0981,[16]21.6908,[17]20.0535,[18]20.0239,[19]19.7845,Final estimate: PPL = 19.7193 +/- 0.83521  (5100 tokens scored, 66.0 s, 154.9 tok/s through the GPU, batches of 128, q4_0_gemm)

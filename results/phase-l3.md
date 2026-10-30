@@ -660,3 +660,74 @@ Qwen Q4_K_M prompt (`vk_prefill`, Intel):
 So on this GPU the prompt pass now beats decode. Whole-file perplexity
 runs went from 238 s / 738 s to 67 s / 169 s (SmolLM2 / Qwen). The Adreno
 numbers wait for the phone.
+
+## Step 11: steps 9–10 on the phone (2026-10-30, on battery, 40–49 °C; `raw/*-phone.txt`)
+
+**f16 prompt products, Q4_0** (`vk_gemm 128`, Adreno 830, GFLOP/s):
+
+| Shape | `q4_0_gemm` f32 | `q4_0_gemm_h` f16 | `qx_gemm_h` Q4_0 | `qx_gemm_h` Q5_0 | `qx_gemm` Q5_0 | CPU (6 cores) |
+|---|---|---|---|---|---|---|
+| wq/wo | 147 | **590** | 516 | 354 | 145 | 212 |
+| gate/up | 228 | **817** | 729 | 514 | 224 | 457 |
+| down | 149 | **613** | 543 | 318 | 148 | 410 |
+
+f16 is 4× f32 on the Adreno, against 3–6× on the Intel GPU. For the first
+time the GPU's prompt products beat the CPU's int8 `smmla` ones.
+
+**Qwen2.5-0.5B prompt** (`vk_prefill`, tok/s):
+
+| Tokens | Q4_0 (`q4_0_gemm_h`) | Q4_K_M (`qx_gemm_h`) | Q4_0 f32, step 7 |
+|---|---|---|---|
+| 16 | 291 | 199 | |
+| 64 | 661 | 476 | |
+| 128 | **812** | **563** | 251–267 |
+
+gate/up and swiglu + down are 77 % of the 128-token pass. llama.cpp's
+OpenCL does 1387 at pp256 (step 8). The gap went from 5× to about 1.7×.
+
+**Correct** (`vk_ppl`, 20 × 512):
+
+| Model | decode step | batch f16 | batch f32 | llama.cpp |
+|---|---|---|---|---|
+| SmolLM2 Q4_0 | | 27.6924 | 27.6910 | 27.7412 |
+| Qwen2.5 Q4_0 | | 19.7190 | 19.7193 | 19.7283 |
+| SmolLM2 Q4_K_M | 20.6876 | 20.6906 | 20.6876 | 20.7784 |
+| Qwen2.5 Q4_K_M | 16.7167 | 16.7173 | 16.7167 | 16.7657 |
+
+The decode and f32 numbers equal the Intel GPU's to the last digit. The
+f16 ones differ from Intel's f16 in the third decimal: each GPU rounds the
+f16 sums in its own way. Whole-file runs, f32 → f16: Qwen Q4_0 66 → 28 s,
+Qwen Q4_K_M 66 → 36 s.
+
+**Q4_K_M decode** (`vk_decode`, GPU time per token, cool phone):
+
+| Depth | Qwen Q4_K_M | Qwen Q4_0 |
+|---|---|---|
+| 0 | 12.3 ms | 9.0 ms |
+| 256 | 12.5 ms | 9.8 ms |
+| 1024 | 14.0 ms | 10.5 ms |
+
+Q4_0 is unchanged from step 6. Q4_K_M costs 35 % more, about its 41 % more
+bytes. The classifier (Q8_0, 152k rows) takes 3.2 ms against Q4_0's 1.8.
+On the GPU's own time Q4_K_M runs at ~75 tok/s, so the CPU (104–111) is
+the faster engine for its decode. In `bench_suite`, wall-time tg64 is
+74 tok/s at depth 0.
+
+**Loading cost of the f16 path**: `upload + record` takes 2.4–3.6 s for
+Q4_0 with the f16 matrices against ~1 s without, and 6–7 s for Qwen
+Q4_K_M. Peak RSS in `bench_suite --backend gpu` (prompt on the GPU) is
+838 MB for Qwen Q4_0 and 1.1 GB for Q4_K_M, against 344 / 465 MB on the
+CPU.
+
+**The app's GPU mode keeps the prompt on the CPU** (`5003b5e`):
+- Chat-length prompts are as fast on the CPU (64 tokens: 777 against 691
+  tok/s, results/phase-l5.md "Every engine").
+- The KV handoff costs nothing measurable (step 7).
+- `GpuSession::open_hybrid` therefore no longer builds the f16 matrices
+  (`Options::f32_gemm`). `aether --gpu -c 2-7` on Qwen Q4_0, old and new
+  binaries alternating: peak RSS 1134–1137 → 938 MB, a 20-token run
+  2.0–5.0 s → 1.5–2.1 s, the same greedy text (`raw/hybrid-no-f16-text.txt`).
+
+`GpuSession::open` without cores (`aether --gpu`) still runs the prompt on
+the GPU in f16. That is the faster choice for prompts of 128+ tokens if
+memory allows.
