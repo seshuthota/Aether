@@ -343,16 +343,30 @@ static void attend(uint32 l, uint32 h, uint32 pos, const float *qh, float *out_h
     }
     float sum = vsum(vs);
     for (uint32 t = 32 * (n - 1); t <= pos; t++) sum += a[t];
-    float inv = 1.0f / sum;
-    HVX_Vector o[8];
-    for (uint32 i = 0; i < nv; i++) o[i] = Q6_V_vzero();
-    for (uint32 t = 0; t <= pos; t++) {
+    // Scale every score once. Four accumulators then add their partial
+    // sums: one chain of `pos` dependent adds stalls the vector unit, and
+    // the four chains do not. The adds are in a different order from a
+    // single chain, so the output differs in the last bits.
+    HVX_Vector vinv = splat_f(1.0f / sum);
+    for (uint32 j = 0; j < n; j++) av[j] = VMUL(av[j], vinv);
+    HVX_Vector acc[4][8];
+    for (uint32 k = 0; k < 4; k++)
+        for (uint32 i = 0; i < nv; i++) acc[k][i] = Q6_V_vzero();
+    uint32 t = 0, npos = pos + 1;
+    for (; t + 4 <= npos; t += 4) {
+        for (uint32 k = 0; k < 4; k++) {
+            const HVX_Vector *v = (const HVX_Vector *) (vc + (size_t) (t + k) * kv);
+            HVX_Vector p = splat_f(a[t + k]);
+            for (uint32 i = 0; i < nv; i++) acc[k][i] = VADD(acc[k][i], VMUL(p, v[i]));
+        }
+    }
+    for (; t < npos; t++) {
         const HVX_Vector *v = (const HVX_Vector *) (vc + (size_t) t * kv);
-        HVX_Vector p = splat_f(a[t] * inv);
-        for (uint32 i = 0; i < nv; i++) o[i] = VADD(o[i], VMUL(p, v[i]));
+        HVX_Vector p = splat_f(a[t]);
+        for (uint32 i = 0; i < nv; i++) acc[0][i] = VADD(acc[0][i], VMUL(p, v[i]));
     }
     HVX_Vector *out = (HVX_Vector *) out_h;
-    for (uint32 i = 0; i < nv; i++) out[i] = o[i];
+    for (uint32 i = 0; i < nv; i++) out[i] = VADD(VADD(acc[0][i], acc[1][i]), VADD(acc[2][i], acc[3][i]));
 }
 
 // SwiGLU into the gate half of hb for blocks (vectors) b0 .. b1: silu(g) u

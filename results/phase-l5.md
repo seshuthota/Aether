@@ -572,3 +572,60 @@ between the depth-0 and depth-512 windows, and 8.9 µs per position from
 512 to 2048; SmolLM2 stays near 7.1 then 7.6 µs. Depth 0 matches the
 earlier short runs (Qwen 6.57 ms, SmolLM2 2.57 ms), so those runs were
 the flat part of this curve.
+
+**Why SmolLM2 costs more per head.** The stage time is the busiest
+thread, and `decode_thread` hands out whole query heads. Qwen has 14
+heads and 24 layers, so two of the six threads get 3 heads and the stage
+is 72 head-visits (3 × 24). SmolLM2-135M has 9 heads and 30 layers, so
+the busiest threads get 2 heads: 60 head-visits. At depth 512 that is
+48 µs per head on Qwen (3464 µs / 72) and 65 µs per head on SmolLM2
+(3911 / 60). A head is the same shape on both, 64 floats, so a visit at
+depth 512 reads the same 256 KB of K and V. That is about 5.3 GB/s on
+the Qwen thread and 3.9 GB/s on the SmolLM2 thread.
+
+The difference is how those visits share a K/V head. Qwen has 2 K/V
+heads and groups of 7; the busy thread's 3 heads are the same K/V head,
+read three times. SmolLM2 has 3 K/V heads and groups of 3; the busy
+thread reads one K/V head twice, and the other threads are on the other
+two K/V heads at the same time. One layer's live K/V is 512 KB on Qwen
+and 768 KB on SmolLM2 (2 against 3 heads). The per-head gap narrows at
+depth 2048 (238 µs against 259 µs), where a layer is 2.0 MB against
+3.0 MB and neither thread is rereading a small cache.
+
+## Wide value loop (2026-10-30; `raw/dsp-profile-depth-vloop-*.txt`, `raw/dsp-ppl-vloop-*.txt`)
+
+`attend` scales the scores by 1/sum in one vector pass, then sums values
+with four accumulators. Same f32 values, different add order. Decode,
+prefill and the few-token pass all call `attend`.
+
+Perplexity, wikitext-2, 20 × 512, against the transposed-key run
+(27.7876 / 19.7560 decode, 27.6893 / 19.7174 prefill) and llama.cpp
+(27.7412 / 19.7283):
+
+| | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| decode | 27.7623 | 19.7716 |
+| prefill, 128 tokens a call | 27.6943 | 19.7205 |
+
+A few hundredths, inside the spread. 114/114 phone tests, including
+`few_tokens_get_the_decode_logits`.
+
+Same profile as above, on battery, screen woken. zone0 38 °C at the
+start of Qwen, 49 °C at depth 512, 53 °C at depth 2048 (baseline was
+38 / 48 / 54). Caps 2.75 / 2.65 GHz. Products at depth 512 match the
+baseline to ~10 µs (gate/up 2092 against 2095).
+
+| depth | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 | 6.54 (was 6.56) | 248 (was 263) | 2.56 (was 2.59) | 255 (was 279) |
+| 512 | 9.47 (was 9.84) | 3087 (was 3464) | 5.92 (was 6.29) | 3548 (was 3911) |
+| 2048 | 24.14 (was 23.08) | 17680 (was 17142) | 17.47 (was 17.91) | 15108 (was 15553) |
+
+The clean gain is depth 512: −377 µs of attention on Qwen and −363 µs
+on SmolLM2, and the step moves by the same amount. That is about 5 µs
+off a 48 µs head, which is what a dependency chain of a few microseconds
+can be. At depth 2048 SmolLM2 is −445 µs and Qwen is +538 µs. The
+baseline's Qwen depth-2048 products were themselves ~10 % quicker than
+its own depth-512 products (gate/up 1877 against 2095 µs), so that one
+window was a fast clock; this run's products sit on the depth-512
+numbers (gate/up 2098). Either way the loop is not where the 17 ms goes.

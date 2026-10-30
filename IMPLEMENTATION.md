@@ -70,14 +70,15 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    weight load across the tokens is needed before lookup is turned back on for GPU sessions.
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
-4. **DSP attention at long positions.** Profiled, `attend` unchanged
-   (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md "Decode profile at depth"):
-   the whole slowdown is the attention stage. Qwen2.5-0.5B Q4_0, 64 steps,
-   6.56 → 9.84 → 23.08 ms/token at depths 0 / 512 / 2048, attention
-   0.26 → 3.46 → 17.14 ms. SmolLM2-135M Q4_0: 2.59 → 6.29 → 17.91 ms,
-   attention 0.28 → 3.91 → 15.55 ms. Next, each its own measured commit:
-   wide value loop, then position split, one VTCM read per K/V head, stride
-   padding. f16 KV only if depth 2048 is still steep after those.
+4. **DSP attention at long positions.** Profiled
+   (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
+   is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /
+   2048). The wide value loop (four accumulators) was measured next: −0.38 ms
+   of attention at depth 512, nothing useful at 2048, PPL within a few
+   hundredths (27.7623 / 19.7716 decode). Next: stride padding where the
+   key stride is a power of two, and l2fetch of the next key and value
+   blocks, each measured at 512 and 2048, then the position split and one
+   VTCM read per K/V head. f16 KV only if depth 2048 is still steep.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
