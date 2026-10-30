@@ -3,6 +3,11 @@
     <application
         android:label="Aether"
         android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        <!-- The DSP path dlopens the vendor's FastRPC library; an app may
+             load a vendor library only if it declares it (Android 12+). -->
+        <uses-native-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

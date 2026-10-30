@@ -39,13 +39,13 @@ typedef int (*AetherTokenCallback)(const uint8_t *bytes, size_t len, void *user)
  * thread. max_seq: longest prompt + reply in tokens. */
 int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
-/* Loads a --pure Q4_0 .gguf for decoding on the GPU (Vulkan). cores as in
+/* Loads a Q4_0 or Q4_K_M .gguf for decoding on the GPU (Vulkan). cores as in
  * aether_open: if given, a second copy of the model on those CPU cores runs
  * each prompt as one batch and hands its KV cache to the GPU (the CPU runs
  * prompts faster than the GPU on the phone; twice the memory); NULL / ""
  * runs the prompt on the GPU, batched as well. Fails with AETHER_ERR_LOAD if the library was built
- * without the vulkan feature, there is no usable GPU, or a matrix is not
- * Q4_0. */
+ * without the vulkan feature, there is no usable GPU, or a matrix is in a
+ * format the GPU does not read (other than Q4_0, Q5_0, Q8_0, Q4_K, Q6_K). */
 int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
 /* Loads a --pure Q4_0 .gguf for the Hexagon DSP: prompts in batches on its

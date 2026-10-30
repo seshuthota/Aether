@@ -92,7 +92,15 @@ Not merged into `master` until these pass. Check the SoC temperature first
 8. **Every engine, one benchmark.** `scripts/backends-bench.sh results/backends/raw` (bench_suite
    `--backend cpu|gpu|dsp`: pp 64–512, tg64 at depth 0/256/512, TTFT pp64, peak RSS; Q4_0 and
    Q4_K_M; the DSP Q4_0 only). Then `SUSTAIN=300` unplugged (adb over Wi-Fi) for J/token.
-9. Then: results/phase-l5.md "Step 5b" and the phone numbers in results/phase-l3.md steps 9–10,
+9. **The app's CPU / GPU / DSP selector** (replaces the GPU checkbox). `scripts/android-native.sh`
+   (now `--features "vulkan hexagon"`), `(cd android && ./gradlew installDebug)`, push a Q4_0
+   model, then each of CPU, GPU, DSP: the reply streams and the status line shows prefill /
+   decode tok/s. Open questions only the phone answers: can an app process open the libcdsprpc.so
+   (`adb shell cat /vendor/etc/public.libraries.txt | grep cdsprpc`; the manifest now declares it
+   with `<uses-native-library>`) and start an unsigned DSP session from its files directory? If
+   not, the DSP option shows the error and the CPU and GPU still work. Also GPU with a Q4_K_M
+   model (the docs no longer say Q4_0 only).
+10. Then: results/phase-l5.md "Step 5b" and the phone numbers in results/phase-l3.md steps 9–10,
    tick the boxes, `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done

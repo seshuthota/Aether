@@ -38,7 +38,7 @@ class MainActivity : Activity() {
     private lateinit var cores: EditText
     private lateinit var chat: CheckBox
     private lateinit var lookup: CheckBox
-    private lateinit var gpu: CheckBox
+    private lateinit var backend: Spinner
     private lateinit var prompt: EditText
     private lateinit var go: Button
     private lateinit var output: TextView
@@ -61,8 +61,12 @@ class MainActivity : Activity() {
         }
         // Prompt lookup decoding: pays when the reply repeats the prompt.
         lookup = CheckBox(this).apply { text = "lookup" }
-        // Decode on the GPU (a --pure Q4_0 model; cores and lookup unused).
-        gpu = CheckBox(this).apply { text = "GPU" }
+        // Where the model runs. GPU: decode on the GPU, the prompt on the
+        // CPU cores (lookup unused). DSP: everything on the Hexagon DSP (a
+        // --pure Q4_0 model; cores and lookup unused).
+        backend = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, BACKENDS)
+        }
         prompt = EditText(this).apply {
             hint = "Ask something"
             setText("Why is the sky blue?")
@@ -84,7 +88,7 @@ class MainActivity : Activity() {
             addView(cores)
             addView(chat)
             addView(lookup)
-            addView(gpu)
+            addView(backend)
         }
         val ask = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -131,7 +135,7 @@ class MainActivity : Activity() {
         val text = prompt.text.toString()
         val asChat = chat.isChecked
         val draft = if (lookup.isChecked) 3 else 0
-        val onGpu = gpu.isChecked
+        val where = BACKENDS[backend.selectedItemPosition]
         running = true
         stop.set(false)
         go.text = "Stop"
@@ -139,16 +143,25 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         engine.execute {
             try {
-                val key = "${file.path}|${if (onGpu) "gpu " else ""}$coreList"
+                val key = "${file.path}|$where|$coreList"
                 if (session == null || loaded != key) {
                     session?.close()
                     session = null
                     ui { status.text = "Loading ${file.name}…" }
                     val t0 = System.nanoTime()
-                    session = if (onGpu) Aether.openGpu(file.path, coreList, MAX_SEQ) else Aether.open(file.path, coreList, MAX_SEQ)
+                    session = when (where) {
+                        "GPU" -> Aether.openGpu(file.path, coreList, MAX_SEQ)
+                        "DSP" -> Aether.openDsp(file.path, filesDir.path, MAX_SEQ)
+                        else -> Aether.open(file.path, coreList, MAX_SEQ)
+                    }
                     loaded = key
                     val ms = (System.nanoTime() - t0) / 1e6
-                    ui { status.text = "Loaded in %.0f ms (%s)".format(ms, if (onGpu) "GPU, prompt on CPU $coreList" else "CPU $coreList") }
+                    val on = when (where) {
+                        "GPU" -> "GPU, prompt on CPU $coreList"
+                        "DSP" -> "Hexagon DSP"
+                        else -> "CPU $coreList"
+                    }
+                    ui { status.text = "Loaded in %.0f ms (%s)".format(ms, on) }
                 }
                 session!!.setLookup(draft)
                 val utf8 = Utf8Stream()
@@ -192,5 +205,6 @@ class MainActivity : Activity() {
         /** KV cache length: prompt plus reply, in tokens. */
         const val MAX_SEQ = 2048
         const val MAX_TOKENS = 512
+        val BACKENDS = listOf("CPU", "GPU", "DSP")
     }
 }

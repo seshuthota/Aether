@@ -369,9 +369,9 @@ impl Drafter {
     }
 }
 
-/// A model decoding on the GPU (`--features vulkan`, a `--pure` Q4_0
-/// GGUF; see `model::gpu`): every position, prompt included, goes through
-/// the GPU decode step, and sampling runs on the CPU.
+/// A model decoding on the GPU (`--features vulkan`, a Q4_0 or Q4_K_M
+/// GGUF; see `model::gpu`), the prompt batched on the GPU or on a CPU
+/// copy of the model; sampling runs on the CPU.
 #[cfg(feature = "vulkan")]
 pub struct GpuSession {
     // Declared before `gpu`: its buffers must be freed while the device lives.
