@@ -13,6 +13,7 @@
 #include "HAP_power.h"
 #include "aether_dsp.h"
 #include "dsp.h"
+#include "q4_0_hvx.h"
 #include "hexagon_types.h"
 #include "hvx_hexagon_protos.h"
 #include "qurt_barrier.h"
@@ -242,54 +243,6 @@ AEEResult aether_dsp_refresh(remote_handle64 h, int fd, uint32 bytes) {
     cpu_wrote(p, bytes);
     release(fd);
     return AEE_SUCCESS;
-}
-
-// Asks the L2 for `bytes` from p on (rows of 4 KB), without waiting.
-static inline void prefetch(const void *p, uint32 bytes) {
-    uint32 rows = (bytes + 4095) / 4096;
-    Q6_l2fetch_AP((void *) p, (uint64) 4096 << 32 | 4096 << 16 | (rows > 0xffff ? 0xffff : rows));
-}
-
-static inline HVX_Vector splat_f(float f) {
-    union { float f; int32 i; } u = {f};
-    return Q6_V_vsplat_R(u.i);
-}
-
-// One block of one group: its rows' integer dot products, low and high
-// nibbles in separate sums (two dependency chains, not one).
-static inline HVX_Vector block_dot(const HVX_Vector *w, const int32 *x, int32 xsum, HVX_Vector low) {
-    HVX_Vector s0 = Q6_V_vsplat_R(-8 * xsum), s1 = Q6_V_vzero();
-    for (int k = 0; k < 4; k++) {
-        s0 = Q6_Vw_vrmpyacc_VwVubRb(s0, Q6_V_vand_VV(w[k], low), x[k]);
-        s1 = Q6_Vw_vrmpyacc_VwVubRb(s1, Q6_V_vand_VV(Q6_Vuh_vlsr_VuhR(w[k], 4), low), x[4 + k]);
-    }
-    return Q6_Vw_vadd_VwVw(s0, s1);
-}
-
-// acc + (the block's sums) * (rows' scales) * (x's scale).
-static inline HVX_Vector block_acc(HVX_Vector acc, HVX_Vector s, HVX_Vector scales, HVX_Vector xd) {
-    return Q6_Vsf_vadd_VsfVsf(acc, Q6_Vsf_vmpy_VsfVsf(Q6_Vsf_equals_Vw(s), Q6_Vsf_vmpy_VsfVsf(scales, xd)));
-}
-
-// Two groups (w0, then w1 right after it) into out[0] and out[1]: the
-// vector unit has independent work while each vrmpy's result is still on
-// its way, and x is read once for both.
-static inline void pair_rows(const HVX_Vector *w0, const char *xqb, uint32 nb, HVX_Vector *out, int accumulate) {
-    const int32 *xq = (const int32 *) xqb;
-    const float *xd = (const float *) (xqb + 32 * nb);
-    const int32 *xs = (const int32 *) (xqb + 36 * nb);
-    const HVX_Vector low = Q6_Vb_vsplat_R(0x0f);
-    const HVX_Vector *w1 = w0 + (size_t) nb * 5;
-    HVX_Vector a0 = Q6_V_vzero(), a1 = a0;
-    for (uint32 b = 0; b < nb; b++, w0 += 5, w1 += 5) {
-        const int32 *x = xq + 8 * b;
-        HVX_Vector d = splat_f(xd[b]);
-        HVX_Vector s0 = block_dot(w0, x, xs[b], low), s1 = block_dot(w1, x, xs[b], low);
-        a0 = block_acc(a0, s0, w0[4], d);
-        a1 = block_acc(a1, s1, w1[4], d);
-    }
-    out[0] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[0], a0) : a0;
-    out[1] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[1], a1) : a1;
 }
 
 // The DMA engine's one-dimensional descriptor (v73+ layout, as llama.cpp's

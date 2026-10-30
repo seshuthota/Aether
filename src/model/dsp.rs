@@ -7,9 +7,13 @@
 //! A prefill ([`DspModel::prefill`]) runs up to `batch` tokens through
 //! every layer in one call, the matrix products on HMX (dsp/hmx.c).
 //!
+//! A few-token pass ([`DspModel::few`]) runs up to [`MAX_FEW`] tokens with
+//! every token's logits, the products as in decode with the weights read
+//! once for all of them: speculative decoding's check of its drafts.
+//!
 //! Like the GPU path, it needs every matrix in Q4_0 (a `--pure` Q4_0 GGUF).
 
-use crate::kernels::hexagon::{Dsp, Result, Shared, q4_0_bytes, repack_q4_0};
+use crate::kernels::hexagon::{Dsp, MAX_FEW, Result, Shared, q4_0_bytes, repack_q4_0};
 use crate::model::transformer::Weights;
 use crate::weight::Weight;
 use crate::model::{Config, RopeLayout};
@@ -176,24 +180,26 @@ impl DspModel {
             put_mat(out, desc[d::CLS], &[(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), vocab)], "classifier")?;
         }
 
-        // The state buffer: `batch` rows of each activation (decode uses the
-        // first); score rows for every head, and for every DSP thread in a
+        // The state buffer: `batch` rows of each activation, at least
+        // MAX_FEW (decode uses the first); MAX_FEW Q8_0 rows, 128-byte
+        // aligned; score rows for every head, and for every DSP thread in a
         // prefill (8 at most).
         let mut sl = Layout::default();
         let kv = nl * c.seq_len * kv_dim;
         let b = batch.max(1);
+        let rows = b.max(MAX_FEW);
         for (i, n) in [
-            (d::X, 4 * dim * b),
-            (d::XB, 4 * dim * b),
-            (d::XQ, 40 * hid.max(dim) / 32),
-            (d::QKV, 4 * (dim + 2 * kv_dim) * b),
+            (d::X, 4 * dim * rows),
+            (d::XB, 4 * dim * rows),
+            (d::XQ, MAX_FEW * (40 * hid.max(dim) / 32).div_ceil(128) * 128),
+            (d::QKV, 4 * (dim + 2 * kv_dim) * rows),
             (d::ATT, 4 * c.n_heads.max(8) * c.seq_len.div_ceil(32) * 32),
-            (d::HB, 4 * 2 * hid * b),
-            (d::LOGITS, 4 * vocab * if all_logits { b } else { 1 }),
+            (d::HB, 4 * 2 * hid * rows),
+            (d::LOGITS, 4 * vocab * if all_logits { rows } else { MAX_FEW }),
             // Keys transposed: a row of every position per element.
             (d::KC, 4 * nl * kv_dim * c.seq_len.div_ceil(32) * 32),
             (d::VC, 4 * kv),
-            (d::ROT, 4 * c.head_size() * b),
+            (d::ROT, 4 * c.head_size() * rows),
             (d::PROF, 8 * STAGES.len()),
         ] {
             desc[i] = sl.take(n) as u32;
@@ -263,6 +269,23 @@ impl DspModel {
         Ok(&self.state.as_slice::<f32>()[self.logits_at / 4..][..rows * self.config.vocab_size])
     }
 
+    /// Runs `tokens` (at most [`MAX_FEW`]) at positions `pos`.. in one
+    /// call with every token's logits (one row of `vocab_size` each):
+    /// speculative decoding's check of a certain token and its drafts.
+    /// Positions must follow those already run. [`DspModel::greedy`] is
+    /// not set.
+    pub fn few(&mut self, dsp: &Dsp, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        let c = &self.config;
+        let n = tokens.len();
+        assert!((1..=MAX_FEW).contains(&n) && pos + n <= c.seq_len);
+        assert!(tokens.iter().all(|&t| t < c.vocab_size));
+        for (i, &t) in tokens.iter().enumerate() {
+            self.put_row(i, t, pos + i);
+        }
+        self.last_us = dsp.model_few(pos as u32, n as u32, self.threads)?;
+        Ok(&self.state.as_slice::<f32>()[self.logits_at / 4..][..n * self.config.vocab_size])
+    }
+
     /// Microseconds the DSP spent in each of [`STAGES`] since the last
     /// call, summed over the steps; resets them.
     pub fn take_profile(&mut self) -> Vec<f64> {
@@ -277,5 +300,45 @@ impl DspModel {
     /// found on the DSP.
     pub fn greedy(&self) -> usize {
         self.next
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::golden;
+
+    /// The few-token pass gives every token the decode step's logits, bit
+    /// for bit: its products add the same block sums in the same order,
+    /// and the rest is the decode step's code. Checked for 1, 3 and 8
+    /// tokens after decoded positions, and again over cache entries a
+    /// first pass wrote (as after rejected drafts).
+    #[test]
+    fn few_tokens_get_the_decode_logits() {
+        let Some(path) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let dsp = match Dsp::open(&dir) {
+            Ok(d) => d,
+            Err(e) => {
+                assert!(!cfg!(target_os = "android"), "{e}");
+                return;
+            }
+        };
+        let (config, weights, _) = crate::model::gguf::load(&path, 64).unwrap();
+        let vocab = config.vocab_size;
+        let mut m = DspModel::new(&dsp, config, weights, 6, 1, false).unwrap();
+        let tokens: Vec<usize> = (0..24).map(|i| (i * 7919 + 13) % vocab).collect();
+        let want: Vec<Vec<f32>> = tokens.iter().enumerate().map(|(p, &t)| m.forward(&dsp, t, p).unwrap().to_vec()).collect();
+        // Overwrite positions 4.. with other tokens first: their cache
+        // entries must be replaced, not kept.
+        m.few(&dsp, &[1, 2, 3, 4, 5, 6, 7, 8], 4).unwrap();
+        let mut pos = 4;
+        for n in [1, 3, 8, 8] {
+            let got = m.few(&dsp, &tokens[pos..pos + n], pos).unwrap();
+            for i in 0..n {
+                assert!(got[i * vocab..][..vocab] == want[pos + i][..], "{n} tokens at {pos}: row {i} differs from the decode step's");
+            }
+            pos += n;
+        }
     }
 }

@@ -63,6 +63,10 @@ const MODEL_DECODE: u32 = 10;
 const MATH_TEST: u32 = 11;
 const HMX_GEMM: u32 = 12;
 const MODEL_PREFILL: u32 = 13;
+const MODEL_FEW: u32 = 14;
+
+/// The most tokens of one [`Dsp::model_few`] (dsp/q4_0_hvx.h's `MAX_FEW`).
+pub const MAX_FEW: usize = 8;
 
 /// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
 struct Rpc {
@@ -248,16 +252,7 @@ impl Dsp {
     pub fn q4_0_gemv(&self, w: &DspMatQ4_0, x: &[BlockQ8_0], xbuf: &mut Shared, out: &mut Shared, threads: u32, fetch: Fetch) -> Result<u64> {
         let nb = w.nb;
         assert!(x.len() == nb && xbuf.len >= 40 * nb && out.len >= 4 * w.rows.div_ceil(32) * 32);
-        // The int8 values, then the scales, then each block's sum.
-        let xb = xbuf.as_mut_slice::<u8>();
-        for (i, blk) in x.iter().enumerate() {
-            for (k, &q) in blk.qs.iter().enumerate() {
-                xb[QK * i + k] = q as u8;
-            }
-            xb[32 * nb + 4 * i..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
-            let sum: i32 = blk.qs.iter().map(|&q| q as i32).sum();
-            xb[36 * nb + 4 * i..][..4].copy_from_slice(&sum.to_le_bytes());
-        }
+        q8_0_layout(x, xbuf.as_mut_slice::<u8>());
         let mut t = [0u8; 8];
         self.call(Q4_0_GEMV, &[&words(&[w.buf.fd as u32, xbuf.fd as u32, out.fd as u32, w.rows as u32, nb as u32, threads, fetch as u32])], &mut [&mut t])?;
         Ok(u64::from_le_bytes(t))
@@ -289,6 +284,16 @@ impl Dsp {
         let mut out = [0u8; 16];
         self.call(MODEL_PREFILL, &[&words(&[pos, n, threads, all as u32])], &mut [&mut out])?;
         Ok((u32::from_le_bytes(out[..4].try_into().unwrap()), u64::from_le_bytes(out[8..].try_into().unwrap())))
+    }
+
+    /// A pass of `n` (at most [`MAX_FEW`]) tokens at positions `pos`.. (rows
+    /// 0..n of the state, as for [`Dsp::model_prefill`]) with every
+    /// token's logits, the products on HVX with each group of weights read
+    /// once for all n tokens. Returns the DSP's time in microseconds.
+    pub fn model_few(&self, pos: u32, n: u32, threads: u32) -> Result<u64> {
+        let mut t = [0u8; 8];
+        self.call(MODEL_FEW, &[&words(&[pos, n, threads])], &mut [&mut t])?;
+        Ok(u64::from_le_bytes(t))
     }
 
     /// The decode step's vector math on the DSP (dsp/model.c), for tests:
@@ -345,6 +350,21 @@ pub fn repack_q4_0(blocks: &[BlockQ4_0], rows: usize, out: &mut [u8]) {
                 }
             }
         }
+    }
+}
+
+/// Q8_0 blocks in the layout the DSP's Q4_0 products read (40 bytes a
+/// block, into `out`): the int8 values, then the f32 scales, then each
+/// block's sum of values.
+pub fn q8_0_layout(x: &[BlockQ8_0], out: &mut [u8]) {
+    let nb = x.len();
+    for (i, blk) in x.iter().enumerate() {
+        for (k, &q) in blk.qs.iter().enumerate() {
+            out[QK * i + k] = q as u8;
+        }
+        out[32 * nb + 4 * i..][..4].copy_from_slice(&f16_to_f32(blk.d).to_le_bytes());
+        let sum: i32 = blk.qs.iter().map(|&q| q as i32).sum();
+        out[36 * nb + 4 * i..][..4].copy_from_slice(&sum.to_le_bytes());
     }
 }
 
@@ -430,6 +450,91 @@ impl Drop for Dsp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A program of dsp/sim/ built with the Hexagon SDK's clang, to run on
+    /// its simulator on the PC: `run(args)` returns its output. None where
+    /// there is no SDK (or on the phone). hexagon-sim wants
+    /// libncurses.so.5 / libtinfo.so.5; where only .so.6 exist, links to
+    /// them go in the build directory.
+    #[cfg(not(target_os = "android"))]
+    fn sim_program(name: &str) -> Option<impl Fn(&[&str]) -> String> {
+        use std::process::Command;
+        use std::path::PathBuf;
+        let sdk = std::env::var("HEXAGON_SDK_ROOT").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join(".hexagon-sdk/6.4.0.2"));
+        let bin = sdk.join("tools/HEXAGON_Tools/19.0.04/Tools/bin");
+        if !bin.join("hexagon-sim").exists() {
+            return None;
+        }
+        let dir = std::env::temp_dir().join(format!("aether-sim-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(name);
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("dsp/sim/{name}.c"));
+        let st = Command::new(bin.join("hexagon-clang"))
+            .args(["-O2", "-mv79", "-mhvx", "-mhvx-length=128B", "-Wall", "-Werror"])
+            .arg(format!("-I{}", sdk.join("incs/stddef").display()))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .status()
+            .unwrap();
+        assert!(st.success(), "hexagon-clang failed on {}", src.display());
+        for lib in ["libncurses", "libtinfo"] {
+            let six = Path::new("/usr/lib/x86_64-linux-gnu").join(format!("{lib}.so.6"));
+            if six.exists() {
+                let _ = std::os::unix::fs::symlink(six, dir.join(format!("{lib}.so.5")));
+            }
+        }
+        Some(move |args: &[&str]| {
+            let out = Command::new(bin.join("hexagon-sim")).arg("-mv79").arg(&exe).arg("--").args(args).env("LD_LIBRARY_PATH", &dir).current_dir(&dir).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(out.status.success() && text.contains("ok\n"), "{name} on the simulator: {text}{}", String::from_utf8_lossy(&out.stderr));
+            text
+        })
+    }
+
+    /// The DSP's Q4_0 × Q8_0 product for several tokens at once
+    /// (`q4_0_rows_n_on`, dsp/q4_0_hvx.h; speculative decoding's check),
+    /// run on the Hexagon simulator: the batch goldens' weights in our
+    /// layout and each token's x quantized by our Q8_0 quantizer (llama.cpp's
+    /// bytes), against dequant(X_q8_0) @ dequant(W)ᵀ in float64
+    /// (`out_q4_0_b`), 1, 3 and 8 tokens a call.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn sim_q4_0_rows_n_matches_reference() {
+        let Some(root) = crate::testutil::golden("quant_batch") else { return };
+        let Some(run) = sim_program("rows_n") else { return };
+        let dir_out = std::env::temp_dir().join(format!("aether-sim-{}-rows_n", std::process::id()));
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_b.npy"));
+            let (rows, tokens, cols) = (ws[0], xs[0], xs[1]);
+            let nb = cols / QK;
+            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
+            let blocks: Vec<BlockQ4_0> = bytes.as_chunks::<18>().0.iter().map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let mut w = vec![0u8; q4_0_bytes(rows, nb)];
+            repack_q4_0(&blocks, rows, &mut w);
+            let mut x = vec![0u8; tokens * 40 * nb];
+            for (t, row) in xv.chunks_exact(cols).enumerate() {
+                let mut q = vec![BlockQ8_0 { d: 0, qs: [0; 32] }; nb];
+                crate::quant::quantize_q8_0(row, &mut q);
+                q8_0_layout(&q, &mut x[t * 40 * nb..(t + 1) * 40 * nb]);
+            }
+            let (wp, xp, op) = (dir_out.join("w.bin"), dir_out.join("x.bin"), dir_out.join("out.bin"));
+            std::fs::write(&wp, &w).unwrap();
+            std::fs::write(&xp, &x).unwrap();
+            for per in [1, 3, 8] {
+                run(&[wp.to_str().unwrap(), xp.to_str().unwrap(), op.to_str().unwrap(), &rows.to_string(), &nb.to_string(), &tokens.to_string(), &per.to_string()]);
+                let got: Vec<f32> = std::fs::read(&op).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+                let (_, rel) = crate::testutil::max_errors(&got, &want);
+                assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{}, {per} tokens a call: rel {rel:.2e}", dir.display());
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir_out);
+        assert!(cases >= 11, "only {cases} golden cases");
+    }
 
     fn dsp() -> Option<Dsp> {
         let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();

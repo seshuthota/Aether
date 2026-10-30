@@ -37,7 +37,8 @@
 //!   --times   with --gpu: print the time of every decode token
 //!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
 //!             --pure Q4_0 GGUF): the prompt in batches on HMX, then one
-//!             DSP call per token
+//!             DSP call per token. --lookup K works here too (up to 7
+//!             drafts, checked in one few-token pass)
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
@@ -130,7 +131,7 @@ fn main() {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps);
+        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram));
     }
     if gpu {
         if chat {
@@ -256,7 +257,7 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
 /// `--dsp`: the prompt in batches on the DSP's HMX, then one DSP decode
 /// step per token (`session::DspSession`); sampling on the CPU.
 #[cfg(feature = "hexagon")]
-fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize) {
+fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (lookup, ngram): (usize, usize)) {
     // The DSP library goes next to this program (/data/local/tmp/... on
     // the phone is writable).
     let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
@@ -267,14 +268,21 @@ fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize) {
     for p in 0..t.len() - 1 {
         let _ = out.write_all(&s.text.piece(t[p], t[p + 1]));
     }
-    let st = s.generate(prompt, &mut sampler, steps, |piece| out.write_all(piece).and_then(|_| out.flush()).is_ok());
+    let emit = |piece: &[u8]| out.write_all(piece).and_then(|_| out.flush()).is_ok();
+    let st = if lookup > 0 {
+        let (st, look) = s.generate_lookup(prompt, &mut sampler, steps, lookup, ngram, emit);
+        eprintln!("\nspeculative: {} passes, {} of {} drafts accepted", look.passes, look.accepted, look.drafted);
+        st
+    } else {
+        s.generate(prompt, &mut sampler, steps, emit)
+    };
     writeln!(out).unwrap();
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
     eprintln!("prefill (DSP): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
 }
 
 #[cfg(not(feature = "hexagon"))]
-fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize) {
+fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize)) {
     eprintln!("--dsp needs a build with --features hexagon");
 }
 

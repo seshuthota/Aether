@@ -65,7 +65,7 @@ int aether_generate(AetherSession *session, const char *prompt, int chat,
  * tokens copied from the last earlier match of the last `ngram` tokens,
  * checked in one batched pass. Faster when the reply repeats the prompt
  * (code edits, quoting). k = 0 turns it off; ngram >= 1 (2 is a good default).
- * CPU and GPU sessions (a DSP session ignores it). */
+ * The GPU and the DSP check up to 7 drafts per pass. */
 int aether_set_lookup(AetherSession *session, uint32_t k, uint32_t ngram);
 
 /* Message for the last error on this thread; valid until the next call. */

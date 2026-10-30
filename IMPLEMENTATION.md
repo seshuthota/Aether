@@ -94,7 +94,16 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    fresh prose: tok/s and drafts
    accepted. The app's lookup checkbox in GPU mode. If lookup is slower on the Adreno, turn it
    off for GPU sessions in the C ABI again.
-11. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
+11. [ ] **Prompt lookup on the DSP** (written 2026-10-30 after the run above; the HVX product
+   for several tokens verified on the Hexagon simulator, the rest phone-only). `cargo test …
+   --features hexagon --lib few_tokens dsp_lookup` (the few-token pass's logits must equal the
+   decode step's bit for bit); `dsp_ppl SMOLLM 20 512 6 1f 1 few` and the same on Qwen (PPL
+   must equal the decode PPL of item 3: 27.7876 / 19.7560; prints the pass's time for 1–8
+   tokens against one decode step); `aether GGUF --dsp -t 0 --lookup 4` against without on
+   the copying prompts and on prose; the app's lookup checkbox in DSP mode. The pass reads
+   weights by l2fetch, not DMA: if 2 tokens cost much more than one decode step, DMA is the
+   next thing to try.
+12. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
    `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -469,6 +478,16 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         To check on the phone: all tests; `dsp_ppl` batch 128 on SmolLM2 and Qwen against
         llama.cpp's PPL (fp16 activations in the products may cost a little); the greedy text;
         decode PPL unchanged with the transposed keys; `dsp_gemm` again (prefetch); `--dsp`.
+  - [~] Prompt lookup on the DSP (2026-10-30, phone pending, waiting item 11):
+        `model_few` (dsp/model.c) runs up to 8 tokens through every layer with every token's
+        logits. Its products (`q4_0_rows_n_on`, dsp/q4_0_hvx.h) split each block of weights
+        into nibbles once and use it for every token, adding the same block sums in the same
+        order as the decode step, so the logits are the decode step's. The HVX product code
+        moved into `dsp/q4_0_hvx.h` so `dsp/sim/rows_n.c` can run it on the SDK's simulator:
+        `sim_q4_0_rows_n_matches_reference` checks it against llama.cpp's Q4_0 bytes (the
+        quant_batch goldens) for 1, 3 and 8 tokens on the PC. `DspModel::few`,
+        `DspSession::generate_lookup`, `aether --dsp --lookup K`, the C ABI's lookup for DSP
+        sessions, `dsp_ppl … few`.
 
 ---
 

@@ -569,11 +569,7 @@ impl DspSession {
         let np = tokens.len().min(steps);
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
         let t0 = Instant::now();
-        let mut logits = Vec::new();
-        let b = self.model.batch;
-        for (i, part) in tokens[..np].chunks(b).enumerate() {
-            logits = self.model.prefill(&self.dsp, part, i * b).expect("DSP prefill").to_vec();
-        }
+        let mut logits = self.prompt(&tokens[..np]);
         stats.prefill = t0.elapsed();
         let (t1, mut pos, mut token) = (Instant::now(), np, tokens[np - 1]);
         // Greedy decoding takes the DSP's argmax instead of reading the logits.
@@ -595,6 +591,78 @@ impl DspSession {
         stats.decode = t1.elapsed();
         stats.decode_tokens = pos - np;
         stats
+    }
+
+    /// Runs the prompt from position 0 in prefills of up to
+    /// [`DspSession::BATCH`] tokens; returns the last token's logits.
+    fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
+        let b = self.model.batch;
+        let mut logits = Vec::new();
+        for (i, part) in tokens.chunks(b).enumerate() {
+            logits = self.model.prefill(&self.dsp, part, i * b).expect("DSP prefill").to_vec();
+        }
+        logits
+    }
+
+    /// Prompt lookup decoding as [`Session::generate_lookup`]: up to `k`
+    /// draft tokens (at most [`crate::kernels::hexagon::MAX_FEW`] − 1)
+    /// checked in one few-token pass ([`crate::model::dsp::DspModel::few`]),
+    /// whose products are those of the decode step. Greedy text is the
+    /// DSP's greedy text up to near-ties (the products add in another
+    /// order); sampled text keeps the sampler's distribution.
+    pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let steps = steps.min(self.model.config.seq_len);
+        let k = k.min(crate::kernels::hexagon::MAX_FEW - 1);
+        let mut hist = self.text.encode(prompt);
+        let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let np = hist.len().min(steps);
+        let t0 = Instant::now();
+        let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
+        stats.prefill = t0.elapsed();
+        stats.prefill_tokens = np;
+        let t1 = Instant::now();
+        let vocab = self.model.config.vocab_size;
+        // `pos`: positions in the cache; `next` is certain but not yet in it.
+        let mut pos = np;
+        if np == hist.len() {
+            'tokens: loop {
+                if self.text.is_stop(next) || !emit(&self.text.piece(hist[pos - 1], next)) || pos >= steps {
+                    break;
+                }
+                hist.push(next);
+                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                if draft.is_empty() {
+                    next = sampler.sample(&mut self.model.forward(&self.dsp, next, pos).expect("DSP step").to_vec());
+                    pos += 1;
+                    continue;
+                }
+                let input: Vec<usize> = std::iter::once(next).chain(draft.iter().copied()).collect();
+                let mut rows = self.model.few(&self.dsp, &input, pos).expect("DSP check").to_vec();
+                look.passes += 1;
+                look.drafted += draft.len();
+                pos += 1;
+                // Row r follows input[r]; draft[r] = input[r + 1].
+                let mut rows = rows.chunks_exact_mut(vocab);
+                for &d in &draft {
+                    let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
+                    if !accepted {
+                        next = t;
+                        continue 'tokens;
+                    }
+                    if self.text.is_stop(d) || !emit(&self.text.piece(hist[pos - 1], d)) {
+                        break 'tokens;
+                    }
+                    look.accepted += 1;
+                    hist.push(d);
+                    pos += 1;
+                }
+                // Every draft accepted: the last row gives the next token.
+                next = sampler.sample(rows.next().unwrap());
+            }
+        }
+        stats.decode = t1.elapsed();
+        stats.decode_tokens = pos - np;
+        (stats, look)
     }
 }
 
@@ -695,6 +763,35 @@ mod tests {
         let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
         let Ok(mut s) = GpuSession::open(&model, 96) else {
             assert!(!cfg!(target_os = "android"), "no GPU");
+            return;
+        };
+        let prompt = "The capital of France is";
+        let mut plain = Vec::new();
+        s.generate(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, |b| {
+            plain.extend_from_slice(b);
+            true
+        });
+        let mut looked = Vec::new();
+        let (stats, look) = s.generate_lookup(prompt, &mut Sampler::new(0.0, 0.9, 0, 1), 96, 4, 2, |b| {
+            looked.extend_from_slice(b);
+            true
+        });
+        assert_eq!(String::from_utf8_lossy(&looked), String::from_utf8_lossy(&plain));
+        assert_eq!(stats.prefill_tokens + stats.decode_tokens, 96);
+        assert!(look.drafted > 0 && look.accepted > 0, "{look:?}");
+    }
+
+    /// Prompt lookup on the DSP leaves greedy text as it is: the few-token
+    /// pass's logits are the decode step's (same products, same order; see
+    /// `model::dsp`'s test), so the text equals plain DSP decoding's, with
+    /// drafts proposed and some accepted.
+    #[cfg(feature = "hexagon")]
+    #[test]
+    fn dsp_lookup_keeps_the_greedy_text() {
+        let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
+        let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let Ok(mut s) = DspSession::open(&model, 96, &dir, 6) else {
+            assert!(!cfg!(target_os = "android"), "no DSP");
             return;
         };
         let prompt = "The capital of France is";
