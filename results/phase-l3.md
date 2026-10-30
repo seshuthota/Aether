@@ -510,3 +510,60 @@ through `GpuModel::forward_batch` (`vk_ppl … batch`, 20 chunks of 512):
 gate/up 16 → 109, down 14 → 80; SmolLM2's perplexity run 217.8 → 50.0 s.
 The phone's numbers are the ones that count (llama.cpp's OpenCL: 1,387
 tok/s at pp256 against our 267).
+
+## Step 10: Q4_K_M files on the GPU, decode (2026-10-30, PC only)
+
+A llama.cpp Q4_K_M file of these models is a mix of formats (results/phase-6.md):
+
+| Matrix | Format |
+|---|---|
+| q, k, o, gate, up | Q5_0 |
+| v | Q5_0 or Q8_0, by layer |
+| down | Q4_K or Q6_K, by layer |
+| embedding (= classifier) | Q8_0 |
+
+`shaders/qx_gemv.comp` reads all of these plus Q4_0. Its work split is
+`q4_0_gemv.comp`'s: lanes over 32-value pieces, rows in registers, shuffles
+to add.
+
+At upload (`MatQ`), every piece is laid out like a Q4_0 block: 16 bytes,
+byte k = value k | value k+16 << 4, or 32 int8s for Q8_0. The extra bits
+come after:
+- Q5_0: one uint of fifth bits per piece.
+- Q6_K: two uints of 2-bit highs per piece.
+
+The K-quants' scales stay per super-block, unpacked to bytes, so each
+format reads close to its file size (Q4_K 0.58 bytes a weight against 0.56;
+Q6_K 0.83 against 0.82).
+
+`GpuModel` keeps the tuned Q4_0 shader for Q4_0 matrices. When q/k/v or
+gate/up differ in format, they are split into parts that write their rows
+at a byte offset of the shared output. The prompt pass stays Q4_0-only.
+
+**Test:** `qx_gemv_matches_reference` runs all five formats against
+X @ dequant(W)ᵀ in float64 from numpy:
+- Q4_0, Q5_0 and Q8_0 use llama.cpp's quantizer bytes (12 cases).
+- Q4_K and Q6_K use random blocks dequantized by the gguf package (9 cases,
+  every token). `tools/gen_quant.py` now also writes `out_q4_k_a` and
+  `out_q6_k_a`.
+- Bound 1e-6 · √cols, as for Q4_0.
+
+**Perplexity** through the GPU decode step (`vk_ppl`, wikitext-2, 20 × 512,
+Intel RPL-P):
+
+| Model | GPU (ours) | CPU (ours, phone) | llama.cpp |
+|---|---|---|---|
+| SmolLM2-135M Q4_K_M | 20.6876 | 20.7201 | 20.7784 ± 0.851 |
+| Qwen2.5-0.5B Q4_K_M | 16.7167 | 16.7088 | 16.7657 ± 0.688 |
+| SmolLM2-135M Q4_0 (regression) | 27.6910 | | unchanged from step 7 |
+| Qwen2.5-0.5B Q4_0 (regression) | 19.7193 | | unchanged from step 7 |
+
+Our CPU quantizes the activations to Q8_0; the GPU keeps them in f32. Both
+are within llama.cpp's error bars.
+
+**Speed** (Intel, only to see that the cost follows the bytes): Qwen decode
+33.3 ms a token for Q4_K_M (392 MB) against 22.8 ms for Q4_0 (278 MB), a
+ratio of 1.46 for 1.41× the bytes. The Adreno numbers wait for the phone.
+
+`bench_suite --backend cpu|gpu|dsp` and `scripts/backends-bench.sh` now
+run the same measurements on every engine.

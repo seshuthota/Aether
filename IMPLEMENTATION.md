@@ -80,7 +80,13 @@ Not merged into `master` until these pass. Check the SoC temperature first
    `vk_ppl -- GGUF 20 512 batch` (PC: 27.6961 / 19.7256) and `batch-f32`; `vk_prefill` on
    Qwen (was 267 tok/s; llama.cpp OpenCL 1387 at pp256). If f16 helps, decide whether the
    app's GPU mode runs the prompt on the GPU.
-7. Then: results/phase-l5.md "Step 5b" and the phone numbers in results/phase-l3.md step 9,
+7. **Q4_K_M decode on the GPU (L.3 step 10).** `vk_ppl -- testdata/gguf/*-q4_k_m.gguf 20 512`
+   (PC: 20.6876 / 16.7167; llama.cpp 20.7784 / 16.7657), `vk_decode` on the same files (tok/s
+   against Q4_0 on the Adreno; our CPU Q4_K_M 104–111 tok/s), and the Q4_0 numbers unchanged.
+8. **Every engine, one benchmark.** `scripts/backends-bench.sh results/backends/raw` (bench_suite
+   `--backend cpu|gpu|dsp`: pp 64–512, tg64 at depth 0/256/512, TTFT pp64, peak RSS; Q4_0 and
+   Q4_K_M; the DSP Q4_0 only). Then `SUSTAIN=300` unplugged (adb over Wi-Fi) for J/token.
+9. Then: results/phase-l5.md "Step 5b" and the phone numbers in results/phase-l3.md steps 9–10,
    tick the boxes, `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -397,6 +403,16 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         27.6961 (f32 27.6910), Qwen2.5 19.7256 (f32 19.7193; llama.cpp 27.7412 / 19.7283).
         To do on the phone: `vk_gemm` (f16 vs f32 GFLOP/s), `vk_ppl … batch`, `vk_prefill`,
         and whether the app's GPU mode should now run the prompt on the GPU instead of the CPU.
+  - [~] Q4_K_M files on the GPU, decode (2026-10-30, PC only; results/phase-l3.md step 10):
+        `shaders/qx_gemv.comp` takes every format of the mix (Q4_0, Q5_0, Q8_0, Q4_K, Q6_K) with
+        the Q4_0 shader's lane layout; `MatQ` lays each 32-value piece out as nibble pairs (int8s
+        for Q8_0), K-quant scales per super-block, so each reads close to its file size. Test
+        `qx_gemv_matches_reference` (all five, 21 golden cases, against numpy). `GpuModel`
+        keeps the tuned Q4_0 shader for Q4_0 matrices and splits q/k/v or gate/up into parts
+        when their formats differ (Q4_K_M has `attn_v` in Q8_0 on half the layers). PPL on the
+        PC: SmolLM2 20.6876, Qwen2.5 16.7167 (llama.cpp 20.7784 ± 0.85 / 16.7657 ± 0.69). The
+        prompt pass stays Q4_0-only (`forward_batch` refuses others; the app's GPU mode runs the
+        prompt on the CPU anyway). To do: phone numbers; K-quant GEMM for the prompt.
 - [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
       6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
