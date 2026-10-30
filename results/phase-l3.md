@@ -604,3 +604,59 @@ token). On the Adreno the f32 Q4_0 shader beat decode (251–267 against
 Next, if it does not help: an f16 multi-format shader like
 `q4_0_gemm_h`. (`qx_gemm`'s Q4_0 case is slower than its Q5_0 case; a
 mixed file has no Q4_0 matrices, and Q4_0 models do not use it.)
+
+**An f16 prompt shader for every format** (same day, PC only):
+`shaders/qx_gemm_h.comp` is `q4_0_gemm_h.comp`'s organization (4 rows × 8
+tokens a thread, no shared memory, f16 sums per 32-value piece added into
+f32) for all five formats. It needs its own copy of each matrix (`MatQT`),
+laid out as `MatQ4_0T` is: per piece, the words of 4 neighbouring rows side
+by side.
+- Low 4 bits: 4 words, value 8h + j in bits 4j of word h.
+- Q5_0: one more word of fifth bits.
+- Q6_K: two more words of 2-bit highs.
+- Q8_0: 8 words of int8s.
+- Scales: one f16 per piece (Q4_0, Q5_0, Q8_0). The K-quants' are
+  multiplied out per piece and rounded to f16: Q4_K's d · scale and dmin ·
+  min, Q6_K's two d · scale.
+
+`GpuModel` uses it for the prompt of any model that is not all Q4_0 when
+the GPU has fp16 (`batch-f32` keeps `qx_gemm`), one part per format as in
+decode.
+
+Test `qx_gemm_h_matches_reference`, on the same goldens as `qx_gemm`:
+- 32-value formats: max error < 4 · 2⁻¹¹ of the largest output, as for
+  `q4_0_gemm_h`; measured up to 1.7e-3.
+- K-quant random blocks: one output (1x256) is a sum that cancels, with
+  error 2.3e-2 of itself, because Q4_K's mins make a whole row lean one
+  way. So each output is checked against Σ|w|·|x| (W from the gguf
+  package's dequantization), the scale its f16 roundings grow with: bound
+  2⁻¹¹, measured up to 0.53 · 2⁻¹¹.
+
+Perplexity through the f16 batched pass (`vk_ppl … batch`, Intel):
+
+| Model | `qx_gemm_h` (f16) | `qx_gemm` (f32) | llama.cpp |
+|---|---|---|---|
+| SmolLM2 Q4_K_M | 20.6939 | 20.6876 | 20.7784 ± 0.851 |
+| Qwen2.5 Q4_K_M | 16.7150 | 16.7167 | 16.7657 ± 0.688 |
+
+Speed on the Intel GPU (`vk_gemm 128`, GFLOP/s; f16 columns exclude the
+activations' transpose):
+
+| Shape | `q4_0_gemm_h` | `qx_gemm_h` Q4_0 | `qx_gemm_h` Q5_0 | `qx_gemm` Q5_0 |
+|---|---|---|---|---|
+| wq/wo | 46 | 51 | 33 | 14 |
+| gate/up | 94 | 107 | 70 | 15 |
+| down | 47 | 51 | 33 | 15 |
+
+Q5_0 costs a third more than Q4_0 here: one more word per piece, and one
+more shift, mask and OR per weight for the fifth bit.
+
+Qwen Q4_K_M prompt (`vk_prefill`, Intel):
+
+| Tokens | f32 `qx_gemm` | f16 `qx_gemm_h` | token by token |
+|---|---|---|---|
+| 128 | 19 tok/s | 83 tok/s | ~30 tok/s |
+
+So on this GPU the prompt pass now beats decode. Whole-file perplexity
+runs went from 238 s / 738 s to 67 s / 169 s (SmolLM2 / Qwen). The Adreno
+numbers wait for the phone.

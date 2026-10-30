@@ -4,7 +4,8 @@
 //! formats of a llama.cpp Q4_K_M file (Q4_0, Q5_0, Q8_0, Q4_K, Q6_K): Q4_0
 //! through the tuned `q4_0_gemv.comp`, the others through `qx_gemv.comp`.
 //! The prompt pass of a Q4_0 model uses `q4_0_gemm.comp` (or its f16
-//! sibling); any other model's, `qx_gemm.comp`.
+//! sibling `q4_0_gemm_h.comp`); any other model's, `qx_gemm.comp` (or
+//! `qx_gemm_h.comp`).
 //!
 //! Every buffer lives in memory the CPU and GPU share. The whole token,
 //! about a dozen dispatches per layer with a barrier after each step, is
@@ -22,7 +23,7 @@
 
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
-use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ, MatQ4_0, MatQ4_0T, Recorder, Result, groups_for};
+use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ, MatQ4_0, MatQ4_0T, MatQT, Recorder, Result, groups_for};
 use crate::quant::BlockQ4_0;
 use crate::weight::{Store, Weight};
 
@@ -68,27 +69,38 @@ fn concat(ws: &[(&Weight, usize)]) -> Option<Weight> {
     })
 }
 
+/// `f` of `ws` (matrices of the same width and format, with their rows)
+/// stacked into one, and its rows.
+fn stacked<R>(ws: &[(&Weight, usize)], what: &str, f: impl FnOnce(&Weight, usize) -> Result<R>) -> Result<R> {
+    let rows = ws.iter().map(|w| w.1).sum();
+    let joined;
+    let w = match ws {
+        [(w, _)] => *w,
+        _ => {
+            joined = concat(ws).ok_or_else(|| format!("{what}: matrices of different formats"))?;
+            &joined
+        }
+    };
+    f(w, rows).map_err(|e| format!("{what}: {e}"))
+}
+
+/// The Q4_0 blocks of `ws`, one matrix under the other.
+fn q4_0_stacked(ws: &[(&Weight, usize)], what: &str) -> Result<Vec<BlockQ4_0>> {
+    let mut blocks = Vec::new();
+    for (w, _) in ws {
+        blocks.extend_from_slice(q4_0(w, what)?);
+    }
+    Ok(blocks)
+}
+
 impl Mat {
     /// Uploads `ws` (matrices of the same width and format, with their
     /// rows) stacked into one.
     fn new(gpu: &Gpu, ws: &[(&Weight, usize)], what: &str) -> Result<Mat> {
-        let rows = ws.iter().map(|w| w.1).sum();
         if let Weight::Q4_0(_) = ws[0].0 {
-            let mut blocks = Vec::new();
-            for (w, _) in ws {
-                blocks.extend_from_slice(q4_0(w, what)?);
-            }
-            return Ok(Mat::Q4_0(MatQ4_0::new(gpu, &blocks, rows)?));
+            return Ok(Mat::Q4_0(MatQ4_0::new(gpu, &q4_0_stacked(ws, what)?, ws.iter().map(|w| w.1).sum())?));
         }
-        let joined;
-        let w = match ws {
-            [(w, _)] => *w,
-            _ => {
-                joined = concat(ws).ok_or_else(|| format!("{what}: matrices of different formats"))?;
-                &joined
-            }
-        };
-        Ok(Mat::Qx(MatQ::new(gpu, w, rows).map_err(|e| format!("{what}: {e}"))?))
+        stacked(ws, what, |w, rows| Ok(Mat::Qx(MatQ::new(gpu, w, rows)?)))
     }
 
     fn rows(&self) -> usize {
@@ -129,9 +141,9 @@ impl Mat {
 /// Matrices whose products go into one buffer (q, k, v; gate, up): one
 /// stacked matrix when they share a format, else one each, writing at a
 /// byte offset of the output.
-fn parts(gpu: &Gpu, ws: &[(&Weight, usize)], what: &str) -> Result<Vec<(Mat, usize)>> {
+fn parts<M>(gpu: &Gpu, ws: &[(&Weight, usize)], what: &str, new: impl Fn(&[(&Weight, usize)]) -> Result<M>) -> Result<Vec<(M, usize)>> {
     if ws.iter().all(|(w, _)| w.format_name() == ws[0].0.format_name()) {
-        return Ok(vec![(Mat::new(gpu, ws, what)?, 0)]);
+        return Ok(vec![(new(ws)?, 0)]);
     }
     let mut at = 0usize;
     let mut v = Vec::new();
@@ -140,7 +152,7 @@ fn parts(gpu: &Gpu, ws: &[(&Weight, usize)], what: &str) -> Result<Vec<(Mat, usi
         if !at.is_multiple_of(align) {
             return Err(format!("{what}: an output offset of {at} bytes is not a multiple of {align}"));
         }
-        v.push((Mat::new(gpu, &[w], what)?, at));
+        v.push((new(&[w])?, at));
         at += 4 * w.1;
     }
     Ok(v)
@@ -203,29 +215,89 @@ pub struct Options {
     /// [`GpuModel::forward_batch`] returns the logits of every token, not
     /// only the last (perplexity), at `batch × vocab` floats of memory.
     pub all_logits: bool,
-    /// The prompt's products with the f32 shader (`q4_0_gemm.comp`) even
-    /// where the f16 one (`q4_0_gemm_h.comp`, [`F16`]) could run.
+    /// The prompt's products with the f32 shaders (`q4_0_gemm.comp`,
+    /// `qx_gemm.comp`) even where the f16 ones ([`F16`]) could run.
     pub f32_gemm: bool,
 }
 
-/// The prompt's products in f16 (`shaders/q4_0_gemm_h.comp`), where the
-/// GPU has fp16 arithmetic: a second copy of every matrix in that
-/// shader's layout, and the activations transposed to f16 in `xt` before
-/// each product.
+/// A matrix in the layout of an f16 prompt shader: `q4_0_gemm_h.comp` for
+/// a Q4_0 model, else `qx_gemm_h.comp`, with the length of a token's
+/// output row (the stacked q/k/v or gate/up when it is one part of it).
+enum HMat {
+    Q4_0(MatQ4_0T),
+    Qx(MatQT, usize),
+}
+
+/// One f16 product: the matrix and its kernel, bound to `xt` and the
+/// output.
+struct HPart {
+    mm: Bound,
+    m: HMat,
+}
+
+/// The prompt's products in f16 (`shaders/q4_0_gemm_h.comp`,
+/// `shaders/qx_gemm_h.comp`), where the GPU has fp16 arithmetic: a second
+/// copy of every matrix in that shader's layout, and the activations
+/// transposed to f16 in `xt` before each product.
 struct F16 {
-    /// Per layer: q/k/v, wo, gate/up, down; then the classifier.
-    mats: Vec<[MatQ4_0T; 4]>,
-    cls: MatQ4_0T,
     /// The transpose from xb, from xb2 (attention's output) and from
     /// gate/up (with the SwiGLU).
     t_xb: Bound,
     t_xb2: Bound,
     t_glu: Bound,
-    /// Per layer, the four products (reading xt); the classifier's with
-    /// every token's logits.
-    mm: Vec<[Bound; 4]>,
-    cls_mm: Option<Bound>,
+    /// Per layer, the four products (reading xt), one part per format as
+    /// in [`Layer`]; the classifier's with every token's logits.
+    mm: Vec<[Vec<HPart>; 4]>,
+    cls_mm: Option<HPart>,
     _xt: Buffer,
+}
+
+impl F16 {
+    /// Records the transpose `t` of `n` tokens, then the parts' products.
+    fn record(r: &mut Recorder, t: &Bound, ps: &[HPart], n: usize) {
+        let nb = match &ps[0].m {
+            HMat::Q4_0(m) => m.nb,
+            HMat::Qx(m, _) => m.nb,
+        };
+        Gpu::record_f16t(r, t, 32 * nb, n);
+        r.barrier();
+        for p in ps {
+            match &p.m {
+                HMat::Q4_0(m) => Gpu::record_q4_0_gemm_h_mm(r, &p.mm, m, n),
+                HMat::Qx(m, stride) => Gpu::record_qx_gemm_h(r, &p.mm, m, n, *stride),
+            }
+        }
+    }
+}
+
+/// The f16 products of `ws` stacked (writing `out`, with `accum` adding to
+/// it), from `xt`: one Q4_0 matrix in a `pure` model, else one per format
+/// as [`parts`] splits them. Kernels are made as needed into `ks`, by
+/// format (0: `q4_0_gemm_h`) and `accum`.
+#[allow(clippy::too_many_arguments)]
+fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, pure: bool, ws: &[(&Weight, usize)], what: &str, accum: bool, xt: &Buffer, out: &Buffer) -> Result<Vec<HPart>> {
+    let total = ws.iter().map(|w| w.1).sum();
+    let mats = if pure {
+        vec![(HMat::Q4_0(MatQ4_0T::new(gpu, &q4_0_stacked(ws, what)?, total)?), 0)]
+    } else {
+        parts(gpu, ws, what, |ws| stacked(ws, what, |w, rows| MatQT::new(gpu, w, rows)))?.into_iter().map(|(m, at)| (HMat::Qx(m, total), at)).collect()
+    };
+    mats.into_iter()
+        .map(|(m, at)| {
+            let (key, [q, s]) = match &m {
+                HMat::Q4_0(t) => ((0, accum), [&t.q, &t.d]),
+                HMat::Qx(t, _) => ((t.ty, accum), [&t.q, &t.s]),
+            };
+            let i = match ks.iter().position(|(k, _)| *k == key) {
+                Some(i) => i,
+                None => {
+                    ks.push((key, if key.0 == 0 { gpu.q4_0_gemm_h_kernel(accum)? } else { gpu.qx_gemm_h_kernel(key.0, accum)? }));
+                    ks.len() - 1
+                }
+            };
+            Ok(HPart { mm: ks[i].1.bind_at(gpu, &[(q, 0), (s, 0), (xt, 0), (out, at)])?, m })
+        })
+        .collect()
 }
 
 pub struct GpuModel {
@@ -311,9 +383,9 @@ impl GpuModel {
                 None => zeros(n),
             };
             layers.push(Layer {
-                wqkv: parts(gpu, &[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"))?,
+                wqkv: parts(gpu, &[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
                 wo: mat(&lw.wo, dim, "wo")?,
-                w_gate_up: parts(gpu, &[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up")?,
+                w_gate_up: parts(gpu, &[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", |ws| Mat::new(gpu, ws, "w_gate/w_up"))?,
                 w_down: mat(&lw.w_down, dim, "w_down")?,
                 attn_norm: f32buf(&lw.attn_norm)?,
                 ffn_norm: f32buf(&lw.ffn_norm)?,
@@ -446,50 +518,27 @@ impl GpuModel {
             (None, _) => None,
         };
 
-        let f16 = if pure && gpu.info.fp16 && !opt.f32_gemm {
-            let (tk, tk_glu, mh, mh_acc) = (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?, gpu.q4_0_gemm_h_kernel(false)?, gpu.q4_0_gemm_h_kernel(true)?);
+        let f16 = if gpu.info.fp16 && !opt.f32_gemm {
+            let (tk, tk_glu) = (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?);
             let xt = gpu.buffer(dim.max(hid) * Gpu::f16t_pad(batch) * 2)?;
-            let mat_t = |w: &Weight, rows: usize, what: &str| MatQ4_0T::new(gpu, q4_0(w, what)?, rows);
-            let stacked_t = |ws: &[(&Weight, usize)], what: &str| -> Result<MatQ4_0T> {
-                let mut blocks = Vec::new();
-                for (w, _) in ws {
-                    blocks.extend_from_slice(q4_0(w, what)?);
-                }
-                MatQ4_0T::new(gpu, &blocks, ws.iter().map(|w| w.1).sum())
-            };
-            let mut mats = Vec::new();
+            let mut ks = Vec::new();
             let mut mm = Vec::new();
             for (l, lw) in weights.layers.iter().enumerate() {
-                let m = [
-                    stacked_t(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"))?,
-                    mat_t(&lw.wo, dim, "wo")?,
-                    stacked_t(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up")?,
-                    mat_t(&lw.w_down, dim, "w_down")?,
-                ];
+                let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
                 mm.push([
-                    mh.bind(gpu, &[&m[0].q, &m[0].d, &xt, &qkv])?,
-                    mh_acc.bind(gpu, &[&m[1].q, &m[1].d, &xt, &x])?,
-                    mh.bind(gpu, &[&m[2].q, &m[2].d, &xt, &hb12])?,
-                    mh_acc.bind(gpu, &[&m[3].q, &m[3].d, &xt, &x])?,
+                    h(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
+                    h(&[(&lw.wo, dim)], "wo", true, &x)?,
+                    h(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", false, &hb12)?,
+                    h(&[(&lw.w_down, dim)], "w_down", true, &x)?,
                 ]);
-                mats.push(m);
             }
-            let cls_t = mat_t(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size, "classifier")?;
             let cls_mm = match &logits_all {
-                Some(l) => Some(mh.bind(gpu, &[&cls_t.q, &cls_t.d, &xt, l])?),
+                Some(l) => h_parts(gpu, &mut ks, pure, &[(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size)], "classifier", false, &xt, l)?.pop(),
                 None => None,
             };
-            let f = F16 {
-                t_xb: tk.bind(gpu, &[&xb, &xt])?,
-                t_xb2: tk.bind(gpu, &[&xb2, &xt])?,
-                t_glu: tk_glu.bind(gpu, &[&hb12, &xt])?,
-                mats,
-                cls: cls_t,
-                mm,
-                cls_mm,
-                _xt: xt,
-            };
-            f16_kernels = vec![tk, tk_glu, mh, mh_acc];
+            let f = F16 { t_xb: tk.bind(gpu, &[&xb, &xt])?, t_xb2: tk.bind(gpu, &[&xb2, &xt])?, t_glu: tk_glu.bind(gpu, &[&hb12, &xt])?, mm, cls_mm, _xt: xt };
+            f16_kernels = vec![tk, tk_glu];
+            f16_kernels.extend(ks.into_iter().map(|(_, k)| k));
             Some(f)
         } else {
             None
@@ -578,14 +627,13 @@ impl GpuModel {
             r.dispatch(k, &p, [m.rows().div_ceil(64) as u32, n.div_ceil(64) as u32, 1]);
         };
         // With f16 products, product i of layer l (q/k/v, wo, gate/up,
-        // down) transposes its input (`t`) and runs the f16 shader (Q4_0
-        // models only, whose products are one matrix each).
+        // down) transposes its input (`t`) and runs the f16 shaders.
         let f16 = self.f16.as_ref().filter(|_| n > 1);
-        let product = |r: &mut Recorder, gemv_b: &[Bound], gemm_b: &[Bound], ms: &[&Mat], stride: usize, h: Option<(&Bound, &Bound, &MatQ4_0T)>| {
+        let product = |r: &mut Recorder, gemv_b: &[Bound], gemm_b: &[Bound], ms: &[&Mat], stride: usize, h: Option<(&Bound, &[HPart])>| {
             if n == 1 {
                 gemv_b.iter().zip(ms).for_each(|(k, m)| gemv(r, k, m));
-            } else if let Some((t, mm, mt)) = h {
-                Gpu::record_q4_0_gemm_h(r, t, mm, mt, n);
+            } else if let Some((t, ps)) = h {
+                F16::record(r, t, ps, n);
             } else {
                 gemm_b.iter().zip(ms).for_each(|(k, m)| gemm(r, k, m, stride));
             }
@@ -593,7 +641,7 @@ impl GpuModel {
         fn mats(p: &[(Mat, usize)]) -> Vec<&Mat> {
             p.iter().map(|(m, _)| m).collect()
         }
-        let h = |l: usize, i: usize, t: fn(&F16) -> &Bound| f16.map(|f| (t(f), &f.mm[l][i], &f.mats[l][i]));
+        let h = |l: usize, i: usize, t: fn(&F16) -> &Bound| f16.map(|f| (t(f), &f.mm[l][i][..]));
         for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
             let layer_off = (l * c.seq_len * kv_dim) as u32;
             // In decode the first norm is part of q/k/v.
@@ -631,7 +679,7 @@ impl GpuModel {
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
                 match f16.and_then(|f| f.cls_mm.as_ref().map(|mm| (f, mm))) {
-                    Some((f, mm)) => Gpu::record_q4_0_gemm_h(r, &f.t_xb, mm, &f.cls, n),
+                    Some((f, mm)) => F16::record(r, &f.t_xb, std::slice::from_ref(mm), n),
                     None => gemm(r, cls_mm, &self.cls, 0),
                 }
             }
@@ -685,12 +733,14 @@ impl GpuModel {
     }
 
     /// Which shader the prompt pass's products use: `q4_0_gemm_h` (f16),
-    /// `q4_0_gemm` (f32) or `qx_gemm` (f32, any format).
+    /// `q4_0_gemm` (f32), or for any format `qx_gemm_h` (f16) or `qx_gemm`
+    /// (f32).
     pub fn gemm_shader(&self) -> &'static str {
         match (self.pure, self.f16.is_some()) {
             (true, true) => "q4_0_gemm_h",
             (true, false) => "q4_0_gemm",
-            (false, _) => "qx_gemm",
+            (false, true) => "qx_gemm_h",
+            (false, false) => "qx_gemm",
         }
     }
 

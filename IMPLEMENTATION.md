@@ -85,6 +85,10 @@ Not merged into `master` until these pass. Check the SoC temperature first
    same files (tok/s against Q4_0 on the Adreno; our CPU Q4_K_M 104–111 tok/s), `vk_prefill`
    on Qwen Q4_K_M (does `qx_gemm` beat token-by-token decode?), `vk_gemm 128` (qx columns),
    and the Q4_0 numbers unchanged.
+   The f16 multi-format prompt shader (`qx_gemm_h`, now the default for Q4_K_M):
+   `vk_ppl -- *-q4_k_m.gguf 20 512 batch` (PC: 20.6939 / 16.7150) and `batch-f32` (`qx_gemm`,
+   20.6876 / 16.7167); `vk_gemm -- 128` qxh columns (PC: Q5_0 33–70 GFLOP/s against `qx_gemm`'s
+   14–15); `vk_prefill` on Qwen Q4_K_M (PC: 83 tok/s at 128 against 19 for f32, 30 decode).
 8. **Every engine, one benchmark.** `scripts/backends-bench.sh results/backends/raw` (bench_suite
    `--backend cpu|gpu|dsp`: pp 64–512, tg64 at depth 0/256/512, TTFT pp64, peak RSS; Q4_0 and
    Q4_K_M; the DSP Q4_0 only). Then `SUSTAIN=300` unplugged (adb over Wi-Fi) for J/token.

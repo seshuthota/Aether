@@ -1,0 +1,105 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+// out[t][row] = W[row] · X[t] in fp16 arithmetic for a matrix W in any
+// format of a llama.cpp Q4_K_M file (FMT, ggml's type id: Q4_0 2, Q5_0 6,
+// Q8_0 8, Q4_K 12, Q6_K 14): q4_0_gemm_h.comp (read that first) for every
+// format. The same organization: each thread computes 4 rows × 8 tokens
+// from the activations transposed to f16 (`to_f16t.comp`), with no shared
+// memory, the sums of each 32-value piece in f16, then added in f32.
+//
+// The layout (`MatQT`): per 32-value piece b of row r, NW words at u32
+// (NW · b + h) · rows4 + r and NS f16 scales at (NS · b + i) · rows4 + r
+// (rows rounded up to rows4, a multiple of 4), so a thread's 4 rows are
+// one uvec4 / f16vec4 and neighbouring threads read neighbouring memory.
+// Words 0–3 hold the low 4 bits, value 8h + j in bits 4j of word h; then
+//
+//   Q4_0 (2)   value (u − 8) · a                     NW 4, NS 1
+//   Q5_0 (6)   value (u − 16) · a, u's fifth bit k   NW 5, NS 1
+//              of value k in word 4
+//   Q8_0 (8)   value i · a: 8 words of int8s,        NW 8, NS 1
+//              value 4h + j in byte j of word h
+//   Q4_K (12)  value u · a − c: a = d · scale,       NW 4, NS 2
+//              c = dmin · min of the sub-block
+//   Q6_K (14)  value (u − 32) · a for values 0–15,   NW 6, NS 2
+//              · c for 16–31; u's 2 high bits of
+//              value 16g + l in bits 2l of word 4 + g
+//
+// `ostride` is the length of a token's row of `o` (0: rows), as in
+// qx_gemm.comp. Workgroup (i, j): rows 256i .. 256i + 255, tokens 8j .. 8j + 7.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 q[]; };
+layout(std430, binding = 1) readonly buffer S { f16vec4 s[]; };
+layout(std430, binding = 2) readonly buffer X { f16vec4 xt[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; uint tokens; uint npad; uint ostride; };
+layout(constant_id = 0) const bool ACCUM = false;
+layout(constant_id = 1) const uint FMT = 2;
+
+const uint NW = FMT == 8 ? 8 : FMT == 6 ? 5 : FMT == 14 ? 6 : 4;
+const uint NS = FMT >= 12 ? 2 : 1;
+
+void main() {
+    uint quad = gl_GlobalInvocationID.x, rq = (rows + 3) / 4;
+    if (quad >= rq) return;
+    uint t0 = gl_WorkGroupID.y * 8, n4 = npad / 4;
+    vec4 acc[8];
+    for (uint t = 0; t < 8; t++) acc[t] = vec4(0.0);
+    for (uint b = 0; b < nb; b++) {
+        f16vec4 a = s[NS * b * rq + quad];
+        f16vec4 c = NS == 2 ? s[(NS * b + 1) * rq + quad] : a;
+        f16vec4 part[8];
+        for (uint t = 0; t < 8; t++) part[t] = f16vec4(0.0);
+        uint at = NW * b * rq + quad;
+        // Value k's weights for the 4 rows, times the 8 tokens' x[k].
+        #define MAC(k, wv) { \
+            f16vec4 xa = xt[(32 * b + (k)) * n4 + t0 / 4], xb = xt[(32 * b + (k)) * n4 + t0 / 4 + 1]; \
+            part[0] += wv * xa.x; part[1] += wv * xa.y; part[2] += wv * xa.z; part[3] += wv * xa.w; \
+            part[4] += wv * xb.x; part[5] += wv * xb.y; part[6] += wv * xb.z; part[7] += wv * xb.w; }
+        if (FMT == 8) {
+            for (uint h = 0; h < 8; h++) {
+                ivec4 w = ivec4(q[at + h * rq]);
+                for (uint j = 0; j < 4; j++) {
+                    f16vec4 wv = f16vec4(bitfieldExtract(w, int(8 * j), 8)) * a;
+                    MAC(4 * h + j, wv)
+                }
+            }
+        } else {
+            uvec4 hi1 = FMT == 6 ? q[at + 4 * rq] : uvec4(0);
+            for (uint h = 0; h < 4; h++) {
+                uvec4 w = q[at + h * rq];
+                uvec4 hi2 = FMT == 14 ? q[at + (4 + h / 2) * rq] : uvec4(0);
+                for (uint j = 0; j < 8; j++) {
+                    uint k = 8 * h + j;
+                    uvec4 u = (w >> (4 * j)) & 15u;
+                    f16vec4 wv;
+                    if (FMT == 2) {
+                        wv = (f16vec4(u) - float16_t(8.0)) * a;
+                    } else if (FMT == 6) {
+                        u |= ((hi1 >> k) & 1u) << 4;
+                        wv = (f16vec4(u) - float16_t(16.0)) * a;
+                    } else if (FMT == 12) {
+                        wv = f16vec4(u) * a - c;
+                    } else {
+                        u |= ((hi2 >> (2 * (k % 16))) & 3u) << 4;
+                        wv = (f16vec4(u) - float16_t(32.0)) * (k < 16 ? a : c);
+                    }
+                    MAC(k, wv)
+                }
+            }
+        }
+        for (uint t = 0; t < 8; t++) acc[t] += vec4(part[t]);
+    }
+    uint stride = ostride == 0 ? rows : ostride;
+    for (uint t = 0; t < 8; t++) {
+        uint tok = t0 + t;
+        if (tok >= tokens) break;
+        for (uint r = 0; r < 4; r++) {
+            uint row = 4 * quad + r;
+            if (row < rows) {
+                uint i = tok * stride + row;
+                o[i] = ACCUM ? o[i] + acc[t][r] : acc[t][r];
+            }
+        }
+    }
+}

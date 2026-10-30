@@ -10,8 +10,8 @@
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
 //! token by token through the decode step; f16 products where the GPU has
-//! fp16 arithmetic and the model is all Q4_0, with `batch-f32` the f32
-//! shader (the shader used is printed).
+//! fp16 arithmetic, with `batch-f32` the f32 shaders (the shader used is
+//! printed).
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
