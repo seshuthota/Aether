@@ -61,6 +61,7 @@ const Q4_0_GEMV: u32 = 8;
 const MODEL_LOAD: u32 = 9;
 const MODEL_DECODE: u32 = 10;
 const MATH_TEST: u32 = 11;
+const HMX_GEMM: u32 = 12;
 
 /// The functions of `libcdsprpc.so` we use (remote.h, rpcmem.h).
 struct Rpc {
@@ -291,6 +292,19 @@ impl Dsp {
         Ok(y)
     }
 
+    /// out = X Wᵀ on the DSP's matrix unit (HMX), for `tokens` rows of X
+    /// (each `w.nb` · 32 f32) in `x`; `out` gets `tokens` rows of
+    /// `w.rows` rounded up to 32 floats. X and W are rounded to fp16 for
+    /// the products. Thread 0 drives HMX while the others dequantize the
+    /// weights. Returns the DSP's own time in microseconds.
+    pub fn hmx_gemm(&self, w: &DspMatQ4_0, x: &Shared, out: &mut Shared, tokens: usize, threads: u32) -> Result<u64> {
+        let stride = w.rows.div_ceil(32) * 32;
+        assert!(x.len >= tokens * w.nb * 128 && out.len >= tokens * stride * 4);
+        let mut t = [0u8; 8];
+        self.call(HMX_GEMM, &[&words(&[w.buf.fd as u32, x.fd as u32, out.fd as u32, w.rows as u32, w.nb as u32, tokens as u32, threads])], &mut [&mut t])?;
+        Ok(u64::from_le_bytes(t))
+    }
+
     /// The number of 128-byte HVX contexts on the DSP.
     pub fn hvx_units(&self) -> Result<u32> {
         let mut out = [0u8; 4];
@@ -481,6 +495,41 @@ mod tests {
         let silu = |i: usize| g[i] as f64 / (1.0 + (-g[i] as f64).exp()) * u[i] as f64;
         let (err, i) = worst(&y, &silu);
         assert!(err < 2e-6 || silu(i).abs() < 1e-30, "silu({}) * {}: {} against {} (relative error {err:.2e})", g[i], u[i], y[i], silu(i));
+    }
+
+    /// The matrix unit's product on llama.cpp's Q4_0 bytes against
+    /// X @ dequant(W)ᵀ in float64 (`out_q4_0_a`, the batch goldens: odd
+    /// row and token counts, so tiles have tails). X and W go through fp16
+    /// (11-bit mantissas), so the bound is fp16's: 2⁻¹¹ for each factor
+    /// and the result, against the largest output.
+    #[test]
+    fn dsp_hmx_gemm_matches_reference() {
+        let Some(root) = crate::testutil::golden("quant_batch") else { return };
+        let Some(d) = dsp() else { return };
+        let mut cases = 0;
+        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
+            cases += 1;
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_a.npy"));
+            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
+            let blocks: Vec<BlockQ4_0> = bytes.as_chunks::<18>().0.iter().map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
+            let (rows, tokens) = (ws[0], xs[0]);
+            let w = d.q4_0_matrix(&blocks, rows).unwrap();
+            let mut x = d.shared(xv.len() * 4).unwrap();
+            x.as_mut_slice::<f32>()[..xv.len()].copy_from_slice(&xv);
+            let stride = rows.div_ceil(32) * 32;
+            let mut out = d.shared(tokens * stride * 4).unwrap();
+            // One thread doing both in turn, and the pipeline.
+            for threads in [1, 2, 6] {
+                out.as_mut_slice::<f32>().fill(f32::NAN);
+                d.hmx_gemm(&w, &x, &mut out, tokens, threads).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+                let got: Vec<f32> = (0..tokens).flat_map(|t| out.as_slice::<f32>()[t * stride..][..rows].to_vec()).collect();
+                let (_, rel) = crate::testutil::max_errors(&got, &want);
+                assert!(rel < 3.0 * 2f32.powi(-11), "{}, {threads} threads: rel {rel:.2e}; first outputs {:?} against {:?}", dir.display(), &got[..4.min(got.len())], &want[..4.min(want.len())]);
+            }
+        }
+        assert!(cases >= 11, "only {cases} golden cases");
     }
 
     /// The DSP's Q4_0 x Q8_0 product on llama.cpp's bytes (the weights

@@ -60,7 +60,7 @@ fn dsp(out: &std::path::Path) {
     let (clang, qurt) = (tools.join("bin/hexagon-clang"), sdk.join("rtos/qurt/computev79/include"));
     let inc = |p: &std::path::Path| format!("-I{}", p.display());
     run(Command::new(sdk.join("ipc/fastrpc/qaic/bin/qaic")).arg("-mdll").arg("-o").arg(out).arg(inc(&sdk.join("incs"))).arg(inc(&sdk.join("incs/stddef"))).arg("dsp/aether_dsp.idl"));
-    let flags = ["-mcpu=hexagonv79", "-mv79", "-mhvx=v79", "-mhvx-length=128b", "-O2", "-G0", "-fpic", "-Wall", "-Werror"];
+    let flags = ["-mcpu=hexagonv79", "-mv79", "-mhvx=v79", "-mhvx-length=128b", "-mhmx", "-O2", "-G0", "-fpic", "-Wall", "-Werror"];
     let incs = [out.to_path_buf(), qurt.clone(), qurt.join("qurt"), qurt.join("posix"), sdk.join("incs"), sdk.join("incs/stddef"), sdk.join("ipc/fastrpc/incs")];
     let mut objs = Vec::new();
     let mut srcs: Vec<PathBuf> = std::fs::read_dir("dsp").unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "c")).collect();

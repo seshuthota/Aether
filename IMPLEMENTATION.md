@@ -358,7 +358,9 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         per token is ~150 µs.)
   - [x] Step 4b, weights by DMA into VTCM (products ~36 → ~60 GB/s; Qwen 6.75 ms a token,
         123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
-  - [ ] Step 5, prefill on HMX (the matrix unit; fp16 tiles in VTCM), PPL again.
+  - [x] Step 5a, Q4_0 matrix-matrix product on HMX (fp16 tiles in VTCM; HVX threads dequantize
+        while one drives HMX; Qwen's layer products 1512 tok/s at 128 tokens, 2413 at 256).
+  - [ ] Step 5b, prefill on the DSP through the whole model with HMX, PPL again.
 
 ---
 

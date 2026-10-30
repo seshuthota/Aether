@@ -44,4 +44,9 @@ interface aether_dsp : remote_handle64 {
     // The decode step's vector math on a and b (whole vectors of 32), for
     // tests: op 0 is y = e^a, op 1 is y = silu(a) b (SwiGLU).
     long math_test(in uint32 op, in sequence<float> a, in sequence<float> b, rout sequence<float> y);
+    // out = X Wᵀ on the matrix unit (HMX, dsp/hmx.c): W Q4_0 in our layout
+    // of 32-row groups (`rows` rows of `nb` blocks), X `tokens` rows of
+    // nb * 32 f32, out `tokens` rows of `rows` (rounded up to 32) f32.
+    // Both are rounded to fp16 for the products.
+    long hmx_gemm(in long w_fd, in long x_fd, in long out_fd, in uint32 rows, in uint32 nb, in uint32 tokens, in uint32 threads, rout uint64 us);
 };
