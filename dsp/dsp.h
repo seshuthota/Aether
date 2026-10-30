@@ -49,6 +49,11 @@ extern uint32 dma_gen;
 char *vtcm_get(uint32 *bytes);
 // The resource context it was got with (for HAP_compute_res_hmx_lock).
 extern unsigned int vtcm_ctx;
+// Held for the whole of a call that uses VTCM, the DMA rings (dma_gen) or
+// HMX: calls run at once on their own FastRPC threads (the tests do), and
+// would overwrite each other's data there.
+void dsp_busy(void);
+void dsp_free(void);
 
 // out = X Wᵀ on HMX (hmx.c): W `rows` rows of nb Q4_0 blocks in our
 // layout, X `tokens` rows of nb * 32 f32 (`x_stride` floats apart), out

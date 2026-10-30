@@ -375,6 +375,10 @@ out:
     return vtcm;
 }
 
+static qurt_mutex_t busy_lock = QURT_MUTEX_INIT;
+void dsp_busy(void) { qurt_mutex_lock(&busy_lock); }
+void dsp_free(void) { qurt_mutex_unlock(&busy_lock); }
+
 void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
     const int32 *xq = (const int32 *) xqb;
     const float *xd = (const float *) (xqb + 32 * nb);
@@ -441,10 +445,12 @@ AEEResult aether_dsp_q4_0_gemv(remote_handle64 h, int w_fd, int x_fd, int out_fd
     int err = AEE_EBADPARM;
     if (w && x && out) {
         cpu_wrote(x, nb * 40);
-        dma_gen++;
         if (prefetch == FETCH_DMA) vtcm_get(&(uint32) {0});
+        dsp_busy();
+        dma_gen++;
         struct gemv_job j = {w, x, out, groups, nb, threads, prefetch};
         err = run_threads(threads, gemv_thread, &j, us);
+        dsp_free();
         cpu_reads(out, groups * 128);
     }
     if (w) release(w_fd);

@@ -219,7 +219,9 @@ AEEResult aether_dsp_hmx_gemm(remote_handle64 h, int w_fd, int x_fd, int out_fd,
         cpu_wrote(x, tokens * nb * 128);
         struct gemm_job j = {{w, rows, nb, x, nb * 32, tokens, out, stride, 0, v}, threads};
         qurt_barrier_init(&j.bar, threads);
+        dsp_busy();
         err = run_threads(threads, gemm_thread, &j, us);
+        dsp_free();
         qurt_barrier_destroy(&j.bar);
         if (!err) err = j.err;
         cpu_reads(out, tokens * stride * 4);

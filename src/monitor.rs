@@ -328,8 +328,9 @@ mod tests {
         let m = Monitor::start(Duration::from_millis(20), None).unwrap();
         // On Android the first sample reads the battery service (three
         // subprocesses): over 150 ms while the other tests load every core.
-        // Later samples skip it until the slow period, so 1 s is plenty.
-        thread::sleep(Duration::from_secs(1));
+        // Later samples skip it until the slow period. 1 s once gave only 1
+        // sample (the 112 tests with the DSP's on the phone), so 3 s.
+        thread::sleep(Duration::from_secs(3));
         let r = m.stop();
         assert!(r.samples.len() >= 5, "only {} samples", r.samples.len());
         // Stopping finishes the sample in progress (the first one reads the

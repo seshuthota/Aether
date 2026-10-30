@@ -437,10 +437,12 @@ AEEResult aether_dsp_model_decode(remote_handle64 h, uint32 pos, uint32 threads,
     cpu_wrote(M.x, 4 * M.dim);
     cpu_wrote(M.rot, 4 * M.hs);
     cpu_wrote(M.prof, 8 * N_STAGES);
+    dsp_busy();
     dma_gen++;
     struct step st = {pos, threads, dma, 0, HAP_perf_get_qtimer_count()};
     qurt_barrier_init(&st.bar, threads);
     int err = run_threads(threads, decode_thread, &st, us);
+    dsp_free();
     qurt_barrier_destroy(&st.bar);
     // The CPU reads the logits, and writes x next time.
     cpu_reads(M.logits, 4 * M.vocab);
@@ -528,11 +530,13 @@ AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint
     // The CPU wrote the tokens' embeddings and RoPE tables.
     cpu_wrote(M.x, 4 * n * M.dim);
     cpu_wrote(M.rot, 4 * n * M.hs);
+    dsp_busy();
     dma_gen++;
     struct step st = {pos, threads, DMA_DEFAULT, 0, HAP_perf_get_qtimer_count()};
     st.n = n, st.all = all, st.vtcm = vtcm;
     qurt_barrier_init(&st.bar, threads);
     int err = run_threads(threads, prefill_thread, &st, us);
+    dsp_free();
     qurt_barrier_destroy(&st.bar);
     if (!err) err = st.err;
     uint32 rows = all ? n : 1;
