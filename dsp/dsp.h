@@ -46,6 +46,8 @@ extern uint32 dma_gen;
 // calling thread may ask, before it starts workers; q4_0_rows uses what
 // was got, and falls back to l2fetch without it.
 char *vtcm_get(uint32 *bytes);
+// The resource context it was got with (for HAP_compute_res_hmx_lock).
+extern unsigned int vtcm_ctx;
 
 // Where thread t of `threads` starts in `groups` row groups: an even
 // group, so groups pair up.

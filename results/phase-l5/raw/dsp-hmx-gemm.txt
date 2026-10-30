@@ -1,0 +1,44 @@
+# cargo run --release --target aarch64-linux-android --features hexagon --example dsp_gemm <tokens> <threads>
+# 2026-10-30, SoC 42.6 °C before the first run. DSP time, median of 9.
+128 tokens, 6 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        308      857.9        2.4
+        wo        239      859.9        1.9
+   gate/up       1656     1347.4       12.9
+      down       1325      842.0       10.4
+24 layers: 84.7 ms for 128 tokens, 1512 tok/s (products only)
+128 tokens, 4 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        335      788.8        2.6
+        wo        296      694.3        2.3
+   gate/up       2726      818.6       21.3
+      down       1913      583.2       14.9
+24 layers: 126.5 ms for 128 tokens, 1012 tok/s (products only)
+128 tokens, 1 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        735      359.5        5.7
+        wo        494      416.0        3.9
+   gate/up       7417      300.8       57.9
+      down       4074      273.9       31.8
+24 layers: 305.3 ms for 128 tokens, 419 tok/s (products only)
+256 tokens, 6 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        408     1295.3        1.6
+        wo        309     1330.2        1.2
+   gate/up       1842     2422.8        7.2
+      down       1862     1198.4        7.3
+24 layers: 106.1 ms for 256 tokens, 2413 tok/s (products only)
+32 tokens, 6 threads
+    matrix         us    GFLOP/s   us/token
+     q/k/v        153      431.8        4.8
+        wo        105      489.3        3.3
+   gate/up       1594      350.0       49.8
+      down        805      346.5       25.2
+24 layers: 63.8 ms for 32 tokens, 502 tok/s (products only)
+
+# Experiment, 1 thread, 128 tokens, dequantizing only the first row group
+# (so the time is HMX, the activations and the f32 output, not the weights):
+     q/k/v        168     1572.9        1.3
+        wo        159     1292.6        1.2
+   gate/up        443     5037.0        3.5
+      down        814     1370.6        6.4

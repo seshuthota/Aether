@@ -288,3 +288,55 @@ left over beyond the products is the norms, RoPE, attention and SwiGLU
 Over the perplexity run (positions 0–510) Qwen does 72 tok/s: attention
 grows with position. Next for decode: attention over the whole cache in
 vectors of positions, not one reduction per position.
+
+## Step 5a: matrix-matrix products on HMX (2026-10-30; `raw/dsp-hmx-gemm.txt`)
+
+For a prompt the products are matrix × matrix: every weight is used by
+all the prompt's tokens, so the work is arithmetic, not reading DRAM.
+The DSP has a matrix unit for that, HMX. It multiplies 32 × 32 tiles of
+fp16 that must be in VTCM, adding into its own accumulator, and writes
+a 32 × 32 result tile back to VTCM. HMX is not in the SDK's documents;
+the tile layouts and instructions follow llama.cpp's backend.
+
+`Dsp::hmx_gemm` (dsp/hmx.c): the activations (up to ~320 tokens) are
+turned into fp16 tiles in VTCM's first 4 MB bank. The weights stay in
+our Q4_0 layout in DRAM. HVX threads dequantize chunks of 32-row groups
+into fp16 weight tiles in one of two 1.5 MB buffers in the second bank,
+while thread 0 drives HMX on the chunk in the other buffer and turns the
+result tiles into f32 rows. Q4_0's 32 rows of a group sit in the 32
+lanes of a vector, which is the layout of a weight tile's 32 outputs, so
+no shuffling across lanes is needed.
+
+**Three things that went wrong first**:
+- The DSP hung, and stayed hung for every later call until the phone
+  was rebooted. HMX has to be powered on (`HAP_power_set_HMX`) like
+  HVX; its instructions on an unpowered unit never finish.
+- Every output was 1.0 too large. The output "scales" are a 32-bit word
+  per column, fp16 scale in the low half and fp16 bias in the high half;
+  `0x3c00` splatted into both halves set a bias of 1.0.
+- With 2048 inputs (64 tiles in one streamed `:deep` load) the sums were
+  wrong; 28 tiles were right. Loads are now at most 32 tiles each.
+  (llama.cpp's backend loads one tile pair per instruction.)
+
+**Correct**: `dsp_hmx_gemm_matches_reference`, against numpy's float64
+X·dequant(W)ᵀ on the 11 batch goldens (odd row and token counts), at 1,
+2 and 6 threads: relative error under 3 · 2⁻¹¹ (fp16's rounding of X, W
+and the result). 109/109 tests on the phone.
+
+**Speed** (Qwen2.5-0.5B's four layer products, random weights, DSP
+time; "tok/s" is 24 layers of products alone, no attention or classifier):
+
+| tokens, threads | q/k/v | wo | gate/up | down | tok/s |
+| --- | --- | --- | --- | --- | --- |
+| 128, 1 | 735 µs | 494 | 7417 | 4074 | 419 |
+| 128, 4 | 335 | 296 | 2726 | 1913 | 1012 |
+| 128, 6 | 308 | 239 | 1656 | 1325 | 1512 |
+| 32, 6 | 153 | 105 | 1594 | 805 | 502 |
+| 256, 6 | 408 | 309 | 1842 | 1862 | 2413 |
+
+Dequantizing the weights is most of the work: on one thread with it
+skipped, 128 tokens take 443 µs on gate/up (5 TFLOP/s) against 7417. So
+the cost per matrix is nearly fixed and the tokens share it: 32 tokens
+run at 502 tok/s, 256 at 2413. llama.cpp's NPU prefill of the whole
+model is ~330 tok/s. Next (step 5b): prefill through the whole model on
+the DSP, and perplexity again.

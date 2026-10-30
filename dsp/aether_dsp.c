@@ -18,6 +18,7 @@
 #include "qurt_barrier.h"
 #include "qurt_hvx.h"
 #include "qurt_memory.h"
+#include "qurt_mutex.h"
 #include "qurt_thread.h"
 
 // One HVX vector: 128 bytes, 32 floats.
@@ -62,6 +63,13 @@ AEEResult aether_dsp_open(const char *uri, remote_handle64 *h) {
     memset(&r, 0, sizeof(r));
     r.type = HAP_power_set_HVX;
     r.hvx.power_up = TRUE;
+    err = HAP_power_set(c, &r);
+    if (err) return err;
+    // And the matrix unit (HMX), which is off until asked for: its
+    // instructions on an unpowered unit hung the DSP.
+    memset(&r, 0, sizeof(r));
+    r.type = HAP_power_set_HMX;
+    r.hmx.power_up = TRUE;
     return HAP_power_set(c, &r);
 }
 
@@ -339,21 +347,30 @@ static inline void dma_wait(volatile struct dma1d *d) {
 // waited inside HAP_compute_res_acquire for the VTCM the one held).
 static char *vtcm;
 static uint32 vtcm_bytes;
+unsigned int vtcm_ctx;
+
+// Calls (each on its own FastRPC thread) may ask at the same time too.
+static qurt_mutex_t vtcm_lock = QURT_MUTEX_INIT;
 
 char *vtcm_get(uint32 *bytes) {
+    qurt_mutex_lock(&vtcm_lock);
     if (!vtcm) {
         unsigned int size = 0;
-        if (HAP_compute_res_query_VTCM(0, &size, NULL, NULL, NULL) || !size) return NULL;
+        if (HAP_compute_res_query_VTCM(0, &size, NULL, NULL, NULL) || !size) goto out;
         compute_res_attr_t attr;
         HAP_compute_res_attr_init(&attr);
         HAP_compute_res_attr_set_serialize(&attr, 0);
         HAP_compute_res_attr_set_vtcm_param_v2(&attr, size, size, size);
+        // With the matrix unit (HMX), which works only on VTCM.
+        HAP_compute_res_attr_set_hmx_param(&attr, 1);
         unsigned int ctx = HAP_compute_res_acquire(&attr, 1000000);
         void *p = NULL;
         unsigned int got = 0;
-        if (!ctx || HAP_compute_res_attr_get_vtcm_ptr_v2(&attr, &p, &got) || !p) return NULL;
-        vtcm = p, vtcm_bytes = got;
+        if (!ctx || HAP_compute_res_attr_get_vtcm_ptr_v2(&attr, &p, &got) || !p) goto out;
+        vtcm = p, vtcm_bytes = got, vtcm_ctx = ctx;
     }
+out:
+    qurt_mutex_unlock(&vtcm_lock);
     *bytes = vtcm_bytes;
     return vtcm;
 }
