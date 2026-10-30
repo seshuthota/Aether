@@ -1138,5 +1138,32 @@ conversion. Every file is **byte-identical**:
 
 The bytes being identical carries every earlier check of those files
 (perplexity, KL, decode on all three backends) over to our own output.
-K-quant mixes (`Q4_K_M`) are read but not written: llama.cpp chooses a
-type per matrix by rules not reproduced here.
+**Q4_K_M** (same day): `aether-quantize … q4_k_m` writes llama.cpp's mix.
+llama.cpp picks a format per matrix (`llama_tensor_get_type`); for these
+dense models the rule comes down to:
+
+| Matrix | Format |
+|---|---|
+| classifier, or the embedding when it is also the classifier | Q6_K (Q8_0 if its rows are not a multiple of 256) |
+| attn_v, ffn_down, on the "more bits" layers | Q6_K |
+| everything else | Q4_K |
+
+- "More bits" layers (`use_more_bits`): the first and last eighth of the
+  layers, and every third layer between. attn_v counts its own tensors in
+  file order; ffn_down counts layers.
+- Fallback: a K-quant needs rows that are a multiple of 256 values. If not,
+  Q4_K falls back to Q5_0 and Q6_K to Q8_0. That is why most of SmolLM2's
+  (576 wide) and Qwen's (896 wide) matrices end up Q5_0.
+
+`q4_k_m_types` reproduces that rule. Fused q/k/v (Q5_K) and its Q5_1
+fallback are refused; neither model has them. The K-quant blocks come from
+our `quantize_q4_k_row` / `quantize_q6_k_row`, already byte-identical row
+by row.
+
+| Model | Q4_K_M | Q4_K_M with imatrix | Time (host) |
+|---|---|---|---|
+| SmolLM2-135M | byte-identical | byte-identical | 1.7 s / 2.7 s |
+| Qwen2.5-0.5B | byte-identical | byte-identical | 6.5 s / 10.5 s |
+
+Test `writes_llama_quantize_q4_k_m` covers SmolLM2 both ways; Qwen was
+checked with `cmp` on the CLI output.

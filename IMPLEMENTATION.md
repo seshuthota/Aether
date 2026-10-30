@@ -269,7 +269,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 
 - [x] **6.1 Block formats** (byte-identical to llama.cpp via the `gguf` package; tools/gen_quant.py) Q8_0 (32×i8 + f16 scale = 34 B) and Q4_0 (32×4-bit + f16 scale =
       18 B, value = (q−8)·d), byte-identical to llama.cpp's reference quantizers.
-- [x] **6.2 `quantize` tool** (models are also quantized in memory at load, `-q q8_0|q4_0`; 2026-10-30: `aether-quantize [--imatrix FILE] IN.gguf OUT.gguf q8_0|q4_0|q5_0`, `format::gguf::Writer`; output byte-identical to `llama-quantize --pure [--imatrix]` for SmolLM2 and Qwen2.5, results/phase-6.md) (Rust binary): f32/f16 GGUF → quantized GGUF.
+- [x] **6.2 `quantize` tool** (models are also quantized in memory at load, `-q q8_0|q4_0`; 2026-10-30: `aether-quantize [--imatrix FILE] IN.gguf OUT.gguf q8_0|q4_0|q5_0|q4_k_m`, `format::gguf::Writer`; output byte-identical to `llama-quantize --pure [--imatrix]` and to its Q4_K_M mix (with and without imatrix) for SmolLM2 and Qwen2.5, results/phase-6.md) (Rust binary): f32/f16 GGUF → quantized GGUF.
 - [x] **6.3 Q8_0 GEMV (a)** dequant-to-f32 + FMA; **(b)** activations quantized to Q8_0 on the
       fly + `sdot` (`vdotq_s32`).
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
