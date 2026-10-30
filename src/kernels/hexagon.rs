@@ -21,6 +21,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::quant::{BlockQ4_0, BlockQ8_0, QK, f16_to_f32};
+use crate::weight::Weight;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -373,6 +374,125 @@ pub fn q4_0_bytes(rows: usize, nb: usize) -> usize {
     rows.div_ceil(32) * nb * 640
 }
 
+/// The weight formats of the DSP's products (dsp/qx_hvx.h's `F_` enum).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(non_camel_case_types)] // ggml's names
+pub enum DspFormat {
+    Q4_0 = 0,
+    Q5_0 = 1,
+    Q8_0 = 2,
+    Q4_K = 3,
+    Q6_K = 4,
+}
+
+impl DspFormat {
+    /// The DSP format of a weight, if it has one.
+    pub fn of(w: &Weight) -> Option<DspFormat> {
+        match w {
+            Weight::Q4_0(_) => Some(DspFormat::Q4_0),
+            Weight::Q5_0(_) => Some(DspFormat::Q5_0),
+            Weight::Q8_0(_) => Some(DspFormat::Q8_0),
+            Weight::Q4_K(_) => Some(DspFormat::Q4_K),
+            Weight::Q6_K(_) => Some(DspFormat::Q6_K),
+            _ => None,
+        }
+    }
+
+    /// Vectors of 128 bytes per 32-value piece of a 32-row group
+    /// (dsp/qx_hvx.h's `piece_vectors`).
+    pub fn piece_vectors(self) -> usize {
+        [5, 6, 9, 6, 10][self as usize]
+    }
+
+    /// Bytes of a matrix of `rows` rows of `nb` pieces in its DSP layout.
+    pub fn bytes(self, rows: usize, nb: usize) -> usize {
+        rows.div_ceil(32) * nb * self.piece_vectors() * 128
+    }
+}
+
+/// Writes the pieces of a matrix of `rows` rows of `nb` pieces in the
+/// DSP's layout of 32-row groups (dsp/qx_hvx.h): `piece(row, b)` gives
+/// row's 4-byte word in each of the V vectors of piece b. Rows past the
+/// last of a group are zeros.
+fn repack_pieces<const V: usize>(rows: usize, nb: usize, out: &mut [u8], piece: impl Fn(usize, usize) -> [[u8; 4]; V]) {
+    for g in 0..rows.div_ceil(32) {
+        for b in 0..nb {
+            let at = (g * nb + b) * V * 128;
+            for j in 0..32 {
+                let words = if 32 * g + j < rows { piece(32 * g + j, b) } else { [[0; 4]; V] };
+                for (v, w) in words.iter().enumerate() {
+                    out[at + 128 * v + 4 * j..][..4].copy_from_slice(w);
+                }
+            }
+        }
+    }
+}
+
+/// Writes `rows` rows of weight `w` (Q4_0, Q5_0, Q8_0, Q4_K or Q6_K) in
+/// the DSP's layout of its format (dsp/qx_hvx.h) into `out` (at least
+/// [`DspFormat::bytes`] long). Scales are stored as f32: f16 ones as they
+/// are, the K-quants' as d·scale (and dmin·min), the products llama.cpp's
+/// dequantization computes, exact in f32.
+pub fn repack_qx(w: &Weight, rows: usize, out: &mut [u8]) {
+    let f32w = |v: f32| v.to_le_bytes();
+    let word = |b: &[u8], k: usize| -> [u8; 4] { b[4 * k..4 * k + 4].try_into().unwrap() };
+    match w {
+        Weight::Q4_0(b) => repack_q4_0(b, rows, out),
+        Weight::Q5_0(blocks) => {
+            let nb = blocks.len() / rows;
+            repack_pieces::<6>(rows, nb, out, |r, b| {
+                let blk = &blocks[r * nb + b];
+                let qh = u32::from_le_bytes(blk.qh);
+                // Bit 8i + k: the fifth bit of slot k's byte i, value 4k + i.
+                let mut hb = 0u32;
+                for k in 0..8 {
+                    for i in 0..4 {
+                        hb |= (qh >> (4 * k + i) & 1) << (8 * i + k);
+                    }
+                }
+                [word(&blk.qs, 0), word(&blk.qs, 1), word(&blk.qs, 2), word(&blk.qs, 3), hb.to_le_bytes(), f32w(f16_to_f32(blk.d))]
+            });
+        }
+        Weight::Q8_0(blocks) => {
+            let nb = blocks.len() / rows;
+            repack_pieces::<9>(rows, nb, out, |r, b| {
+                let blk = &blocks[r * nb + b];
+                // Values + 128 as unsigned bytes (dsp/qx_hvx.h).
+                let q: [u8; 32] = blk.qs.map(|v| (v as u8) ^ 0x80);
+                std::array::from_fn(|v| if v < 8 { word(&q, v) } else { f32w(f16_to_f32(blk.d)) })
+            });
+        }
+        Weight::Q4_K(blocks) => {
+            let nb = blocks.len() * 8 / rows;
+            repack_pieces::<6>(rows, nb, out, |r, b| {
+                let blk = &blocks[(r * nb + b) / 8];
+                let j = b % 8;
+                let q = &crate::quant::q4_k_values(blk)[32 * j..][..32];
+                // Byte i: value i in the low nibble, value i + 16 in the high.
+                let nib: [u8; 16] = std::array::from_fn(|i| q[i] | q[i + 16] << 4);
+                let (sc, m) = crate::quant::q4_k_scale_min(&blk.scales, j);
+                [word(&nib, 0), word(&nib, 1), word(&nib, 2), word(&nib, 3), f32w(f16_to_f32(blk.d) * sc as f32), f32w(f16_to_f32(blk.dmin) * m as f32)]
+            });
+        }
+        Weight::Q6_K(blocks) => {
+            let nb = blocks.len() * 8 / rows;
+            repack_pieces::<10>(rows, nb, out, |r, b| {
+                let blk = &blocks[(r * nb + b) / 8];
+                let j = b % 8;
+                let all = crate::quant::q6_k_values(blk);
+                let q: [u8; 32] = std::array::from_fn(|i| all[32 * j + i] as u8);
+                let d = f16_to_f32(blk.d);
+                std::array::from_fn(|v| match v {
+                    0..8 => word(&q, v),
+                    8 => f32w(d * blk.scales[2 * j] as f32),
+                    _ => f32w(d * blk.scales[2 * j + 1] as f32),
+                })
+            });
+        }
+        _ => panic!("{} has no DSP layout", w.format_name()),
+    }
+}
+
 /// u32 scalars as the bytes of one argument buffer.
 fn words(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -492,30 +612,26 @@ mod tests {
         })
     }
 
-    /// The DSP's Q4_0 × Q8_0 product for several tokens at once
-    /// (`q4_0_rows_n_on`, dsp/q4_0_hvx.h; speculative decoding's check),
-    /// run on the Hexagon simulator: the batch goldens' weights in our
-    /// layout and each token's x quantized by our Q8_0 quantizer (llama.cpp's
-    /// bytes), against dequant(X_q8_0) @ dequant(W)ᵀ in float64
-    /// (`out_q4_0_b`), 1, 3 and 8 tokens a call.
+    /// The DSP's products for 1 to 8 tokens at once (`qx_rows_n_on`,
+    /// dsp/qx_hvx.h) in every format, run on the Hexagon simulator: the
+    /// goldens' llama.cpp bytes in our layout ([`repack_qx`]) and each
+    /// token's x quantized by our Q8_0 quantizer (llama.cpp's bytes),
+    /// against dequant(X_q8_0) @ dequant(W)ᵀ in float64 (`out_<fmt>_b`),
+    /// 1, 3 and 8 tokens a call.
     #[cfg(not(target_os = "android"))]
     #[test]
-    fn sim_q4_0_rows_n_matches_reference() {
-        let Some(root) = crate::testutil::golden("quant_batch") else { return };
+    fn sim_qx_rows_n_matches_reference() {
+        use crate::weight::Store;
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
         let Some(run) = sim_program("rows_n") else { return };
         let dir_out = std::env::temp_dir().join(format!("aether-sim-{}-rows_n", std::process::id()));
-        let mut cases = 0;
-        for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
-            cases += 1;
-            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+        let check = |dir: &Path, name: &str, w: Weight, rows: usize| {
             let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
-            let (_, want) = crate::testutil::read_npy(&dir.join("out_q4_0_b.npy"));
-            let (rows, tokens, cols) = (ws[0], xs[0], xs[1]);
-            let nb = cols / QK;
-            let bytes = std::fs::read(dir.join("w_q4_0.bin")).unwrap();
-            let blocks: Vec<BlockQ4_0> = bytes.as_chunks::<18>().0.iter().map(|c| BlockQ4_0 { d: u16::from_le_bytes([c[0], c[1]]), qs: c[2..].try_into().unwrap() }).collect();
-            let mut w = vec![0u8; q4_0_bytes(rows, nb)];
-            repack_q4_0(&blocks, rows, &mut w);
+            let (_, want) = crate::testutil::read_npy(&dir.join(format!("out_{name}_b.npy")));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let (nb, fmt) = (cols / QK, DspFormat::of(&w).unwrap());
+            let mut wb = vec![0u8; fmt.bytes(rows, nb)];
+            repack_qx(&w, rows, &mut wb);
             let mut x = vec![0u8; tokens * 40 * nb];
             for (t, row) in xv.chunks_exact(cols).enumerate() {
                 let mut q = vec![BlockQ8_0 { d: 0, qs: [0; 32] }; nb];
@@ -523,17 +639,34 @@ mod tests {
                 q8_0_layout(&q, &mut x[t * 40 * nb..(t + 1) * 40 * nb]);
             }
             let (wp, xp, op) = (dir_out.join("w.bin"), dir_out.join("x.bin"), dir_out.join("out.bin"));
-            std::fs::write(&wp, &w).unwrap();
+            std::fs::write(&wp, &wb).unwrap();
             std::fs::write(&xp, &x).unwrap();
             for per in [1, 3, 8] {
-                run(&[wp.to_str().unwrap(), xp.to_str().unwrap(), op.to_str().unwrap(), &rows.to_string(), &nb.to_string(), &tokens.to_string(), &per.to_string()]);
+                run(&[wp.to_str().unwrap(), xp.to_str().unwrap(), op.to_str().unwrap(), &rows.to_string(), &nb.to_string(), &tokens.to_string(), &per.to_string(), &(fmt as u32).to_string()]);
                 let got: Vec<f32> = std::fs::read(&op).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
                 let (_, rel) = crate::testutil::max_errors(&got, &want);
-                assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{}, {per} tokens a call: rel {rel:.2e}", dir.display());
+                assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}, {per} tokens a call: rel {rel:.2e}", dir.display());
             }
+        };
+        let dirs = |r: &Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let mut cases = 0;
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(Store::Owned(crate::quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(Store::Owned(crate::quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(Store::Owned(crate::quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(Store::Owned(crate::quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(Store::Owned(crate::quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
         }
         let _ = std::fs::remove_dir_all(&dir_out);
-        assert!(cases >= 11, "only {cases} golden cases");
+        assert!(cases >= 20, "only {cases} golden cases");
     }
 
     fn dsp() -> Option<Dsp> {
