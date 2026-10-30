@@ -36,8 +36,8 @@
 //!             to 7 drafts, checked in one few-token pass)
 //!   --times   with --gpu: print the time of every decode token
 //!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
-//!             --pure Q4_0 GGUF): the prompt in batches on HMX, then one
-//!             DSP call per token. --lookup K works here too (up to 7
+//!             --pure Q4_0 GGUF, or Q4_K_M): the prompt in batches on HMX
+//!             (Q4_K_M: 8 tokens a call on HVX), then one DSP call per token. --lookup K works here too (up to 7
 //!             drafts, checked in one few-token pass)
 //!   --system TEXT   system message for --chat (default: Qwen's)
 //!

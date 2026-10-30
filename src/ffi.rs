@@ -296,12 +296,14 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, cores: *const c_ch
     })
 }
 
-/// Loads a `--pure` Q4_0 `.gguf` for the Hexagon DSP: prompts in batches
-/// on its matrix unit (HMX), then one DSP call per token. `dir` is a
+/// Loads a `--pure` Q4_0 `.gguf` (or a Q4_K_M one) for the Hexagon DSP:
+/// prompts in batches on its matrix unit (HMX; for Q4_K_M, 8 tokens a
+/// call on the vector units), then one DSP call per token. `dir` is a
 /// writable directory the DSP library is written to and loaded from (an
 /// app's files directory). `max_seq` as in `aether_open`. Fails with
 /// `AETHER_ERR_LOAD` when the library was built without the `hexagon`
-/// feature, the DSP cannot be opened, or a matrix is not Q4_0.
+/// feature, the DSP cannot be opened, or a matrix is in another format
+/// (Q4_0, Q5_0, Q8_0, Q4_K and Q6_K work).
 ///
 /// # Safety
 /// `path` and `dir` must be valid NUL-terminated strings; `out` as in

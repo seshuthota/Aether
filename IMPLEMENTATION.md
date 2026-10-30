@@ -103,7 +103,15 @@ Steps 1–8 ran on the phone on 2026-10-30, 19:20–20:40 (results/phase-l5.md "
    the copying prompts and on prose; the app's lookup checkbox in DSP mode. The pass reads
    weights by l2fetch, not DMA: if 2 tokens cost much more than one decode step, DMA is the
    next thing to try.
-12. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
+12. [ ] **Q4_K_M on the DSP** (written 2026-10-30; the products of every format verified on the
+   simulator, the model phone-only). `cargo test … --features hexagon --lib few_tokens` now
+   also runs SmolLM2 Q4_K_M (few-token logits = decode logits). `dsp_ppl` on
+   `smollm2-135m-q4_k_m.gguf` and `qwen2.5-0.5b-q4_k_m.gguf` (decode, and `… 1 few`): llama.cpp
+   20.7784 / 16.7657, our CPU 20.7201 / 16.7088. Decode tok/s against Q4_0 (bytes per weight
+   ~1.4× Q4_0's, so expect it slower), the stage profile, and with DMA mask 0 against 1f.
+   `aether qwen…q4_k_m.gguf --dsp`: the text, and the prompt speed (8 tokens a call on HVX:
+   no HMX prefill for these formats yet). The app's DSP mode on the Q4_K_M file.
+13. [ ] Then: the app's result in results/phase-l5.md, tick L.5 / L.3 below,
    `git branch -f impl gpu-pending`, merge.
 
 ### Phone checks of the host-built commits (2026-10-28): done
@@ -488,6 +496,13 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         quant_batch goldens) for 1, 3 and 8 tokens on the PC. `DspModel::few`,
         `DspSession::generate_lookup`, `aether --dsp --lookup K`, the C ABI's lookup for DSP
         sessions, `dsp_ppl … few`.
+  - [~] Q4_K_M on the DSP (2026-10-30, phone pending, waiting item 12): products for Q5_0,
+        Q8_0, Q4_K and Q6_K (dsp/qx_hvx.h), each laid out like Q4_0 (32-row groups, a piece
+        as whole vectors; `repack_qx`), checked on the simulator against llama.cpp's bytes
+        (`sim_qx_rows_n_matches_reference`, 20 shapes, 1/3/8 tokens). A product is up to
+        three runs of one format each (q/k/v and gate/up may mix formats). Decode uses DMA
+        for every format (`qx_rows`); the few-token pass runs them too, and is the prompt
+        pass for files not all Q4_0 (HMX prefill is Q4_0 only).
 
 ---
 

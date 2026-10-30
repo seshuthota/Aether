@@ -33,6 +33,10 @@ int run_threads(uint32 threads, void (*fn)(void *arg, uint32 t), void *arg, uint
 // (added to what is there with `accumulate`), on thread t.
 void q4_0_rows(const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t);
 
+// As q4_0_rows for a matrix in format fmt (dsp/qx_hvx.h's F_ enum, its
+// layout there); Q4_0 goes to q4_0_rows.
+void qx_rows(uint32 fmt, const HVX_Vector *w, const char *xq, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t);
+
 // How q4_0_rows gets the weights: plain loads, l2fetch of the next two
 // groups into the L2 while two are computed, or DMA of the next two into
 // thread t's two slots in VTCM (falling back to l2fetch where they do not

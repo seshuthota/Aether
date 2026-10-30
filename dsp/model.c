@@ -4,8 +4,8 @@
 // barrier before the next step that needs the result).
 //
 // The CPU sets the model up once (`model_load`): it uploads the weights
-// into one shared buffer (matrices in our Q4_0 layout, q/k/v and gate/up
-// stacked as on the GPU; norms and biases in f32) and allocates a second
+// into one shared buffer (matrices in our layouts of qx_hvx.h, q/k/v and
+// gate/up one after another; norms and biases in f32) and allocates a second
 // shared buffer for the state (activations, KV cache, logits). `desc`
 // gives the shapes and where everything is. Per token the CPU writes the
 // token's embedding into x and the RoPE table (sin, cos per pair, computed
@@ -13,6 +13,11 @@
 //
 // The activations are f32; before every matrix product they are quantized
 // to Q8_0, as on our CPU path and llama.cpp's.
+//
+// A product is up to three runs of rows, each in one format: q/k/v are
+// one run when all three have the same format (their groups are back to
+// back), else a run per format change, and so for gate/up. The prefill
+// (on HMX) takes Q4_0 only.
 //
 // One model per DSP process (it lives in a static).
 
@@ -24,7 +29,7 @@
 #include "aether_dsp.h"
 #include "dsp.h"
 #include "hvx_hexagon_protos.h"
-#include "q4_0_hvx.h"
+#include "qx_hvx.h"
 #include "qurt_barrier.h"
 
 // desc[], in order. Offsets are bytes into the weights (W) or state (S)
@@ -61,10 +66,19 @@ enum {
               // many rows and at least MAX_FEW, LOGITS this many with all
               // logits and at least MAX_FEW, ATT at least MAX_THREADS
               // (decode uses row 0 of each)
+    D_CLS_FMT,
     D_LAYER0,
 };
-// Per layer, from D_LAYER0 on: W offsets.
-enum { L_WQKV, L_WO, L_WGU, L_WDOWN, L_ATTN_NORM, L_FFN_NORM, L_BQ, L_BK, L_BV, L_N };
+// Per layer, from D_LAYER0 on: W offsets, formats (F_ of qx_hvx.h) and
+// rows. q/k/v: three runs of (offset, format, rows), gate/up two (unused
+// ones 0 rows).
+enum { L_QKV = 0, L_WO = 9, L_WO_FMT, L_GU, L_WDOWN = 17, L_WDOWN_FMT, L_ATTN_NORM, L_FFN_NORM, L_BQ, L_BK, L_BV, L_N };
+
+// Rows of a matrix in one format.
+struct run {
+    const HVX_Vector *w;
+    uint32 fmt, rows;
+};
 
 #define MAX_LAYERS 64
 // The classifier's fetch in a prefill without every token's logits: DMA.
@@ -85,12 +99,27 @@ static struct model {
     uint64 *prof;
     char *xq;
     const float *final_norm;
-    const HVX_Vector *cls;
+    struct run cls;
     struct {
-        const HVX_Vector *wqkv, *wo, *wgu, *wdown;
+        struct run qkv[3], wo, gu[2], wdown;
         const float *attn_norm, *ffn_norm, *bq, *bk, *bv;
     } l[MAX_LAYERS];
+    // Every product Q4_0 in one run (what the prefill takes).
+    int q4_0_only;
 } M;
+
+// Reads n runs from d (offset, format, rows each) into r; whether they
+// are valid and add up to `rows`.
+static int read_runs(struct run *r, const uint32 *d, uint32 n, uint32 rows) {
+    uint32 sum = 0;
+    for (uint32 i = 0; i < n; i++, d += 3) {
+        r[i] = (struct run) {(const HVX_Vector *) (M.w + d[0]), d[1], d[2]};
+        if (r[i].fmt >= N_FORMATS || r[i].rows % 32) return 0;
+        if (r[i].rows && (i > 0 || r[i].fmt != F_Q4_0)) M.q4_0_only = 0;
+        sum += r[i].rows;
+    }
+    return sum == rows;
+}
 
 AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     (void) h;
@@ -122,18 +151,25 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     M.att = (float *) (s + d[D_ATT]), M.hb = (float *) (s + d[D_HB]), M.logits = (float *) (s + d[D_LOGITS]);
     M.kc = (float *) (s + d[D_KC]), M.vc = (float *) (s + d[D_VC]), M.rot = (float *) (s + d[D_ROT]);
     M.prof = (uint64 *) (s + d[D_PROF]);
-    M.final_norm = (const float *) (w + d[D_FINAL_NORM]), M.cls = (const HVX_Vector *) (w + d[D_CLS]);
+    M.final_norm = (const float *) (w + d[D_FINAL_NORM]);
+    M.q4_0_only = 1;
+    uint32 cls[3] = {d[D_CLS], d[D_CLS_FMT], M.vocab};
+    int ok = read_runs(&M.cls, cls, 1, M.vocab);
     for (uint32 l = 0; l < M.layers; l++) {
         const uint32 *o = d + D_LAYER0 + l * L_N;
-        M.l[l].wqkv = (const HVX_Vector *) (w + o[L_WQKV]);
-        M.l[l].wo = (const HVX_Vector *) (w + o[L_WO]);
-        M.l[l].wgu = (const HVX_Vector *) (w + o[L_WGU]);
-        M.l[l].wdown = (const HVX_Vector *) (w + o[L_WDOWN]);
+        uint32 wo[3] = {o[L_WO], o[L_WO_FMT], M.dim}, down[3] = {o[L_WDOWN], o[L_WDOWN_FMT], M.dim};
+        ok = ok && read_runs(M.l[l].qkv, o + L_QKV, 3, M.dim + 2 * M.kv_dim) && read_runs(&M.l[l].wo, wo, 1, M.dim);
+        ok = ok && read_runs(M.l[l].gu, o + L_GU, 2, 2 * M.hid) && read_runs(&M.l[l].wdown, down, 1, M.dim);
         M.l[l].attn_norm = (const float *) (w + o[L_ATTN_NORM]);
         M.l[l].ffn_norm = (const float *) (w + o[L_FFN_NORM]);
         M.l[l].bq = (const float *) (w + o[L_BQ]);
         M.l[l].bk = (const float *) (w + o[L_BK]);
         M.l[l].bv = (const float *) (w + o[L_BV]);
+    }
+    if (!ok) {
+        release(M.w_fd);
+        release(M.s_fd);
+        return AEE_EBADPARM;
     }
     // VTCM for the products' DMA (see vtcm_get).
     vtcm_get(&(uint32) {0});
@@ -217,7 +253,7 @@ static void qkv_post(uint32 l, uint32 pos, float *qkv, const float *rot, uint32 
 }
 
 // HVX float helpers (IEEE single precision, Hexagon v73 and later;
-// splat_f is in q4_0_hvx.h).
+// splat_f is in q4_0_hvx.h, which qx_hvx.h includes).
 #define VADD Q6_Vsf_vadd_VsfVsf
 #define VSUB Q6_Vsf_vsub_VsfVsf
 #define VMUL Q6_Vsf_vmpy_VsfVsf
@@ -373,6 +409,16 @@ static void argmax(struct step *st, const float *lg, uint32 t) {
     }
 }
 
+// The product of the runs (up to nr; each its rows of the output, one after
+// another) and M.xq (nb blocks) into out, each thread a run of whole pairs
+// of row groups of each run.
+static void product(const struct run *r, uint32 nr, uint32 nb, float *out, int acc, int fetch, uint32 t, uint32 T) {
+    for (uint32 i = 0; i < nr && r[i].rows; out += r[i].rows, i++) {
+        uint32 groups = r[i].rows / 32;
+        qx_rows(r[i].fmt, r[i].w, M.xq, nb, (HVX_Vector *) out, pair_split(groups, t, T), pair_split(groups, t + 1, T), fetch, acc, t);
+    }
+}
+
 // thread t's share of `n` items.
 #define FROM(n) ((n) * t / T)
 #define TO(n) ((n) * (t + 1) / T)
@@ -393,13 +439,13 @@ static void decode_thread(void *arg, uint32 t) {
 #define WAIT(p)                \
     qurt_barrier_wait(bar);    \
     MARK(p)
-    // Row groups of 32 per product, each thread a run of whole pairs.
-    // Product k (0 q/k/v, 1 wo, 2 gate/up, 3 down, 4 classifier) by DMA or l2fetch.
-#define ROWS(k, w, x_nb, out, rows, acc) q4_0_rows(w, M.xq, x_nb, (HVX_Vector *) (out), pair_split((rows) / 32, t, T), pair_split((rows) / 32, t + 1, T), st->dma >> (k) & 1 ? FETCH_DMA : FETCH_L2, acc, t)
+    // Product k (0 q/k/v, 1 wo, 2 gate/up, 3 down, 4 classifier; up to
+    // nr runs) by DMA or l2fetch.
+#define ROWS(k, runs, nr, x_nb, out, acc) product(runs, nr, x_nb, out, acc, st->dma >> (k) & 1 ? FETCH_DMA : FETCH_L2, t, T)
     for (uint32 l = 0; l < M.layers; l++) {
         norm_quantize(M.xb, M.x, M.l[l].attn_norm, dim, FROM(dim / 32), TO(dim / 32));
         WAIT(P_NORM1);
-        ROWS(0, M.l[l].wqkv, dim / 32, M.qkv, dim + 2 * kv, 0);
+        ROWS(0, M.l[l].qkv, 3, dim / 32, M.qkv, 0);
         WAIT(P_QKV);
         qkv_post(l, pos, M.qkv, M.rot, FROM(dim / 2 + kv / 2), TO(dim / 2 + kv / 2), FROM(kv), TO(kv));
         WAIT(P_POST);
@@ -408,22 +454,22 @@ static void decode_thread(void *arg, uint32 t) {
         for (uint32 h = FROM(M.heads); h < TO(M.heads); h++) attend(l, h, pos, M.qkv + h * hs, M.xb + h * hs, M.att + (size_t) h * M.att_stride);
         quantize_q8_0(M.xb, dim / 32, FROM(M.heads) * hs / 32, TO(M.heads) * hs / 32, M.xq);
         WAIT(P_ATTEND);
-        ROWS(1, M.l[l].wo, dim / 32, M.x, dim, 1);
+        ROWS(1, &M.l[l].wo, 1, dim / 32, M.x, 1);
         WAIT(P_WO);
         norm_quantize(M.xb, M.x, M.l[l].ffn_norm, dim, FROM(dim / 32), TO(dim / 32));
         WAIT(P_NORM2);
-        ROWS(2, M.l[l].wgu, dim / 32, M.hb, 2 * hid, 0);
+        ROWS(2, M.l[l].gu, 2, dim / 32, M.hb, 0);
         WAIT(P_GATE_UP);
         // SwiGLU, quantized for down; a run of blocks each.
         swiglu(FROM(hid / 32), TO(hid / 32));
         quantize_q8_0(M.hb, hid / 32, FROM(hid / 32), TO(hid / 32), M.xq);
         WAIT(P_SWIGLU);
-        ROWS(3, M.l[l].wdown, hid / 32, M.x, dim, 1);
+        ROWS(3, &M.l[l].wdown, 1, hid / 32, M.x, 1);
         WAIT(P_DOWN);
     }
     norm_quantize(M.xb, M.x, M.final_norm, dim, FROM(dim / 32), TO(dim / 32));
     WAIT(P_FINAL_NORM);
-    ROWS(4, M.cls, dim / 32, M.logits, M.vocab, 0);
+    ROWS(4, &M.cls, 1, dim / 32, M.logits, 0);
     WAIT(P_CLS);
     argmax(st, M.logits, t);
     MARK(P_ARGMAX);
@@ -483,7 +529,7 @@ static void prefill_thread(void *arg, uint32 t) {
     for (uint32 l = 0; l < M.layers; l++) {
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].attn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wqkv, qkv_n, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
+        HMX(M.l[l].qkv[0].w, qkv_n, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
         for (uint32 i = FROM(n); i < TO(n); i++) qkv_post(l, pos + i, M.qkv + (size_t) i * qkv_n, M.rot + (size_t) i * hs, 0, dim / 2 + kv / 2, 0, kv);
         qurt_barrier_wait(bar);
         // Every token's keys and values are in the cache now.
@@ -492,29 +538,29 @@ static void prefill_thread(void *arg, uint32 t) {
             attend(l, h, pos + i, M.qkv + (size_t) i * qkv_n + h * hs, M.xb + (size_t) i * dim + h * hs, M.att + (size_t) t * M.att_stride);
         }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wo, dim, dim / 32, M.xb, dim, M.x, dim, 1);
+        HMX(M.l[l].wo.w, dim, dim / 32, M.xb, dim, M.x, dim, 1);
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].ffn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wgu, 2 * hid, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
+        HMX(M.l[l].gu[0].w, 2 * hid, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
         for (uint32 k = FROM(n * (hid / 32)); k < TO(n * (hid / 32)); k++) {
             HVX_Vector *g = (HVX_Vector *) (M.hb + (size_t) (k / (hid / 32)) * 2 * hid) + k % (hid / 32);
             *g = silu_mul(*g, g[hid / 32]);
         }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wdown, dim, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
+        HMX(M.l[l].wdown.w, dim, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
     }
     const float *last;
     if (st->all) {
         // Every token's logits, on HMX.
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.final_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.cls, M.vocab, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
+        HMX(M.cls.w, M.vocab, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
         last = M.logits + (size_t) (n - 1) * M.vocab;
     } else {
         // The last token's only, as in decode_thread.
         norm_quantize(M.xb, M.x + (size_t) (n - 1) * dim, M.final_norm, dim, FROM(dim / 32), TO(dim / 32));
         qurt_barrier_wait(bar);
-        q4_0_rows(M.cls, M.xq, dim / 32, (HVX_Vector *) M.logits, pair_split(M.vocab / 32, t, T), pair_split(M.vocab / 32, t + 1, T), st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, 0, t);
+        q4_0_rows(M.cls.w, M.xq, dim / 32, (HVX_Vector *) M.logits, pair_split(M.vocab / 32, t, T), pair_split(M.vocab / 32, t + 1, T), st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, 0, t);
         qurt_barrier_wait(bar);
         last = M.logits;
     }
@@ -524,7 +570,7 @@ static void prefill_thread(void *arg, uint32 t) {
 
 AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint32 threads, uint32 all, uint32 *next, uint64 *us) {
     (void) h;
-    if (!M.loaded || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
+    if (!M.loaded || !M.q4_0_only || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
     if (!hmx_fits(M.dim / 32, n) || !hmx_fits(M.hid / 32, n)) return AEE_EBADPARM;
     uint32 bytes = 0;
     char *vtcm = vtcm_get(&bytes);
@@ -557,6 +603,13 @@ AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint
 // quantizing a run of blocks of every token each; attention a run of
 // (token, head) pairs each (token i over positions up to pos + i), SwiGLU
 // a run of (token, block) pairs each.
+static void product_n(const struct run *r, uint32 nr, uint32 nb, const char *const *xs, uint32 n, float *out, uint32 os, int acc, uint32 t, uint32 T) {
+    for (uint32 i = 0; i < nr && r[i].rows; out += r[i].rows, i++) {
+        uint32 groups = r[i].rows / 32;
+        qx_rows_n_on(r[i].fmt, r[i].w, xs, n, nb, (HVX_Vector *) out, os / 32, FROM(groups), TO(groups), acc);
+    }
+}
+
 static void few_thread(void *arg, uint32 t) {
     struct step *st = arg;
     const uint32 dim = M.dim, hid = M.hid, kv = M.kv_dim, hs = M.hs, qkv_n = dim + 2 * kv, pos = st->pos, n = st->n, T = st->threads;
@@ -564,15 +617,15 @@ static void few_thread(void *arg, uint32 t) {
     const char *xs[MAX_FEW];
     for (uint32 i = 0; i < n; i++) xs[i] = M.xq + (size_t) i * M.xq_stride;
 #define XQ(i) (M.xq + (size_t) (i) * M.xq_stride)
-    // Rows `rows` of W times every token's xq, a run of groups each;
-    // token i's into out + i * os floats.
-#define ROWS_N(w, nb, out, os, rows, acc) q4_0_rows_n_on(w, xs, n, nb, (HVX_Vector *) (out), (os) / 32, FROM((rows) / 32), TO((rows) / 32), acc)
+    // The runs (up to nr) times every token's xq, a run of groups of each
+    // per thread; token i's into out + i * os floats.
+#define ROWS_N(runs, nr, nb, out, os, acc) product_n(runs, nr, nb, xs, n, out, os, acc, t, T)
 #define NORM(w)                                                                                                         \
     for (uint32 i = 0; i < n; i++) norm_quantize_to(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, w, dim, FROM(dim / 32), TO(dim / 32), XQ(i))
     for (uint32 l = 0; l < M.layers; l++) {
         NORM(M.l[l].attn_norm);
         qurt_barrier_wait(bar);
-        ROWS_N(M.l[l].wqkv, dim / 32, M.qkv, qkv_n, qkv_n, 0);
+        ROWS_N(M.l[l].qkv, 3, dim / 32, M.qkv, qkv_n, 0);
         qurt_barrier_wait(bar);
         for (uint32 i = 0; i < n; i++) qkv_post(l, pos + i, M.qkv + (size_t) i * qkv_n, M.rot + (size_t) i * hs, FROM(dim / 2 + kv / 2), TO(dim / 2 + kv / 2), FROM(kv), TO(kv));
         qurt_barrier_wait(bar);
@@ -584,11 +637,11 @@ static void few_thread(void *arg, uint32 t) {
             quantize_q8_0(o, dim / 32, h * hs / 32, (h + 1) * hs / 32, XQ(i));
         }
         qurt_barrier_wait(bar);
-        ROWS_N(M.l[l].wo, dim / 32, M.x, dim, dim, 1);
+        ROWS_N(&M.l[l].wo, 1, dim / 32, M.x, dim, 1);
         qurt_barrier_wait(bar);
         NORM(M.l[l].ffn_norm);
         qurt_barrier_wait(bar);
-        ROWS_N(M.l[l].wgu, dim / 32, M.hb, 2 * hid, 2 * hid, 0);
+        ROWS_N(M.l[l].gu, 2, dim / 32, M.hb, 2 * hid, 0);
         qurt_barrier_wait(bar);
         for (uint32 k = FROM(n * (hid / 32)); k < TO(n * (hid / 32)); k++) {
             uint32 i = k / (hid / 32), b = k % (hid / 32);
@@ -598,12 +651,12 @@ static void few_thread(void *arg, uint32 t) {
             quantize_q8_0(row, hid / 32, b, b + 1, XQ(i));
         }
         qurt_barrier_wait(bar);
-        ROWS_N(M.l[l].wdown, hid / 32, M.x, dim, dim, 1);
+        ROWS_N(&M.l[l].wdown, 1, hid / 32, M.x, dim, 1);
         qurt_barrier_wait(bar);
     }
     NORM(M.final_norm);
     qurt_barrier_wait(bar);
-    ROWS_N(M.cls, dim / 32, M.logits, M.vocab, M.vocab, 0);
+    ROWS_N(&M.cls, 1, dim / 32, M.logits, M.vocab, 0);
 #undef NORM
 #undef ROWS_N
 #undef XQ

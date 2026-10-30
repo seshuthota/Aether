@@ -13,7 +13,7 @@
 #include "HAP_power.h"
 #include "aether_dsp.h"
 #include "dsp.h"
-#include "q4_0_hvx.h"
+#include "qx_hvx.h"
 #include "hexagon_types.h"
 #include "hvx_hexagon_protos.h"
 #include "qurt_barrier.h"
@@ -362,6 +362,31 @@ void q4_0_rows(const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *o
         for (uint32 b = 0; b < nb; b++, w += 5) a = block_acc(a, block_dot(w, xq + 8 * b, xs[b], low), w[4], splat_f(xd[b]));
         out[g] = accumulate ? Q6_Vsf_vadd_VsfVsf(out[g], a) : a;
     }
+}
+
+void qx_rows(uint32 fmt, const HVX_Vector *wall, const char *xqb, uint32 nb, HVX_Vector *out, uint32 g0, uint32 g1, int fetch, int accumulate, uint32 t) {
+    if (fmt == F_Q4_0) {
+        q4_0_rows(wall, xqb, nb, out, g0, g1, fetch, accumulate, t);
+        return;
+    }
+    // As q4_0_rows, a group at a time by qx_hvx.h's product for one token.
+    const uint32 gv = piece_vectors(fmt) * nb, pair = 2 * gv * 128;
+    uint32 g = g0;
+    char *v = fetch == FETCH_DMA ? vtcm : NULL;
+    if (v && 2 * pair * (t + 1) <= vtcm_bytes && g + 2 <= g1) {
+        char *slot[2] = {v + 2 * pair * t, v + 2 * pair * t + pair};
+        uint32 n = (g1 - g) / 2;
+        struct dma1d *d[2] = {dma_copy(t, slot[0], wall + (size_t) g * gv, pair), NULL};
+        for (uint32 p = 0; p < n; p++, g += 2) {
+            if (p + 1 < n) d[(p + 1) % 2] = dma_copy(t, slot[(p + 1) % 2], wall + (size_t) (g + 2) * gv, pair);
+            dma_wait(d[p % 2]);
+            // A group at a time, so nothing l2fetches from VTCM.
+            const HVX_Vector *w = (const HVX_Vector *) slot[p % 2];
+            qx_rows_n_on(fmt, w, &xqb, 1, nb, out + g, 1, 0, 1, accumulate);
+            qx_rows_n_on(fmt, w + gv, &xqb, 1, nb, out + g + 1, 1, 0, 1, accumulate);
+        }
+    }
+    if (g < g1) qx_rows_n_on(fmt, wall + (size_t) g * gv, &xqb, 1, nb, out + g, 1, 0, g1 - g, accumulate);
 }
 
 // Q4_0 x Q8_0 matrix-vector product. The weights come in groups of 32

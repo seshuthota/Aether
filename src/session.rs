@@ -531,10 +531,11 @@ impl GpuSession {
     }
 }
 
-/// A model on the Hexagon DSP (`--features hexagon`, a `--pure` Q4_0
-/// GGUF; see `model::dsp`): the prompt by prefills of up to
-/// [`DspSession::BATCH`] tokens (products on HMX), then one decode step
-/// per token; sampling on the CPU.
+/// A model on the Hexagon DSP (`--features hexagon`, a `--pure` Q4_0 GGUF
+/// or a Q4_K_M one; see `model::dsp`): the prompt by prefills of up to
+/// [`DspSession::BATCH`] tokens (products on HMX; Q4_0 only, else passes
+/// of 8 tokens on HVX), then one decode step per token; sampling on the
+/// CPU.
 #[cfg(feature = "hexagon")]
 pub struct DspSession {
     // Declared before `dsp`: its shared buffers must be freed while the
@@ -594,10 +595,20 @@ impl DspSession {
     }
 
     /// Runs the prompt from position 0 in prefills of up to
-    /// [`DspSession::BATCH`] tokens; returns the last token's logits.
+    /// [`DspSession::BATCH`] tokens, or for a model not all in Q4_0 (no
+    /// prefill on HMX) in few-token passes of 8; returns the last token's
+    /// logits.
     fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
-        let b = self.model.batch;
+        let (b, vocab) = (self.model.batch, self.model.config.vocab_size);
         let mut logits = Vec::new();
+        if !self.model.q4_0_only {
+            let f = crate::kernels::hexagon::MAX_FEW;
+            for (i, part) in tokens.chunks(f).enumerate() {
+                let rows = self.model.few(&self.dsp, part, i * f).expect("DSP prompt pass");
+                logits = rows[rows.len() - vocab..].to_vec();
+            }
+            return logits;
+        }
         for (i, part) in tokens.chunks(b).enumerate() {
             logits = self.model.prefill(&self.dsp, part, i * b).expect("DSP prefill").to_vec();
         }

@@ -48,11 +48,13 @@ int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSes
  * format the GPU does not read (other than Q4_0, Q5_0, Q8_0, Q4_K, Q6_K). */
 int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
 
-/* Loads a --pure Q4_0 .gguf for the Hexagon DSP: prompts in batches on its
- * matrix unit (HMX), then one DSP call per token. dir: a writable directory
+/* Loads a --pure Q4_0 .gguf (or a Q4_K_M one) for the Hexagon DSP: prompts
+ * in batches on its matrix unit (HMX; for Q4_K_M, 8 tokens a call on the
+ * vector units), then one DSP call per token. dir: a writable directory
  * the DSP library is written to and loaded from (an app's files directory).
  * Fails with AETHER_ERR_LOAD if the library was built without the hexagon
- * feature, the DSP cannot be opened, or a matrix is not Q4_0. */
+ * feature, the DSP cannot be opened, or a matrix is in another format
+ * (Q4_0, Q5_0, Q8_0, Q4_K and Q6_K work). */
 int aether_open_dsp(const char *path, const char *dir, uint32_t max_seq, AetherSession **out);
 
 /* Generates a reply. chat != 0 wraps the prompt in the ChatML template.

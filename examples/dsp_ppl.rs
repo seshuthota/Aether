@@ -1,4 +1,4 @@
-//! Perplexity of a `--pure` Q4_0 GGUF with every token through the DSP
+//! Perplexity of a `--pure` Q4_0 GGUF (or Q4_K_M, without BATCH) with every token through the DSP
 //! decode step (`model::dsp::DspModel`), or with BATCH > 1 through its
 //! prefill (BATCH tokens a call, products on HMX), by `llama-perplexity`'s
 //! procedure (wikitext-2 test, chunks of CTX tokens, the second half of
