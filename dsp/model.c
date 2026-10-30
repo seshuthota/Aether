@@ -308,6 +308,15 @@ static inline float vmax_lanes(HVX_Vector v) {
     return u.f[0];
 }
 
+// Ask L2 for `height` rows of `width` bytes, `stride` bytes apart.
+// l2fetch's stride field is 16 bits and the width must not exceed it, so a
+// stride that does not fit is left to the loads.
+static inline void l2fetch_2d(const void *p, uint32 stride, uint32 width, uint32 height) {
+    if (!height || !width || width > stride || stride > 0xffffu) return;
+    if (height > 0xffffu) height = 0xffffu;
+    Q6_l2fetch_AP((void *) p, (uint64) stride << 32 | (uint64) width << 16 | height);
+}
+
 // Head h's attention for the query qh (its hs values) over positions
 // 0..pos into out (hs outputs, hs / 32 vectors), with the scores in a.
 // Every row of q, the caches and the scores starts on a vector.
@@ -324,6 +333,10 @@ static void attend(uint32 l, uint32 h, uint32 pos, const float *qh, float *out_h
     uint32 n = (pos + 1 + 31) / 32;
     HVX_Vector *av = (HVX_Vector *) a;
     for (uint32 j = 0; j < n; j++) {
+        // One key chunk (32 positions, one vector on each of the hs rows),
+        // four chunks ahead of this one. The first four chunks are not
+        // fetched; every later chunk is fetched once.
+        if (j + 4 < n) l2fetch_2d(kt + 32 * (j + 4), S * 4, 128, hs);
         // Two sums, so the adds of one wait less on the other.
         HVX_Vector s0 = Q6_V_vzero(), s1 = Q6_V_vzero();
         const float *col = kt + 32 * j;
@@ -358,6 +371,14 @@ static void attend(uint32 l, uint32 h, uint32 pos, const float *qh, float *out_h
         for (uint32 i = 0; i < nv; i++) acc[k][i] = Q6_V_vzero();
     uint32 t = 0, npos = pos + 1;
     for (; t + 4 <= npos; t += 4) {
+        // This head's value rows (hs floats, stride kv), one block of 32
+        // positions, four blocks ahead. Issued once per block.
+        if ((t & 31) == 0 && t + 128 < npos && t + 128 < M.seq_len) {
+            uint32 room = npos - (t + 128);
+            uint32 cap = M.seq_len - (t + 128);
+            if (room > cap) room = cap;
+            l2fetch_2d(vc + (size_t) (t + 128) * kv, kv * 4, hs * 4, room < 32 ? room : 32);
+        }
         for (uint32 k = 0; k < 4; k++) {
             const HVX_Vector *v = (const HVX_Vector *) (vc + (size_t) (t + k) * kv);
             HVX_Vector p = splat_f(a[t + k]);

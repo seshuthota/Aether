@@ -79,9 +79,15 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    by one vector (context 4096, where the stride is 4096 floats; the
    depth-2048 profile's 2112 is not a power of two) cut Qwen attention
    3815 → 2902 µs at depth 512 and 17725 → 17372 µs at depth 2048. Set
-   conflicts matter at 512 and are a small piece of the 17 ms. Next:
-   l2fetch of the next key and value blocks, then the position split and
-   one VTCM read per K/V head. f16 KV only if depth 2048 is still steep.
+   conflicts matter at 512 and are a small piece of the 17 ms. l2fetch of
+   the next key chunk and value block, four blocks ahead, on that same
+   context-2112 profile (the pad is inactive there) cut Qwen attention
+   3087 → 2058 µs at depth 512 and 17680 → 7774 µs at depth 2048, with
+   gate/up still ~2095 µs. About half of the depth-2048 stage was DRAM
+   latency; what remains scales with the K/V bytes (~9 GB/s per thread).
+   PPL unchanged (27.7623 / 19.7716 decode). Next: the position split and
+   one VTCM read per K/V head. f16 KV only if depth 2048 is still steep
+   after that.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
