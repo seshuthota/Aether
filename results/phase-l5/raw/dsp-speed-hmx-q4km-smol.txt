@@ -1,0 +1,21 @@
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 512 | upload 376 ms
+#   attn norm + quantize        142.0 us/token   4.0%
+#   q/k/v                       311.0 us/token   8.9%
+#   bias + RoPE + KV store      283.4 us/token   8.1%
+#   attention + quantize        230.8 us/token   6.6%
+#   wo                          224.1 us/token   6.4%
+#   ffn norm + quantize         142.8 us/token   4.1%
+#   gate/up                     738.7 us/token  21.1%
+#   SwiGLU + quantize           218.5 us/token   6.2%
+#   down                        571.8 us/token  16.3%
+#   final norm + quantize         4.8 us/token   0.1%
+#   classifier                  548.0 us/token  15.6%
+#   argmax                       45.8 us/token   1.3%
+#   thread start                 46.7 us/token   1.3%
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the
+# 59 positions in 228.5 ms: 258.2 tok/s (3.50 ms per token on the DSP)
+# prefill   32 tokens:     32.9 ms on the DSP,   973.0 tok/s (median of 5)
+# prefill   64 tokens:     47.7 ms on the DSP,  1341.4 tok/s (median of 5)
+# prefill  128 tokens:     82.9 ms on the DSP,  1543.8 tok/s (median of 5)
+# prefill  512 tokens:    398.3 ms on the DSP,  1285.4 tok/s (median of 5)
+Final estimate: PPL = NaN +/- NaN  (0 tokens scored, 0.0 s, 0.0 tok/s through the DSP)

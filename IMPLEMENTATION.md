@@ -62,9 +62,22 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
 
 ### Next steps (2026-10-30)
 
-1. **Q4_K_M prompts on HMX.** The DSP runs Q4_K_M prompts in 8-token passes on HVX: 272 tok/s
-   against 755 for Q4_0 on HMX. `hmx.c` dequantizes only Q4_0 into fp16 tiles; the other formats'
-   dequantization (Q5_0, Q8_0, Q4_K, Q6_K) can be checked on the simulator first.
+1. **Q4_K_M prompts on HMX.** Done (2026-10-31; results/phase-l5.md).
+   `hmx_weight_tiles` dequantizes Q4_0, Q5_0, Q8_0, Q4_K and Q6_K into
+   the same fp16 tiles. Q4_K and Q6_K scale in f32 and round once; an
+   f16 multiply flushed small Q4_K weights to 0. Simulator check:
+   `sim_hmx_weight_tiles_match_gguf`, relative 2e-3 against gguf-py.
+   Prefill calls `hmx_rows` once per run. Wikitext prefill PPL is
+   20.6872 / 16.7155 (llama.cpp 20.7784 / 16.7657; f16 decode
+   20.7288 / 16.7422). 115 phone tests, including
+   `q4km_hmx_prompt_matches_few_greedy`. With gate/up at the Q4_K_M
+   decode figure (739 / 2560 µs), SmolLM2 is 973 / 1341 / 1544 /
+   1285 tok/s at 32 / 64 / 128 / 512. Qwen's cooler run is 311 / 540 /
+   746 / 813 at 32 / 64 / 128 / 320; a warmer run with the same
+   gate/up measured 502 / 696 at 64 / 128 and 799 at 256. The 8-token
+   HVX path was 272 tok/s over 241 tokens. Qwen cannot take 512
+   tokens in one call (16 row-tiles of `down` are 4.98 MB; the
+   activation bank is 3 MB). 320 tokens fit.
 2. **GPU lookup that pays on the Adreno.** The few-token shader costs about a whole dispatch per
    extra token there (`results/phase-l3/raw/vk-gemv-n-adreno.txt`); a shader that shares each
    weight load across the tokens is needed before lookup is turned back on for GPU sessions.
@@ -574,6 +587,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         three runs of one format each (q/k/v and gate/up may mix formats). Decode uses DMA
         for every format (`qx_rows`); the few-token pass runs them too, and is the prompt
         pass for files not all Q4_0 (HMX prefill is Q4_0 only).
+  - [x] Q4_K_M prompts on HMX (2026-10-31; phone: prefill PPL 20.6872 / 16.7155, 115 tests):
+        `hmx_weight_tiles` for Q5_0, Q8_0, Q4_K and Q6_K, one `hmx_rows` call per run.
+        Qwen's longest single call is 320 tokens (the 3 MB activation bank). SmolLM2
+        runs 512. Prompt rates and the gate/up check are in results/phase-l5.md.
 
 ---
 

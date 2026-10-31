@@ -413,6 +413,12 @@ impl DspFormat {
     pub fn bytes(self, rows: usize, nb: usize) -> usize {
         rows.div_ceil(32) * nb * self.piece_vectors() * 128
     }
+
+    /// Whether a descriptor format has an HMX tile dequantizer. The five
+    /// formats do (`dsp/hmx_tiles.h`).
+    pub fn on_hmx(fmt: u32) -> bool {
+        fmt <= DspFormat::Q6_K as u32
+    }
 }
 
 /// Writes the pieces of a matrix of `rows` rows of `nb` pieces in the
@@ -722,6 +728,104 @@ mod tests {
             assert_eq!(got_back[i].to_bits(), wb.to_bits(), "load lane {i}: input {}", vals[i]);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// HMX weight tiles (`dsp/hmx_tiles.h`) for Q4_0, Q5_0, Q8_0, Q4_K and
+    /// Q6_K against llama.cpp's gguf-py dequantizer, cast to float16 with
+    /// numpy. The simulator does not run HMX; this checks the tiles the
+    /// matrix unit would multiply. Relative tolerance is 2e-3, about two
+    /// float16 ulps: the tile rounds the scale to float16 and then
+    /// multiplies, and gguf-py rounds the f32 product once.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn sim_hmx_weight_tiles_match_gguf() {
+        use crate::weight::Weight;
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Some(run) = sim_program("hmx_tiles") else { return };
+        let py = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/.venv/bin/python");
+        let home = std::env::var("HOME").unwrap();
+        let gguf_py = std::path::PathBuf::from(&home).join("llama.cpp/gguf-py");
+        assert!(py.exists(), "numpy venv is missing at {}", py.display());
+        assert!(gguf_py.join("gguf/quants.py").exists(), "gguf-py is missing at {}", gguf_py.display());
+        let dir_out = std::env::temp_dir().join(format!("aether-sim-{}-hmx_tiles", std::process::id()));
+        std::fs::create_dir_all(&dir_out).unwrap();
+        let script = "import sys\nsys.path.insert(0, sys.argv[1])\nimport numpy as np\nfrom gguf import GGMLQuantizationType as T\nfrom gguf.quants import dequantize\ntyp = {'q4_0': T.Q4_0, 'q5_0': T.Q5_0, 'q8_0': T.Q8_0, 'q4_k': T.Q4_K, 'q6_k': T.Q6_K}[sys.argv[2]]\nrows, cols = int(sys.argv[3]), int(sys.argv[4])\nraw = np.fromfile(sys.argv[5], dtype=np.uint8).reshape(rows, -1)\nwd = dequantize(raw, typ)\nassert wd.shape == (rows, cols), (wd.shape, rows, cols)\nwd.astype(np.float16).view(np.uint16).tofile(sys.argv[6])\n";
+        let check = |dir: &Path, name: &str, w: Weight, rows_full: usize, cols: usize| {
+            // Two groups is enough to see the lane order; a short matrix
+            // still contributes its tail rows.
+            let rows = rows_full.min(64);
+            let fmt = DspFormat::of(&w).unwrap();
+            let nb = cols / QK;
+            let mut wb = vec![0u8; fmt.bytes(rows, nb)];
+            repack_qx(&w, rows, &mut wb);
+            let (wp, tp, hp, bp) = (dir_out.join(format!("{name}.w")), dir_out.join(format!("{name}.tiles")), dir_out.join(format!("{name}.f16")), dir_out.join(format!("{name}.bin")));
+            std::fs::write(&wp, &wb).unwrap();
+            // The ggml bytes are row-major, so the first `rows` rows are a prefix.
+            let all = std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
+            std::fs::write(&bp, &all[..all.len() / rows_full * rows]).unwrap();
+            let st = std::process::Command::new(&py).args(["-c", script, gguf_py.to_str().unwrap(), name, &rows.to_string(), &cols.to_string(), bp.to_str().unwrap(), hp.to_str().unwrap()]).output().unwrap();
+            assert!(st.status.success(), "gguf-py {name}: {}", String::from_utf8_lossy(&st.stderr));
+            let groups = rows.div_ceil(32);
+            run(&[wp.to_str().unwrap(), tp.to_str().unwrap(), &groups.to_string(), &nb.to_string(), &(fmt as u32).to_string()]);
+            let raw = std::fs::read(&tp).unwrap();
+            let tiles: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let want: Vec<u16> = std::fs::read(&hp).unwrap().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            assert_eq!(want.len(), rows * cols);
+            let mut worst = (0.0f32, 0usize, 0usize, 0.0f32, 0.0f32);
+            for g in 0..groups {
+                for b in 0..nb {
+                    for i in 0..16 {
+                        for n in 0..32 {
+                            let row = 32 * g + n;
+                            if row >= rows {
+                                continue;
+                            }
+                            let base = ((g * nb + b) * 16 + i) * 64;
+                            for (half, col) in [(0, 32 * b + 2 * i), (1, 32 * b + 2 * i + 1)] {
+                                if col >= cols {
+                                    continue;
+                                }
+                                let got = crate::quant::f16_to_f32(tiles[base + 2 * n + half]);
+                                let reference = crate::quant::f16_to_f32(want[row * cols + col]);
+                                let rel = (got - reference).abs() / reference.abs().max(1e-6);
+                                if rel > worst.0 {
+                                    worst = (rel, row, col, got, reference);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(worst.0 < 2e-3, "{} {name}: relative {:.3e} at row {} col {} got {} ref {} (bound 2e-3)", dir.display(), worst.0, worst.1, worst.2, worst.3, worst.4);
+        };
+        let mut cases = 0;
+        for dir in std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| {
+                let all = std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+                let rows = ws[0].min(64);
+                all[..all.len() / ws[0] * rows].to_vec()
+            };
+            let cols = ws[1];
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(crate::quant::blocks_from_bytes(&bytes("q4_0")))), ws[0], cols);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(crate::quant::blocks_from_bytes(&bytes("q5_0")))), ws[0], cols);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(crate::quant::blocks_from_bytes(&bytes("q8_0")))), ws[0], cols);
+            cases += 1;
+        }
+        for dir in std::fs::read_dir(&root_k).unwrap().map(|e| e.unwrap().path()) {
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            let bytes = |n: &str| {
+                let all = std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+                let rows = ds[0].min(64);
+                all[..all.len() / ds[0] * rows].to_vec()
+            };
+            let cols = ds[1];
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(crate::quant::blocks_from_bytes(&bytes("q4_k")))), ds[0], cols);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(crate::quant::blocks_from_bytes(&bytes("q6_k")))), ds[0], cols);
+            cases += 1;
+        }
+        let _ = std::fs::remove_dir_all(&dir_out);
+        assert!(cases >= 10, "only {cases} golden cases");
     }
 
     fn dsp() -> Option<Dsp> {

@@ -1,0 +1,12 @@
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 49.33s
+     Running unittests src/lib.rs (target/aarch64-linux-android/release/deps/aether-ab0b05a958287c85)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether-ab0b05a958287c85: 1 file pushed, 0 skipped. 85.5 MB/s (24025704 bytes in 0.268s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+     Running unittests src/main.rs (target/aarch64-linux-android/release/deps/aether-d2117141486baa20)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether-d2117141486baa20: 1 file pushed, 0 skipped. 500.5 MB/s (12757592 bytes in 0.024s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+     Running unittests src/bin/aether-quantize.rs (target/aarch64-linux-android/release/deps/aether_quantize-adff53da5a4ac857)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether_quantize-adff53da5a4ac857: 1 file pushed, 0 skipped. 425.9 MB/s (12757720 bytes in 0.029s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+   Doc-tests aether

@@ -1065,3 +1065,79 @@ busiest thread at 512 is the barrier thread (merge 616 µs, DMA 29
 µs); the average is DMA 114, score 227, value 187, merge 257.
 SmolLM2's depth-512 split is balanced: DMA 235 / 269, score 213 /
 182, value 162 / 151, merge 178 / 165 (busy / average).
+
+## Q4_K_M prompts on HMX (2026-10-31; `raw/dsp-ppl-hmx-q4km-*.txt`, `raw/dsp-speed-hmx-q4km-*.txt`, `raw/dsp-tests-hmx.txt`)
+
+`hmx_weight_tiles` fills the same fp16 weight tile for every format
+in a Q4_K_M file (Q5_0, Q8_0, Q4_K, Q6_K, and Q4_0). Q4_0, Q5_0 and
+Q8_0 scale in f16. Q4_K and Q6_K multiply the integer by the scale in
+f32, subtract Q4_K's offset there, and round to f16 once: an f16
+multiply flushed a small Q4_K weight to 0 (reference about 7.6e-5).
+The activation tile stays plain fp16. `prefill_thread` calls
+`hmx_rows` once per run, so a Q5_0 run and a Q8_0 run in the same
+matrix land on the right rows. `hmx_prefill` stays set for these five
+formats; anything past Q6_K would keep the 8-token HVX path. The
+last-token classifier (sessions, `all_logits` off) goes through the
+format's HVX product. Perplexity asks for every token, so that
+classifier stays on HMX.
+
+The tile values were checked on hexagon-sim before the phone
+(`sim_hmx_weight_tiles_match_gguf`): the first 64 rows of each
+quant_batch and quant_k golden, against gguf-py dequantized to f16,
+relative error under 2e-3. HMX itself does not run on the simulator.
+On the phone, 115 tests passed, including
+`q4km_hmx_prompt_matches_few_greedy` (SmolLM2 Q4_K_M, 24-token
+prompt, the HMX prompt and the 8-token path then pick the same 8
+greedy tokens). Zone0 was 37.6 °C and the battery 91% at the start
+of the tests. `dsp_ppl` does not print clock caps.
+
+Prefill perplexity, wikitext-2, 20 × 512, batch 128. The f16-cache
+decode digits are 20.7288 / 16.7422. llama.cpp's f16 cache is
+20.7784 ± 0.85 and 16.7657 ± 0.69. Nothing moved by more than 0.1.
+
+| | HMX prefill | f16 decode | llama.cpp | zone0 | gate/up µs |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2 Q4_K_M | 20.6872 ± 0.847 | 20.7288 | 20.7784 | 39.2 °C, battery 90% | 691 |
+| Qwen Q4_K_M | 16.7155 ± 0.686 | 16.7422 | 16.7657 | 39.9 °C (waited from 50.3), battery 90% | 2301 |
+
+Those gate/up times are the decode steps of the perplexity run, and
+they are faster than the f16 Q4_K_M decode runs (745 µs and 2560 µs),
+by about 7% and 10%. The scoring rates in the same runs, 1086 tok/s
+on SmolLM2 (9.4 s) and 517 tok/s on Qwen (19.8 s), sit on that faster
+clock. The earlier few-token scoring of the same chunks was 360 tok/s
+and 163 tok/s (`raw/dsp-q4km-ppl.txt`). The prompt medians printed
+inside the perplexity runs are not the speed table below.
+
+Speed is a separate `dsp_ppl` with zero chunks, median of five, DSP
+time. Gate/up here is within 1% of the f16 Q4_K_M decode figure, so
+these rows are the clean clock. Battery 90% throughout. Caps are not
+printed.
+
+| | zone0 start | gate/up µs | 32 | 64 | 128 | longer |
+| --- | --- | --- | --- | --- | --- | --- |
+| SmolLM2, batch 512 | 39.6 °C (from 41.5) | 739 (decode 745) | 973 | 1341 | 1544 | 1285 at 512 |
+| Qwen, batch 256 | 39.9 °C (from 48.8) | 2582 (decode 2560) | 311 | 502 | 696 | 799 at 256 |
+| Qwen, batch 320 | 38.0 °C | 2560 | 311 | 540 | 746 | 813 at 320 |
+
+Qwen's two runs agree at 32 tokens and on gate/up, and disagree by
+about 7% at 64 and 128. The 256-token run had just cooled from
+48.8 °C; the 320-token run started at 38.0 °C. A pass at 37.3 °C
+with gate/up 2295 µs (not a matched clock) still scored 813 tok/s at
+320 tokens; that stdout was replaced by the matched rerun. The
+published 8-token HVX prompt is 272 tok/s over 241 tokens, and the
+published Q4_0 HMX prompt is 755 tok/s over the same 241 tokens
+(step 6). Q4_0 on this same tool, 2026-10-30, was SmolLM2 1205 /
+1636 / 1608 and Qwen 376 / 596 / 778 at 32 / 64 / 128, with no
+gate/up recorded in that table. At 128 tokens SmolLM2 Q4_K_M is
+1544 against that 1608. Qwen is 696 in the warmer run and 746 in
+the cooler one, against 778. The tool does not time dequantization
+apart from the HMX product, so there is no per-format split. The
+big decode products in the matched runs are gate/up 739 µs and down
+572 µs on SmolLM2, gate/up 2560–2582 µs and down 1917–1930 µs on
+Qwen.
+
+Qwen cannot take 512 tokens in one HMX call. The activation bank is
+3 MB (`A_MAX`). The down matrix has 152 blocks of 32, and each
+row-tile is 2048 bytes, so 512 tokens is 16 row-tiles and 4.98 MB.
+320 tokens is 10 row-tiles and 3.11 MB, which fits. 321 does not.
+SmolLM2's hidden size is 1536, so 512 tokens fits (1.57 MB).

@@ -18,7 +18,8 @@
 // A product is up to three runs of rows, each in one format: q/k/v are
 // one run when all three have the same format (their groups are back to
 // back), else a run per format change, and so for gate/up. The prefill
-// (on HMX) takes Q4_0 only.
+// (on HMX) takes a run when its format has a tile dequantizer
+// (hmx_tiles.h: Q4_0, Q5_0, Q8_0, Q4_K, Q6_K).
 //
 // One model per DSP process (it lives in a static).
 
@@ -111,8 +112,8 @@ static struct model {
         struct run qkv[3], wo, gu[2], wdown;
         const float *attn_norm, *ffn_norm, *bq, *bk, *bv;
     } l[MAX_LAYERS];
-    // Every product Q4_0 in one run (what the prefill takes).
-    int q4_0_only;
+    // Every run's format has an HMX tile dequantizer (what the prefill takes).
+    int hmx_prefill;
 } M;
 
 // Positions per streamed K/V block, and the shortest context that streams.
@@ -149,7 +150,9 @@ static int read_runs(struct run *r, const uint32 *d, uint32 n, uint32 rows) {
     for (uint32 i = 0; i < n; i++, d += 3) {
         r[i] = (struct run) {(const HVX_Vector *) (M.w + d[0]), d[1], d[2]};
         if (r[i].fmt >= N_FORMATS || r[i].rows % 32) return 0;
-        if (r[i].rows && (i > 0 || r[i].fmt != F_Q4_0)) M.q4_0_only = 0;
+        // A format this process can load but not dequantize into a tile
+        // stays on the 8-token HVX path. The five formats all dequantize.
+        if (r[i].rows && r[i].fmt > F_Q6_K) M.hmx_prefill = 0;
         sum += r[i].rows;
     }
     return sum == rows;
@@ -195,7 +198,7 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     M.prof = (uint64 *) (s + d[D_PROF]);
     M.cy = (uint64 *) (s + d[D_PROF] + ATTN_CY_OFF);
     M.final_norm = (const float *) (w + d[D_FINAL_NORM]);
-    M.q4_0_only = 1;
+    M.hmx_prefill = 1;
     uint32 cls[3] = {d[D_CLS], d[D_CLS_FMT], M.vocab};
     int ok = read_runs(&M.cls, cls, 1, M.vocab);
     for (uint32 l = 0; l < M.layers; l++) {
@@ -1003,17 +1006,24 @@ static void prefill_thread(void *arg, uint32 t) {
     const uint32 dim = M.dim, hid = M.hid, kv = M.kv_dim, hs = M.hs, qkv_n = dim + 2 * kv, pos = st->pos, n = st->n, T = st->threads;
     qurt_barrier_t *bar = &st->bar;
     char *vtcm = st->vtcm;
-    // A product on all threads; thread 0 keeps the first error.
-#define HMX(w, rows, nb, x, xs, out, os, acc)                                                                    \
-    do {                                                                                                        \
-        struct hmx_product p = {w, rows, nb, x, xs, n, out, os, acc, vtcm};                                     \
-        int e = hmx_rows(&p, t, T, bar);                                                                        \
-        if (e && !st->err) st->err = e;                                                                         \
+    // One product per run, so a matrix of mixed formats lands each run's
+    // rows at that run's offset. Every thread calls hmx_rows the same
+    // number of times (the runs do not depend on t). Thread 0 keeps the
+    // first error.
+#define HMX(runs, nr, nb, x, xs, out, os, acc)                                                                          \
+    do {                                                                                                                \
+        const struct run *hr = (runs);                                                                                 \
+        float *ho = (out);                                                                                             \
+        for (uint32 ri = 0; ri < (nr) && hr[ri].rows; ho += hr[ri].rows, ri++) {                                       \
+            struct hmx_product p = {hr[ri].w, hr[ri].rows, nb, x, xs, n, ho, os, acc, vtcm, hr[ri].fmt};               \
+            int e = hmx_rows(&p, t, T, bar);                                                                            \
+            if (e && !st->err) st->err = e;                                                                             \
+        }                                                                                                               \
     } while (0)
     for (uint32 l = 0; l < M.layers; l++) {
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].attn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].qkv[0].w, qkv_n, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
+        HMX(M.l[l].qkv, 3, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
         for (uint32 i = FROM(n); i < TO(n); i++) qkv_post(l, pos + i, M.qkv + (size_t) i * qkv_n, M.rot + (size_t) i * hs, 0, dim / 2 + kv / 2, 0, kv);
         qurt_barrier_wait(bar);
         // Every token's keys and values are in the cache now. Groups of
@@ -1024,29 +1034,30 @@ static void prefill_thread(void *arg, uint32 t) {
             attend_pass(bar, T, l, pos, base, i1, M.qkv, qkv_n, M.xb, dim, t);
         }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wo.w, dim, dim / 32, M.xb, dim, M.x, dim, 1);
+        HMX(&M.l[l].wo, 1, dim / 32, M.xb, dim, M.x, dim, 1);
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].ffn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].gu[0].w, 2 * hid, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
+        HMX(M.l[l].gu, 2, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
         for (uint32 k = FROM(n * (hid / 32)); k < TO(n * (hid / 32)); k++) {
             HVX_Vector *g = (HVX_Vector *) (M.hb + (size_t) (k / (hid / 32)) * 2 * hid) + k % (hid / 32);
             *g = silu_mul(*g, g[hid / 32]);
         }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wdown.w, dim, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
+        HMX(&M.l[l].wdown, 1, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
     }
     const float *last;
     if (st->all) {
         // Every token's logits, on HMX.
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.final_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.cls.w, M.vocab, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
+        HMX(&M.cls, 1, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
         last = M.logits + (size_t) (n - 1) * M.vocab;
     } else {
-        // The last token's only, as in decode_thread.
+        // The last token's only, as in decode_thread. Q4_0 goes through
+        // q4_0_rows; the other formats through their own HVX product.
         norm_quantize(M.xb, M.x + (size_t) (n - 1) * dim, M.final_norm, dim, FROM(dim / 32), TO(dim / 32));
         qurt_barrier_wait(bar);
-        q4_0_rows(M.cls.w, M.xq, dim / 32, (HVX_Vector *) M.logits, pair_split(M.vocab / 32, t, T), pair_split(M.vocab / 32, t + 1, T), st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, 0, t);
+        product(&M.cls, 1, dim / 32, M.logits, 0, st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, t, T);
         qurt_barrier_wait(bar);
         last = M.logits;
     }
@@ -1056,7 +1067,7 @@ static void prefill_thread(void *arg, uint32 t) {
 
 AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint32 threads, uint32 all, uint32 *next, uint64 *us) {
     (void) h;
-    if (!M.loaded || !M.q4_0_only || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
+    if (!M.loaded || !M.hmx_prefill || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
     if (!hmx_fits(M.dim / 32, n) || !hmx_fits(M.hid / 32, n)) return AEE_EBADPARM;
     uint32 bytes = 0;
     char *vtcm = vtcm_get(&bytes);

@@ -595,13 +595,13 @@ impl DspSession {
     }
 
     /// Runs the prompt from position 0 in prefills of up to
-    /// [`DspSession::BATCH`] tokens, or for a model not all in Q4_0 (no
-    /// prefill on HMX) in few-token passes of 8; returns the last token's
+    /// [`DspSession::BATCH`] tokens, or, when a matrix has no HMX
+    /// dequantizer, in few-token passes of 8; returns the last token's
     /// logits.
     fn prompt(&mut self, tokens: &[usize]) -> Vec<f32> {
         let (b, vocab) = (self.model.batch, self.model.config.vocab_size);
         let mut logits = Vec::new();
-        if !self.model.q4_0_only {
+        if !self.model.hmx_prefill {
             let f = crate::kernels::hexagon::MAX_FEW;
             for (i, part) in tokens.chunks(f).enumerate() {
                 let rows = self.model.few(&self.dsp, part, i * f).expect("DSP prompt pass");
