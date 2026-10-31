@@ -1240,3 +1240,76 @@ awake. tok/s, round 1 / round 2:
   up to 512 keys). Not yet profiled at those positions: `vk_prefill` times
   a single batch from position 0. That is the next thing to look at for
   long prompts.
+
+## Step 22: the prompt's attention, 32 tokens a workgroup (2026-11-01; `raw/vk-kld-*-batch-tile.txt`, `raw/vk-tests-attn-tile-phone.txt`)
+
+**Where the 20 % went.** `vk_pp … profile` (new: GPU time per kind of
+stage, summed over the batches of one run) on Qwen2.5-0.5B Q4_0, int8
+products, phone charging (so for the split, not as a speed result):
+
+| GPU ms | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| attention | 2.7 | 9.0 | 34.4 | **134.6** |
+| gate/up | 19.1 | 36.7 | 73.4 | 147.8 |
+| swiglu + down | 17.2 | 28.8 | 57.5 | 116.3 |
+| everything | 51 | 92 | 202 | 476 |
+
+Attention grows with the square of the length and was 28 % of the GPU's
+time at 512 tokens, running at ~84 GFLOP/s (11.3 GFLOP of scores and
+value sums) where the products run at over 1,000. `attention.comp` gives
+each (head, 64-position chunk, token) its own workgroup: each loads the
+chunk's keys and values again, and does 64 dot products with a dozen
+barrier rounds.
+
+**`attention_tile.comp`**: workgroup (head, chunk, 32 tokens); four
+threads per pair of tokens, each with 16 of the 64 query and output
+values in registers; keys and values through shared memory 16 positions
+at a time, every read serving two tokens; scores added across the four
+threads with two subgroup shuffles; an online softmax per position, as in
+flash attention (no scores stored). The chunk split and
+`attention_merge.comp` stay, so the GPU keeps enough workgroups. The
+variants measured on the way, attention ms at 512 tokens (same state):
+
+| variant | pp64 | pp512 |
+| --- | --- | --- |
+| `attention.comp` (one workgroup per token) | 2.7 | 134.6 |
+| 16 tokens, scores in shared memory, one thread per position | 14.0 | 473.1 |
+| one token per thread, 4 threads per token, f32 in shared | 6.7 | 193.4 |
+| … unrolled score array | 11.2 | 382.4 |
+| two tokens per thread, f32 | 4.3 | 120.6 |
+| four tokens per thread, f32 | 6.0 | 138.5 |
+| **two tokens per thread, f16 keys/values in shared, 16 positions a load** | **3.0** | **57.3** |
+| … 32 positions a load | 3.1 | 71.9 |
+| … 64 positions a load | 4.2 | 113.8 |
+| … 8 positions a load | 3.1 | 58.2 |
+| four tokens per thread, f16, 16 positions | 5.0 | 76.1 |
+
+What the Adreno rewards here is fewer bytes read from shared memory per
+multiply-add (two tokens per read: 193 → 121; f16 storage: 121 → 72) and a
+small footprint (more waves resident: 16 positions per load beat 64;
+four tokens per thread, with twice the registers, lost). The first design,
+all scores in shared memory, did ~2,000 shared reads per thread and was 3.5×
+slower than the original.
+
+f16 storage rounds keys and values as llama.cpp's default f16 cache does.
+Through the prompt pass (int8 products, wikitext-2 20 × 512, phone), KL
+against the f32 model, before (step 20) → now, llama.cpp:
+
+| | Mean KLD before | now | llama.cpp |
+| --- | --- | --- | --- |
+| SmolLM2-135M Q4_0 | 0.335616 | 0.336116 | 0.335355 ± 0.004256 |
+| SmolLM2-135M Q4_K_M | 0.051535 | 0.051098 | 0.053319 ± 0.000979 |
+| Qwen2.5-0.5B Q4_0 | 0.181107 | 0.180747 | 0.181010 ± 0.002752 |
+| Qwen2.5-0.5B Q4_K_M | 0.031790 | 0.031558 | 0.033112 ± 0.000638 |
+
+All within llama.cpp's error bar. On the PC (f32 products), PPL through
+the pass is equal to the old shader's to four decimals in f32 storage
+(20.8704, 29.3184 with chunks of 300: partial tiles), 29.3175 with f16.
+130 / 130 tests on the phone (`--features vulkan,hexagon`).
+
+With attention at 57 instead of 135 ms, the 512-token prompt's GPU time
+falls from ~476 to ~400 ms (−16 %, phone charging). The battery A/B
+(`scripts/opt-ab.sh prompt`, against `Options::attn_per_token`) is to do.
+This is the first piece of flash attention on the GPU; the full version
+(one pass over all positions with the online softmax, no merge, for long
+contexts) is the next topic.

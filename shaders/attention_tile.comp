@@ -1,0 +1,127 @@
+#version 450
+// attention.comp for a prompt, 32 tokens per workgroup: workgroup (h, c, g)
+// takes query head h, the 64 positions of chunk c and tokens 32g .. 32g + 31
+// of the batch. attention.comp gives each token its own workgroup, so each
+// loads the chunk's keys and values again and reduces over 64 positions
+// with a dozen barriers for 64 dot products; at 512 tokens that was 28 % of
+// the GPU's prompt time on the Adreno.
+//
+// Here four threads share two tokens (t and t + 16), each holding 16 of
+// both queries' 64 values and 16 of both outputs' in registers. The chunk's
+// keys and values go through shared memory SUB positions at a time, read
+// by every thread at once (the same address in all threads of a part), and
+// each read serves both tokens. A score is four partial dot products added
+// with two subgroup shuffles. The softmax is "online", as in flash
+// attention: per position, a new max m' rescales what was summed so far by
+// e^(m − m'), then e^(s − m') and e^(s − m') v are added, so no score is
+// stored.
+//
+// On the Adreno the limit is reading shared memory (each key and value is
+// read once per pair of tokens), so keys and values sit there as f16 (as
+// llama.cpp's default cache holds them): half the bytes per read. Measured
+// at 512 tokens (Qwen2.5-0.5B, results/phase-l3.md step 22): attention.comp
+// 135 ms; this shader with one token per thread 193, two 121 (f32), two
+// with f16 57 (SUB = 16; 32: 72, 64: 114), four 76 (registers).
+//
+// Same output as attention.comp: (m, l, out[0..hs]) at parts[t][h][c] for
+// every token that reaches the chunk, combined by attention_merge.comp.
+// hs must be at most 64 (four threads × 16 values).
+#extension GL_KHR_shader_subgroup_shuffle : enable
+#extension GL_EXT_control_flow_attributes : enable
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Qv { float q[]; };
+layout(std430, binding = 1) readonly buffer Kc { float kc[]; };
+layout(std430, binding = 2) readonly buffer Vc { float vc[]; };
+layout(std430, binding = 3) writeonly buffer Pt { float parts[]; };
+layout(std430, binding = 4) readonly buffer Pm { uint pos; };
+layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; uint qstride; uint ntok; };
+
+// U tokens per thread (t, t + 16, ...).
+const uint U = 2, TQ = 16 * U, SUB = 16;
+// Keys and values of SUB positions, 16 vec4s (64 values) per position.
+// Stored as f16 pairs (packHalf2x16), half the bytes per read.
+shared uvec2 ks[SUB * 16];
+shared uvec2 vs[SUB * 16];
+
+uvec2 pack4(vec4 v) { return uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw)); }
+vec4 unpack4(uvec2 p) { return vec4(unpackHalf2x16(p.x), unpackHalf2x16(p.y)); }
+
+void main() {
+    uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, id = gl_LocalInvocationID.x;
+    uint tok0 = gl_WorkGroupID.z * TQ, nq = min(TQ, ntok - tok0);
+    uint t0 = 64 * c, last = pos + tok0 + nq - 1;
+    if (t0 > last) return;
+    // Thread (t, part): values 16·part .. 16·part + 15 of tokens t, t + 16.
+    uint t = id / 4, part = id % 4;
+    uint at[U];
+    bool live[U];
+    [[unroll]] for (uint u = 0; u < U; u++) {
+        at[u] = pos + tok0 + t + 16 * u;
+        live[u] = t + 16 * u < nq;
+    }
+    uint kv_dim = n_kv * hs, kvo = layer_off + (h / (n_heads / n_kv)) * hs;
+    vec4 qv[U][4], acc[U][4];
+    [[unroll]] for (uint u = 0; u < U; u++) {
+        [[unroll]] for (uint i = 0; i < 4; i++) {
+            uint d = 16 * part + 4 * i;
+            uint qo = (tok0 + t + 16 * u) * qstride + h * hs + d;
+            qv[u][i] = live[u] && d < hs ? vec4(q[qo], q[qo + 1], q[qo + 2], q[qo + 3]) : vec4(0.0);
+            acc[u][i] = vec4(0.0);
+        }
+    }
+    float m[U], l[U];
+    [[unroll]] for (uint u = 0; u < U; u++) {
+        m[u] = -1.0 / 0.0;
+        l[u] = 0.0;
+    }
+    float scale = 1.0 / sqrt(float(hs));
+    uint n = min(64, last + 1 - t0);
+    for (uint j0 = 0; j0 < n; j0 += SUB) {
+        // 64 threads load SUB × 16 vec4s of keys and of values.
+        for (uint k = id; k < SUB * 16; k += 64) {
+            uint j = k / 16, d = 4 * (k % 16), at_k = kvo + (t0 + j0 + j) * kv_dim + d;
+            bool ok = j0 + j < n && d < hs;
+            ks[k] = pack4(ok ? vec4(kc[at_k], kc[at_k + 1], kc[at_k + 2], kc[at_k + 3]) : vec4(0.0));
+            vs[k] = pack4(ok ? vec4(vc[at_k], vc[at_k + 1], vc[at_k + 2], vc[at_k + 3]) : vec4(0.0));
+        }
+        barrier();
+        uint nj = min(SUB, n - j0);
+        for (uint j = 0; j < nj; j++) {
+            uint b = j * 16 + 4 * part, tj = t0 + j0 + j;
+            vec4 k0 = unpack4(ks[b]), k1 = unpack4(ks[b + 1]), k2 = unpack4(ks[b + 2]), k3 = unpack4(ks[b + 3]);
+            vec4 v0 = unpack4(vs[b]), v1 = unpack4(vs[b + 1]), v2 = unpack4(vs[b + 2]), v3 = unpack4(vs[b + 3]);
+            [[unroll]] for (uint u = 0; u < U; u++) {
+                float p = dot(qv[u][0], k0) + dot(qv[u][1], k1) + dot(qv[u][2], k2) + dot(qv[u][3], k3);
+                p += subgroupShuffleXor(p, 1);
+                p += subgroupShuffleXor(p, 2);
+                if (live[u] && tj <= at[u]) {
+                    float s = p * scale, m2 = max(m[u], s), r = exp(m[u] - m2), e = exp(s - m2);
+                    l[u] = l[u] * r + e;
+                    acc[u][0] = acc[u][0] * r + e * v0;
+                    acc[u][1] = acc[u][1] * r + e * v1;
+                    acc[u][2] = acc[u][2] * r + e * v2;
+                    acc[u][3] = acc[u][3] * r + e * v3;
+                    m[u] = m2;
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint u = 0; u < U; u++) {
+        if (!live[u] || t0 > at[u]) continue;
+        uint base = (((tok0 + t + 16 * u) * n_heads + h) * chunks + c) * (hs + 2);
+        [[unroll]] for (uint i = 0; i < 4; i++) {
+            uint d = 16 * part + 4 * i;
+            if (d < hs) {
+                parts[base + 2 + d] = acc[u][i].x;
+                parts[base + 3 + d] = acc[u][i].y;
+                parts[base + 4 + d] = acc[u][i].z;
+                parts[base + 5 + d] = acc[u][i].w;
+            }
+        }
+        if (part == 0) {
+            parts[base] = m[u];
+            parts[base + 1] = l[u];
+        }
+    }
+}

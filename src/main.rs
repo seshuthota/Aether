@@ -25,6 +25,9 @@
 //!             copied from the last earlier match of the last --ngram N
 //!             tokens (default 2), checked in one batched pass; with -t > 0
 //!             by speculative sampling, which keeps the sampler's distribution
+//!   --lookup-fixed  check K drafts every time (default: the length adapts
+//!             to how many were accepted, down to plain decoding while
+//!             drafts keep failing; session::DraftLen)
 //!   --draft PATH  speculative decoding with a draft model of the same
 //!             vocabulary (e.g. SmolLM2-135M for SmolLM2-360M; -q applies to
 //!             it too): up to --draft-k K (default 4) greedy draft tokens,
@@ -74,13 +77,14 @@ fn main() {
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
     let mut base_path: Option<PathBuf> = None;
-    let (mut lookup, mut ngram) = (0usize, 2usize);
+    let (mut lookup, mut ngram, mut fixed) = (0usize, 2usize, false);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" {
             match flag.as_str() {
+                "--lookup-fixed" => fixed = true,
                 "--kl" => kl = true,
                 "--chat" => chat = true,
                 "--times" => times = true,
@@ -132,16 +136,17 @@ fn main() {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram));
+        return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram, fixed));
     }
     if gpu {
         if chat {
             prompt = aether::chat::chatml(&system, &prompt);
         }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram));
+        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
+    session.lookup_fixed = fixed;
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
         prompt = aether::chat::chatml(&system, &prompt);
@@ -194,7 +199,7 @@ fn peak_rss() -> String {
 #[allow(clippy::too_many_arguments)]
 fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatrix: Option<&Imatrix>, ctx: usize, chunks: usize, base: Option<PathBuf>, cores: Option<Vec<usize>>) {
     let open = |p: &Path, f: Format, im: Option<&Imatrix>, c: Option<&[usize]>| Session::open_imatrix(p, Some(tok_path), ctx, f, im, c).unwrap_or_else(|e| fail(p, e));
-    let Session { mut model, text } = open(model_path, format, imatrix, cores.as_deref());
+    let Session { mut model, text, .. } = open(model_path, format, imatrix, cores.as_deref());
     let kl = base.is_some();
     let mut base = base.map(|b| open(&b, Format::F32, None, None).model);
     let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
@@ -216,12 +221,13 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram): (usize, usize)) {
+fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram, fixed): (usize, usize, bool)) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
     };
     let mut s = s.unwrap_or_else(|e| fail(path, e));
+    s.lookup_fixed = fixed;
     eprintln!("GPU: {}", s.gpu.info.name);
     let mut out = std::io::stdout().lock();
     let t = s.text.encode(prompt);
@@ -258,11 +264,12 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
 /// `--dsp`: the prompt in batches on the DSP's HMX, then one DSP decode
 /// step per token (`session::DspSession`); sampling on the CPU.
 #[cfg(feature = "hexagon")]
-fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (lookup, ngram): (usize, usize)) {
+fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (lookup, ngram, fixed): (usize, usize, bool)) {
     // The DSP library goes next to this program (/data/local/tmp/... on
     // the phone is writable).
     let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
     let mut s = aether::session::DspSession::open(path, steps, &dir, 6).unwrap_or_else(|e| fail(path, e));
+    s.lookup_fixed = fixed;
     let mut out = std::io::stdout().lock();
     let t = s.text.encode(prompt);
     let _ = out.write_all(&s.text.first_piece(t[0]));
@@ -283,12 +290,12 @@ fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (
 }
 
 #[cfg(not(feature = "hexagon"))]
-fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize)) {
+fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize, bool)) {
     eprintln!("--dsp needs a build with --features hexagon");
 }
 
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize)) {
+fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize, bool)) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

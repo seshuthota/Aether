@@ -203,6 +203,8 @@ struct Bl {
     qkv: Vec<Bound>,
     post: Bound,
     attn: Bound,
+    /// attention_tile.comp: a prompt's attention, 32 tokens a workgroup.
+    attn_tile: Bound,
     merge: Bound,
     o: Bound,
     norm2: Bound,
@@ -258,6 +260,16 @@ pub struct Options {
     /// The few-token pass with the f32 shader (`qx_gemv_n`) even where
     /// the int8 one ([`Q8`]) could run.
     pub few_f32: bool,
+    /// The decode step's layer products with x in 8 bits and int8 dot
+    /// products as well ([`Q8`] at one token), where the GPU has them: the
+    /// RMS norm before q/k/v and the SwiGLU before down become their own
+    /// dispatches. On the Adreno the int8 kernel for one token was 10 %
+    /// faster on gate/up (results/phase-l3.md, step 14).
+    pub decode_q8: bool,
+    /// A prompt's attention with one workgroup per token
+    /// (`attention.comp`, as decode) instead of `attention_tile.comp`
+    /// (A/B timing only).
+    pub attn_per_token: bool,
 }
 
 /// The few-token pass with x quantized to 8 bits per 32 values and int8
@@ -266,7 +278,8 @@ pub struct Options {
 /// dispatches this way, against ~8 with x in f32 (results/phase-l3.md,
 /// step 14).
 struct Q8 {
-    /// Kernel sizes in tokens, 2 to [`FEW`]: a pass of n tokens takes the
+    /// Kernel sizes in tokens, 2 to [`FEW`] (and 1 with
+    /// [`Options::decode_q8`]): a pass of n tokens takes the
     /// first that holds n. One kernel per size: on the Adreno 5 tokens
     /// through the 8-token kernel cost 3.4 decode steps against 2.1 for
     /// 4 through the 4-token one (results/phase-l3.md, step 14).
@@ -405,6 +418,10 @@ pub struct GpuModel {
     fcls_mm: Option<Bound>,
     fcls_few: Bound,
     q8: Option<Q8>,
+    /// The few-token pass and the decode step use [`Q8`].
+    q8_few: bool,
+    decode_q8: bool,
+    attn_per_token: bool,
     /// The two passes of the argmax of `logits` into `best`.
     amax: Bound,
     best: Buffer,
@@ -503,6 +520,7 @@ impl GpuModel {
         let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 12)?;
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
         let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
+        let attn_tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
         let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
@@ -568,7 +586,9 @@ impl GpuModel {
         };
         // The int8 few-token products ([`Q8`]), by format, accumulation and
         // size, all reading `xq`.
-        let q8_sizes: Vec<usize> = if gpu.info.int_dot && !opt.few_f32 && few >= 2 { (2..=few).collect() } else { Vec::new() };
+        let q8_few = gpu.info.int_dot && !opt.few_f32 && few >= 2;
+        let decode_q8 = gpu.info.int_dot && opt.decode_q8;
+        let q8_sizes: Vec<usize> = (if decode_q8 { 1 } else { 2 }..=if q8_few { few } else { 1 }).collect();
         let xq = gpu.buffer(few * dim.max(hid) / 32 * 48)?;
         let mut q8_ks: Vec<((u32, bool, usize), Kernel)> = Vec::new();
         let mut q8_bind = |m: &Mat, accum: bool, size: usize, out: (&Buffer, usize)| -> Result<Bound> {
@@ -625,6 +645,7 @@ impl GpuModel {
                 qkv: ly.wqkv.iter().map(|(m, at)| gemv_bind(m, false, Some(&ly.attn_norm), &x, (&qkv, *at))).collect::<Result<_>>()?,
                 post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
                 attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
+                attn_tile: attn_tile.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
                 o: gemv_bind(&ly.wo, true, None, &xb2, (&x, 0))?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
@@ -689,7 +710,7 @@ impl GpuModel {
 
         let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm, amax_parts];
         keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, merge, swiglu, argmax, mm, mm_acc, mm_glu];
+        let mut kernels = vec![rms, post, attn, attn_tile, merge, swiglu, argmax, mm, mm_acc, mm_glu];
         kernels.append(&mut f16_kernels);
         kernels.extend(gemv_ks.into_iter().map(|(_, k)| k));
         kernels.extend(gemm_ks.into_iter().map(|(_, k)| k));
@@ -705,6 +726,9 @@ impl GpuModel {
             logits_all,
             logits_few,
             few,
+            q8_few,
+            decode_q8,
+            attn_per_token: opt.attn_per_token,
             kc,
             vc,
             params,
@@ -779,7 +803,7 @@ impl GpuModel {
         // With Q8: quantize the product's input (`quant`: 0 xb, 1 xb2, 2
         // gate/up through SwiGLU), then the int8 products of the smallest
         // size that holds the pass.
-        let q8 = self.q8.as_ref().filter(|_| few);
+        let q8 = self.q8.as_ref().filter(|_| (few && self.q8_few) || (n == 1 && self.decode_q8));
         let size = q8.map_or(0, |q| q.sizes.iter().position(|&s| s >= n).unwrap());
         let quant = |r: &mut Recorder, i: usize, nb: usize| {
             r.dispatch(&q8.unwrap().quant[i], &push(&[nb as u32, nt]), groups_for(n * nb, 64));
@@ -790,9 +814,9 @@ impl GpuModel {
         // down) transposes its input (`t`) and runs the f16 shaders.
         let f16 = self.f16.as_ref().filter(|_| n > 1 && !few);
         let product = |r: &mut Recorder, gemv_b: &[Bound], gemm_b: &[Bound], few_b: &[Bound], ms: &[&Mat], stride: usize, h: Option<(&Bound, &[HPart])>, q8_b: (usize, &[Bound])| {
-            if n == 1 {
+            if n == 1 && q8.is_none() {
                 gemv_b.iter().zip(ms).for_each(|(k, m)| gemv(r, k, m));
-            } else if few && q8.is_some() {
+            } else if q8.is_some() {
                 quant(r, q8_b.0, ms[0].nb());
                 q8_b.1.iter().zip(ms).for_each(|(k, m)| gemv_q8(r, k, m, stride));
             } else if few {
@@ -809,8 +833,9 @@ impl GpuModel {
         let h = |l: usize, i: usize, t: fn(&F16) -> &Bound| f16.map(|f| (t(f), &f.mm[l][i][..]));
         for (l, (b, ly)) in self.bound.iter().zip(&self.layers).enumerate() {
             let layer_off = (l * c.seq_len * kv_dim) as u32;
-            // In decode the first norm is part of q/k/v.
-            if n > 1 {
+            // In decode the first norm is part of q/k/v (unless x is
+            // quantized first).
+            if n > 1 || q8.is_some() {
                 r.dispatch(&b.norm1, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
             }
@@ -819,7 +844,13 @@ impl GpuModel {
             end(r, "q/k/v");
             r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
             end(r, "bias + RoPE + cache");
-            r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+            // A prompt: 32 tokens a workgroup; decode and a few-token
+            // pass: one.
+            if n > 1 && !few && !self.attn_per_token {
+                r.dispatch(&b.attn_tile, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, nt]), [c.n_heads as u32, chunks, nt.div_ceil(32)]);
+            } else {
+                r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+            }
             end(r, "attention");
             r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
             end(r, "attention merge");
@@ -829,8 +860,9 @@ impl GpuModel {
             end(r, "rmsnorm");
             product(r, &b.gate_up, &b.mm[2], &b.few[2], &mats(&ly.w_gate_up), 2 * c.hidden_dim, h(l, 2, |f| &f.t_xb), (0, q8_b(2)));
             end(r, "gate/up");
-            // The GEMM applies the SwiGLU as it loads gate and up.
-            if n == 1 {
+            // The GEMM applies the SwiGLU as it loads gate and up (and the
+            // quantizer of the int8 products as it reads them).
+            if n == 1 && q8.is_none() {
                 r.dispatch(&b.swiglu, &push(&[c.hidden_dim as u32]), [c.hidden_dim.div_ceil(256) as u32, 1, 1]);
                 end(r, "swiglu");
                 product(r, std::slice::from_ref(&b.down), &b.mm[3], &b.few[3], &[&ly.w_down], 0, None, (2, &[]));
