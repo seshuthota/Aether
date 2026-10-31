@@ -1,0 +1,24 @@
+== f16 38800
+16 tokens: 70.7 ms wall (226 tok/s), 69.1 
+64 tokens: 119.1 ms wall (537 tok/s), 114.5 
+128 tokens: 198.9 ms wall (644 tok/s), 196.5 
+== int8 37600
+16 tokens: 54.6 ms wall (293 tok/s), 51.0 
+64 tokens: 77.6 ms wall (824 tok/s), 74.3 
+128 tokens: 124.4 ms wall (1029 tok/s), 121.6 
+== f16 37600
+16 tokens: 71.2 ms wall (225 tok/s), 69.6 
+64 tokens: 116.5 ms wall (549 tok/s), 114.1 
+128 tokens: 201.9 ms wall (634 tok/s), 196.4 
+== int8 37600
+16 tokens: 53.2 ms wall (301 tok/s), 51.6 
+64 tokens: 76.8 ms wall (833 tok/s), 74.5 
+128 tokens: 124.5 ms wall (1028 tok/s), 122.0 
+== f16 36900
+16 tokens: 71.0 ms wall (225 tok/s), 69.6 
+64 tokens: 119.0 ms wall (538 tok/s), 114.6 
+128 tokens: 199.0 ms wall (643 tok/s), 196.0 
+== int8 36900
+16 tokens: 55.2 ms wall (290 tok/s), 51.4 
+64 tokens: 77.7 ms wall (823 tok/s), 74.4 
+128 tokens: 124.7 ms wall (1027 tok/s), 121.7 

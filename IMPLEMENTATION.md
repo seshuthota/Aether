@@ -102,7 +102,10 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    Adreno. Step 16b: same change in `qx_gemm_h.comp` for Q4_0/Q5_0 pieces, +5 %.
    Step 17: int8 dot products in the prefill GEMM for Q4_0 files (`q4_0_gemm_q8.comp`),
    x staged through shared memory: 1049 → 1546 tok/s at 128 tokens (+47 %), PPL
-   +0.02–0.06. Open: the same for Q4_K_M files (`qx_gemm_q8`), int8 for decode.
+   +0.02–0.06. Step 19: the same for Q4_K_M files (`qx_gemm_q8.comp`): 634 → 1028 tok/s at 128
+   tokens (+60 %), PPL +0.02–0.04; int8 products now tested on the phone (step 18).
+   Open: KL / top-token agreement against llama.cpp for both int8 paths, a
+   same-session `llama-bench` at pp128/256/512, int8 for decode.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /

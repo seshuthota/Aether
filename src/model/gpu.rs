@@ -5,8 +5,8 @@
 //! through the tuned `q4_0_gemv.comp`, the others through `qx_gemv.comp`.
 //! The prompt pass of a Q4_0 model uses `q4_0_gemm_q8.comp` (int8 dot
 //! products, x in 8 bits) where the GPU has them, else `q4_0_gemm_h.comp`
-//! (f16) or `q4_0_gemm.comp` (f32); any other model's, `qx_gemm.comp` (or
-//! `qx_gemm_h.comp`).
+//! (f16) or `q4_0_gemm.comp` (f32); any other model's, `qx_gemm_q8.comp`
+//! (int8), `qx_gemm_h.comp` (f16) or `qx_gemm.comp` (f32).
 //!
 //! Every buffer lives in memory the CPU and GPU share. The whole token,
 //! about a dozen dispatches per layer with a barrier after each step, is
@@ -298,7 +298,7 @@ struct HPart {
 /// copy of every matrix in that shader's layout, and the activations
 /// transposed to f16 in `xt` before each product. With `int8` (a Q4_0
 /// model on a GPU with int8 dot products) the products are
-/// `q4_0_gemm_q8.comp`'s and `xt` holds the activations quantized to 8 bits
+/// `q4_0_gemm_q8.comp`'s (any other format's, `qx_gemm_q8.comp`'s) and `xt` holds the activations quantized to 8 bits
 /// (`quant_x.comp`) instead: 1.5× the f16 shader's speed on the Adreno 830
 /// (results/phase-l3.md, step 17).
 struct F16 {
@@ -347,7 +347,7 @@ fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, int8: bool, pure: boo
     let mats = if pure {
         vec![(HMat::Q4_0(MatQ4_0T::new(gpu, &q4_0_stacked(ws, what)?, total)?), 0)]
     } else {
-        parts(gpu, ws, what, |ws| stacked(ws, what, |w, rows| MatQT::new(gpu, w, rows)))?.into_iter().map(|(m, at)| (HMat::Qx(m, total), at)).collect()
+        parts(gpu, ws, what, |ws| stacked(ws, what, |w, rows| if int8 { MatQT::new_paired(gpu, w, rows) } else { MatQT::new(gpu, w, rows) }))?.into_iter().map(|(m, at)| (HMat::Qx(m, total), at)).collect()
     };
     mats.into_iter()
         .map(|(m, at)| {
@@ -358,7 +358,7 @@ fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, int8: bool, pure: boo
             let i = match ks.iter().position(|(k, _)| *k == key) {
                 Some(i) => i,
                 None => {
-                    ks.push((key, if key.0 == 0 && int8 { gpu.q4_0_gemm_q8_kernel(accum)? } else if key.0 == 0 { gpu.q4_0_gemm_h_kernel(accum)? } else { gpu.qx_gemm_h_kernel(key.0, accum)? }));
+                    ks.push((key, if key.0 == 0 && int8 { gpu.q4_0_gemm_q8_kernel(accum)? } else if key.0 == 0 { gpu.q4_0_gemm_h_kernel(accum)? } else if int8 { gpu.qx_gemm_q8_kernel(key.0, accum)? } else { gpu.qx_gemm_h_kernel(key.0, accum)? }));
                     ks.len() - 1
                 }
             };
@@ -656,7 +656,7 @@ impl GpuModel {
             Some(Q8 { sizes: q8_sizes, quant, cls: cls_q8, _xq: xq })
         };
 
-        let int8 = pure && gpu.info.int_dot && !opt.f16_gemm && !opt.f32_gemm;
+        let int8 = gpu.info.int_dot && !opt.f16_gemm && !opt.f32_gemm;
         let f16 = if int8 || (gpu.info.fp16 && !opt.f32_gemm) {
             let (tk, tk_glu) = if int8 { (gpu.quant_xp_kernel(false)?, gpu.quant_xp_kernel(true)?) } else { (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?) };
             let xt = gpu.buffer(dim.max(hid) * Gpu::f16t_pad(batch) * 2)?;
@@ -918,6 +918,7 @@ impl GpuModel {
             (true, true) if self.f16.as_ref().is_some_and(|f| f.int8) => "q4_0_gemm_q8",
             (true, true) => "q4_0_gemm_h",
             (true, false) => "q4_0_gemm",
+            (false, true) if self.f16.as_ref().is_some_and(|f| f.int8) => "qx_gemm_q8",
             (false, true) => "qx_gemm_h",
             (false, false) => "qx_gemm",
         }
