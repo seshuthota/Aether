@@ -1018,10 +1018,50 @@ not paying for the shorter copy. Qwen's prefill gate/up is 1894
 against 2097, about 10% faster, so 542 against 533 tok/s is not a
 clean comparison and was not rerun.
 
-The depth profile (0 / 512 / 2048, the DMA-wait split) was not run.
-The battery was 24% at the start of the phone tests and 19% when the
-perplexity runs finished, which is under the 20% line where the
-clocks change. Zone0 was waited under 40 °C before each perplexity
-run; it was 36 °C at the first and 40 °C at the last. Caps during the
-runs fell from cpu0 2.75 / cpu7 2.65 GHz to 2.00 / 2.25 GHz. The
-Q4_0 decode comparisons above are the ones whose gate/up stayed put.
+The depth profile was skipped at first: the battery was 24% at the
+start of the phone tests and 19% when the perplexity runs finished,
+under the 20% line where the clocks change. Zone0 was waited under
+40 °C before each perplexity run; it was 36 °C at the first and 40 °C
+at the last. Caps during those runs fell from cpu0 2.75 / cpu7 2.65
+GHz to 2.00 / 2.25 GHz. The Q4_0 decode comparisons above are the ones
+whose gate/up stayed put. The profile was run later the same day, on
+battery at 91%, and supersedes that skip
+(`raw/dsp-profile-depth-f16-{smol,qwen}.txt`).
+
+SmolLM2 zone0 41.5 °C at the start, 48.0 °C before depth 512, 56.1 °C
+before depth 2048. Qwen 43.4 / 54.2 / 61.1 °C. Caps stayed cpu0
+2.40 GHz and cpu7 2.44 GHz (cpu7's current frequency sat at 1.02 GHz).
+That is a lower cap than the score-loop profile's 2.75 / 2.65 GHz.
+Gate/up is the DSP check and it matches: Qwen 2107 / 2114 / 2100 µs
+against 2113 / 2105 / 2116, SmolLM2 571 / 569 / 566 µs against 571 /
+568 / 571. Depth 2048 is within 1% on both, so the split below is a
+clean comparison.
+
+At depth 2048, busiest thread then average, against the f32-cache
+score-loop split:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 254 (was 494) | 253 (was 495) | 265 (was 1589) | 345 (was 1588) |
+| score + softmax | 684 (was 764) | 801 (was 718) | 677 (was 547) | 647 (was 578) |
+| value accumulation | 570 (was 839) | 716 (was 758) | 588 (was 599) | 576 (was 609) |
+| barriers + merge | 547 (was 153) | 270 (was 275) | 324 (was 233) | 272 (was 187) |
+
+SmolLM2's DMA wait falls 1589 → 265 µs on the busiest thread and
+1588 → 345 µs on average, about a sixth of the f32 wait, more than
+the halving of the bytes. Its score rises 547 → 677 µs (the f16
+convert). Attention goes 3151 → 2031 µs and the step 5.43 → 4.43 ms
+(191 tok/s wall). Qwen's DMA wait halves, 494 → 254 µs. Its average
+score rises 718 → 801 µs and its average value falls 758 → 716 µs;
+the busiest thread's cycles move into the barrier bucket (merge 153
+→ 547 µs) while the average merge stays 270 µs. Attention goes
+2435 → 2234 µs and the step 8.79 → 8.60 ms (97 tok/s wall). Qwen
+does not lose to the conversion, so there is no per-model switch.
+
+Depth 0 is still the prefetch path: attention 236 µs on Qwen (was
+262) and 227 µs on SmolLM2 (was 266). At depth 512 attention is
+953 µs on Qwen (was 1110) and 937 µs on SmolLM2 (was 1238). Qwen's
+busiest thread at 512 is the barrier thread (merge 616 µs, DMA 29
+µs); the average is DMA 114, score 227, value 187, merge 257.
+SmolLM2's depth-512 split is balanced: DMA 235 / 269, score 213 /
+182, value 162 / 151, merge 178 / 165 (busy / average).

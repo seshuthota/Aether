@@ -114,8 +114,10 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    16.7381 → 16.7422. Qwen's decode throughput does not change (104
    tok/s, gate/up 2109 vs 2102). SmolLM2's rises 237 → 244 tok/s
    (gate/up 577 vs 571) and its prefill falls 1055 → 1026 (gate/up
-   flat). The depth-2048 cycle split was not measured: the battery was
-   at 19% after the perplexity runs.
+   flat). At depth 2048, with gate/up within 1% of 2116 / 571 µs,
+   SmolLM2's DMA wait falls 1589 → 265 µs and its step 5.43 → 4.43 ms.
+   Qwen's DMA wait halves (494 → 254 µs) and its step moves 8.79 →
+   8.60 ms; the conversion does not make Qwen slower.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
