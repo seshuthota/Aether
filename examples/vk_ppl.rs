@@ -5,7 +5,7 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f32|few]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f32|few|few-f32]
 //!
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
@@ -15,7 +15,8 @@
 //!
 //! `few`: score each chunk `GpuModel::few` tokens at a time through
 //! `GpuModel::forward_few` (the decode shader for several tokens, as
-//! speculative decoding checks its drafts).
+//! speculative decoding checks its drafts): with x in 8 bits and int8
+//! dot products where the GPU has them, `few-f32` with x in f32.
 
 use aether::eval::{Score, log_probs};
 use aether::kernels::vulkan::Gpu;
@@ -31,14 +32,14 @@ fn main() {
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let mode = args.next().unwrap_or_default();
-    let (batched, f32_gemm, few) = (mode.starts_with("batch"), mode == "batch-f32", mode == "few");
+    let (batched, f32_gemm, few, few_f32) = (mode.starts_with("batch"), mode == "batch-f32", mode.starts_with("few"), mode == "few-f32");
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
     let text = Session::open(&path, None, ctx, Format::F32, None).unwrap().text;
     let (config, weights, _) = aether::model::gguf::load(&path, ctx).unwrap();
     let gpu = Gpu::new().unwrap();
     let t0 = Instant::now();
-    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, f32_gemm, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, f32_gemm, few_f32, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
     let vocab = m.config.vocab_size;
     println!("# {} on {} | upload + record {:.0} ms", path.display(), gpu.info.name, t0.elapsed().as_secs_f64() * 1e3);
 
@@ -98,5 +99,5 @@ fn main() {
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
-    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else if few { format!(", {} tokens a pass, qx_gemv_n", m.few) } else { String::new() });
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else if few { format!(", {} tokens a pass, {}", m.few, m.few_shader()) } else { String::new() });
 }

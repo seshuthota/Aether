@@ -1,0 +1,8 @@
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Write a short story about a lighthouse keeper who finds a message in a bottle.<|im_end|>
+<|im_start|>assistant
+Once upon a time, there was a lighthouse keeper named Jack. Jack had been working at the lighthouse for many years, and he had become very familiar with the lighthouse's history and the people who worked there. One day, Jack received a message from a stranger, and he was surprised to find out that it was a bottle filled with treasure.
+Jack was skeptical at first, but he decided to investigate further. He carefully examined the bottle, and he found that it was filled with gold coins. Jack was amazed and excited, and he knew that he had found something truly special.
+Jack decided to keep the treasure safe and secure, and he promised to return it to the lighthouse keeper who had given it to him. He knew that he had found something truly remarkable, and he was grateful for the opportunity to discover it.

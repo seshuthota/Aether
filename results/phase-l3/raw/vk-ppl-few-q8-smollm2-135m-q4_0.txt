@@ -1,0 +1,4 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on Adreno (TM) 830 | upload + record 966 ms
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 510.2 ms: 125.4 tok/s
+Final estimate: PPL = 27.7707 +/- 1.17756  (5100 tokens scored, 36.9 s, 277.3 tok/s through the GPU, 8 tokens a pass, qx_gemv_q8)

@@ -1,0 +1,4 @@
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on Adreno (TM) 830 | upload + record 2425 ms
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 697.7 ms: 91.7 tok/s
+Final estimate: PPL = 20.7313 +/- 0.84952  (5100 tokens scored, 41.7 s, 245.3 tok/s through the GPU, 8 tokens a pass, qx_gemv_q8)

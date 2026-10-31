@@ -219,6 +219,8 @@ pub unsafe extern "C" fn aether_generate(
             Engine::Cpu(s) if *lookup_k > 0 => s.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
             Engine::Cpu(s) => s.generate(&text, &mut sampler, steps, false, emit),
             #[cfg(feature = "vulkan")]
+            Engine::Gpu(g) if *lookup_k > 0 => g.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
+            #[cfg(feature = "vulkan")]
             Engine::Gpu(g) => g.generate(&text, &mut sampler, steps, emit),
             #[cfg(feature = "hexagon")]
             Engine::Dsp(d) if *lookup_k > 0 => d.generate_lookup(&text, &mut sampler, steps, *lookup_k, *lookup_ngram, emit).0,
@@ -350,11 +352,11 @@ pub unsafe extern "C" fn aether_open_dsp(path: *const c_char, dir: *const c_char
 /// batched pass (`Session::generate_lookup`). Faster when the reply repeats
 /// the prompt (code edits, quoting); the output keeps the sampler's
 /// distribution. `k` = 0 turns it off; `ngram` must be at least 1. The DSP
-/// checks up to 7 drafts in one few-token pass
-/// (`DspSession::generate_lookup`). A GPU session ignores it: on the
-/// Adreno each extra token of the few-token shader costs 1.4–1.9 decode
-/// dispatches, and lookup makes decoding 2.5× slower
-/// (results/phase-l3.md, step 13).
+/// and the GPU check up to 7 drafts in one few-token pass
+/// (`DspSession::generate_lookup`, `GpuSession::generate_lookup`). On the
+/// GPU the pass rounds x to 8 bits, so the greedy text may part from
+/// plain decoding's at a near tie, as the CPU's batched pass does
+/// (results/phase-l3.md, step 14).
 ///
 /// # Safety
 /// `session` must come from `aether_open` and not be closed.

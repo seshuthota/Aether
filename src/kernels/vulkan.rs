@@ -35,7 +35,7 @@ pub type Result<T> = std::result::Result<T, String>;
 
 /// Descriptor sets the pool behind [`Kernel::bind`] holds (and eight times as
 /// many buffer descriptors).
-const MAX_SETS: u32 = 2048;
+const MAX_SETS: u32 = 4096;
 
 fn vkr(what: &str) -> impl FnOnce(vk::Result) -> String + '_ {
     move |e| format!("{what}: {e}")
@@ -71,6 +71,12 @@ pub struct Info {
     /// (`shaderFloat16` and `storageBuffer16BitAccess`), as the f16
     /// prefill shader needs ([`Gpu::q4_0_gemm_h`]).
     pub fp16: bool,
+    /// Shaders may use int8 dot products (`shaderIntegerDotProduct`,
+    /// VK_KHR_shader_integer_dot_product), and whether the device says the
+    /// signed 4 × int8 packed form is accelerated (faster than the same
+    /// done with ordinary integer instructions).
+    pub int_dot: bool,
+    pub int_dot_accelerated: bool,
     /// (size in bytes, flags) per memory heap, and (heap, flags) per type.
     pub heaps: Vec<(u64, vk::MemoryHeapFlags)>,
     pub types: Vec<(u32, vk::MemoryPropertyFlags)>,
@@ -137,6 +143,17 @@ impl Gpu {
                 instance.get_physical_device_features2(phys, &mut f2);
             }
             let fp16 = f16_ext && f16_feat.shader_float16 == vk::TRUE && s16_feat.storage_buffer16_bit_access == vk::TRUE;
+            let dot_ext = extensions.iter().any(|e| e == "VK_KHR_shader_integer_dot_product");
+            let mut dot_feat = vk::PhysicalDeviceShaderIntegerDotProductFeatures::default();
+            let mut dot_props = vk::PhysicalDeviceShaderIntegerDotProductProperties::default();
+            if dot_ext {
+                let mut f2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut dot_feat);
+                instance.get_physical_device_features2(phys, &mut f2);
+                let mut p2 = vk::PhysicalDeviceProperties2::default().push_next(&mut dot_props);
+                instance.get_physical_device_properties2(phys, &mut p2);
+            }
+            let int_dot = dot_ext && dot_feat.shader_integer_dot_product == vk::TRUE;
+            let int_dot_accelerated = int_dot && dot_props.integer_dot_product4x8_bit_packed_signed_accelerated == vk::TRUE;
             let mem = instance.get_physical_device_memory_properties(phys);
             let heaps: Vec<_> = mem.memory_heaps[..mem.memory_heap_count as usize].iter().map(|h| (h.size, h.flags)).collect();
             let types: Vec<_> = mem.memory_types[..mem.memory_type_count as usize].iter().map(|t| (t.heap_index, t.property_flags)).collect();
@@ -155,6 +172,8 @@ impl Gpu {
                 extensions,
                 timestamp_period: props.limits.timestamp_period,
                 fp16,
+                int_dot,
+                int_dot_accelerated,
                 heaps,
                 types,
             };
@@ -164,6 +183,7 @@ impl Gpu {
             let mut size_feature = vk::PhysicalDeviceSubgroupSizeControlFeaturesEXT::default().subgroup_size_control(true);
             let mut f16_on = vk::PhysicalDeviceShaderFloat16Int8Features::default().shader_float16(true);
             let mut s16_on = vk::PhysicalDevice16BitStorageFeatures::default().storage_buffer16_bit_access(true);
+            let mut dot_on = vk::PhysicalDeviceShaderIntegerDotProductFeatures::default().shader_integer_dot_product(true);
             let mut dinfo = vk::DeviceCreateInfo::default().queue_create_infos(&qinfo);
             if required_subgroup_size.is_some() {
                 ext_names.push(c"VK_EXT_subgroup_size_control".as_ptr());
@@ -172,6 +192,10 @@ impl Gpu {
             if fp16 {
                 ext_names.push(c"VK_KHR_shader_float16_int8".as_ptr());
                 dinfo = dinfo.push_next(&mut f16_on).push_next(&mut s16_on);
+            }
+            if int_dot {
+                ext_names.push(c"VK_KHR_shader_integer_dot_product".as_ptr());
+                dinfo = dinfo.push_next(&mut dot_on);
             }
             dinfo = dinfo.enabled_extension_names(&ext_names);
             let device = instance.create_device(phys, &dinfo, None).map_err(vkr("create device"))?;
@@ -819,6 +843,47 @@ impl Gpu {
         let push: Vec<u8> = [w.rows as u32, w.nb as u32, 0, tokens as u32, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
         self.run(kernel, &[&w.qs, &w.sc, x, out, x], &push, groups_for(w.rows, 16), reps)
     }
+
+    /// `quant_x.comp`: each token's x (with `glu`, silu(gate) · up) to 8
+    /// bits per 32 values, for [`Gpu::qx_gemv_q8_kernel`]. Pushes nb and
+    /// tokens.
+    pub fn quant_x_kernel(&self, glu: bool) -> Result<Kernel> {
+        Kernel::with_spec(self, crate::spirv!("quant_x"), 2, 8, &[glu.into()])
+    }
+
+    /// Quantizes `tokens` rows of `nb` 32-value pieces of `x` into `xq`
+    /// (48 bytes a piece), `reps` times. Returns the GPU time.
+    pub fn quant_x(&self, kernel: &Kernel, x: &Buffer, nb: usize, tokens: usize, xq: &Buffer, reps: u32) -> Result<f64> {
+        let glu = kernel.spec[0] != 0;
+        assert!(x.size >= tokens * nb * 32 * 4 * if glu { 2 } else { 1 } && xq.size >= tokens * nb * 48);
+        let push: Vec<u8> = [nb as u32, tokens as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.run(kernel, &[x, xq], &push, groups_for(tokens * nb, 64), reps)
+    }
+
+    /// `qx_gemv_q8.comp`: the few-token product of [`Gpu::qx_gemv_n_kernel`]
+    /// with x quantized by [`Gpu::quant_x`] and int8 dot products, for up
+    /// to `max_tokens` tokens (1 to 8). Needs [`Info::int_dot`]. Pushes
+    /// rows, nb, tokens and the output row length (0: rows).
+    pub fn qx_gemv_q8_kernel(&self, ty: u32, accum: bool, max_tokens: u32) -> Result<Kernel> {
+        assert!((1..=8).contains(&max_tokens), "1 to 8 tokens");
+        assert!([2, 6, 8, 12, 14].contains(&ty), "ggml type {ty} has no GPU kernel");
+        if !self.info.int_dot {
+            return Err("qx_gemv_q8 needs int8 dot products (VK_KHR_shader_integer_dot_product)".into());
+        }
+        if self.info.subgroup_size < 32 || !self.info.subgroup_ops.contains(vk::SubgroupFeatureFlags::SHUFFLE) {
+            return Err(format!("qx_gemv_q8 needs subgroup shuffles and subgroups of at least 32 lanes ({} lanes, {:?})", self.info.subgroup_size, self.info.subgroup_ops));
+        }
+        Kernel::with_spec(self, crate::spirv!("qx_gemv_q8"), 4, 16, &[accum.into(), ty, max_tokens])
+    }
+
+    /// `out[t][r] = W[r] · x[t]` for `tokens` quantized activations `xq`
+    /// of a [`MatQ`], `reps` times. Returns the GPU time.
+    pub fn qx_gemv_q8(&self, kernel: &Kernel, w: &MatQ, xq: &Buffer, tokens: usize, out: &Buffer, reps: u32) -> Result<f64> {
+        assert!(tokens >= 1 && tokens <= kernel.spec[2] as usize && xq.size >= tokens * w.nb * 48 && out.size >= tokens * w.rows * 4);
+        assert_eq!(kernel.spec[1], w.ty, "a kernel for another format");
+        let push: Vec<u8> = [w.rows as u32, w.nb as u32, tokens as u32, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.run(kernel, &[&w.qs, &w.sc, xq, out], &push, groups_for(w.rows, 16), reps)
+    }
 }
 
 impl Gpu {
@@ -1282,6 +1347,112 @@ mod tests {
             check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
             cases += 1;
         }
+        assert!(cases >= 20, "only {cases} golden cases");
+    }
+
+    /// The int8 path (`quant_x`, `qx_gemv_q8`). First, x's codes and
+    /// scales against gguf-py's Q8_0 quantizer (llama.cpp's reference:
+    /// the same codes; d within f16 rounding, as ours stays f32), plain
+    /// and through SwiGLU. Then the products, 1, 3 and 8 tokens a
+    /// dispatch, all five formats, against numpy's X' @ dequant(W)ᵀ in
+    /// float64, where X' is x as our codes say (code · d) and dequant is
+    /// gguf-py's.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn qx_gemv_q8_matches_reference() {
+        let (Some(root), Some(root_k)) = (crate::testutil::golden("quant_batch"), crate::testutil::golden("quant_k")) else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        if !gpu.info.int_dot {
+            return;
+        }
+        let py = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/.venv/bin/python");
+        let gguf_py = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("llama.cpp/gguf-py");
+        assert!(py.exists() && gguf_py.join("gguf/quants.py").exists(), "needs tools/.venv and ~/llama.cpp/gguf-py");
+        let script = "import sys\nsys.path.insert(0, sys.argv[1])\nimport numpy as np\nfrom gguf import GGMLQuantizationType as T\nfrom gguf.quants import dequantize, Q8_0\nmode = sys.argv[2]\nif mode == 'quant':\n    rows, cols, glu = int(sys.argv[4]), int(sys.argv[5]), sys.argv[6] == '1'\n    x = np.fromfile(sys.argv[3], dtype='<f4').reshape(rows, -1)\n    if glu:\n        g, u = x[:, :cols], x[:, cols:]\n        x = (g / (np.float32(1) + np.exp(-g)) * u).astype(np.float32)\n    b = Q8_0.quantize_blocks(x.reshape(-1, 32))\n    b[:, 2:].tofile(sys.argv[7])\n    b[:, :2].copy().view(np.float16).astype(np.float32).tofile(sys.argv[8])\nelse:\n    typ = {'q4_0': T.Q4_0, 'q5_0': T.Q5_0, 'q8_0': T.Q8_0, 'q4_k': T.Q4_K, 'q6_k': T.Q6_K}[sys.argv[3]]\n    rows, cols = int(sys.argv[4]), int(sys.argv[5])\n    w = dequantize(np.fromfile(sys.argv[6], dtype=np.uint8).reshape(rows, -1), typ).astype(np.float64)\n    x = np.fromfile(sys.argv[7], dtype='<f4').astype(np.float64).reshape(-1, cols)\n    (x @ w.T).astype(np.float32).tofile(sys.argv[8])\n";
+        let dir_out = std::env::temp_dir().join(format!("aether-q8-{}", std::process::id()));
+        std::fs::create_dir_all(&dir_out).unwrap();
+        let run_py = |args: &[&str]| {
+            let st = std::process::Command::new(&py).args(["-c", script, gguf_py.to_str().unwrap()]).args(args).output().unwrap();
+            assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+        };
+        let f32s = |b: &[u8]| b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect::<Vec<_>>();
+        let path = |n: &str| dir_out.join(n).to_str().unwrap().to_string();
+        // Quantizes `tokens` rows of x (gate then up with `glu`) on the GPU,
+        // checks the codes and scales against gguf-py, and returns the GPU's
+        // xq buffer and x as its codes say.
+        let quantize = |x: &[f32], tokens: usize, cols: usize, glu: bool| -> (Buffer, Vec<f32>) {
+            let nb = cols / 32;
+            let mut xb = gpu.buffer(x.len() * 4).unwrap();
+            xb.as_mut_slice::<f32>().copy_from_slice(x);
+            let xq = gpu.buffer(tokens * nb * 48).unwrap();
+            gpu.quant_x(&gpu.quant_x_kernel(glu).unwrap(), &xb, nb, tokens, &xq, 1).unwrap();
+            std::fs::write(path("x.bin"), x.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>()).unwrap();
+            run_py(&["quant", &path("x.bin"), &tokens.to_string(), &cols.to_string(), if glu { "1" } else { "0" }, &path("q.bin"), &path("d.bin")]);
+            let (want_q, want_d) = (std::fs::read(path("q.bin")).unwrap(), f32s(&std::fs::read(path("d.bin")).unwrap()));
+            let raw = xq.as_slice::<u8>();
+            let (mut differ, mut deq) = (0, Vec::with_capacity(tokens * cols));
+            for p in 0..tokens * nb {
+                let piece = &raw[48 * p..48 * p + 48];
+                let d = f32::from_le_bytes(piece[32..36].try_into().unwrap());
+                let dr = want_d[p];
+                assert!((d - dr).abs() <= dr * 2f32.powi(-11), "piece {p}: d {d}, gguf-py {dr}");
+                for k in 0..32 {
+                    let (q, qr) = (piece[k] as i8, want_q[32 * p + k] as i8);
+                    assert!((q as i32 - qr as i32).abs() <= 1, "piece {p} value {k}: code {q}, gguf-py {qr}");
+                    differ += (q != qr) as usize;
+                    deq.push(q as f32 * d);
+                }
+            }
+            // A code may differ only where x / d is within rounding of a
+            // half: our 1 / d and exp are not numpy's to the last bit.
+            assert!(differ * 1000 <= tokens * cols * if glu { 10 } else { 1 }, "{differ} of {} codes differ from gguf-py", tokens * cols);
+            (xq, deq)
+        };
+        let mut cases = 0;
+        let check = |dir: &std::path::Path, name: &str, w: Weight, rows: usize| {
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let (xq, xd) = quantize(&xv, tokens, cols, false);
+            std::fs::write(path("xd.bin"), xd.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>()).unwrap();
+            run_py(&["ref", name, &rows.to_string(), &cols.to_string(), dir.join(format!("w_{name}.bin")).to_str().unwrap(), &path("xd.bin"), &path("want.bin")]);
+            let want = f32s(&std::fs::read(path("want.bin")).unwrap());
+            let m = MatQ::new(&gpu, &w, rows).unwrap();
+            let nb = cols / 32;
+            for nt in [1usize, 3, 8] {
+                let k = gpu.qx_gemv_q8_kernel(m.ty, false, nt as u32).unwrap();
+                for t0 in (0..tokens).step_by(nt) {
+                    let n = (tokens - t0).min(nt);
+                    let mut part = gpu.buffer(n * nb * 48).unwrap();
+                    part.as_mut_slice::<u8>().copy_from_slice(&xq.as_slice::<u8>()[t0 * nb * 48..(t0 + n) * nb * 48]);
+                    let out = gpu.buffer(n * rows * 4).unwrap();
+                    gpu.qx_gemv_q8(&k, &m, &part, n, &out, 1).unwrap();
+                    let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..n * rows], &want[t0 * rows..(t0 + n) * rows]);
+                    assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}, {nt} a dispatch, tokens {t0}..{}: rel {rel:.2e}", dir.display(), t0 + n);
+                }
+            }
+        };
+        let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        for dir in dirs(&root) {
+            let (ws, _) = crate::testutil::read_npy(&dir.join("w.npy"));
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            check(&dir, "q4_0", Weight::Q4_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_0")))), ws[0]);
+            check(&dir, "q5_0", Weight::Q5_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q5_0")))), ws[0]);
+            check(&dir, "q8_0", Weight::Q8_0(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q8_0")))), ws[0]);
+            // SwiGLU's input: gate x, up a different row order of x.
+            let (xs, xv) = crate::testutil::read_npy(&dir.join("x.npy"));
+            let (tokens, cols) = (xs[0], xs[1]);
+            let glu: Vec<f32> = (0..tokens).flat_map(|t| xv[t * cols..(t + 1) * cols].iter().chain(&xv[(tokens - 1 - t) * cols..(tokens - t) * cols]).copied().collect::<Vec<_>>()).collect();
+            quantize(&glu, tokens, cols, true);
+            cases += 1;
+        }
+        for dir in dirs(&root_k) {
+            let bytes = |n: &str| std::fs::read(dir.join(format!("w_{n}.bin"))).unwrap();
+            let (ds, _) = crate::testutil::read_npy(&dir.join("deq_q4_k.npy"));
+            check(&dir, "q4_k", Weight::Q4_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q4_k")))), ds[0]);
+            check(&dir, "q6_k", Weight::Q6_K(crate::weight::Store::Owned(quant::blocks_from_bytes(&bytes("q6_k")))), ds[0]);
+            cases += 1;
+        }
+        let _ = std::fs::remove_dir_all(&dir_out);
         assert!(cases >= 20, "only {cases} golden cases");
     }
 

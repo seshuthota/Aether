@@ -33,8 +33,8 @@
 //!             vulkan; a Q4_0 or Q4_K_M GGUF). With -c, the prompt runs on
 //!             the CPU (batched) and its KV cache goes to the GPU; without,
 //!             on the GPU (batched as well). --lookup K works here too (up
-//!             to 7 drafts, checked in one few-token pass), but is slower
-//!             on the Adreno (results/phase-l3.md steps 12–13)
+//!             to 7 drafts, checked in one few-token pass; results/phase-l3.md
+//!             step 14)
 //!   --times   with --gpu: print the time of every decode token
 //!   --dsp     run on the Hexagon DSP (builds with --features hexagon; a
 //!             --pure Q4_0 GGUF, or Q4_K_M): the prompt in batches on HMX
