@@ -1014,3 +1014,14 @@ session (`raw/vk-prefill-scalehoist-ab.txt`), tok/s at 16 / 64 / 128:
 products dominate there). An earlier run of the unchanged shader read 812
 at 128: the phone's clocks differ 10–20 % between sessions, so only
 same-session pairs are compared here.
+
+**The same for Q4_K_M files** (`qx_gemm_h.comp`, `raw/vk-prefill-qxhoist-ab.txt`,
+`raw/vk-ppl-qxhoist.txt`). Hoisting is on for Q4_0 and Q5_0 only. Q6_K
+(first tried, with a split where its scale changes) made SmolLM2's
+Q4_K_M perplexity NaN: its unscaled values reach 32 and a block's f16 sum
+overflowed. Q8_0's reach 127, and Q4_K's `u · a − c` is one fused op
+already, so those stay as they were. Perplexity through `forward_batch`:
+20.6902 / 16.7176 (were 20.6906 / 16.7201 by the old shader). Qwen2.5-0.5B
+Q4_K_M, three old/new pairs in one session: GPU time of a 128-token pass
+205.7 → 196.3 ms (612 → 643 tok/s), 64 tokens 118.8 → 114.5 ms. Smaller
+than the Q4_0 file's +7 %, since most of its weights are Q4_K.

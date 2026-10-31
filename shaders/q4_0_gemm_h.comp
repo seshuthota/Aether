@@ -17,7 +17,8 @@
 //   f16vec4 loads, the same for every thread of a workgroup;
 // - each input multiplies the 4 rows' weights into 8 tokens' sums, in
 //   f16; after each block of 32 inputs the f16 sums are added into f32
-//   ones, which bounds the rounding over long rows.
+//   ones, which bounds the rounding over long rows. The f16 sums are of
+//   (nibble − 8) · x; the block's scale multiplies each sum once, in f32.
 // Workgroup (i, j): rows 256i .. 256i + 255, tokens 8j .. 8j + 7.
 layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer Q { uvec4 q[]; };
