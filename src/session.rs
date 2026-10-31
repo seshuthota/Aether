@@ -533,9 +533,9 @@ impl GpuSession {
 
 /// A model on the Hexagon DSP (`--features hexagon`, a `--pure` Q4_0 GGUF
 /// or a Q4_K_M one; see `model::dsp`): the prompt by prefills of up to
-/// [`DspSession::BATCH`] tokens (products on HMX; Q4_0 only, else passes
-/// of 8 tokens on HVX), then one decode step per token; sampling on the
-/// CPU.
+/// [`DspSession::BATCH`] tokens (products on HMX, for every format the
+/// loader places; else passes of 8 tokens on HVX), then one decode step
+/// per token; sampling on the CPU.
 #[cfg(feature = "hexagon")]
 pub struct DspSession {
     // Declared before `dsp`: its shared buffers must be freed while the
