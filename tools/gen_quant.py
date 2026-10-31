@@ -26,6 +26,7 @@ the tiles (full tiles of 4 token pairs, then 1, 2 or 3 pairs):
   out_q8_0_b.npy, out_q4_0_b.npy, out_q5_0_b.npy
                              [t, d]: dequant(X_q8_0) @ dequant(W)ᵀ
   w_q8_0.bin, w_q4_0.bin, w_q5_0.bin   the weight rows quantized, raw bytes
+  x_q8_0.bin                 x quantized to Q8_0, row by row (34-byte blocks)
   out_q8_0_a.npy, …          [t, d]: X @ dequant(W)ᵀ (f32 activations, as
                              the GPU kernels use)
 
@@ -126,7 +127,9 @@ def batch(root):
         out.mkdir(parents=True, exist_ok=True)
         np.save(out / "w.npy", w)
         np.save(out / "x.npy", x)
-        xd = quants.dequantize(quants.quantize(x, T.Q8_0), T.Q8_0).astype(np.float64)
+        xq = quants.quantize(x, T.Q8_0)
+        (out / "x_q8_0.bin").write_bytes(xq.tobytes())
+        xd = quants.dequantize(xq, T.Q8_0).astype(np.float64)
         for typ, name in [(T.Q8_0, "q8_0"), (T.Q4_0, "q4_0"), (T.Q5_0, "q5_0")]:
             wq = quants.quantize(w, typ)
             wd = quants.dequantize(wq, typ).astype(np.float64)

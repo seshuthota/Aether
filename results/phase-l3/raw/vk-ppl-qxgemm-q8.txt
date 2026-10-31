@@ -1,0 +1,4 @@
+smollm2-135m-q4_k_m batch: PPL = 20.7338 +/- 0.84950  (5100 tokens scored, 7.1 s, 1446.9 tok/s through the GPU, batches of 128, qx_gemm_q8
+smollm2-135m-q4_k_m batch-f16: PPL = 20.6902 +/- 0.84741  (5100 tokens scored, 8.9 s, 1142.5 tok/s through the GPU, batches of 128, qx_gemm_h
+qwen2.5-0.5b-q4_k_m batch: PPL = 16.7356 +/- 0.68659  (5100 tokens scored, 18.1 s, 563.8 tok/s through the GPU, batches of 128, qx_gemm_q8
+qwen2.5-0.5b-q4_k_m batch-f16: PPL = 16.7176 +/- 0.68577  (5100 tokens scored, 25.7 s, 398.0 tok/s through the GPU, batches of 128, qx_gemm_h

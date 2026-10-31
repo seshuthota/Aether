@@ -946,7 +946,8 @@ the 8-token kernel for every pass (`raw/lookup-q8/`), K = 4 was 95–100 tok/s
 against 99–104 plain.
 
 So on the GPU lookup now behaves as on the CPU and the DSP: up to +18 %
-(Q4_0) and +84 % (Q4_K_M, whose single step is slower) when the reply
+(Q4_0) and +84 % (Q4_K_M, whose single step is slower: the baseline is
+64 tok/s plain decode) when the reply
 repeats the prompt, 10–15 % slower when few drafts are accepted. The C ABI
 (and so the app's "lookup" checkbox, K = 3) now uses it for GPU sessions.
 
@@ -1010,8 +1011,12 @@ session (`raw/vk-prefill-scalehoist-ab.txt`), tok/s at 16 / 64 / 128:
 | before | 383 / 371 | 825 / 823 | 980 / 977 |
 | after | 368 / 364 | 884 / 880 | 1049 / 1046 |
 
-+7 % at 64 and 128 tokens, nothing at 16 (the stages other than the
-products dominate there). An earlier run of the unchanged shader read 812
++7 % at 64 and 128 tokens, no gain at 16 (368 / 364 against 383 / 371,
+inside the session's noise; why was not profiled). Headroom: a block's
+f16 sum can now reach 256 · max|x| where it was scaled down by the weight
+scale first, so ~100× less before overflow; wikitext shows none, but Qwen's
+down-projection inputs were not checked for outliers, so the f16 shaders'
+margin is unmeasured. An earlier run of the unchanged shader read 812
 at 128: the phone's clocks differ 10–20 % between sessions, so only
 same-session pairs are compared here.
 
@@ -1037,10 +1042,12 @@ group of 8 codes as an even word and an odd word. The −8 comes off once per
 block with the sum of the codes. x is rounded to 8 bits per 32 values, as
 in step 14.
 
-**Correct**: `qx_gemv_q8_matches_reference` now also checks the paired
-codes against the plain ones (so against gguf-py's Q8_0) and the product
-against numpy on those codes; a swapped operand in the shader fails it
-(rel 1.3). Phone tests 115/115, host 113/113.
+**Correct**: `qx_gemv_q8_matches_reference` (host only: it needs Python)
+now also checks the paired codes against the plain ones (so against
+gguf-py's Q8_0) and the product against numpy on those codes; a swapped
+operand in the shader fails it (rel 1.3). Phone tests 115/115, host
+113/113. That test cannot run on the phone, so until step 18 nothing int8
+was tested on the Adreno itself.
 
 **First version was no faster than f16** (gate/up, 128 tokens: 1.12 ms
 against 1.16; `vk_gemm`). Every thread of a wave loads the same x. With
@@ -1055,15 +1062,21 @@ tokens' codes together, one barrier pair per 8 blocks, 3 KB):
 
 Tile of 4, 8 or 16 blocks: within noise (0.80 / 0.79 / 0.76 ms for
 gate/up); 28 blocks (10 KB) falls back to the buffer's speed. The same
-staging in the f16 shader made it slower (gate/up 1.16 → 1.63 ms): that
-shader is bound by its f16 arithmetic, the int8 one by its loads.
+staging in the f16 shader made it slower (gate/up 1.16 → 1.63 ms). A
+hypothesis that fits this (the f16 shader limited by its arithmetic, the
+int8 one by its loads), not tested by counters; barriers, registers or
+shared-memory latency could also explain it.
 (Loading x once per block instead of per token ran 2× faster, but the
 compiler had folded the eight identical products into one, so that test
 said nothing.)
 
 **Perplexity** through `forward_batch` (20 chunks of 512, phone), f16 →
 int8: SmolLM2 27.6950 → 27.7581, Qwen2.5 19.7205 → 19.7371 (llama.cpp
-27.7412 / 19.7283). The 8-bit rounding moves it by 0.02–0.06, as in step 14.
+27.7412 / 19.7283). The error bars (±1.2 / ±0.8) are far wider than these
+moves, and the int8 numbers sit closer to llama.cpp's (SmolLM2 +0.017
+against −0.046 for f16; Qwen +0.009 against −0.008), whose CPU path also
+rounds x to Q8_0. Perplexity cannot rank them; KL divergence and top-token
+agreement against llama.cpp's logits would (to do, with the Q4_K_M step).
 
 **The prompt pass** (`vk_prefill`, Qwen2.5-0.5B Q4_0, tok/s at 16 / 64 /
 128 tokens, f16 and int8 alternated in one session):
@@ -1073,8 +1086,70 @@ int8: SmolLM2 27.6950 → 27.7581, Qwen2.5 19.7205 → 19.7371 (llama.cpp
 | f16 | 367 | 880 / 861 | 1049 / 1052 |
 | **int8** | **580** | **1339 / 1340** | **1548 / 1544** |
 
-+47 % at 128 tokens, and above llama.cpp's OpenCL figure at pp256 in
-step 8's table (1,387; ours is measured at 128, not 256). Used for pure
++47 % at 128 tokens. Not comparable with llama.cpp's OpenCL 1,387 at
+pp256 in step 8's table (another day, another prompt length); a
+same-session `llama-bench` at pp128 / 256 / 512 is still to do. Used for pure
 Q4_0 files where the GPU has int8 dot products
 (`Options::f16_gemm` keeps the f16 shader). Q4_K_M files still use
 `qx_gemm_h.comp`.
+
+## Step 18: the int8 products tested on the Adreno (2026-10-31)
+
+A review (a second model reading the code and these results) found that
+`qx_gemv_q8_matches_reference` is host-only, so the phone's "115/115" said
+nothing about the int8 shaders. `tools/gen_quant.py` now also writes
+`x_q8_0.bin` (x's Q8_0 blocks as gguf-py made them) for the batch goldens,
+without changing any existing golden file (md5 of all of
+`testdata/quant*` compared). `int8_products_match_goldens` needs no
+Python and runs on any target: it lays gguf-py's codes out as
+`quant_x.comp` would (plain, and in nibble-pair order), runs
+`qx_gemv_q8.comp` (all five formats; 1, 3, 8 tokens a dispatch) and
+`q4_0_gemm_q8.comp` (set and accumulating), and compares with the goldens'
+`out_*_b.npy` (dequant(X_q8_0) @ dequant(W)ᵀ, relative 1e-6 · √cols); it
+also compares `quant_x.comp`'s own codes with gguf-py's (±1, at most 1 in
+1000 differ). 20 golden cases: odd row counts (9, 12, 17, 130, …) and token
+counts (1–17). Passes on the Adreno 830 (`raw/vk-tests-int8-phone.txt`)
+and the Intel GPU. Four mutations each fail it: the Q4_0 offset 8 → 7 in
+the GEMM, Q6_K's 32 → 31, Q4_K's min using the wrong scale, and the
+paired code order.
+
+## Step 19: int8 dot products for Q4_K_M files' prompts (2026-10-31; `raw/vk-prefill-qxgemm-q8-ab.txt`, `raw/vk-ppl-qxgemm-q8.txt`)
+
+Step 17's product for every format of a Q4_K_M file. `qx_gemm_q8.comp` has
+`qx_gemm_h.comp`'s layout and split and `q4_0_gemm_q8.comp`'s method (x in
+8 bits, nibble words masked to bytes, x staged through shared memory, the
+offsets taken out per piece with the codes' sums); the header lists each
+format's arithmetic (Q4_0 `a · (s − 8Σ)`, Q4_K `a · s − c · Σ`, Q6_K
+`a · (s0 − 32 Σ0) + c · (s1 − 32 Σ1)`, …). `MatQT::new_paired` repacks the
+bits the nibble masks do not reach into the order of the code pairs: Q5_0's
+fifth bits, Q6_K's two high bits, Q8_0's bytes. Nibble words need no change.
+
+**Correct**: `int8_products_match_goldens` (any target; step 18) now runs
+it on all five formats against the goldens' `out_*_b.npy`, set and
+accumulating, with a row stride longer than the rows. Q4_0, Q5_0 and Q8_0
+match to 1e-6 · √cols. The K-quants are within f16's rounding of their
+per-piece scales (`MatQT` stores `d · scale` and `dmin · min` as f16): up to
+4.7e-3 on the random-block goldens, whose scales nearly cancel; numpy with
+the scales rounded to f16 reproduces the GPU's figure (4.66e-3 on
+`quant_k_1x256_t1`, 1.81e-4 on `quant_k_6x512_t11`), so the shader
+itself is exact. The bound is 1e-2 for them. Six mutations fail it: Q6_K's
+32 → 31, Q4_K's min with the wrong scale, Q5_0's 16 → 15, the Q6_K and Q5_0
+high-bit fields, Q8_0's word order. Phone tests 116/116.
+
+**Perplexity** through `forward_batch` (20 chunks of 512, phone), f16 →
+int8: SmolLM2 Q4_K_M 20.6902 → 20.7338, Qwen2.5 Q4_K_M 16.7176 → 16.7356
+(llama.cpp 20.7784 / 16.7657; error bars ±0.85 / ±0.69). Scoring tok/s
+1143 → 1447 and 398 → 564.
+
+**The prompt pass** (`vk_prefill`, Qwen2.5-0.5B Q4_K_M, three alternated
+pairs, GPU times repeat to 0.5 ms):
+
+| tok/s | 16 | 64 | 128 |
+|---|---|---|---|
+| f16 | 225–226 | 537–549 | 634–644 |
+| **int8** | **290–301** | **823–833** | **1027–1029** |
+
++60 % at 128 tokens, +53 % at 64, +31 % at 16. Still to do: KL divergence
+and top-token agreement against llama.cpp's logits for both int8 paths
+(perplexity cannot rank differences this small), and a same-session
+`llama-bench` at pp128 / 256 / 512 for a like-for-like comparison.
