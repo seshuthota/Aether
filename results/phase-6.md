@@ -1167,3 +1167,35 @@ by row.
 
 Test `writes_llama_quantize_q4_k_m` covers SmolLM2 both ways; Qwen was
 checked with `cmp` on the CLI output.
+
+## Writing imatrix files: `aether-imatrix` (L.2, 2026-10-31, host only)
+
+`Imatrix::write` saves an importance matrix in the GGUF layout
+`llama-imatrix` writes: `general.type`, `imatrix.datasets`,
+`imatrix.chunk_count`, `imatrix.chunk_size`, then `in_sum2` (sums of x² per
+column) and `counts` for each matrix, sorted by name, a trailing dimension
+of 1 dropped as `ggml_n_dims` does. `aether-imatrix MODEL TEXT OUT [CTX]
+[CHUNKS]` runs `Imatrix::collect` (our forward pass) over the text and
+writes the file, like `llama-imatrix -m MODEL -f TEXT -o OUT -c CTX
+--chunks N`.
+
+Checks, all against llama.cpp:
+
+- `writes_llama_imatrix_files`: the three files `llama-imatrix` made
+  (`hostdata/imatrix/`), read and written again, come out byte for byte
+  the same.
+- `collected_imatrix_matches_llama_imatrix` now compares our collected
+  imatrix after a trip through `write` and `open`: still within the
+  tolerances measured before (median 2.4e-5 relative).
+- Our file into llama.cpp's quantizer: `aether-imatrix` on the f32 GGUF,
+  10 chunks of 512 of `calib.txt` (35 s for SmolLM2-135M, 99 s for
+  Qwen2.5-0.5B on the host), then `llama-quantize [--pure] --imatrix OURS`
+  and `aether-quantize --imatrix OURS` on the same f32 file. llama.cpp
+  loads it ("loaded 210 importance matrix entries … computed on 10
+  chunks"), and the two outputs are identical (`cmp`) for Q4_0 and Q4_K_M
+  on both models. The whole path is now ours: collection, the file, and
+  the quantization.
+
+(`~/llama.cpp/build-nodl/bin/llama-quantize` crashes with any imatrix,
+llama.cpp's own included; `build-cuda/bin/llama-quantize`, same commit
+`d00685831`, was used.)

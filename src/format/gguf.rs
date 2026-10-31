@@ -308,6 +308,15 @@ impl Writer {
         self.set(key, b);
     }
 
+    /// An array of strings (type 9, element type 8).
+    pub fn set_str_array(&mut self, key: &str, v: &[String]) {
+        let mut b = 9u32.to_le_bytes().to_vec();
+        b.extend(8u32.to_le_bytes());
+        b.extend((v.len() as u64).to_le_bytes());
+        v.iter().for_each(|s| put_str(&mut b, s));
+        self.set(key, b);
+    }
+
     pub fn remove(&mut self, key: &str) {
         self.metadata.retain(|(k, _)| k != key);
     }

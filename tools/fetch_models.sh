@@ -84,6 +84,12 @@ gguf() {
   smollm2_135m; qwen25
   gguf_of testdata/models/SmolLM2-135M smollm2-135m
   gguf_of testdata/models/Qwen2.5-0.5B-Instruct qwen2.5-0.5b
+  # 16-bit files for the loader's f16 / bf16 path (host-only; the f16 one is
+  # checked against `tools/hf_dump.py … testdata/qwen2.5-0.5b-f16 f16`).
+  for t in bf16 f16; do
+    local out=hostdata/gguf/qwen2.5-0.5b-$t.gguf
+    [ -f "$out" ] || tools/.venv/bin/python "$LLAMA_CPP/convert_hf_to_gguf.py" testdata/models/Qwen2.5-0.5B-Instruct --outtype $t --outfile "$out"
+  done
 }
 
 wikitext() {

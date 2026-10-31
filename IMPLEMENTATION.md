@@ -453,8 +453,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       `llama-quantize --pure --imatrix`, and every tensor of its imatrix Q4_K_M re-quantized to
       the same bytes; our own imatrix (`Imatrix::collect`) within 1.7e-3 of llama-imatrix's.
       PPL / KLD match llama-perplexity; the imatrix cuts KLD 11–33 % at the same size.
-      Not done: writing imatrix files, and choosing a Q4_K_M mix ourselves (`-q` stays
-      `--pure`). Lib tests pass on the phone too (2026-10-29).
+      Lib tests pass on the phone too (2026-10-29). The Q4_K_M mix (`aether-quantize … q4_k_m`,
+      6.2) and writing imatrix files (`Imatrix::write`, `aether-imatrix`; 2026-10-31: llama's
+      files round-trip byte for byte, and `llama-quantize --imatrix` with our file writes the
+      same bytes as `aether-quantize`) are done too.
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
@@ -468,7 +470,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **Lookup in the C ABI and the app** (2026-10-29): `aether_set_lookup(session, k, ngram)`
       (include/aether.h), `Aether.setLookup` in Kotlin, a "lookup" checkbox in the app (K = 3).
       `c_abi_round_trip` checks the greedy text with lookup on; tried in the app on the phone.
-- [~] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
+- [x] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
   - [x] Device, buffers, compute kernels (`kernels::vulkan`, shaders/ via `build.rs` + NDK
         `glslc`, `ash` for the C API), `vk_bandwidth`: GPU reads DRAM at ~66 GB/s (CPU: ~67),
         an empty dispatch + barrier costs 1.7 µs. Test `copy_shader_copies`.
@@ -515,7 +517,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         tokens, `GpuSession::generate_lookup`): correct, but 2.4× slower on the Adreno (each
         extra token costs about a whole dispatch); the C ABI ignores lookup for GPU sessions.
         A shader that shares the weights across tokens on the Adreno would be needed.
-  - [~] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+  - [x] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+        Met 2026-10-31 (step 21, same session, int8 products): Qwen Q4_0 1.5–2× ahead at
+        pp64/128, level at pp256, 3–11 % behind at pp512; Q4_K_M 4–5× ahead (no Adreno Q4_K
+        kernel there). KL within llama.cpp's error bar (step 20).
         f16 shaders on the phone (step 11): 771 at pp256, 812 at 128; the gap is ~1.7×. Left:
         the texel-buffer path for the activations.
         How its Adreno Q4_0 kernel (`mul_mat_Ab_Bi_8x4.cl`) differs from `q4_0_gemm.comp`:
@@ -556,7 +561,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         stride for parts); test `qx_gemm_matches_reference` (20 cases); PPL through it the same
         as the decode step. On the Intel GPU it is no faster than decode (f32 tiles ~15
         GFLOP/s there). To do: phone numbers; an f16 multi-format GEMM if the phone needs it.
-- [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
+- [x] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
       6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
       reference for platform use (and its numbers to measure against: pp ~330, tg ~74 tok/s,
