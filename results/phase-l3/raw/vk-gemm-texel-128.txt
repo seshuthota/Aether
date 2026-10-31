@@ -1,0 +1,7 @@
+target/aarch64-linux-android/release/examples/vk_gemm: 1 file pushed, 0 skipped. 224.9 MB/s (13711360 bytes in 0.058s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+# Adreno (TM) 830 | 128 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops
+wq/wo,896,896,1.28,160,0.32,638,0.32,634,1.28,161,1.30,158,0.37,558,0.54,382,0.48,424
+gate/up,4864,896,4.55,245,1.27,881,1.27,881,4.61,242,4.64,241,1.41,790,2.01,554,1.44,774
+down,896,4864,6.98,160,1.71,651,1.70,656,7.02,159,7.05,158,1.89,589,3.01,370,1.49,748

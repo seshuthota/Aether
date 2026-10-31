@@ -93,6 +93,10 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    miss; on in the C ABI. Open: the same products for decode (+10 % on gate/up).
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
+   Tried (2026-10-31, step 15 of results/phase-l3.md): the activations as a texel buffer
+   (`q4_0_gemm_ht.comp`) are no faster than the storage-buffer reads (881 against 881
+   GFLOP/s on gate/up at 128 tokens), so the gap is not the reads. Open: the f16
+   accumulator tile and the per-weight dequantization.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /

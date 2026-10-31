@@ -37,6 +37,14 @@ pub type Result<T> = std::result::Result<T, String>;
 /// many buffer descriptors).
 const MAX_SETS: u32 = 4096;
 
+fn desc_type(texel: &[usize], binding: usize) -> vk::DescriptorType {
+    if texel.contains(&binding) {
+        vk::DescriptorType::UNIFORM_TEXEL_BUFFER
+    } else {
+        vk::DescriptorType::STORAGE_BUFFER
+    }
+}
+
 fn vkr(what: &str) -> impl FnOnce(vk::Result) -> String + '_ {
     move |e| format!("{what}: {e}")
 }
@@ -59,6 +67,8 @@ pub struct Info {
     pub subgroup_ops: vk::SubgroupFeatureFlags,
     pub max_workgroup_invocations: u32,
     pub max_storage_buffer_range: u32,
+    /// Texels a texel buffer view may span (`maxTexelBufferElements`).
+    pub max_texel_elements: u32,
     pub max_shared_memory: u32,
     /// Byte offsets of buffer views ([`Kernel::bind_at`]) are multiples of this.
     pub storage_offset_align: u64,
@@ -91,6 +101,8 @@ pub struct Gpu {
     pool: vk::CommandPool,
     /// Descriptor sets for [`Kernel::bind`] (a model binds a few hundred).
     sets: vk::DescriptorPool,
+    /// The buffer views of [`Kernel::bind_at`]'s texel bindings, freed with the device.
+    views: std::sync::Mutex<Vec<vk::BufferView>>,
     pub info: Info,
 }
 
@@ -167,6 +179,7 @@ impl Gpu {
                 subgroup_ops: sub.supported_operations,
                 max_workgroup_invocations: props.limits.max_compute_work_group_invocations,
                 max_storage_buffer_range: props.limits.max_storage_buffer_range,
+                max_texel_elements: props.limits.max_texel_buffer_elements,
                 max_shared_memory: props.limits.max_compute_shared_memory_size,
                 storage_offset_align: props.limits.min_storage_buffer_offset_alignment,
                 extensions,
@@ -203,9 +216,12 @@ impl Gpu {
             let pool = device
                 .create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family).flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None)
                 .map_err(vkr("create command pool"))?;
-            let sizes = [vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: 8 * MAX_SETS }];
+            let sizes = [
+                vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: 8 * MAX_SETS },
+                vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_TEXEL_BUFFER, descriptor_count: MAX_SETS },
+            ];
             let sets = device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(MAX_SETS).pool_sizes(&sizes), None).map_err(vkr("descriptor pool"))?;
-            Ok(Gpu { _entry: entry, instance, phys, device, queue, pool, sets, info })
+            Ok(Gpu { _entry: entry, instance, phys, device, queue, pool, sets, views: Default::default(), info })
         }
     }
 
@@ -229,7 +245,7 @@ impl Gpu {
         // on an error).
         unsafe {
             let buf = d
-                .create_buffer(&vk::BufferCreateInfo::default().size(size as u64).usage(vk::BufferUsageFlags::STORAGE_BUFFER).sharing_mode(vk::SharingMode::EXCLUSIVE), None)
+                .create_buffer(&vk::BufferCreateInfo::default().size(size as u64).usage(vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER).sharing_mode(vk::SharingMode::EXCLUSIVE), None)
                 .map_err(vkr("create buffer"))?;
             let req = d.get_buffer_memory_requirements(buf);
             let Some(mem_type) = self.info.types.iter().enumerate().position(|(i, &(_, t))| req.memory_type_bits & (1 << i) != 0 && t.contains(flags)) else {
@@ -261,6 +277,7 @@ impl Gpu {
     /// Returns the GPU time of all `reps` in seconds, from timestamps.
     pub fn run(&self, kernel: &Kernel, buffers: &[&Buffer], push: &[u8], groups: [u32; 3], reps: u32) -> Result<f64> {
         assert_eq!(buffers.len(), kernel.bindings, "one buffer per binding");
+        assert!(kernel.texel.is_empty(), "texel bindings are bound with Kernel::bind");
         let d = &self.device;
         // SAFETY: every handle is live; the descriptor set is not in use
         // (the previous run was waited for); the command buffer, query pool
@@ -321,6 +338,9 @@ impl Drop for Gpu {
         // its fence); buffers and kernels hold clones of `device` and must
         // be dropped first, which owning them after the Gpu ensures.
         unsafe {
+            for v in self.views.get_mut().unwrap().drain(..) {
+                self.device.destroy_buffer_view(v, None);
+            }
             self.device.destroy_descriptor_pool(self.sets, None);
             self.device.destroy_command_pool(self.pool, None);
             self.device.destroy_device(None);
@@ -382,6 +402,8 @@ pub struct Kernel {
     desc_pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
     bindings: usize,
+    /// Bindings that are uniform texel buffers (`samplerBuffer`, f16 × 4 texels).
+    texel: Vec<usize>,
     pub spec: Vec<u32>,
 }
 
@@ -391,13 +413,20 @@ impl Kernel {
     }
 
     pub fn with_spec(gpu: &Gpu, spirv: &[u8], bindings: usize, push_bytes: u32, spec: &[u32]) -> Result<Kernel> {
+        Kernel::with_texel(gpu, spirv, bindings, push_bytes, spec, &[])
+    }
+
+    /// [`Kernel::with_spec`] where the bindings in `texel` are uniform texel
+    /// buffers, read with `texelFetch` as 4 × f16 texels
+    /// (R16G16B16A16_SFLOAT), the way an image would be.
+    pub fn with_texel(gpu: &Gpu, spirv: &[u8], bindings: usize, push_bytes: u32, spec: &[u32], texel: &[usize]) -> Result<Kernel> {
         let d = &gpu.device;
         let code = ash::util::read_spv(&mut std::io::Cursor::new(spirv)).map_err(|e| format!("SPIR-V: {e}"))?;
         // SAFETY: `d` is live; the objects are freed in Drop, in reverse.
         unsafe {
             let module = d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None).map_err(vkr("create shader module"))?;
             let binds: Vec<_> = (0..bindings as u32)
-                .map(|i| vk::DescriptorSetLayoutBinding::default().binding(i).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE))
+                .map(|i| vk::DescriptorSetLayoutBinding::default().binding(i).descriptor_type(desc_type(texel, i as usize)).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE))
                 .collect();
             let set_layout = d.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&binds), None).map_err(vkr("set layout"))?;
             let ranges = [vk::PushConstantRange { stage_flags: vk::ShaderStageFlags::COMPUTE, offset: 0, size: push_bytes }];
@@ -418,10 +447,13 @@ impl Kernel {
             let pipeline = d
                 .create_compute_pipelines(vk::PipelineCache::null(), &[vk::ComputePipelineCreateInfo::default().stage(stage).layout(layout)], None)
                 .map_err(|(_, e)| format!("create pipeline: {e}"))?[0];
-            let sizes = [vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: bindings.max(1) as u32 }];
+            let mut sizes = vec![vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: (bindings - texel.len()).max(1) as u32 }];
+            if !texel.is_empty() {
+                sizes.push(vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_TEXEL_BUFFER, descriptor_count: texel.len() as u32 });
+            }
             let desc_pool = d.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes), None).map_err(vkr("descriptor pool"))?;
             let set = d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(desc_pool).set_layouts(&sets)).map_err(vkr("descriptor set"))?[0];
-            Ok(Kernel { device: d.clone(), module, set_layout, layout, pipeline, desc_pool, set, bindings, spec: spec.to_vec() })
+            Ok(Kernel { device: d.clone(), module, set_layout, layout, pipeline, desc_pool, set, bindings, texel: texel.to_vec(), spec: spec.to_vec() })
         }
     }
 }
@@ -449,10 +481,24 @@ impl Kernel {
         unsafe {
             let set = d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(gpu.sets).set_layouts(&layouts)).map_err(vkr("descriptor set"))?[0];
             let infos: Vec<[vk::DescriptorBufferInfo; 1]> = at.iter().map(|&(b, o)| [vk::DescriptorBufferInfo { buffer: b.buf, offset: o as u64, range: vk::WHOLE_SIZE }]).collect();
+            let mut views = Vec::new();
+            for &i in &self.texel {
+                let (b, o) = at[i];
+                let range = ((b.size - o) / 8 * 8) as u64;
+                if range / 8 > gpu.info.max_texel_elements as u64 {
+                    return Err(format!("{range} bytes are more than a texel buffer view spans ({} texels)", gpu.info.max_texel_elements));
+                }
+                let info = vk::BufferViewCreateInfo::default().buffer(b.buf).format(vk::Format::R16G16B16A16_SFLOAT).offset(o as u64).range(range);
+                views.push([d.create_buffer_view(&info, None).map_err(vkr("create buffer view"))?]);
+            }
+            gpu.views.lock().unwrap().extend(views.iter().map(|v| v[0]));
             let writes: Vec<vk::WriteDescriptorSet> = infos
                 .iter()
                 .enumerate()
-                .map(|(i, info)| vk::WriteDescriptorSet::default().dst_set(set).dst_binding(i as u32).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(info))
+                .map(|(i, info)| match self.texel.iter().position(|&t| t == i) {
+                    Some(v) => vk::WriteDescriptorSet::default().dst_set(set).dst_binding(i as u32).descriptor_type(vk::DescriptorType::UNIFORM_TEXEL_BUFFER).texel_buffer_view(&views[v]),
+                    None => vk::WriteDescriptorSet::default().dst_set(set).dst_binding(i as u32).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(info),
+                })
                 .collect();
             d.update_descriptor_sets(&writes, &[]);
             Ok(Bound { pipeline: self.pipeline, layout: self.layout, set })
@@ -982,6 +1028,16 @@ impl Gpu {
             return Err("q4_0_gemm_h needs fp16 arithmetic and 16-bit storage buffers".into());
         }
         Kernel::with_spec(self, crate::spirv!("q4_0_gemm_h"), 4, 16, &[accum.into()])
+    }
+
+    /// [`Gpu::q4_0_gemm_h_kernel`] with the activations (binding 2) as a
+    /// texel buffer (`shaders/q4_0_gemm_ht.comp`): the texture path, as
+    /// llama.cpp's Adreno kernel reads them.
+    pub fn q4_0_gemm_ht_kernel(&self, accum: bool) -> Result<Kernel> {
+        if !self.info.fp16 {
+            return Err("q4_0_gemm_ht needs fp16 arithmetic and 16-bit storage buffers".into());
+        }
+        Kernel::with_texel(self, crate::spirv!("q4_0_gemm_ht"), 4, 16, &[accum.into()], &[2])
     }
 
     /// Its activations' transpose to f16 (`shaders/to_f16t.comp`); with
@@ -1537,6 +1593,8 @@ mod tests {
         let Some(root) = crate::testutil::golden("quant_batch") else { return };
         let Ok(gpu) = Gpu::new() else { return };
         let (Ok(t), Ok(mm)) = (gpu.to_f16t_kernel(false), gpu.q4_0_gemm_h_kernel(false)) else { return };
+        // The texel-buffer variant reads the same activations through texelFetch.
+        let mmt = gpu.q4_0_gemm_ht_kernel(false).unwrap();
         let mut cases = 0;
         for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
             cases += 1;
@@ -1550,9 +1608,12 @@ mod tests {
             let xt = gpu.buffer(w.nb * 32 * Gpu::f16t_pad(xs[0]) * 2).unwrap();
             let mut out = gpu.buffer(want.len() * 4).unwrap();
             out.as_mut_slice::<f32>().fill(f32::NAN);
-            gpu.q4_0_gemm_h(&t, &mm, &w, &x, &xt, xs[0], &out, 0).unwrap();
-            let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
-            assert!(rel < 4.0 * 2f32.powi(-11), "{}: rel {rel:.2e}", dir.display());
+            for k in [&mm, &mmt] {
+                out.as_mut_slice::<f32>().fill(f32::NAN);
+                gpu.q4_0_gemm_h(&t, k, &w, &x, &xt, xs[0], &out, 0).unwrap();
+                let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+                assert!(rel < 4.0 * 2f32.powi(-11), "{}: rel {rel:.2e}", dir.display());
+            }
         }
         assert!(cases >= 11, "only {cases} golden cases");
     }

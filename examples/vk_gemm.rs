@@ -24,8 +24,8 @@ fn main() {
     let ks = [gpu.q4_0_gemm_kernel().unwrap()];
     let pool = if cfg!(target_arch = "aarch64") { Some(ThreadPool::new(&[2, 3, 4, 5, 6, 7]).unwrap()) } else { None };
     println!("# {} | {t} tokens | CPU: cores 2-7", gpu.info.name);
-    let f16 = gpu.to_f16t_kernel(false).and_then(|t| Ok((t, gpu.q4_0_gemm_h_kernel(false)?))).ok();
-    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops");
+    let f16 = gpu.to_f16t_kernel(false).and_then(|t| Ok((t, gpu.q4_0_gemm_h_kernel(false)?, gpu.q4_0_gemm_ht_kernel(false)?))).ok();
+    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops");
     for (d, n, what) in [(896, 896, "wq/wo"), (4864, 896, "gate/up"), (896, 4864, "down")] {
         let mut w = AlignedBuf::zeros(d * n);
         for (i, v) in w.iter_mut().enumerate() {
@@ -55,15 +55,18 @@ fn main() {
         }
 
         match &f16 {
-            Some((tk, mk)) => {
+            Some((tk, mk, mt_k)) => {
                 let mt = MatQ4_0T::new(&gpu, blocks, d).unwrap();
                 let xt = gpu.buffer(n * Gpu::f16t_pad(t) * 2).unwrap();
                 // Warm up, then the median of 21 back-to-back products.
                 gpu.q4_0_gemm_h(tk, mk, &mt, &xb, &xt, t, &out, 5).unwrap();
                 let s = gpu.q4_0_gemm_h(tk, mk, &mt, &xb, &xt, t, &out, 21).unwrap();
                 cols += &format!("{:.2},{:.0},", s * 1e3, flops / s / 1e9);
+                gpu.q4_0_gemm_h(tk, mt_k, &mt, &xb, &xt, t, &out, 5).unwrap();
+                let s = gpu.q4_0_gemm_h(tk, mt_k, &mt, &xb, &xt, t, &out, 21).unwrap();
+                cols += &format!("{:.2},{:.0},", s * 1e3, flops / s / 1e9);
             }
-            None => cols += ",,",
+            None => cols += ",,,,",
         }
 
         // The multi-format shader (`qx_gemm.comp`, for Q4_K_M files) on the
@@ -77,7 +80,7 @@ fn main() {
         }
         for f in [Format::Q4_0, Format::Q5_0] {
             match &f16 {
-                Some((tk, _)) => {
+                Some((tk, _, _)) => {
                     let mq = MatQT::new(&gpu, &Weight::from(w.clone_buf()).convert(n, f), d).unwrap();
                     let k = gpu.qx_gemm_h_kernel(mq.ty, false).unwrap();
                     let xt = gpu.buffer(n * Gpu::f16t_pad(t) * 2).unwrap();
