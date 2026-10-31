@@ -58,6 +58,21 @@ impl Score {
     pub fn same_top_pct(&self) -> f64 {
         100.0 * self.same_top as f64 / self.count as f64
     }
+
+    /// Scores one prediction: `lp` the model's log-probabilities, `next`
+    /// the actual next token, `base` the base model's log-probabilities
+    /// for the same position (if there is a base model).
+    pub fn add(&mut self, lp: &[f64], next: usize, base: Option<&[f64]>) {
+        let nll = -lp[next];
+        self.nll += nll;
+        self.nll2 += nll * nll;
+        self.count += 1;
+        if let Some(lb) = base {
+            self.nll_base -= lb[next];
+            self.kld += lb.iter().zip(lp).map(|(&b, &q)| b.exp() * (b - q)).sum::<f64>();
+            self.same_top += usize::from(argmax(lb) == argmax(lp));
+        }
+    }
 }
 
 /// Natural-log probabilities of one row of logits, in f64. Sums `exp` over
@@ -112,16 +127,8 @@ pub fn perplexity(
         for r in 0..(n_ctx - 1 - first) {
             let next = chunk[first + r + 1];
             let lp = log_probs(&ours[r * vocab..(r + 1) * vocab]);
-            let nll = -lp[next];
-            score.nll += nll;
-            score.nll2 += nll * nll;
-            score.count += 1;
-            if let Some(reference) = &reference {
-                let lb = log_probs(&reference[r * vocab..(r + 1) * vocab]);
-                score.nll_base -= lb[next];
-                score.kld += lb.iter().zip(&lp).map(|(&b, &q)| b.exp() * (b - q)).sum::<f64>();
-                score.same_top += usize::from(argmax(&lb) == argmax(&lp));
-            }
+            let lb = reference.as_ref().map(|reference| log_probs(&reference[r * vocab..(r + 1) * vocab]));
+            score.add(&lp, next, lb.as_deref());
         }
         progress(ch + 1, &score);
     }

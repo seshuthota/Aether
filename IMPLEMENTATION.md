@@ -104,8 +104,12 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    x staged through shared memory: 1049 → 1546 tok/s at 128 tokens (+47 %), PPL
    +0.02–0.06. Step 19: the same for Q4_K_M files (`qx_gemm_q8.comp`): 634 → 1028 tok/s at 128
    tokens (+60 %), PPL +0.02–0.04; int8 products now tested on the phone (step 18).
-   Open: KL / top-token agreement against llama.cpp for both int8 paths, a
-   same-session `llama-bench` at pp128/256/512, int8 for decode.
+   Step 20: KL against the f32 model: int8 within llama.cpp's error bar on all four
+   files (e.g. Qwen Q4_0 0.181107 vs llama.cpp 0.181010); f16 0.0012–0.0026 lower.
+   Step 21: same session as llama.cpp's OpenCL: Q4_0 ahead at pp64/128 (1.5–2×), level
+   at pp256, 3–11 % behind at pp512; Q4_K_M 4–5× (no Adreno Q4_K kernel there).
+   Open: our prompt speed falls 20 % from 128 to 512 tokens (attention over the cache,
+   not yet profiled at those positions); int8 for decode.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /
