@@ -1149,7 +1149,94 @@ pairs, GPU times repeat to 0.5 ms):
 | f16 | 225–226 | 537–549 | 634–644 |
 | **int8** | **290–301** | **823–833** | **1027–1029** |
 
-+60 % at 128 tokens, +53 % at 64, +31 % at 16. Still to do: KL divergence
-and top-token agreement against llama.cpp's logits for both int8 paths
-(perplexity cannot rank differences this small), and a same-session
-`llama-bench` at pp128 / 256 / 512 for a like-for-like comparison.
++60 % at 128 tokens, +53 % at 64, +31 % at 16. KL divergence: step 20;
+a same-session comparison with llama-bench: step 21.
+
+## Step 20: KL divergence of the GPU prompt pass, f16 and int8 (2026-10-31; `raw/vk-kld-*.txt`)
+
+Perplexity's error bars (±0.7–1.2) are 20–50× the f16 → int8 moves, so
+they cannot say which shader is closer to the f32 model. KL divergence can:
+it compares the whole next-token distribution at every scored position
+with the f32 model's. `vk_ppl` takes the f32 GGUF as a fifth argument and
+runs each chunk through it on the CPU (`Score::add`, now shared with
+`eval::perplexity`). The base is our f32 CPU model on the phone, which
+matches HF `transformers` (≤ 1.4e-4) and whose KL figures for the CPU's
+quantized paths matched llama.cpp's (`results/phase-6.md`, `phase-7.md`);
+llama.cpp's figures are against its own f32 logits, from the same f32
+files. wikitext-2, 20 × 512, `forward_batch` in batches of 128, phone.
+
+| Model, format | shader | PPL | Mean KLD | Same top |
+| --- | --- | --- | --- | --- |
+| SmolLM2-135M Q4_0 | f16 `q4_0_gemm_h` | 27.6950 | 0.333160 | 64.90 % |
+| | **int8** `q4_0_gemm_q8` | 27.7581 | 0.335616 | 64.82 % |
+| | our CPU (phase 6) | 27.7150 | 0.335544 | 64.71 % |
+| | llama.cpp | 27.7412 | 0.335355 ± 0.004256 | 64.77 ± 0.67 % |
+| SmolLM2-135M Q4_K_M | f16 `qx_gemm_h` | 20.6902 | 0.048888 | 86.51 % |
+| | **int8** `qx_gemm_q8` | 20.7338 | 0.051535 | 86.04 % |
+| | our CPU (phase 6) | 20.7201 | 0.051455 | 85.86 % |
+| | llama.cpp | 20.7784 | 0.053319 ± 0.000979 | 86.14 ± 0.48 % |
+| Qwen2.5-0.5B Q4_0 | f16 `q4_0_gemm_h` | 19.7205 | 0.179864 | 77.22 % |
+| | **int8** `q4_0_gemm_q8` | 19.7371 | 0.181107 | 77.08 % |
+| | our CPU (phase 7) | 19.7441 | 0.180924 | 77.18 % |
+| | llama.cpp | 19.7283 | 0.181010 ± 0.002752 | 76.98 ± 0.59 % |
+| Qwen2.5-0.5B Q4_K_M | f16 `qx_gemm_h` | 16.7176 | 0.030122 | 90.41 % |
+| | **int8** `qx_gemm_q8` | 16.7356 | 0.031790 | 89.98 % |
+| | our CPU (phase 6) | 16.7088 | 0.031828 | 90.43 % |
+| | llama.cpp | 16.7657 | 0.033112 ± 0.000638 | 90.10 ± 0.42 % |
+
+- **int8 against llama.cpp**: every int8 KLD and same-top figure is within
+  llama.cpp's error bar of its own (Q4_0: 0.335616 vs 0.335355, 0.181107
+  vs 0.181010), or below it for Q4_K_M (where llama.cpp rounds x per 256
+  values, Q8_K, and we per 32: `results/phase-6.md`'s explanation for our
+  CPU path).
+  The int8 GPU path lands on our CPU path's figures (both round x to Q8_0
+  per 32 values): within 0.0002 KLD in all four.
+- **f16 against int8**: f16 is closer to f32 in all four, by 0.0012–0.0026
+  KLD: +0.7 % (Qwen Q4_0), +0.7 % (SmolLM2 Q4_0), +5 % (Qwen Q4_K_M),
+  +5 % (SmolLM2 Q4_K_M). This is the cost of rounding x to 8 bits, which
+  f16 (11-bit mantissa) does not pay; it is small next to what the weights'
+  4 bits cost (KLD 0.03–0.34). Same top drops by 0.1–0.5 points.
+  llama.cpp's error bars are for one run; the f16/int8 pairs score the same
+  tokens, so their difference is much more certain than those bars (not
+  computed: that needs the per-token values).
+
+## Step 21: the GPU prompt pass against llama.cpp's OpenCL, same session (2026-10-31, 18:16–18:31, battery 68 → 66 %; `raw/gpu-pp-vs-llamacpp/`)
+
+`scripts/gpu-pp-vs-llamacpp.sh`: our `vk_pp` (a prompt of N tokens from an
+empty cache, as llama-bench's `pp N`: fed 128 tokens a pass, logits for the
+last token only, one warm-up then the mean of 5 runs) with the int8 and the
+f16 products, and llama.cpp's OpenCL build (`d00685831`, step 8) as
+`llama-bench -p 64,128,256,512 -n 0 -ngl 99 --mmap 0 -r 5`. Qwen2.5-0.5B,
+two rounds in opposite orders, every run started below 40 °C, screen
+awake. tok/s, round 1 / round 2:
+
+| Q4_0 | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| **ours, int8** | 1174 / 1200 | 1346 / 1367 | 1237 / 1250 | 1067 / 1074 |
+| ours, f16 | 817 / 754 | 942 / 874 | 889 / 824 | 785 / 733 |
+| llama.cpp OpenCL | 571 / 603 | 901 / 911 | 1225 / 1133 | 1194 / 1108 |
+
+| Q4_K_M | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| **ours, int8** | 826 / 835 | 1030 / 1027 | 964 / 954 | 851 / 857 |
+| ours, f16 | 571 / 529 | 636 / 596 | 614 / 568 | 567 / 526 |
+| llama.cpp OpenCL | 185 / 188 | 214 / 183 | 217 / 213 | 220 / 217 |
+
+- **Q4_0**: ours is ahead at pp64 (2.0×) and pp128 (1.5×), level at pp256
+  (+1 % / +10 %), behind at pp512 (−11 % / −3 %). llama.cpp gets faster up
+  to 256 tokens (it passes the whole prompt at once, its fp16 image kernel
+  wants many tokens); ours peaks at 128 and loses 20 % by 512.
+- **Q4_K_M**: llama.cpp's OpenCL backend has no Adreno-tuned Q4_K kernel
+  (185–220 tok/s at every size); ours is 4–5× faster.
+- **Not equal conditions**: a llama-bench run (4 sizes × 6 passes) lasts
+  longer and ended at 50–60 °C, ours at 38–40 °C, so llama.cpp's later
+  sizes ran on a warmer phone; its round-2 drop at pp256 / 512 (−7 %) may
+  be that. Our runs repeat within 2 % (int8) and 8 % (f16, which drifted
+  down in round 2 in both models). The GPU clock could not be read
+  (`max_gpuclk` not readable from adb shell).
+- **Our fall from 128 to 512 tokens**: the products do the same work per
+  token at every position, so the loss is in what grows with position, the
+  attention over the cache (each 128-token pass at position 384 attends to
+  up to 512 keys). Not yet profiled at those positions: `vk_prefill` times
+  a single batch from position 0. That is the next thing to look at for
+  long prompts.

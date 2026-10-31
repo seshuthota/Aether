@@ -1,0 +1,8 @@
+# 2026-10-31T18:22:41+05:30 start 38000 m°C, GPU max clock 
+| model                          |       size |     params | backend    | ngl | mmap |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ---: | --------------: | -------------------: |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |            pp64 |        185.00 ± 7.47 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |           pp128 |        213.71 ± 7.64 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |           pp256 |        216.83 ± 3.95 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |           pp512 |        220.28 ± 1.86 |
+# end 60700 m°C

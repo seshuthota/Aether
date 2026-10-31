@@ -1,0 +1,8 @@
+# 2026-10-31T18:30:32+05:30 start 39600 m°C, GPU max clock 
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | batches of 128, qx_gemm_q8 | mean of 5 runs
+test,tok_per_s,ms
+pp64,835.0,76.7
+pp128,1026.8,124.7
+pp256,954.0,268.3
+pp512,856.6,597.7
+# end 38400 m°C

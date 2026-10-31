@@ -5,7 +5,7 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f16|batch-f32|few|few-f32]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f16|batch-f32|few|few-f32] [BASE.gguf]
 //!
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
@@ -18,8 +18,14 @@
 //! `GpuModel::forward_few` (the decode shader for several tokens, as
 //! speculative decoding checks its drafts): with x in 8 bits and int8
 //! dot products where the GPU has them, `few-f32` with x in f32.
+//!
+//! `BASE.gguf` (the f32 file llama.cpp's `--kl-divergence-base` was made
+//! from): also run each chunk through that model on the CPU and print KL
+//! divergence and top-token agreement against it, as `aether --ppl --kl`
+//! and llama-perplexity's `--kl-divergence` do.
 
 use aether::eval::{Score, log_probs};
+use aether::model::Transformer;
 use aether::kernels::vulkan::Gpu;
 use aether::model::gpu::{GpuModel, Options};
 use aether::session::Session;
@@ -33,6 +39,7 @@ fn main() {
     let chunks: usize = args.next().map_or(20, |v| v.parse().unwrap());
     let ctx: usize = args.next().map_or(512, |v| v.parse().unwrap());
     let mode = args.next().unwrap_or_default();
+    let mut base: Option<Transformer> = args.next().map(|b| Session::open(&PathBuf::from(b), None, ctx, Format::F32, None).unwrap().model);
     let (batched, f32_gemm, f16_gemm, few, few_f32) = (mode.starts_with("batch"), mode == "batch-f32", mode == "batch-f16", mode.starts_with("few"), mode == "few-f32");
     // The tokenizer from a session; the weights again, as stored (the
     // session's copy is repacked for the CPU kernels).
@@ -72,12 +79,11 @@ fn main() {
         if let Some(b) = bos {
             chunk[0] = b;
         }
+        let reference = base.as_mut().map(|b| b.forward_batch_logits(&chunk, 0, first).to_vec());
         let mut score = |p: usize, logits: &[f32]| {
             if p >= first {
-                let v = -log_probs(logits)[chunk[p + 1]];
-                s.nll += v;
-                s.nll2 += v * v;
-                s.count += 1;
+                let lb = reference.as_ref().map(|r| log_probs(&r[(p - first) * vocab..(p - first + 1) * vocab]));
+                s.add(&log_probs(logits), chunk[p + 1], lb.as_deref());
             }
         };
         if batched || few {
@@ -97,8 +103,15 @@ fn main() {
             }
         }
         eprint!("[{}]{:.4},", ch + 1, s.ppl());
+        if base.is_some() {
+            eprint!("kld {:.5},", s.mean_kld());
+        }
     }
     let dt = t2.elapsed().as_secs_f64();
     eprintln!();
     println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored, {:.1} s, {:.1} tok/s through the GPU{})", s.ppl(), s.ppl_err(), s.count, dt, (chunks * (ctx - 1)) as f64 / dt, if batched { format!(", batches of {}, {}", m.batch, m.gemm_shader()) } else if few { format!(", {} tokens a pass, {}", m.few, m.few_shader()) } else { String::new() });
+    if base.is_some() {
+        println!("PPL(base f32) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
+        println!("Mean KLD: {:.6}   Same top p: {:.3} %   (time and tok/s include the base model on the CPU)", s.mean_kld(), s.same_top_pct());
+    }
 }

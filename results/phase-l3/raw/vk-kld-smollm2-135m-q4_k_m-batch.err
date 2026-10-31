@@ -1,0 +1,3 @@
+target/aarch64-linux-android/release/examples/vk_ppl: 1 file pushed, 0 skipped. 420.5 MB/s (14281160 bytes in 0.032s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1245 skipped.
+[1]10.6853,kld 0.05747,[2]16.0315,kld 0.05316,[3]16.1643,kld 0.05638,[4]16.3639,kld 0.05587,[5]16.5127,kld 0.05389,[6]16.6342,kld 0.05280,[7]17.0309,kld 0.05218,[8]17.8241,kld 0.05218,[9]19.0550,kld 0.05163,[10]19.4214,kld 0.05161,[11]19.5269,kld 0.05113,[12]19.6776,kld 0.05171,[13]19.6844,kld 0.05256,[14]20.4118,kld 0.05272,[15]20.8981,kld 0.05279,[16]21.2285,kld 0.05258,[17]20.1306,kld 0.05151,[18]20.3844,kld 0.05147,[19]20.7075,kld 0.05124,[20]20.7338,kld 0.05154,
