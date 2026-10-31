@@ -149,3 +149,95 @@ are kept as a record of how much conditions move, not as a comparison.
 
 - Split attention across positions as well as heads (14 heads over 6
   threads), then re-measure depth 512.
+
+## Same session against llama-bench, after the later phases (2026-10-31; `results/plan-checks/raw/`)
+
+The tables above are from 2026-10-21, before repacked weights, `smmla`
+prefill, K-quant kernels, flash-decoding and the pool changes
+(`results/phase-6.md`). `scripts/plan-checks.sh … bench` re-ran both
+engines on the same GGUF files and cores: `bench_suite --warmup 1` (median
+of 3) and `llama-bench -p 64,256,512 -n 64 -d 0,256,512 -t N -r 3` (mean of
+3, `taskset` to the same cores), two rounds with the order reversed in the
+second, every run started below 45 °C. On battery (53 → 38 %), screen kept
+on. The clock caps at the start of each run were 1.79 / 1.96 GHz
+(performance / prime) for 21 of the 24 runs, both engines alike (the phone
+was still warm from the energy runs before it); `aether-qwen-q8_0-c2-7-r1`
+and two llama.cpp runs started at 2.00 / 2.25. Commit `0b67b7f` + the
+imatrix writer (`da29b98`, which does not touch these paths).
+
+tok/s, round 1 / round 2. llama.cpp's `pp N` is from depth 0.
+
+| Qwen2.5-0.5B | pp64 | pp256 | pp512 | tg64 @ d0 | tg64 @ d256 | tg64 @ d512 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Q4_0 ours, 2–7 | 681 / 693 | 670 / 656 | 588 / 623 | **180 / 182** | 162 / 167 | 159 / 159 |
+| Q4_0 llama.cpp, 2–7 | 541 / 556 | 510 / 543 | 422 / 425 | 153 / 152 | 136 / 137 | 123 / 123 |
+| Q4_0 ours, 6–7 | 470 / 487 | 444 / 440 | 382 / 386 | 139 / 138 | 130 / 130 | 123 / 124 |
+| Q4_0 llama.cpp, 6–7 | 357 / 333 | 371 / 328 | 284 / 248 | 124 / 108 | 111 / 97 | 101 / 88 |
+| Q8_0 ours, 2–7 | 818 / 709 | 807 / 721 | 767 / 660 | 111 / 110 | 93 / 105 | 102 / 101 |
+| Q8_0 llama.cpp, 2–7 | 613 / 623 | 638 / 654 | 479 / 480 | 99 / 99 | 93 / 93 | 84 / 79 |
+| Q8_0 ours, 6–7 | 424 / 493 | 390 / 454 | 337 / 384 | 112 / 106 | 105 / 94 | 101 / 93 |
+| Q8_0 llama.cpp, 6–7 | 325 / 326 | 307 / 312 | 245 / 246 | 101 / 102 | 92 / 91 | 84 / 83 |
+| Q4_K_M ours, 2–7 | 551 / 557 | 557 / 532 | 516 / 512 | 112 / 112 | 107 / 107 | 104 / 104 |
+| Q4_K_M llama.cpp, 2–7 | 167 / 146 | 169 / 150 | 155 / 139 | 91 / 86 | 81 / 81 | 72 / 75 |
+| Q4_K_M ours, 6–7 | 333 / 336 | 329 / 326 | 292 / 292 | 78 / 78 | 74 / 75 | 72 / 72 |
+| Q4_K_M llama.cpp, 6–7 | 80 / 83 | 84 / 84 | 77 / 77 | 61 / 60 | 56 / 56 | 50 / 52 |
+
+Ours is ahead in every cell of both rounds: prefill by 1.2–1.6× (Q4_0,
+Q8_0) and 3.3–4.3× (Q4_K_M: llama.cpp has no repacked K-quant path in this
+build), decode by 1.0–1.3× at depth 0 and more at depth 512 (flash-decoding
+by K/V head). The closest cells are Q8_0 decode on the two prime cores
+(112 / 106 against 101 / 102), where both engines are near the memory
+limit (below). The screen was on for these runs; that was the screen-on
+check `results/phase-6.md` left open after its screen-off comparison.
+
+Peak RSS of ours in these runs: Q4_0 344 MB, Q8_0 578–586 MB, Q4_K_M 457
+MB (with a 512-token prompt and the KV cache; footprints per format are in
+`results/phase-6.md`).
+
+## Where the time and energy go
+
+This is the written account the plan asks for, from the measurements in
+`results/phase-1.md` … `phase-l5.md`; Qwen2.5-0.5B Q4_0 on cores 2–7 unless
+stated.
+
+**Decode is reading weights.** Each token reads every matrix once: 278 MB
+for Q4_0 (the tied embedding is read as the classifier). At 180–199 tok/s
+that is 50–55 GB/s, 75–82 % of the 67 GB/s all-core DRAM read measured in
+Phase 1; Q8_0 at 110 tok/s reads 58 GB/s (86 %), and on just the two prime
+cores 112 tok/s × 525 MB = 59 GB/s, so two cores already saturate memory for
+Q8_0 and adding six gains nothing. Q4_0 and Q4_K_M need more cores because
+unpacking 4-bit weights costs instructions: Q4_0 on two prime cores reaches
+38 GB/s, Q4_K_M on six 44 GB/s (65 %, its scales are unpacked per
+sub-block). The CPU-side time per token (2–7, Q4_0, from the profiles in
+`results/phase-6.md`): the weight products ~60 %, attention ~11 % at depth
+512 (it grows with the cache: 159 vs 180 tok/s from depth 0 to 512), pool
+waits ~14 %, the rest (norms, RoPE, SwiGLU, activation quantization) a few
+percent. So decode speed is bandwidth × the fraction of it the kernels can
+use; the remaining headroom is ~20 %.
+
+**Prefill is arithmetic.** Each weight is used for every prompt token, so
+the work is `smmla` (int8 matrix multiply, 4 rows × 8 tokens per tile) on
+weights repacked at load: ~58 % of prefill cycles in the `mmla4` kernel,
+attention 17–19 %, waiting threads 6–8 %, quantizing activations 3 %.
+Prefill falls from 681 tok/s at 64 tokens to 588 at 512 as attention over
+the growing prompt adds up (quadratic in length).
+
+**Heat sets the long-run speed.** Short runs above are at 1.79–2.75 GHz
+caps; held for 5 minutes, decode settles lower: 180 → 133 tok/s average on
+cores 2–7 (`results/phase-4.md`, energy), the SoC at 89 °C. Clock caps are
+the single largest source of variation in every table here (up to 20 % between
+runs an hour apart; `results/phase-6.md` "Measurement").
+
+**Energy per token is nearly flat across core sets**: 0.028–0.032 J/token
+(phone total, screen on) whether one prime core runs at 70 tok/s or six
+cores at 133. More cores draw more power (2.2 → 3.8 W) but finish
+proportionally sooner; the fixed cost (screen, DRAM, SoC) is a large share
+at these sizes. Against the 2026-10-21 run (0.041 J/token at 86 tok/s
+sustained), the kernel work cut energy per token by a third. The other
+engines on the same phone (`results/backends/`, Qwen Q4_0, 5 min on battery):
+GPU 0.029 J/token at 78 tok/s, Hexagon DSP 0.025 at 131 — the DSP is the
+most efficient, and the CPU the fastest for short bursts.
+
+**Memory** is the weights plus little else: peak RSS is the weight bytes
++ 15–30 MB for Q4_0 / Q8_0 / Q4_K_M (repacked copies replace, not add to,
+the mapped file), 1.96 GB for f32 (`results/phase-6.md`).

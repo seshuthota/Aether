@@ -1,0 +1,26 @@
+# 2026-10-31T22:07:20+05:30, commit da29b98
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 35
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# foreground: topResumedActivity=ActivityRecord{201968723 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |            pp64 |        326.36 ± 9.54 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |           pp256 |        312.37 ± 2.75 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |           pp512 |        246.07 ± 3.31 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |            tg64 |        102.02 ± 0.10 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |     pp64 @ d256 |        244.00 ± 1.07 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |    pp256 @ d256 |        237.48 ± 2.16 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |    pp512 @ d256 |        197.65 ± 1.60 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |     tg64 @ d256 |         91.37 ± 0.11 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |     pp64 @ d512 |       191.56 ± 10.74 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |    pp256 @ d512 |        198.47 ± 2.09 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |    pp512 @ d512 |        166.85 ± 0.76 |
+| qwen2 1B Q8_0                  | 500.79 MiB |   494.03 M | CPU        |       2 |     tg64 @ d512 |         83.03 ± 0.22 |
+
+build: d00685831 (8660)

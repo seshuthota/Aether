@@ -37,6 +37,7 @@ conditions() {
   adb shell dumpsys battery | grep -E 'powered: true|status:|level' | sed 's/^ */# /' | tr -d '\r' || true
   adb shell 'for c in 0 6; do echo "# cpu$c cap $(cat /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq) kHz"; done' | tr -d '\r' || true
   adb shell dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | sed 's/^ */# foreground: /' | tr -d '\r' || true
+  adb shell dumpsys power | grep -m1 'mWakefulness=' | sed 's/^ */# screen: /' | tr -d '\r' || true
 }
 ours() { # name, bench_suite args...
   local name=$1; shift
