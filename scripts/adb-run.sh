@@ -29,6 +29,19 @@ if [ -d "$TESTDATA" ]; then
   adb push --sync "$TESTDATA/." "$REMOTE_DIR/testdata/" >/dev/null
 fi
 
+# Keep the screen on for the run: with it off the vendor lowers the clock caps
+# (1.0/1.8 GHz instead of 2.4 GHz on battery, results/phase-1.md), and every
+# timing taken through this runner would be on the lowered clocks. Wake it,
+# then press left Shift (does nothing) every minute so the screen timeout
+# restarts; the key event runs on core 3. No phone setting is changed.
+# AETHER_SCREEN_OFF=1 skips this, for runs that measure the screen-off state.
+if [ -z "${AETHER_SCREEN_OFF:-}" ]; then
+  adb shell input keyevent KEYCODE_WAKEUP
+  ( while :; do sleep 60; adb shell taskset 8 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
+  KEEPALIVE=$!
+  trap 'kill $KEEPALIVE 2>/dev/null' EXIT
+fi
+
 # 2. Run it. adb shell glues its arguments into one string for the phone's shell,
 #    so we quote each argument first (printf %q) to keep spaces and special
 #    characters intact. set +e stops the script from exiting immediately if the
