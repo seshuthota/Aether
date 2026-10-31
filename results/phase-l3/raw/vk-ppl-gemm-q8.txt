@@ -1,0 +1,2 @@
+Final estimate: PPL = 27.7581 +/- 1.17684  (5100 tokens scored, 6.3 s, 1631.6 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+Final estimate: PPL = 19.7371 +/- 0.83583  (5100 tokens scored, 14.6 s, 699.7 tok/s through the GPU, batches of 128, q4_0_gemm_q8)

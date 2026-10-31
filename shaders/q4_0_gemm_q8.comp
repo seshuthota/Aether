@@ -1,0 +1,90 @@
+#version 450
+#extension GL_EXT_spirv_intrinsics : require
+// out[t][row] = W[row] · X[t] for a Q4_0 matrix W and `tokens` activations
+// quantized to 8 bits (quant_x.comp with PAIRS), in int8 dot products: the
+// prefill product after q4_0_gemm_h.comp (read that first), whose f16
+// multiply-adds this replaces by OpSDot, four int8 pairs in one instruction.
+// The same layout and split: a thread takes 4 rows (MatQ4_0T) × 8 tokens;
+// workgroup (i, j): rows 256i .. 256i + 255, tokens 8j .. 8j + 7.
+//
+// A word of the weights holds 8 nibbles in bits 4j, values 8h + j, so
+// masking it with 0x0f0f0f0f gives values 8h, 8h + 2, 8h + 4, 8h + 6 as
+// four bytes and shifting it first gives the odd ones: the order of the two
+// words quant_x stores for each group of 8 values. The −8 of Q4_0 comes off
+// once per block, with the sum of the token's 32 codes:
+//
+//   Σ (u − 8) · q = Σ u · q − 8 · Σ q
+//
+// and the block's two scales (the weights', the token's) multiply the
+// integer sum.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Q { uvec4 q[]; };
+layout(std430, binding = 1) readonly buffer D { uvec2 d[]; };
+layout(std430, binding = 2) readonly buffer X { uvec4 xq[]; };
+layout(std430, binding = 3) buffer O { float o[]; };
+layout(push_constant) uniform P { uint rows; uint nb; uint tokens; uint npad; };
+layout(constant_id = 0) const bool ACCUM = false;
+
+spirv_instruction(extensions = ["SPV_KHR_integer_dot_product"], capabilities = [6019, 6018], id = 4450)
+int sdot(uint a, uint b, spirv_literal int fmt);
+int dot4(uint a, uint b) { return sdot(a, b, 0); }
+
+const uint M = 0x0f0f0f0fu;
+
+// The workgroup's 8 tokens' x for BC pieces at a time, loaded together: every
+// thread needs the same x, and one load each from shared memory is cheaper
+// than 64 loads of the same address from the buffer.
+const uint BC = 8;
+shared uvec4 sx[BC * 8 * 3];
+
+void main() {
+    uint quad = gl_GlobalInvocationID.x, rq = (rows + 3) / 4;
+    bool live = quad < rq;
+    uint t0 = gl_WorkGroupID.y * 8;
+    vec4 acc[8];
+    for (uint t = 0; t < 8; t++) acc[t] = vec4(0.0);
+    for (uint b0 = 0; b0 < nb; b0 += BC) {
+        uint nc = min(BC, nb - b0);
+        barrier();
+        for (uint i = gl_LocalInvocationID.x; i < nc * 24; i += 64) {
+            uint p = i / 3, t = p / nc, bb = p % nc;
+            sx[(bb * 8 + t) * 3 + i % 3] = xq[3 * ((t0 + t) * nb + b0 + bb) + i % 3];
+        }
+        barrier();
+        if (!live) continue;
+        for (uint bb = 0; bb < nc; bb++) {
+            uint b = b0 + bb;
+            uvec2 sd = d[b * rq + quad];
+            vec4 sw = vec4(unpackHalf2x16(sd.x), unpackHalf2x16(sd.y));
+            uvec4 lo[4], hi[4];
+            for (uint h = 0; h < 4; h++) {
+                uvec4 w = q[(4 * b + h) * rq + quad];
+                lo[h] = w & M;
+                hi[h] = (w >> 4) & M;
+            }
+            for (uint t = 0; t < 8; t++) {
+                uint at = (bb * 8 + t) * 3;
+                uvec4 xa = sx[at], xb = sx[at + 1], xm = sx[at + 2];
+                int off = 8 * (int(xm.y) + int(xm.z));
+                float dx = uintBitsToFloat(xm.x);
+                for (uint c = 0; c < 4; c++) {
+                    int sum = dot4(lo[0][c], xa.x) + dot4(hi[0][c], xa.y) + dot4(lo[1][c], xa.z) + dot4(hi[1][c], xa.w)
+                            + dot4(lo[2][c], xb.x) + dot4(hi[2][c], xb.y) + dot4(lo[3][c], xb.z) + dot4(hi[3][c], xb.w);
+                    acc[t][c] += dx * sw[c] * float(sum - off);
+                }
+            }
+        }
+    }
+    if (!live) return;
+    for (uint t = 0; t < 8; t++) {
+        uint tok = t0 + t;
+        if (tok >= tokens) break;
+        for (uint c = 0; c < 4; c++) {
+            uint row = 4 * quad + c;
+            if (row < rows) {
+                uint i = tok * rows + row;
+                o[i] = ACCUM ? o[i] + acc[t][c] : acc[t][c];
+            }
+        }
+    }
+}

@@ -9,12 +9,18 @@
 // the codes of values 0–15 and 16–31 (the products subtract the weights'
 // offsets with them). With GLU, x is gate then up per token, and the
 // values are silu(gate) · up, as qx_gemv.comp's xtok.
+//
+// With PAIRS, the 32 int8s are stored for q4_0_gemm_q8.comp: per group of 8
+// values 8g .. 8g + 7, one word of values 8g, 8g + 2, 8g + 4, 8g + 6 and
+// one of 8g + 1, 8g + 3, 8g + 5, 8g + 7 (the order of a nibble word's
+// masked low and high nibbles).
 layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer X { vec4 x[]; };
 layout(std430, binding = 1) writeonly buffer Q { uvec4 xq[]; };
 layout(push_constant) uniform P { uint nb; uint tokens; };
 
 layout(constant_id = 0) const bool GLU = false;
+layout(constant_id = 1) const bool PAIRS = false;
 
 vec4 xtok(uint t, uint i) {
     if (!GLU) return x[t * 8 * nb + i];
@@ -42,9 +48,17 @@ void main() {
     float inv = d == 0.0 ? 0.0 : 1.0 / d;
     uint w[8];
     int s[2] = int[2](0, 0);
+    ivec4 qv[8];
     for (uint k = 0; k < 8; k++) {
-        ivec4 q = roundf(v[k] * inv);
-        s[k / 4] += q.x + q.y + q.z + q.w;
+        qv[k] = roundf(v[k] * inv);
+        s[k / 4] += qv[k].x + qv[k].y + qv[k].z + qv[k].w;
+    }
+    for (uint k = 0; k < 8; k++) {
+        ivec4 q = qv[k];
+        if (PAIRS) {
+            ivec4 a = qv[k & ~1u], b = qv[k | 1u];
+            q = (k & 1u) == 0 ? ivec4(a.x, a.z, b.x, b.z) : ivec4(a.y, a.w, b.y, b.w);
+        }
         uvec4 u = uvec4(q) & 255u;
         w[k] = u.x | u.y << 8 | u.z << 16 | u.w << 24;
     }

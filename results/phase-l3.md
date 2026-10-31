@@ -1025,3 +1025,56 @@ already, so those stay as they were. Perplexity through `forward_batch`:
 Q4_K_M, three old/new pairs in one session: GPU time of a 128-token pass
 205.7 → 196.3 ms (612 → 643 tok/s), 64 tokens 118.8 → 114.5 ms. Smaller
 than the Q4_0 file's +7 %, since most of its weights are Q4_K.
+
+## Step 17: int8 dot products in the prefill product (2026-10-31; `raw/vk-gemm-q8-*`, `raw/vk-prefill-gemm-q8-ab.txt`)
+
+Step 14's trick, in the matrix-matrix product of a Q4_0 model.
+`q4_0_gemm_q8.comp` keeps `q4_0_gemm_h.comp`'s split (a thread takes 4 rows
+× 8 tokens of the `MatQ4_0T` layout) but multiplies in `OpSDot`: a nibble
+word masked with `0x0f0f0f0f` is four weights as bytes, and the masked
+`word >> 4` the next four, so `quant_x.comp` (new `PAIRS` mode) stores each
+group of 8 codes as an even word and an odd word. The −8 comes off once per
+block with the sum of the codes. x is rounded to 8 bits per 32 values, as
+in step 14.
+
+**Correct**: `qx_gemv_q8_matches_reference` now also checks the paired
+codes against the plain ones (so against gguf-py's Q8_0) and the product
+against numpy on those codes; a swapped operand in the shader fails it
+(rel 1.3). Phone tests 115/115, host 113/113.
+
+**First version was no faster than f16** (gate/up, 128 tokens: 1.12 ms
+against 1.16; `vk_gemm`). Every thread of a wave loads the same x. With
+x staged through shared memory (the workgroup loads 8 blocks of its 8
+tokens' codes together, one barrier pair per 8 blocks, 3 KB):
+
+| 128 tokens, ms (GFLOP/s) | f16 | int8, x from the buffer | int8, x through shared memory |
+|---|---|---|---|
+| wq/wo | 0.30 (694) | 0.30 (679) | 0.20 (1025) |
+| gate/up | 1.16 (959) | 1.12 (998) | 0.79 (1417) |
+| down | 1.54 (723) | 1.62 (689) | 1.12 (998) |
+
+Tile of 4, 8 or 16 blocks: within noise (0.80 / 0.79 / 0.76 ms for
+gate/up); 28 blocks (10 KB) falls back to the buffer's speed. The same
+staging in the f16 shader made it slower (gate/up 1.16 → 1.63 ms): that
+shader is bound by its f16 arithmetic, the int8 one by its loads.
+(Loading x once per block instead of per token ran 2× faster, but the
+compiler had folded the eight identical products into one, so that test
+said nothing.)
+
+**Perplexity** through `forward_batch` (20 chunks of 512, phone), f16 →
+int8: SmolLM2 27.6950 → 27.7581, Qwen2.5 19.7205 → 19.7371 (llama.cpp
+27.7412 / 19.7283). The 8-bit rounding moves it by 0.02–0.06, as in step 14.
+
+**The prompt pass** (`vk_prefill`, Qwen2.5-0.5B Q4_0, tok/s at 16 / 64 /
+128 tokens, f16 and int8 alternated in one session):
+
+| | 16 | 64 | 128 |
+|---|---|---|---|
+| f16 | 367 | 880 / 861 | 1049 / 1052 |
+| **int8** | **580** | **1339 / 1340** | **1548 / 1544** |
+
++47 % at 128 tokens, and above llama.cpp's OpenCL figure at pp256 in
+step 8's table (1,387; ours is measured at 128, not 256). Used for pure
+Q4_0 files where the GPU has int8 dot products
+(`Options::f16_gemm` keeps the f16 shader). Q4_K_M files still use
+`qx_gemm_h.comp`.

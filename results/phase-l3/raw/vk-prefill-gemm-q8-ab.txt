@@ -1,0 +1,16 @@
+== f16 37300
+16 tokens: 43.6 ms wall (367 tok/s), 40.6 
+64 tokens: 72.7 ms wall (880 tok/s), 69.4 
+128 tokens: 122.0 ms wall (1049 tok/s), 119.2 
+== int8 37300
+16 tokens: 27.6 ms wall (579 tok/s), 26.0 
+64 tokens: 47.8 ms wall (1339 tok/s), 44.3 
+128 tokens: 82.7 ms wall (1548 tok/s), 80.9 
+== f16 38800
+16 tokens: 43.6 ms wall (367 tok/s), 40.5 
+64 tokens: 74.4 ms wall (861 tok/s), 69.0 
+128 tokens: 121.7 ms wall (1052 tok/s), 118.8 
+== int8 37300
+16 tokens: 27.6 ms wall (580 tok/s), 26.0 
+64 tokens: 47.8 ms wall (1340 tok/s), 44.3 
+128 tokens: 82.9 ms wall (1544 tok/s), 81.0 

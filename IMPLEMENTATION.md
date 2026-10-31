@@ -99,8 +99,10 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    accumulator tile and the per-weight dequantization.
    Step 16: the scale applied once per block instead of per weight: +7 % (980 → 1049
    tok/s at 128 tokens, same-session A/B), PPL unchanged. No cooperative matrix on the
-   Adreno. Next: int8 dot products in the prefill GEMM; the same scale change in
-   `qx_gemm_h.comp`.
+   Adreno. Step 16b: same change in `qx_gemm_h.comp` for Q4_0/Q5_0 pieces, +5 %.
+   Step 17: int8 dot products in the prefill GEMM for Q4_0 files (`q4_0_gemm_q8.comp`),
+   x staged through shared memory: 1049 → 1546 tok/s at 128 tokens (+47 %), PPL
+   +0.02–0.06. Open: the same for Q4_K_M files (`qx_gemm_q8`), int8 for decode.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /

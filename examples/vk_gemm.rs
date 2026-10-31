@@ -25,7 +25,7 @@ fn main() {
     let pool = if cfg!(target_arch = "aarch64") { Some(ThreadPool::new(&[2, 3, 4, 5, 6, 7]).unwrap()) } else { None };
     println!("# {} | {t} tokens | CPU: cores 2-7", gpu.info.name);
     let f16 = gpu.to_f16t_kernel(false).and_then(|t| Ok((t, gpu.q4_0_gemm_h_kernel(false)?, gpu.q4_0_gemm_ht_kernel(false)?))).ok();
-    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops");
+    println!("shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,q8_ms,q8_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops");
     for (d, n, what) in [(896, 896, "wq/wo"), (4864, 896, "gate/up"), (896, 4864, "down")] {
         let mut w = AlignedBuf::zeros(d * n);
         for (i, v) in w.iter_mut().enumerate() {
@@ -67,6 +67,23 @@ fn main() {
                 cols += &format!("{:.2},{:.0},", s * 1e3, flops / s / 1e9);
             }
             None => cols += ",,,,",
+        }
+
+        // The int8 prefill product (`q4_0_gemm_q8.comp`): x quantized once,
+        // then the product alone, median of 21 back-to-back runs.
+        match (gpu.quant_xp_kernel(false), gpu.q4_0_gemm_q8_kernel(false)) {
+            (Ok(qk), Ok(mk)) => {
+                let mt = MatQ4_0T::new(&gpu, blocks, d).unwrap();
+                let npad = Gpu::f16t_pad(t);
+                let xp = gpu.buffer(npad * n / 32 * 48).unwrap();
+                gpu.quant_x(&qk, &xb, n / 32, t, &xp, 1).unwrap();
+                let push: Vec<u8> = [d as u32, (n / 32) as u32, t as u32, npad as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+                let groups = [d.div_ceil(256) as u32, (npad / 8) as u32, 1];
+                let mut v: Vec<f64> = (0..21).map(|_| gpu.run(&mk, &[&mt.q, &mt.d, &xp, &out], &push, groups, 1).unwrap()).collect();
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                cols += &format!("{:.2},{:.0},", v[10] * 1e3, flops / v[10] / 1e9);
+            }
+            _ => cols += ",,",
         }
 
         // The multi-format shader (`qx_gemm.comp`, for Q4_K_M files) on the
