@@ -1313,3 +1313,27 @@ falls from ~476 to ~400 ms (−16 %, phone charging). The battery A/B
 This is the first piece of flash attention on the GPU; the full version
 (one pass over all positions with the online softmax, no merge, for long
 contexts) is the next topic.
+
+## Step 23: int8 products in the decode step (2026-11-01; `raw/vk-ppl-*-decode*.txt`)
+
+`Options::decode_q8`: the decode step's layer products take x in 8 bits
+per 32 values and int8 dot products, as the few-token pass does (step 14):
+`quant_x.comp` then `qx_gemv_q8.comp` at one token, so the RMS norm before
+q/k/v and the SwiGLU before down are no longer fused into the products
+(the classifier keeps the fused f32 product). Off by default until the
+battery A/B (`scripts/opt-ab.sh decode`).
+
+Perplexity through the decode step, wikitext-2 20 × 512, phone (charging;
+the tok/s include the CPU's scoring and are only indicative):
+
+| Qwen2.5-0.5B | f32 x | int8 x | llama.cpp |
+| --- | --- | --- | --- |
+| Q4_0 PPL | 19.7193 | 19.7367 | 19.7283 ± 0.836 |
+| Q4_0 tok/s | 79.3 | 80.9 | |
+| Q4_K_M PPL | 16.7167 | 16.7154 | 16.7657 ± 0.688 |
+| Q4_K_M tok/s | 53.2 | 67.5 (+27 %) | |
+
+Q4_K_M gains most: its K-quant decode was limited by arithmetic (12.3 ms
+of GPU time a token against Q4_0's 9.0, step 11), and the int8 path
+unpacks scales and weights with fewer instructions. On the PC's Intel GPU:
++12 % (Q4_0), +36 % (Q4_K_M).

@@ -1,0 +1,7 @@
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-Aether/c077017d-8f97-433b-8f3e-172808a90489/scratchpad/vk_ppl_q8: 1 file pushed, 0 skipped. 127.7 MB/s (14315784 bytes in 0.107s)
+scripts/../testdata/./: 0 files pushed, 1246 skipped.
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 4809 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 1150.1 ms: 55.6 tok/s
+[1]9.8782,[2]13.5216,[3]13.5513,[4]13.4806,[5]13.5818,[6]14.1052,[7]14.4576,[8]15.4642,[9]16.4181,[10]16.9846,[11]17.3025,[12]17.4160,[13]18.2140,[14]17.7032,[15]17.5470,[16]18.0473,[17]16.7691,[18]16.8952,[19]16.7234,[Final estimate: PPL = 16.7167 +/- 0.68578  (5100 tokens scored, 192.3 s, 53.2 tok/s through the GPU)
+20]16.7167,
