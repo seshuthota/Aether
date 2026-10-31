@@ -49,6 +49,11 @@ run() { # name, cargo run args...
 # Reverses the arguments on even rounds.
 order() { if [ $(($1 % 2)) = 1 ]; then shift; echo "$@"; else shift; echo "$@" | tr ' ' '\n' | tac | tr '\n' ' '; fi; }
 
+# Battery numbers only: wait until the phone is off the charger.
+until adb shell dumpsys battery | grep -q -E 'AC powered: false' && ! adb shell dumpsys battery | grep -q -E '(USB|Wireless) powered: true'; do
+  echo "# $(date -Iseconds) waiting for the phone to be unplugged"; sleep 60
+done
+echo "# $(date -Iseconds) on battery, starting"
 adb shell input keyevent KEYCODE_WAKEUP
 ( while :; do sleep 60; adb shell taskset 1 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
 KEEPALIVE=$!; trap 'kill $KEEPALIVE 2>/dev/null' EXIT
