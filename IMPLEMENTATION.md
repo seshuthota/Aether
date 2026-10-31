@@ -13,11 +13,19 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started · `(phone)`
 
 ---
 
-## 0. Where the engine is today (2026-10-22)
+## 0. Where the engine is today (2026-10-31)
 
-All nine phases have working, verified code; `master` has everything up to `dc636d9`.
-85 tests pass on the phone and 83 on the host. Each phase's numbers, conditions and raw data are in
-`results/phase-N.md`.
+Everything in the plan is built and verified: Phases 0–8 and the later phases of section 13
+(K-quants, importance matrices, i8mm, flash-decoding, speculative decoding, Vulkan on the
+Adreno, the Hexagon NPU). Every box below is ticked; what is left is optimization and the
+learning track. 116 tests pass on the phone (`--features vulkan,hexagon` builds), 105 on the
+host. Each phase's numbers, conditions and raw data are in `results/phase-N.md`.
+
+Same session against llama.cpp on the CPU (2026-10-31, Qwen2.5-0.5B, cores 2–7, on battery,
+results/phase-7.md): Q4_0 prefill 681 vs 541 tok/s (pp64), decode 180 vs 153; Q8_0 818 vs 613
+/ 111 vs 99; Q4_K_M 551 vs 167 / 112 vs 91. Decode reads weights at 74–89 % of the DRAM rate;
+0.028–0.032 J/token on every core set. The table below is the state of 2026-10-22, kept for
+the history; the paragraphs after it bring it forward.
 
 | Phase | What works | Verified against | Key numbers (phone, on battery) | Open |
 | --- | --- | --- | --- | --- |
@@ -158,9 +166,9 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    SmolLM2's DMA wait falls 1589 → 265 µs and its step 5.43 → 4.43 ms.
    Qwen's DMA wait halves (494 → 254 µs) and its step moves 8.79 →
    8.60 ms; the conversion does not make Qwen slower.
-5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
-   write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
-   comparison with the user present.
+5. **Verification leftovers**: done 2026-10-31 (`scripts/plan-checks.sh`,
+   `results/plan-checks/raw/`; results/phase-4.md, phase-6.md, phase-7.md). Every box of
+   the plan is now ticked; open items below are optimizations.
 6. **Learning track** (with the user): pages and films for what the implementation track built.
 
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
@@ -359,7 +367,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       token at a time), so prefill becomes GEMM.
 - [x] **3.4 NEON GEMM**: packed panels + register-blocked micro-kernel + cache blocking. GFLOPS vs
       theoretical peak FMA.
-- [~] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; NEON softmax: no gain on 2026-10-28, kept on 2026-10-29 after the attention rewrite (decode at d1024 −10 % cycles); rest not needed yet) where the profile says so: rmsnorm, softmax (needs a vector exp),
+- [x] **3.5 NEON vector ops** (attention done: +10% Qwen decode at depth 512, A/B in results/phase-7.md; NEON softmax: no gain on 2026-10-28, kept on 2026-10-29 after the attention rewrite (decode at d1024 −10 % cycles); SwiGLU with a NEON exp and RoPE angles once per call, 2026-10-29 (results/phase-6.md). Closed 2026-10-31 on the profiles: Qwen Q4_0 decode at d512 rmsnorm 0.40 % of cycles, RoPE under 0.13 % (`raw/softmax-neon-2/profile-tg256-d512.txt`); pp64 rmsnorm 1.1 % (already split by token), RoPE 1.1 % after the angle change. Decode's rmsnorm runs on the caller alone, so ~1–1.5 % of wall time at most, under run-to-run noise: no vector rmsnorm / RoPE) where the profile says so: rmsnorm, softmax (needs a vector exp),
       silu/swiglu, rope.
 - [x] **3.6 Dispatch** (dotprod/fp16 intrinsics stable on 1.99; i8mm `vmmlaq_s32` is not → `asm!` for smmla): `is_aarch64_feature_detected!`, `#[target_feature]`, scalar fallback on
       the host (x86 tests still run). Check dotprod/i8mm intrinsic stability on Rust 1.99 now
@@ -374,7 +382,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **4.2 Parallel GEMV** by output rows (chunks aligned to 64 B), parallel GEMM, attention
       heads in parallel.
 - [x] **4.3 Flags** (`-c LIST`: one thread per listed core): `--threads`, `--cores`. Results bit-identical to single-thread (test).
-- [~] **4.4 Sweeps** (running: scripts/model-speed.sh): tok/s vs threads and core sets; multi-thread GEMV GB/s as % of Phase 1
+- [x] **4.4 Sweeps** (2026-10-31, results/phase-4.md "Re-run on Qwen2.5-0.5B": decode saturates at ~195 tok/s on 3–7 / 2–7 = 54–55 GB/s, 80 % of Phase 1 all-core; J/token 0.028–0.032 for every core set on battery; rayon baseline not done, optional): tok/s vs threads and core sets; multi-thread GEMV GB/s as % of Phase 1
       all-core; J/token per core set (unplugged) → `results/phase-4.md`. Optional: rayon baseline.
 
 ## Phase 5 — SmolLM2 (GQA, safetensors, byte-level BPE)
@@ -403,7 +411,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **6.4 Q4_0 GEMV** (4-row kernels; Q4_0 still compute-bound on one core): NEON nibble unpack + `sdot`.
 - [x] **6.5 Quantized GEMM** (smmla tiles of 4 rows × 8 tokens on weights repacked four rows at a time, NEON activation quantizer, per-token steps across the pool: prefill level with llama.cpp for Q4_0, ahead for Q8_0 and Q4_K_M, 2026-10-29, results/phase-6.md) for prefill: `sdot`, then `smmla` (i8mm) with repacked weights.
 - [x] **6.6 Perplexity + KL mode** (`--ppl FILE --kl`, llama-perplexity's procedure) over wikitext-2 test (cached), with f32 logits as base.
-- [~] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md written): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
+- [x] **6.7 Verify** (f32, Q8_0 and Q4_0 PPL/KLD match llama.cpp; results/phase-6.md written; 2026-10-31: GB/s at the quantized size 74–89 % of DRAM for Qwen2.5, peak RSS = weights + 13–23 MB, Q4_0 6.5× smaller than f32): kernels vs numpy goldens of the same block math; PPL/KL vs `llama-perplexity
       --kl-divergence` on the same weights and text (S5); GB/s at quantized size, memory footprint →
       `results/phase-6.md` (phone).
 
@@ -419,7 +427,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       special tokens; ChatML chat template.
 - [x] **7.4 Benchmark suite** (`scripts/phase7-bench.sh`): prefill tok/s at several prompt lengths, decode tok/s at several
       context lengths, TTFT, peak RSS (`VmHWM`), J/token, 5-minute sustained tok/s trace.
-- [~] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; PPL/KLD for f32, Q8_0, Q4_0 match llama.cpp; results/phase-7.md written; NEON attention A/B done): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
+- [x] **7.5 Verify** (HF safetensors + GGUF f32: 48 greedy tokens identical; PPL/KLD for f32, Q8_0, Q4_0 match llama.cpp; results/phase-7.md written; NEON attention A/B done; 2026-10-31: bf16 / f16 GGUFs against transformers, `llama-bench` same session (ours ahead in every cell, screen on), "Where the time and energy go" written): HF per-layer + greedy tokens (f16/bf16), PPL/KL vs llama.cpp per quant type,
       tokenizer exact vs HF; `llama-bench` on the phone under the same conditions →
       `results/phase-7.md` with a written account of where time and energy go (phone).
 
@@ -453,8 +461,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
       `llama-quantize --pure --imatrix`, and every tensor of its imatrix Q4_K_M re-quantized to
       the same bytes; our own imatrix (`Imatrix::collect`) within 1.7e-3 of llama-imatrix's.
       PPL / KLD match llama-perplexity; the imatrix cuts KLD 11–33 % at the same size.
-      Not done: writing imatrix files, and choosing a Q4_K_M mix ourselves (`-q` stays
-      `--pure`). Lib tests pass on the phone too (2026-10-29).
+      Lib tests pass on the phone too (2026-10-29). The Q4_K_M mix (`aether-quantize … q4_k_m`,
+      6.2) and writing imatrix files (`Imatrix::write`, `aether-imatrix`; 2026-10-31: llama's
+      files round-trip byte for byte, and `llama-quantize --imatrix` with our file writes the
+      same bytes as `aether-quantize`) are done too.
 - [x] **Flash-decoding** (plan section 13, 2026-10-29; results/phase-6.md "Flash-decoding by K/V
       head"): decode attention as (K/V head, 64-position chunk) items, merged per head; decode
       cycles −11 % at d512, −18 % at d1024.
@@ -468,7 +478,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
 - [x] **Lookup in the C ABI and the app** (2026-10-29): `aether_set_lookup(session, k, ngram)`
       (include/aether.h), `Aether.setLookup` in Kotlin, a "lookup" checkbox in the app (K = 3).
       `c_abi_round_trip` checks the greedy text with lookup on; tried in the app on the phone.
-- [~] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
+- [x] **L.3 Vulkan** (Adreno; results/phase-l3.md, `--features vulkan`):
   - [x] Device, buffers, compute kernels (`kernels::vulkan`, shaders/ via `build.rs` + NDK
         `glslc`, `ash` for the C API), `vk_bandwidth`: GPU reads DRAM at ~66 GB/s (CPU: ~67),
         an empty dispatch + barrier costs 1.7 µs. Test `copy_shader_copies`.
@@ -515,7 +525,10 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         tokens, `GpuSession::generate_lookup`): correct, but 2.4× slower on the Adreno (each
         extra token costs about a whole dispatch); the C ABI ignores lookup for GPU sessions.
         A shader that shares the weights across tokens on the Adreno would be needed.
-  - [~] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+  - [x] GPU prefill as fast as llama.cpp's OpenCL (1,387 vs our 267 tok/s at pp256; step 8).
+        Met 2026-10-31 (step 21, same session, int8 products): Qwen Q4_0 1.5–2× ahead at
+        pp64/128, level at pp256, 3–11 % behind at pp512; Q4_K_M 4–5× ahead (no Adreno Q4_K
+        kernel there). KL within llama.cpp's error bar (step 20).
         f16 shaders on the phone (step 11): 771 at pp256, 812 at 128; the gap is ~1.7×. Left:
         the texel-buffer path for the activations.
         How its Adreno Q4_0 kernel (`mul_mat_Ab_Bi_8x4.cl`) differs from `q4_0_gemm.comp`:
@@ -556,7 +569,7 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         stride for parts); test `qx_gemm_matches_reference` (20 cases); PPL through it the same
         as the decode step. On the Intel GPU it is no faster than decode (f32 tiles ~15
         GFLOP/s there). To do: phone numbers; an f16 multi-format GEMM if the phone needs it.
-- [ ] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
+- [x] **L.5** NPU (Hexagon v79 DSP), from scratch (agreed 2026-10-29). Toolchain: Hexagon SDK
       6.4.0.2 in `~/.hexagon-sdk/6.4.0.2` (public release `snapdragon-toolchain/hexagon-sdk`):
       Hexagon clang for the DSP side, `qaic` for the FastRPC glue. llama.cpp's `ggml-hexagon` is the
       reference for platform use (and its numbers to measure against: pp ~330, tg ~74 tok/s,

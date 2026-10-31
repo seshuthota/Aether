@@ -17,6 +17,12 @@ Writes to the output directory:
 
 The model runs in float32 (bf16 weights widened exactly, as the engine does)
 with eager attention, so the only differences left are summation order.
+
+    tools/.venv/bin/python -I tools/hf_dump.py MODEL_DIR OUT f16
+
+rounds every matrix (every parameter of 2 or more dimensions) to float16
+first, as `convert_hf_to_gguf.py --outtype f16` stores them (it keeps norms
+and biases in f32): the reference for an f16 GGUF.
 """
 
 import sys
@@ -41,6 +47,11 @@ def main():
     tok = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
     model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.float32, attn_implementation="eager")
     model.eval()
+    if sys.argv[3:] == ["f16"]:
+        with torch.no_grad():
+            for p in model.parameters():
+                if p.dim() >= 2:
+                    p.copy_(p.half().float())
 
     ids = tok.encode(PROMPT).ids
     acts = {}

@@ -14,17 +14,25 @@
 //!
 //! `n_mat` is 1 except for stacked expert matrices. The entry used for
 //! quantizing is `in_sum2 / counts`, as `llama-quantize` computes it.
+//!
+//! [`Imatrix::collect`] computes one from our own forward pass and
+//! [`Imatrix::write`] saves it in that format (`aether-imatrix`).
 
-use super::gguf::{GgmlType, Gguf, Value};
+use super::gguf::{GgmlType, Gguf, Value, Writer};
 use crate::model::transformer::{Observer, Transformer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::Path;
 
 pub struct Imatrix {
     entries: HashMap<String, Vec<f32>>,
+    /// Per matrix, `in_sum2` and `counts` as the file stores them (sorted
+    /// by name, the order `llama-imatrix` writes them in).
+    sums: BTreeMap<String, (Vec<f32>, Vec<f32>)>,
     /// How many chunks of calibration text went in.
     pub chunks: u64,
+    /// Tokens per chunk.
+    pub chunk_size: u64,
     /// The calibration files, as `llama-imatrix` recorded them.
     pub datasets: Vec<String>,
 }
@@ -49,7 +57,7 @@ impl Imatrix {
         if g.get("general.type").and_then(Value::as_str) != Some("imatrix") {
             return Err(bad("not an imatrix GGUF (general.type is not \"imatrix\")".into()));
         }
-        let mut entries = HashMap::new();
+        let (mut entries, mut all) = (HashMap::new(), BTreeMap::new());
         for t in &g.tensors {
             let Some(name) = t.name.strip_suffix(".in_sum2") else { continue };
             let sums = f32s(&g, &t.name)?;
@@ -65,13 +73,38 @@ impl Imatrix {
                 if n > 0.0 { e.extend(s.iter().map(|&v| v / n)) } else { e.extend(std::iter::repeat_n(1.0, cols)) }
             }
             entries.insert(name.to_string(), e);
+            all.insert(name.to_string(), (sums, counts));
         }
         if entries.is_empty() {
             return Err(bad("no .in_sum2 tensors in the imatrix".into()));
         }
         let chunks = g.get("imatrix.chunk_count").and_then(Value::as_u64).unwrap_or(0);
+        let chunk_size = g.get("imatrix.chunk_size").and_then(Value::as_u64).unwrap_or(0);
         let datasets = g.get("imatrix.datasets").and_then(Value::as_array).unwrap_or(&[]).iter().filter_map(|v| v.as_str().map(String::from)).collect();
-        Ok(Imatrix { entries, chunks, datasets })
+        Ok(Imatrix { entries, sums: all, chunks, chunk_size, datasets })
+    }
+
+    /// Writes the file as `llama-imatrix` does: `general.type`,
+    /// `imatrix.datasets`, `imatrix.chunk_count`, `imatrix.chunk_size`,
+    /// then `in_sum2` and `counts` of each matrix, by name.
+    pub fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let mut w = Writer::default();
+        w.set_str("general.type", "imatrix");
+        w.set_str_array("imatrix.datasets", &self.datasets);
+        w.set_u32("imatrix.chunk_count", self.chunks as u32);
+        w.set_u32("imatrix.chunk_size", self.chunk_size as u32);
+        let mut data = Vec::new();
+        for (name, (sums, counts)) in &self.sums {
+            // [cols, n_mat] and [1, n_mat], a trailing 1 dropped as
+            // ggml_n_dims does.
+            let n = counts.len();
+            let dims = |d0: usize| if n == 1 { vec![d0] } else { vec![d0, n] };
+            w.add_tensor(&format!("{name}.in_sum2"), &dims(sums.len() / n), GgmlType::F32);
+            w.add_tensor(&format!("{name}.counts"), &dims(1), GgmlType::F32);
+            data.extend([sums, counts]);
+        }
+        let mut out = io::BufWriter::new(std::fs::File::create(path)?);
+        w.write(&mut out, |i| Ok(data[i].iter().flat_map(|v| v.to_le_bytes()).collect()))
     }
 
     /// The importance of each input column of matrix `name` (a llama.cpp
@@ -103,9 +136,10 @@ impl Imatrix {
             }
             model.forward_batch_traced(&chunk, 0, &mut c);
         }
-        let mut entries = HashMap::new();
+        let (mut entries, mut all) = (HashMap::new(), BTreeMap::new());
         for ((tap, l), (sums, n)) in c.sums {
             let e: Vec<f32> = sums.iter().map(|&s| (s / n as f64) as f32).collect();
+            let raw: Vec<f32> = sums.iter().map(|&s| s as f32).collect();
             // The matrices each tap feeds (q, k and v share their input,
             // as do gate and up).
             let names: &[&str] = match tap {
@@ -116,9 +150,10 @@ impl Imatrix {
             };
             for m in names {
                 entries.insert(format!("blk.{l}.{m}.weight"), e.clone());
+                all.insert(format!("blk.{l}.{m}.weight"), (raw.clone(), vec![n as f32]));
             }
         }
-        Imatrix { entries, chunks: chunks as u64, datasets: Vec::new() }
+        Imatrix { entries, sums: all, chunks: chunks as u64, chunk_size: n_ctx as u64, datasets: Vec::new() }
     }
 }
 
@@ -272,6 +307,20 @@ mod tests {
         }
     }
 
+    /// A file `llama-imatrix` wrote, read and written again, comes out
+    /// byte for byte the same.
+    #[test]
+    fn writes_llama_imatrix_files() {
+        for m in ["smollm2-135m", "smollm2-135m-10", "qwen2.5-0.5b"] {
+            let Some(p) = host_golden(&format!("imatrix/{m}.imatrix.gguf")) else { return };
+            let out = std::env::temp_dir().join(format!("aether-imatrix-{m}-{}.gguf", std::process::id()));
+            Imatrix::open(&p).unwrap().write(&out).unwrap();
+            let same = std::fs::read(&out).unwrap() == std::fs::read(&p).unwrap();
+            std::fs::remove_file(&out).unwrap();
+            assert!(same, "{m}");
+        }
+    }
+
     /// Our own imatrix, collected over the same 10 chunks of calibration
     /// text as `llama-imatrix --chunks 10` on the f32 GGUF, agrees with
     /// llama.cpp's entry by entry (llama.cpp sums in f32 and computes in a
@@ -283,8 +332,12 @@ mod tests {
         let cores: Vec<usize> = (0..std::thread::available_parallelism().map_or(1, |n| n.get())).collect();
         let mut s = crate::session::Session::open(&f32, None, 512, Format::F32, Some(&cores)).unwrap();
         let tokens = s.text.encode(&std::fs::read_to_string(calib).unwrap());
-        let ours = Imatrix::collect(&mut s.model, &tokens, s.text.chunk_bos(), 512, 10);
-        assert_eq!((ours.len(), ours.chunks), (want.len(), want.chunks));
+        // Through a file, so what is compared is what `write` saved.
+        let path = std::env::temp_dir().join(format!("aether-imatrix-{}.gguf", std::process::id()));
+        Imatrix::collect(&mut s.model, &tokens, s.text.chunk_bos(), 512, 10).write(&path).unwrap();
+        let ours = Imatrix::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!((ours.len(), ours.chunks, ours.chunk_size), (want.len(), want.chunks, want.chunk_size));
         // Relative difference of every entry, and its sign.
         let mut rel = Vec::new();
         for (name, w) in &want.entries {

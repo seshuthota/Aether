@@ -211,3 +211,68 @@ cores at short prompts (more synchronisations per unit of work).
 
 **Superseded**: these are single short runs, the first with caps down to
 1.02 GHz and the second with unrecorded conditions; see the A/B and the clean sweep above.
+
+## Re-run on Qwen2.5-0.5B after the later phases (2026-10-31; `results/plan-checks/raw/`)
+
+`scripts/plan-checks.sh … energy sweep`, current code (`0b67b7f` +
+`da29b98`), Qwen2.5-0.5B Q4_0, on battery (53 → 29 %, adb over Wi-Fi),
+screen on, every run started below 45 °C.
+
+**Speed per core set** (`sweep-*.txt`, `--pp 64 --tg 64 --reps 3`): tok/s,
+pass 1 (in order, caps 2.40 / 2.44 GHz) / pass 2 (reverse order; caps 2.40 /
+2.44 for its first three runs, 0–5, 2–5 and 0–1, then 2.75 / 2.65 GHz for
+the other nine, so pass 2 is faster there by its clocks). Multi-thread GB/s
+= tg64 × 278 MB of weights.
+
+| Cores | tg64 | pp64 | GB/s (decode) | % of 67 GB/s |
+| --- | --- | --- | --- | --- |
+| 7 | 80.8 / 87.7 | 260 / 280 | 22–24 | 34–36 % |
+| 6–7 | 150.4 / 156.8 | 416 / 581 | 42–44 | 62–65 % |
+| 5–7 | 164.6 / 181.4 | 602 / 679 | 46–50 | 68–75 % |
+| 4–7 | 166.6 / 192.0 | 693 / 768 | 46–53 | 69–80 % |
+| 3–7 | 191.2 / 197.9 | 788 / 881 | 53–55 | 79–82 % |
+| 2–7 | 193.3 / 198.7 | 905 / 1003 | 54–55 | 80–82 % |
+| 1–7 | 181.4 / 196.3 | 990 / 968 | 50–55 | 75–81 % |
+| 0–7 | 181.7 / 185.9 | 910 / 1069 | 51–52 | 75–77 % |
+| 0 | 39.6 / 44.9 | 134 / 154 | 11–12 | 16–19 % |
+| 0–1 | 76.0 / 87.0 | 262 / 296 | 21–24 | 32–36 % |
+| 2–5 | 142.1 / 143.4 | 503 / 501 | 40 | 59 % |
+| 0–5 | 180.7 / 178.4 | 708 / 598 | 50 | 75 % |
+
+- Decode rises to ~195 tok/s at 3–7 / 2–7, 54–55 GB/s, about 80 % of the
+  all-core DRAM read, and stays there or dips with cores 0–1 added. This
+  is the multi-thread GEMV bandwidth the plan asks for, measured in the
+  model rather than in `gemv_bench` (single-threaded).
+- Prefill keeps gaining up to 0–7 (910–1069), as compute work should.
+- One prime core decodes 2.0× one performance core (80.8 vs 39.6), as in
+  the SmolLM2 sweep (1.9×); both caps were 2.40–2.44 GHz, so not the
+  clock. Six performance cores (0–5, 178–181) come within 7–10 % of 2–7
+  (193–199): with memory the limit, the prime cores add little.
+- The two prime cores alone reach 150–157 tok/s, 2× the 2026-10-21 figure
+  (78.8): repacked weights and the `sri` unpacks made the per-core work
+  smaller (`results/phase-6.md`).
+
+**Energy per token** (`energy-*.txt`, five minutes of 64-token decode
+bursts each; energy from the battery charge counter over the window it
+covers; whole phone, screen on):
+
+| Cores | start tok/s | 5-min average | charge-counter power | J/token | max temp |
+| --- | --- | --- | --- | --- | --- |
+| 7 | 80.7 | 69.7 | 2.17 W (212 s) | 0.031 | 74.5 °C |
+| 6–7 | 122.1 | 99.7 | 3.16 W (171 s) | 0.032 | 85.3 °C |
+| 2–7 | 178.7 | 133.0 | 3.76 W (286 s) | 0.028 | 88.8 °C |
+| 0–7 | 161.6 | 140.5 | 4.09 W (221 s) | 0.029 | 89.2 °C |
+
+- Every set throttles: decode falls 14–26 % over five minutes; 6–8 cores
+  reach 85–89 °C.
+- J/token is 0.028–0.032 for every set; the spread is about the
+  measurement's (the counter covers 171–286 s of each run, and the
+  monitor's own power estimate differs from it by up to 24 %). More cores
+  draw more power and finish sooner, in nearly equal proportion. If
+  anything, 2–7 and 0–7 are slightly cheaper per token than the prime cores
+  alone.
+- Against the first energy run of Phase 7 (0.041 J/token, 86 tok/s
+  average), the same model now costs a third less per token at 1.5× the
+  sustained speed.
+
+With this, 4.4 is complete except the optional rayon baseline.

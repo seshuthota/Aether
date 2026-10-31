@@ -1167,3 +1167,74 @@ by row.
 
 Test `writes_llama_quantize_q4_k_m` covers SmolLM2 both ways; Qwen was
 checked with `cmp` on the CLI output.
+
+## Writing imatrix files: `aether-imatrix` (L.2, 2026-10-31, host only)
+
+`Imatrix::write` saves an importance matrix in the GGUF layout
+`llama-imatrix` writes: `general.type`, `imatrix.datasets`,
+`imatrix.chunk_count`, `imatrix.chunk_size`, then `in_sum2` (sums of x² per
+column) and `counts` for each matrix, sorted by name, a trailing dimension
+of 1 dropped as `ggml_n_dims` does. `aether-imatrix MODEL TEXT OUT [CTX]
+[CHUNKS]` runs `Imatrix::collect` (our forward pass) over the text and
+writes the file, like `llama-imatrix -m MODEL -f TEXT -o OUT -c CTX
+--chunks N`.
+
+Checks, all against llama.cpp:
+
+- `writes_llama_imatrix_files`: the three files `llama-imatrix` made
+  (`hostdata/imatrix/`), read and written again, come out byte for byte
+  the same.
+- `collected_imatrix_matches_llama_imatrix` now compares our collected
+  imatrix after a trip through `write` and `open`: still within the
+  tolerances measured before (median 2.4e-5 relative).
+- Our file into llama.cpp's quantizer: `aether-imatrix` on the f32 GGUF,
+  10 chunks of 512 of `calib.txt` (35 s for SmolLM2-135M, 99 s for
+  Qwen2.5-0.5B on the host), then `llama-quantize [--pure] --imatrix OURS`
+  and `aether-quantize --imatrix OURS` on the same f32 file. llama.cpp
+  loads it ("loaded 210 importance matrix entries … computed on 10
+  chunks"), and the two outputs are identical (`cmp`) for Q4_0 and Q4_K_M
+  on both models. The whole path is now ours: collection, the file, and
+  the quantization.
+
+(`~/llama.cpp/build-nodl/bin/llama-quantize` crashes with any imatrix,
+llama.cpp's own included; `build-cuda/bin/llama-quantize`, same commit
+`d00685831`, was used.)
+
+## GB/s at the quantized size, and memory footprint (6.7, 2026-10-31; `results/plan-checks/raw/memory-*.txt`)
+
+`scripts/plan-checks.sh … memory`: `bench_suite -c 2-7 --pp 64 --depth 0
+--tg 64 --reps 3` per file, on battery (32–30 %), screen on, caps 2.40 /
+2.44 GHz (one run 1.79 / 1.96 and one 2.00 / 2.25), each started below
+45 °C. "Weights" is what the model holds after loading (repacked where the
+kernels want it); GB/s = decode tok/s × weights, i.e. bytes counted at the
+quantized size, against Phase 1's all-core DRAM read of 67 GB/s.
+
+| Model, format | weights | peak RSS | × smaller than f32 (RSS) | pp64 tok/s | tg64 tok/s | GB/s | % of 67 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Qwen2.5-0.5B f32 | 1976 MB | 1958 MB | 1 | 322 | 30.3 | 59.9 | 89 % |
+| Qwen2.5-0.5B Q8_0 | 525 MB | 542 MB | 3.6 | 963 | 112.2 | 58.9 | 88 % |
+| Qwen2.5-0.5B Q4_K_M | 392 MB | 415 MB | 4.7 | 729 | 126.1 | 49.4 | 74 % |
+| Qwen2.5-0.5B Q4_0 | 278 MB | 299 MB | 6.5 | 925 | 194.7 | 54.1 | 81 % |
+| SmolLM2-135M f32 | 538 MB | 541 MB | 1 | 740 | 97.0 | 52.2 | 78 % |
+| SmolLM2-135M Q8_0 | 143 MB | 156 MB | 3.5 | 2232 | 327.8 | 46.9 | 70 % |
+| SmolLM2-135M Q5_0 | 93 MB | 106 MB | 5.1 | 1994 | 425.6 | 39.4 | 59 % |
+| SmolLM2-135M Q4_K_M | 104 MB | 121 MB | 4.5 | 1831 | 387.2 | 40.1 | 60 % |
+| SmolLM2-135M Q4_0 | 76 MB | 89 MB | 6.1 | 2180 | 516.5 | 39.2 | 58 % |
+
+- **Footprint** is the weights plus 13–23 MB (KV cache for 64 + 64 tokens,
+  buffers, code). The repacked copies are made from the mapped file
+  without both staying resident (Qwen Q4_0: 278 MB of weights, 299 MB
+  peak). f32 is read in place from the mmap (RSS just under the file:
+  the pages of tensors not touched yet are not counted).
+- **Bandwidth**: Qwen2.5 decode uses 74–89 % of the measured DRAM read
+  rate in every format; f32 and Q8_0 (no nibble unpacking) come closest.
+  Q4_0 decodes 6.4× faster than f32 on 7.1× fewer bytes. SmolLM2 uses less
+  of it (58–78 %): at 2–5 ms a token, the ~240 hand-outs to the pool per
+  token and the serial parts between them weigh more against 76–143 MB of
+  weights.
+- Load time (in this run): 46–114 ms for f32 (mmap, nothing converted),
+  0.2–1.3 s for the quantized files (repacking).
+
+With this, 6.7 is complete: kernels against numpy goldens, PPL/KLD against
+`llama-perplexity` (above and `results/phase-l3.md` step 20), GB/s at the
+quantized size, and the footprint.

@@ -157,4 +157,22 @@ mod tests {
             check_against_transformers(&mut t, "qwen2.5-0.5b/acts.safetensors", "Qwen2.5 (GGUF)");
         }
     }
+
+    /// `--outtype bf16`: the checkpoint's own bf16 matrices, widened at
+    /// load, so the same reference as the f32 file.
+    #[test]
+    fn qwen2_bf16_gguf_matches_transformers() {
+        if let Some(mut t) = model("gguf/qwen2.5-0.5b-bf16.gguf") {
+            check_against_transformers(&mut t, "qwen2.5-0.5b/acts.safetensors", "Qwen2.5 (bf16 GGUF)");
+        }
+    }
+
+    /// `--outtype f16`: matrices rounded to f16 by the converter, against
+    /// transformers with the same matrices rounded by torch (`hf_dump.py … f16`).
+    #[test]
+    fn qwen2_f16_gguf_matches_transformers() {
+        if let Some(mut t) = model("gguf/qwen2.5-0.5b-f16.gguf") {
+            check_against_transformers(&mut t, "qwen2.5-0.5b-f16/acts.safetensors", "Qwen2.5 (f16 GGUF)");
+        }
+    }
 }

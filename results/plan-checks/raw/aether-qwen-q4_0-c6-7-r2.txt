@@ -1,0 +1,24 @@
+# 2026-10-31T22:03:14+05:30, commit da29b98
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 36
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# foreground: topResumedActivity=ActivityRecord{201968723 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+# bench_suite testdata/gguf/qwen2.5-0.5b-q4_0.gguf | q4_0 | weights 278.0 MB | backend cpu | cores [6, 7] (2 threads) | load 197 ms
+test,tok_per_s,ms
+pp64,487.0,131.4
+pp256,439.7,582.2
+pp512,385.8,1327.0
+tg64@d0,138.2,463.0
+# tg64@d0 per token: median 7.22 ms, p95 7.32 ms (192 samples)
+tg64@d256,130.2,491.7
+# tg64@d256 per token: median 7.67 ms, p95 7.74 ms (192 samples)
+tg64@d512,123.7,517.5
+# tg64@d512 per token: median 8.07 ms, p95 8.14 ms (192 samples)
+ttft_pp64,7.7,130.2
+# peak RSS 344860 kB
+# monitor: 45 samples over 21.99 s, max temp 84.5 °C, energy 32.65 J, avg power 1.48 W

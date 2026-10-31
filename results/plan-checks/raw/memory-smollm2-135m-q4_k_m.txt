@@ -1,0 +1,18 @@
+# 2026-10-31T22:26:01+05:30, commit da29b98
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 32
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# foreground: topResumedActivity=ActivityRecord{201968723 u0 com.android.launcher3/com.bbk.launcher2.Launcher t6 d0}
+# bench_suite testdata/gguf/smollm2-135m-q4_k_m.gguf | q5_0+q8_0+q6_k+q4_k | weights 103.7 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 406 ms
+test,tok_per_s,ms
+pp64,1830.7,35.0
+tg64@d0,387.2,165.3
+# tg64@d0 per token: median 2.59 ms, p95 2.68 ms (192 samples)
+ttft_pp64,30.2,33.1
+# peak RSS 121052 kB
+# monitor: 3 samples over 0.69 s, max temp 64.8 °C, no battery power readings
