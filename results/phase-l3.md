@@ -783,3 +783,72 @@ products run at 30–40 GB/s of its ~66. Whether lookup pays off there is a
 phone question (`vk_gemv_n`, then `aether --gpu --lookup 4` on a copying
 prompt). `forward_batch` does not use the few-token shader (short prompts
 keep the prefill shaders) until the phone says it should.
+
+## Step 13: the few-token shader on the Adreno (2026-10-31, on battery, screen on, 37–49 °C)
+
+Step 12 left prompt lookup off on the GPU: on the Adreno an 8-token
+dispatch of `qx_gemv_n` cost 8–16 one-token dispatches
+(`raw/vk-gemv-n-adreno.txt`), and lookup made decoding 2.4× slower
+(results/phase-l5.md). The cause was in the shader's loop order. Each lane
+dequantized one row's piece and then loaded every token's 32 x values for
+it, so with 4 rows a lane it loaded each token's x 4 times per piece (and
+recomputed down's SwiGLU 4 times). The one-token shader loads a piece's x
+once and dots it with all its rows.
+
+The new loop does the same per token: load token t's 32 values once, dot
+them with the 4 rows' pieces through `piece`, the one-token path's
+function. Two other orders were measured and dropped (`vk_gemv_n`, GPU
+µs per dispatch, Q4_0, Qwen2.5-0.5B shapes):
+
+| | wq/wo 8 tok | gate/up 8 tok | down 8 tok | gate/up, 1 token in the 8-token kernel |
+|---|---|---|---|---|
+| step 12 (dequantize a row, x per row) | 327 | 2947 | 1531 | 875 |
+| **x once per token, 4 rows** | **211** | **1889** | **938** | **443** |
+| dequantize 4 rows once (128 floats a lane) | 587 | 6025 | 2827 | 3948 |
+| x once per token, 8 rows a lane | 394 | 2811 | 1696 | 698 |
+
+Files: `raw/vk-gemv-n-adreno-xshare.txt`, `-deq4.txt`, `-rows.txt` (the
+last has 4 and 8 rows from one run, with a `rows_per_32` column; the
+4-row rows match the xshare run within 2 %). Holding 4 dequantized rows
+spills registers. 8 rows a lane costs more registers than the shared
+loads save. The one-token decode shader's time moved between runs
+(gate/up 123 to 180 µs) while the few-token times did not, so the table
+compares absolute times.
+
+**Still not cheap per token.** With 4 tokens through the 4-token kernel,
+gate/up is 896 µs, 224 µs a token, against 123–168 µs for one token
+through the decode shader. Every extra token costs 1.4–1.9 one-token
+dispatches. The decode shader reads gate/up at about 40 GB/s, below the
+~66 the GPU can read, so it is limited by its arithmetic (unpacking
+nibbles, converting to float, multiplying), and that arithmetic is
+repeated for every token. A pass of n tokens cannot cost much less than
+n steps.
+
+**Lookup** (`aether --gpu --lookup 4`, Qwen2.5-0.5B-Instruct Q4_0, greedy,
+the phase-6 code prompt; `raw/lookup-xshare/`):
+
+| | decode, run 1 | run 2 |
+|---|---|---|
+| plain | 120.3 tok/s | 121.1 |
+| `--lookup 4` (21 passes, 61 of 84 drafts accepted) | 47.4 | 45.5 |
+
+Same text with and without lookup. Plain decode is faster than in step
+12's table (69 tok/s) because the runner now keeps the screen on, which
+keeps the clock caps up. Lookup went from 28 to 47 tok/s, still 2.5×
+slower than plain. The C ABI keeps ignoring lookup for GPU sessions.
+
+**Correct**:
+- `qx_gemv_n_matches_reference` (numpy, Intel GPU), all five formats.
+- Perplexity through `forward_few` on the Adreno (`vk_ppl … few`, 20 ×
+  512) equals the decode step's to the last digit: SmolLM2 Q4_0 27.6910,
+  SmolLM2 Q4_K_M 20.6876, Qwen2.5 Q4_K_M 16.7167
+  (`raw/vk-ppl-few-xshare-*.txt`).
+- 115 tests on the phone with `--features vulkan`
+  (`raw/vk-tests-xshare.txt`).
+
+**Next**: make the extra tokens cost only multiply-adds. The Adreno 830
+has `VK_KHR_shader_integer_dot_product`. llama.cpp's GPU backends quantize
+x to 8 bits per 32 values and multiply 4 int8 pairs per instruction, so
+the nibbles never become floats. That changes what the shader computes (x
+is rounded), so its reference would be numpy on x quantized by gguf-py's
+Q8_0 quantizer, and perplexity against llama.cpp.
