@@ -1,0 +1,27 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f | upload 41 ms
+# at start: zone0 aoss-0 48.8 C, hottest cpu cpuss-1-1 49.4 C, cpu0 2400/2400 MHz, cpu7 1017/2438 MHz, battery Discharging
+# filling positions 0..2048
+# before depth 2048: zone0 aoss-0 54.6 C, hottest cpu cpuss-1-0 53.2 C, cpu0 2400/2400 MHz, cpu7 1017/2438 MHz, battery Discharging
+# depth 2048: 64 decode steps at positions 2048..2111
+#   attn norm + quantize        141.3 us/token   1.8%
+#   q/k/v                       217.4 us/token   2.8%
+#   bias + RoPE + KV store      153.8 us/token   2.0%
+#   attention + quantize       5368.8 us/token  70.1%
+#   wo                          143.9 us/token   1.9%
+#   ffn norm + quantize         143.9 us/token   1.9%
+#   gate/up                     571.1 us/token   7.5%
+#   SwiGLU + quantize           219.9 us/token   2.9%
+#   down                        327.2 us/token   4.3%
+#   final norm + quantize         4.7 us/token   0.1%
+#   classifier                  277.7 us/token   3.6%
+#   argmax                       44.2 us/token   0.6%
+#   thread start                 43.9 us/token   0.6%
+#   64 steps in 546.7 ms wall: 117.1 tok/s (7.64 ms per token on the DSP)
+# streamed attention split, 64 steps, 6 threads (qtimer us at 19.2 MHz)
+#   dma wait             busy    1337238 cyc   633.9 us    avg    1339628 cyc   635.1 us
+#   score + softmax      busy    2381563 cyc  1128.0 us    avg    2479847 cyc  1174.6 us
+#   value accumulate     busy    6198955 cyc  2935.7 us    avg    6273389 cyc  2970.9 us
+#   barriers + merge     busy    1075698 cyc   509.6 us    avg     891466 cyc   422.4 us
+#   exp (inside score)   busy     234233 cyc             avg     241211 cyc
+#   busiest thread 0: 10993454 cyc/token, average 10984330
+# after depth 2048: zone0 aoss-0 54.6 C, hottest cpu cpuss-1-0 53.2 C, cpu0 2400/2400 MHz, cpu7 1017/2438 MHz, battery Discharging

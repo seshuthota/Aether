@@ -47,6 +47,15 @@ pub const STAGES: [&str; 13] = [
 /// token on Qwen2.5-0.5B against 10.4 with `l2fetch` (results/phase-l5.md).
 pub const DMA_ALL: u32 = 0x1f;
 
+/// Byte offset of the streamed-attention counters past [`STAGES`], and how
+/// many u64s each of the 8 DSP threads stores. Matches `ATTN_CY_OFF` and
+/// `ATTN_CY_STRIDE` in dsp/model.c: pcycles of DMA wait, score + softmax,
+/// value accumulation, barriers + merge, then exp (a subset of score),
+/// then qtimer ticks of the four parts.
+pub const ATTN_CY_OFF: usize = 128;
+pub const ATTN_CY_STRIDE: usize = 9;
+pub const ATTN_CY_PARTS: [&str; 4] = ["dma wait", "score + softmax", "value accumulate", "barriers + merge"];
+
 /// Places byte ranges, 128-byte aligned (an HVX vector), one after another.
 #[derive(Default)]
 struct Layout(usize);
@@ -229,7 +238,9 @@ impl DspModel {
             (d::KC, 4 * nl * kv_dim * stride),
             (d::VC, 4 * kv),
             (d::ROT, 4 * c.head_size() * rows),
-            (d::PROF, 8 * STAGES.len()),
+            // Stage timers, then the per-thread streamed-attention counters
+            // at the same offset dsp/model.c uses (ATTN_CY_OFF).
+            (d::PROF, ATTN_CY_OFF + 8 * 8 * ATTN_CY_STRIDE),
         ] {
             desc[i] = sl.take(n) as u32;
         }
@@ -332,6 +343,20 @@ impl DspModel {
         us
     }
 
+    /// Streamed-attention counters since the last call, per DSP thread
+    /// (8, matching dsp.h's `MAX_THREADS`), then clears them. Each row is
+    /// [`ATTN_CY_STRIDE`] u64s: pcycles of the four parts, pcycles inside
+    /// exp, qtimer ticks of the four parts. The qtimer runs at 19.2 MHz.
+    pub fn take_attn_cycles(&mut self) -> [[u64; ATTN_CY_STRIDE]; 8] {
+        let p = &mut self.state.as_mut_slice::<u64>()[(self.prof_at + ATTN_CY_OFF) / 8..][..8 * ATTN_CY_STRIDE];
+        let mut out = [[0u64; ATTN_CY_STRIDE]; 8];
+        for (row, chunk) in out.iter_mut().zip(p.chunks_exact(ATTN_CY_STRIDE)) {
+            row.copy_from_slice(chunk);
+        }
+        p.fill(0);
+        out
+    }
+
     /// The most likely next token after the last [`DspModel::forward`] or
     /// [`DspModel::prefill`] (found on the DSP) or [`DspModel::few`].
     pub fn greedy(&self) -> usize {
@@ -346,10 +371,11 @@ mod tests {
 
     /// The few-token pass gives every token the decode step's logits, bit
     /// for bit: its products add the same block sums in the same order,
-    /// and the rest is the decode step's code. Checked for 1, 3 and 8
-    /// tokens after decoded positions, and again over cache entries a
-    /// first pass wrote (as after rejected drafts); for Q4_0 and for the
-    /// Q4_K_M mix (Q5_0, Q8_0, Q4_K, Q6_K).
+    /// and both passes call the same attention. Checked for 1, 3 and 8
+    /// tokens after decoded positions, again over cache entries a first
+    /// pass wrote (as after rejected drafts), and for 8 tokens where
+    /// attention is two streamed blocks; for Q4_0 and for the Q4_K_M mix
+    /// (Q5_0, Q8_0, Q4_K, Q6_K).
     #[test]
     fn few_tokens_get_the_decode_logits() {
         for file in ["gguf/smollm2-135m-q4_0.gguf", "gguf/smollm2-135m-q4_k_m.gguf"] {
@@ -368,11 +394,14 @@ mod tests {
                 return;
             }
         };
-        let (config, weights, _) = crate::model::gguf::load(&path, 64).unwrap();
+        // 320 covers the prefetch path, one streamed block (128..255) and a
+        // two-block merge (from 256). Both passes call the same attention,
+        // so the logits match on either side of those lines.
+        let (config, weights, _) = crate::model::gguf::load(&path, 320).unwrap();
         let vocab = config.vocab_size;
         let mut m = DspModel::new(&dsp, config, weights, 6, 1, false).unwrap();
         assert_eq!(m.q4_0_only, file.contains("q4_0"), "{file}");
-        let tokens: Vec<usize> = (0..24).map(|i| (i * 7919 + 13) % vocab).collect();
+        let tokens: Vec<usize> = (0..320).map(|i| (i * 7919 + 13) % vocab).collect();
         let want: Vec<Vec<f32>> = tokens.iter().enumerate().map(|(p, &t)| m.forward(&dsp, t, p).unwrap().to_vec()).collect();
         // Overwrite positions 4.. with other tokens first: their cache
         // entries must be replaced, not kept.
@@ -384,6 +413,21 @@ mod tests {
                 assert!(got[i * vocab..][..vocab] == want[pos + i][..], "{file}, {n} tokens at {pos}: row {i} differs from the decode step's");
             }
             pos += n;
+        }
+        // Past 256 positions a token's attention is two blocks, merged.
+        // Fill up to there, then eight decode steps against one few-token pass.
+        while pos < 256 {
+            m.forward(&dsp, tokens[pos], pos).unwrap();
+            pos += 1;
+        }
+        let mut want_long = Vec::new();
+        for _ in 0..8 {
+            want_long.push(m.forward(&dsp, tokens[pos], pos).unwrap().to_vec());
+            pos += 1;
+        }
+        let got = m.few(&dsp, &tokens[256..264], 256).unwrap();
+        for i in 0..8 {
+            assert!(got[i * vocab..][..vocab] == want_long[i][..], "{file}: streamed row {i} at 256 differs from the decode step's");
         }
     }
 }

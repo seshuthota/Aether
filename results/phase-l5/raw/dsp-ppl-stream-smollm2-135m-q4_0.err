@@ -1,0 +1,5 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.00s
+     Running `/home/curious/Documents/hermes-projects/Aether-impl/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_ppl testdata/gguf/smollm2-135m-q4_0.gguf 20 512 6`
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 451.5 MB/s (11974480 bytes in 0.025s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+[1]14.0517,[2]21.1059,[3]20.3077,[4]20.8844,[5]21.2248,[6]21.4677,[7]22.3173,[8]23.1995,[9]24.9795,[10]25.4056,[11]25.4787,[12]25.9554,[13]26.1863,[14]27.3338,[15]28.0038,[16]28.4817,[17]26.7767,[18]27.1207,[19]27.5859,[20]27.7779,

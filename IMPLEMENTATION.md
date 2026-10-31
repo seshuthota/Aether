@@ -85,9 +85,18 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    3087 → 2058 µs at depth 512 and 17680 → 7774 µs at depth 2048, with
    gate/up still ~2095 µs. About half of the depth-2048 stage was DRAM
    latency; what remains scales with the K/V bytes (~9 GB/s per thread).
-   PPL unchanged (27.7623 / 19.7716 decode). Next: the position split and
-   one VTCM read per K/V head. f16 KV only if depth 2048 is still steep
-   after that.
+   PPL unchanged (27.7623 / 19.7716 decode). Streaming 256-position K/V
+   blocks through VTCM, one DMA per block shared by that head's query
+   heads, starts at 256 positions (Qwen is ~100 µs slower below that;
+   both are faster at 512). Qwen attention 2058 → 1546 µs at depth 512
+   and 7774 → 4008 µs at depth 2048, gate/up still ~2115 µs. Decode PPL
+   27.7779 / 19.7503. A cycle split of that 4.0 ms put 1.78 ms in the
+   value mix, 1.34 ms in the score, 0.53 ms waiting on the DMA (already
+   double-buffered) and 0.20 ms in the barriers and the merge. Naming
+   the four value-accumulator pairs, with the scores kept on the stack,
+   cut the value mix to 0.84 ms. Qwen attention is 1292 µs at depth 512
+   and 2994 µs at depth 2048, and the step is 9.30 ms. The score, 1.34 ms,
+   is what is left; exp inside it is about 0.18 ms. f16 KV stays off.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.

@@ -1,0 +1,5 @@
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 23.62s
+     Running `/home/curious/Documents/hermes-projects/Aether-impl/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_ppl testdata/gguf/qwen2.5-0.5b-q4_0.gguf depth 2048 6`
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 498.0 MB/s (12145312 bytes in 0.023s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
