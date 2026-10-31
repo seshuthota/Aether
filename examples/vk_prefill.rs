@@ -10,10 +10,10 @@ use aether::model::gpu::{GpuModel, Options};
 use std::time::Instant;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: vk_prefill MODEL.gguf");
+    let path = std::env::args().nth(1).expect("usage: vk_prefill MODEL.gguf [f16]");
     let (config, weights, _) = aether::model::gguf::load(&path, 1024).unwrap();
     let gpu = Gpu::new().unwrap();
-    let mut m = GpuModel::with(&gpu, config, weights, Options { profile: true, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { profile: true, f16_gemm: std::env::args().nth(2).is_some_and(|a| a == "f16"), ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
     println!("# {path} on {} | batch up to {}", gpu.info.name, m.batch);
     for n in [16usize, 64, 128] {
         let n = n.min(m.batch);

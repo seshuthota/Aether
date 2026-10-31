@@ -3,8 +3,9 @@
 //! compute shaders. Decode runs any model whose matrices are in the
 //! formats of a llama.cpp Q4_K_M file (Q4_0, Q5_0, Q8_0, Q4_K, Q6_K): Q4_0
 //! through the tuned `q4_0_gemv.comp`, the others through `qx_gemv.comp`.
-//! The prompt pass of a Q4_0 model uses `q4_0_gemm.comp` (or its f16
-//! sibling `q4_0_gemm_h.comp`); any other model's, `qx_gemm.comp` (or
+//! The prompt pass of a Q4_0 model uses `q4_0_gemm_q8.comp` (int8 dot
+//! products, x in 8 bits) where the GPU has them, else `q4_0_gemm_h.comp`
+//! (f16) or `q4_0_gemm.comp` (f32); any other model's, `qx_gemm.comp` (or
 //! `qx_gemm_h.comp`).
 //!
 //! Every buffer lives in memory the CPU and GPU share. The whole token,
@@ -251,6 +252,9 @@ pub struct Options {
     /// The prompt's products with the f32 shaders (`q4_0_gemm.comp`,
     /// `qx_gemm.comp`) even where the f16 ones ([`F16`]) could run.
     pub f32_gemm: bool,
+    /// The prompt's products of a Q4_0 model with the f16 shader
+    /// (`q4_0_gemm_h.comp`) even where the int8 one ([`F16::int8`]) could run.
+    pub f16_gemm: bool,
     /// The few-token pass with the f32 shader (`qx_gemv_n`) even where
     /// the int8 one ([`Q8`]) could run.
     pub few_f32: bool,
@@ -292,8 +296,13 @@ struct HPart {
 /// The prompt's products in f16 (`shaders/q4_0_gemm_h.comp`,
 /// `shaders/qx_gemm_h.comp`), where the GPU has fp16 arithmetic: a second
 /// copy of every matrix in that shader's layout, and the activations
-/// transposed to f16 in `xt` before each product.
+/// transposed to f16 in `xt` before each product. With `int8` (a Q4_0
+/// model on a GPU with int8 dot products) the products are
+/// `q4_0_gemm_q8.comp`'s and `xt` holds the activations quantized to 8 bits
+/// (`quant_x.comp`) instead: 1.5× the f16 shader's speed on the Adreno 830
+/// (results/phase-l3.md, step 17).
 struct F16 {
+    int8: bool,
     /// The transpose from xb, from xb2 (attention's output) and from
     /// gate/up (with the SwiGLU).
     t_xb: Bound,
@@ -308,12 +317,16 @@ struct F16 {
 
 impl F16 {
     /// Records the transpose `t` of `n` tokens, then the parts' products.
-    fn record(r: &mut Recorder, t: &Bound, ps: &[HPart], n: usize) {
+    fn record(int8: bool, r: &mut Recorder, t: &Bound, ps: &[HPart], n: usize) {
         let nb = match &ps[0].m {
             HMat::Q4_0(m) => m.nb,
             HMat::Qx(m, _) => m.nb,
         };
-        Gpu::record_f16t(r, t, 32 * nb, n);
+        if int8 {
+            Gpu::record_quant_x(r, t, 32 * nb, n);
+        } else {
+            Gpu::record_f16t(r, t, 32 * nb, n);
+        }
         r.barrier();
         for p in ps {
             match &p.m {
@@ -329,7 +342,7 @@ impl F16 {
 /// as [`parts`] splits them. Kernels are made as needed into `ks`, by
 /// format (0: `q4_0_gemm_h`) and `accum`.
 #[allow(clippy::too_many_arguments)]
-fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, pure: bool, ws: &[(&Weight, usize)], what: &str, accum: bool, xt: &Buffer, out: &Buffer) -> Result<Vec<HPart>> {
+fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, int8: bool, pure: bool, ws: &[(&Weight, usize)], what: &str, accum: bool, xt: &Buffer, out: &Buffer) -> Result<Vec<HPart>> {
     let total = ws.iter().map(|w| w.1).sum();
     let mats = if pure {
         vec![(HMat::Q4_0(MatQ4_0T::new(gpu, &q4_0_stacked(ws, what)?, total)?), 0)]
@@ -345,7 +358,7 @@ fn h_parts(gpu: &Gpu, ks: &mut Vec<((u32, bool), Kernel)>, pure: bool, ws: &[(&W
             let i = match ks.iter().position(|(k, _)| *k == key) {
                 Some(i) => i,
                 None => {
-                    ks.push((key, if key.0 == 0 { gpu.q4_0_gemm_h_kernel(accum)? } else { gpu.qx_gemm_h_kernel(key.0, accum)? }));
+                    ks.push((key, if key.0 == 0 && int8 { gpu.q4_0_gemm_q8_kernel(accum)? } else if key.0 == 0 { gpu.q4_0_gemm_h_kernel(accum)? } else { gpu.qx_gemm_h_kernel(key.0, accum)? }));
                     ks.len() - 1
                 }
             };
@@ -643,13 +656,14 @@ impl GpuModel {
             Some(Q8 { sizes: q8_sizes, quant, cls: cls_q8, _xq: xq })
         };
 
-        let f16 = if gpu.info.fp16 && !opt.f32_gemm {
-            let (tk, tk_glu) = (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?);
+        let int8 = pure && gpu.info.int_dot && !opt.f16_gemm && !opt.f32_gemm;
+        let f16 = if int8 || (gpu.info.fp16 && !opt.f32_gemm) {
+            let (tk, tk_glu) = if int8 { (gpu.quant_xp_kernel(false)?, gpu.quant_xp_kernel(true)?) } else { (gpu.to_f16t_kernel(false)?, gpu.to_f16t_kernel(true)?) };
             let xt = gpu.buffer(dim.max(hid) * Gpu::f16t_pad(batch) * 2)?;
             let mut ks = Vec::new();
             let mut mm = Vec::new();
             for (l, lw) in weights.layers.iter().enumerate() {
-                let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
+                let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, int8, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
                 mm.push([
                     h(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
                     h(&[(&lw.wo, dim)], "wo", true, &x)?,
@@ -658,10 +672,10 @@ impl GpuModel {
                 ]);
             }
             let cls_mm = match &logits_all {
-                Some(l) => h_parts(gpu, &mut ks, pure, &[(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size)], "classifier", false, &xt, l)?.pop(),
+                Some(l) => h_parts(gpu, &mut ks, int8, pure, &[(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size)], "classifier", false, &xt, l)?.pop(),
                 None => None,
             };
-            let f = F16 { t_xb: tk.bind(gpu, &[&xb, &xt])?, t_xb2: tk.bind(gpu, &[&xb2, &xt])?, t_glu: tk_glu.bind(gpu, &[&hb12, &xt])?, mm, cls_mm, _xt: xt };
+            let f = F16 { int8, t_xb: tk.bind(gpu, &[&xb, &xt])?, t_xb2: tk.bind(gpu, &[&xb2, &xt])?, t_glu: tk_glu.bind(gpu, &[&hb12, &xt])?, mm, cls_mm, _xt: xt };
             f16_kernels = vec![tk, tk_glu];
             f16_kernels.extend(ks.into_iter().map(|(_, k)| k));
             Some(f)
@@ -784,7 +798,7 @@ impl GpuModel {
             } else if few {
                 few_b.iter().zip(ms).for_each(|(k, m)| gemv_n(r, k, m, stride));
             } else if let Some((t, ps)) = h {
-                F16::record(r, t, ps, n);
+                F16::record(f16.is_some_and(|f| f.int8), r, t, ps, n);
             } else {
                 gemm_b.iter().zip(ms).for_each(|(k, m)| gemm(r, k, m, stride));
             }
@@ -831,7 +845,7 @@ impl GpuModel {
                 r.dispatch(&self.fnorm, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);
                 end(r, "rmsnorm");
                 match f16.and_then(|f| f.cls_mm.as_ref().map(|mm| (f, mm))) {
-                    Some((f, mm)) => F16::record(r, &f.t_xb, std::slice::from_ref(mm), n),
+                    Some((f, mm)) => F16::record(f.int8, r, &f.t_xb, std::slice::from_ref(mm), n),
                     None => gemm(r, cls_mm, &self.cls, 0),
                 }
             }
@@ -895,11 +909,13 @@ impl GpuModel {
         self.best.as_slice::<u32>()[0] as usize
     }
 
-    /// Which shader the prompt pass's products use: `q4_0_gemm_h` (f16),
+    /// Which shader the prompt pass's products use: `q4_0_gemm_q8` (x in
+    /// 8 bits, int8 dot products), `q4_0_gemm_h` (f16),
     /// `q4_0_gemm` (f32), or for any format `qx_gemm_h` (f16) or `qx_gemm`
     /// (f32).
     pub fn gemm_shader(&self) -> &'static str {
         match (self.pure, self.f16.is_some()) {
+            (true, true) if self.f16.as_ref().is_some_and(|f| f.int8) => "q4_0_gemm_q8",
             (true, true) => "q4_0_gemm_h",
             (true, false) => "q4_0_gemm",
             (false, true) => "qx_gemm_h",

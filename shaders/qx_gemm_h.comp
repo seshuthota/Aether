@@ -38,6 +38,11 @@ layout(constant_id = 1) const uint FMT = 2;
 
 const uint NW = FMT == 8 ? 8 : FMT == 6 ? 5 : FMT == 14 ? 6 : 4;
 const uint NS = FMT >= 12 ? 2 : 1;
+// Q4_0 and Q5_0: the f16 sums are of the unscaled values times x and
+// the scale multiplies each sum once, in f32 (Q8_0's values reach 127 and Q6_K's 32,
+// and a SmolLM2 Q4_K_M file overflowed f16 with Q6_K hoisted; Q4_K's
+// u · a − c is one op anyway).
+const bool HOIST = FMT == 2 || FMT == 6;
 
 void main() {
     uint quad = gl_GlobalInvocationID.x, rq = (rows + 3) / 4;
@@ -74,10 +79,10 @@ void main() {
                     uvec4 u = (w >> (4 * j)) & 15u;
                     f16vec4 wv;
                     if (FMT == 2) {
-                        wv = (f16vec4(u) - float16_t(8.0)) * a;
+                        wv = f16vec4(u) - float16_t(8.0);
                     } else if (FMT == 6) {
                         u |= ((hi1 >> k) & 1u) << 4;
-                        wv = (f16vec4(u) - float16_t(16.0)) * a;
+                        wv = f16vec4(u) - float16_t(16.0);
                     } else if (FMT == 12) {
                         wv = f16vec4(u) * a - c;
                     } else {
@@ -88,7 +93,7 @@ void main() {
                 }
             }
         }
-        for (uint t = 0; t < 8; t++) acc[t] += vec4(part[t]);
+        for (uint t = 0; t < 8; t++) acc[t] += HOIST ? vec4(part[t]) * vec4(a) : vec4(part[t]);
     }
     uint stride = ostride == 0 ? rows : ostride;
     for (uint t = 0; t < 8; t++) {

@@ -897,6 +897,12 @@ impl Gpu {
         Kernel::with_spec(self, crate::spirv!("quant_x"), 2, 8, &[glu.into()])
     }
 
+    /// [`Gpu::quant_x_kernel`] storing the codes in the order of
+    /// [`Gpu::q4_0_gemm_q8_kernel`] (`PAIRS` in `quant_x.comp`).
+    pub fn quant_xp_kernel(&self, glu: bool) -> Result<Kernel> {
+        Kernel::with_spec(self, crate::spirv!("quant_x"), 2, 8, &[glu.into(), 1])
+    }
+
     /// Quantizes `tokens` rows of `nb` 32-value pieces of `x` into `xq`
     /// (48 bytes a piece), `reps` times. Returns the GPU time.
     pub fn quant_x(&self, kernel: &Kernel, x: &Buffer, nb: usize, tokens: usize, xq: &Buffer, reps: u32) -> Result<f64> {
@@ -1038,6 +1044,23 @@ impl Gpu {
             return Err("q4_0_gemm_ht needs fp16 arithmetic and 16-bit storage buffers".into());
         }
         Kernel::with_texel(self, crate::spirv!("q4_0_gemm_ht"), 4, 16, &[accum.into()], &[2])
+    }
+
+    /// `q4_0_gemm_q8.comp`: the prefill product of [`Gpu::q4_0_gemm_h_kernel`]
+    /// with the activations quantized to 8 bits by [`Gpu::quant_xp_kernel`]
+    /// and int8 dot products. Same buffers, same pushes. Needs
+    /// [`Info::int_dot`].
+    pub fn q4_0_gemm_q8_kernel(&self, accum: bool) -> Result<Kernel> {
+        if !self.info.int_dot {
+            return Err("q4_0_gemm_q8 needs int8 dot products (VK_KHR_shader_integer_dot_product)".into());
+        }
+        Kernel::with_spec(self, crate::spirv!("q4_0_gemm_q8"), 4, 16, &[accum.into()])
+    }
+
+    /// Records the quantization of `tokens` rows of `cols` activations
+    /// (`quant_x.comp`), the int8 counterpart of [`Gpu::record_f16t`].
+    pub fn record_quant_x(r: &mut Recorder, t: &Bound, cols: usize, tokens: usize) {
+        r.dispatch(t, &push_u32(&[(cols / 32) as u32, tokens as u32]), groups_for(tokens * (cols / 32), 64));
     }
 
     /// Its activations' transpose to f16 (`shaders/to_f16t.comp`); with
@@ -1485,6 +1508,32 @@ mod tests {
                     let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..n * rows], &want[t0 * rows..(t0 + n) * rows]);
                     assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} {name}, {nt} a dispatch, tokens {t0}..{}: rel {rel:.2e}", dir.display(), t0 + n);
                 }
+            }
+            // The prefill product: the same codes in the order of nibble
+            // pairs, then q4_0_gemm_q8.comp against the same reference.
+            if let Weight::Q4_0(blocks) = &w {
+                let mut xb = gpu.buffer(xv.len() * 4).unwrap();
+                xb.as_mut_slice::<f32>().copy_from_slice(&xv);
+                let npad = Gpu::f16t_pad(tokens);
+                let xp = gpu.buffer(npad * nb * 48).unwrap();
+                gpu.quant_x(&gpu.quant_xp_kernel(false).unwrap(), &xb, nb, tokens, &xp, 1).unwrap();
+                let (plain, paired) = (xq.as_slice::<u8>(), xp.as_slice::<u8>());
+                for p in 0..tokens * nb {
+                    assert_eq!(plain[48 * p + 32..48 * p + 48], paired[48 * p + 32..48 * p + 48], "piece {p}: scale and sums");
+                    for g in 0..4 {
+                        for j in 0..4 {
+                            assert_eq!(paired[48 * p + 8 * g + j], plain[48 * p + 8 * g + 2 * j], "piece {p} group {g}: even value {j}");
+                            assert_eq!(paired[48 * p + 8 * g + 4 + j], plain[48 * p + 8 * g + 2 * j + 1], "piece {p} group {g}: odd value {j}");
+                        }
+                    }
+                }
+                let mt = MatQ4_0T::new(&gpu, blocks, rows).unwrap();
+                let mm = gpu.q4_0_gemm_q8_kernel(false).unwrap();
+                let out = gpu.buffer(tokens * rows * 4).unwrap();
+                let push: Vec<u8> = [rows as u32, nb as u32, tokens as u32, npad as u32].iter().flat_map(|v| v.to_le_bytes()).collect();
+                gpu.run(&mm, &[&mt.q, &mt.d, &xp, &out], &push, [rows.div_ceil(256) as u32, (npad / 8) as u32, 1], 1).unwrap();
+                let (_, rel) = crate::testutil::max_errors(&out.as_slice::<f32>()[..tokens * rows], &want[..tokens * rows]);
+                assert!(rel < 1e-6 * (cols as f32).sqrt().max(4.0), "{} q4_0 prefill product: rel {rel:.2e}", dir.display());
             }
         };
         let dirs = |r: &std::path::Path| std::fs::read_dir(r).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
