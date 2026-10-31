@@ -954,3 +954,31 @@ repeats the prompt, 10–15 % slower when few drafts are accepted. The C ABI
 10 % faster than the decode shader on gate/up (110 against 123 µs, plus
 4 µs of `quant_x`). Not done: decode would then round x too and its
 perplexity would move like the few-token pass's.
+
+## Step 15: the activations as a texel buffer (2026-10-31; `raw/vk-gemm-texel-*.txt`)
+
+Step 8 named the fp16 image reads of llama.cpp's Adreno kernel as one
+difference from ours. `q4_0_gemm_ht.comp` is `q4_0_gemm_h.comp` with `xt`
+bound as a uniform texel buffer (`samplerBuffer`, R16G16B16A16_SFLOAT, one
+`texelFetch` per 4 tokens) instead of a storage buffer: the texture path
+without the images. `Kernel::with_texel` marks such bindings and
+`bind_at` makes the buffer view. The result equals the storage shader's
+against the batch goldens (`q4_0_gemm_h_matches_reference` runs both);
+phone tests 115/115 (`raw/vk-tests-texel.txt`).
+
+Median of 21 products, Qwen2.5-0.5B shapes, phone at 36 °C:
+
+| tokens | product | storage ms (GFLOP/s) | texel ms (GFLOP/s) |
+|---|---|---|---|
+| 128 | wq/wo | 0.32 (638) | 0.32 (634) |
+| 128 | gate/up | 1.27 (881) | 1.27 (881) |
+| 128 | down | 1.71 (651) | 1.70 (656) |
+| 512 | wq/wo | 1.07 (768) | 1.07 (769) |
+| 512 | gate/up | 4.82 (926) | 4.91 (909) |
+| 512 | down | 5.80 (770) | 5.94 (751) |
+
+No gain: the activation reads are not what holds the shader at ~900
+GFLOP/s. The texel path stays in as an option (`q4_0_gemm_ht_kernel`) but
+the model does not use it. What is left of the gap to llama.cpp's OpenCL
+prefill is elsewhere (its 8 × 4 tile in f16 accumulators, or the
+dequantization per weight); this step rules out the reads.
