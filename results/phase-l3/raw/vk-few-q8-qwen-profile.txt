@@ -1,0 +1,18 @@
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | few-token shader qx_gemv_q8 | position 256
+tokens,wall_ms,vs_one
+1,9.90,1.00
+2,13.53,1.37
+#   GPU 11.55 ms: rmsnorm 0.43, q/k/v 0.93, bias + RoPE + cache 0.19, attention 0.94, attention merge 0.18, wo + add 0.81, gate/up 3.74, swiglu + down + add 2.32, classifier 2.02
+3,19.26,1.94
+#   GPU 16.85 ms: rmsnorm 0.44, q/k/v 1.30, bias + RoPE + cache 0.19, attention 1.13, attention merge 0.20, wo + add 1.11, gate/up 6.07, swiglu + down + add 2.87, classifier 3.54
+4,21.14,2.13
+#   GPU 18.92 ms: rmsnorm 0.44, q/k/v 1.44, bias + RoPE + cache 0.19, attention 1.39, attention merge 0.21, wo + add 1.23, gate/up 6.78, swiglu + down + add 3.44, classifier 3.80
+5,33.96,3.43
+#   GPU 31.96 ms: rmsnorm 0.54, q/k/v 2.14, bias + RoPE + cache 0.25, attention 1.75, attention merge 0.29, wo + add 2.09, gate/up 11.56, swiglu + down + add 6.45, classifier 6.91
+6,39.38,3.98
+#   GPU 35.83 ms: rmsnorm 0.54, q/k/v 2.31, bias + RoPE + cache 0.25, attention 2.00, attention merge 0.32, wo + add 2.28, gate/up 12.97, swiglu + down + add 7.34, classifier 7.82
+7,42.73,4.31
+#   GPU 40.09 ms: rmsnorm 0.57, q/k/v 2.52, bias + RoPE + cache 0.25, attention 2.45, attention merge 0.35, wo + add 2.48, gate/up 14.48, swiglu + down + add 8.24, classifier 8.76
+8,46.42,4.69
+#   GPU 44.00 ms: rmsnorm 0.55, q/k/v 2.69, bias + RoPE + cache 0.26, attention 2.61, attention merge 0.38, wo + add 2.66, gate/up 15.98, swiglu + down + add 9.14, classifier 9.74
+# one decode step, GPU 9.67 ms

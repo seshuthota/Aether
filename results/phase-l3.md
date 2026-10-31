@@ -852,3 +852,105 @@ x to 8 bits per 32 values and multiply 4 int8 pairs per instruction, so
 the nibbles never become floats. That changes what the shader computes (x
 is rounded), so its reference would be numpy on x quantized by gguf-py's
 Q8_0 quantizer, and perplexity against llama.cpp.
+
+## Step 14: int8 few-token products, and prompt lookup that pays on the Adreno (2026-10-31, on battery, screen on, 37–50 °C)
+
+Step 13 left every extra token of a few-token pass at 1.4–1.9 one-token
+dispatches: the Adreno's products are limited by arithmetic, and
+`qx_gemv_n` unpacks every weight to a float again for each token. The
+new path does what llama.cpp's GPU backends do for small batches:
+
+- `quant_x.comp` rounds each token's x to 8 bits per 32 values, as
+  llama.cpp's Q8_0 (d = max |x| / 127, codes rounded half away from zero
+  like gguf-py's `np_roundf`), except that d stays f32. It also stores the
+  sums of the codes, and applies down's SwiGLU while it reads.
+- `qx_gemv_q8.comp` dots the weight bytes with the codes with `OpSDot`
+  (`VK_KHR_shader_integer_dot_product`): four int8 pairs per
+  instruction. A nibble word masked to its low or high nibbles is already
+  four bytes in x's order. Q5_0's fifth bits and Q6_K's high bits are
+  spread into the bytes, and each format's offset comes out once per piece
+  as c · Σ q. The NDK's glslc (shaderc 2022.3) does not know
+  `GL_EXT_integer_dot_product`, so the shader names the SPIR-V
+  instruction by its opcode (`GL_EXT_spirv_intrinsics`).
+- Both GPUs report the instruction as accelerated
+  (`integerDotProduct4x8BitPackedSignedAccelerated`; Adreno 830 and
+  Intel, `Info::int_dot_accelerated`).
+
+**Correct**:
+- `qx_gemv_q8_matches_reference` (Intel GPU, host only: it needs
+  gguf-py). x's codes and d against gguf-py's Q8_0 quantizer, plain and
+  through SwiGLU: every code equal on the Intel GPU. The test allows a
+  code to differ by one where x / d sits on a half, at most 1 in 1000
+  (1 in 100 through SwiGLU's exp). Then the products of all five formats,
+  1, 3 and 8 tokens a dispatch, against numpy's X' @ dequant(W)ᵀ in
+  float64 (X' = our codes × d, dequant from gguf-py), at the same bound as
+  the f32 shaders. Changing Q6_K's offset from 32 to 31 fails it (rel 4.5e-2).
+- Perplexity through `forward_few` on the Adreno (`vk_ppl … few`, 20 × 512,
+  8 tokens a pass; `raw/vk-ppl-few-q8-*.txt`):
+
+| | int8 pass | f32 pass (step 13) | llama.cpp |
+|---|---|---|---|
+| SmolLM2 Q4_0 | 27.7707 | 27.6910 | 27.7412 ± 1.18 |
+| Qwen2.5 Q4_0 | 19.7512 | | 19.7283 ± 0.84 |
+| SmolLM2 Q4_K_M | 20.7313 | 20.6876 | 20.7784 ± 0.85 |
+| Qwen2.5 Q4_K_M | 16.7201 | 16.7167 | 16.7657 ± 0.69 |
+
+  All within 0.05 of llama.cpp. On the Intel GPU SmolLM2 Q4_0 gives
+  27.7333: the two GPUs' 1 / d and exp put a few codes on the other side
+  of a half.
+- 115 tests on the phone with `--features vulkan` (`raw/vk-tests-q8.txt`).
+  `gpu_lookup_keeps_the_greedy_text` now runs the f32 pass
+  (`Options::few_f32`), whose products are the decode step's, so it still
+  checks KV positions and rows exactly.
+
+**Products** (`vk_gemv_n`, Q4_0, Qwen2.5-0.5B shapes, GPU µs per
+dispatch; `raw/vk-gemv-n-adreno-q8.txt`). One gate/up token through the
+decode shader is 123 µs in this run:
+
+| gate/up | f32 path | int8 path (+ `quant_x`, 4–6 µs) |
+|---|---|---|
+| 1 token, 1-token kernel | 123 (decode shader) | 110 |
+| 2 tokens | 425 | 130 |
+| 4 tokens | 994 | 246 |
+| 8 tokens | 2079 | 629 |
+
+**The pass** (`examples/vk_few.rs`: wall time of `forward_few` at position
+256, Qwen2.5-0.5B, against one decode step; `raw/vk-few-q8-*.txt`). With
+kernels for 2, 4 and 8 tokens only, 5 tokens took the 8-token kernel and
+cost 3.43 steps against 2.13 for 4. The GPU time was all but ~2 ms of
+the wall time, so the kernel size, not recording or reading the logits,
+was the cost. The model now builds one kernel per size from 2 to 8, and
+the descriptor pool holds 4096 sets:
+
+| tokens | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| Q4_0 (one step 9.7 ms) | 1.38 | 1.72 | 2.23 | 2.58 | 3.19 | 3.88 | 4.79 |
+| Q4_K_M (one step 15.5 ms) | 1.21 | 1.50 | 1.75 | 1.86 | 2.23 | 2.79 | 3.38 |
+
+**Lookup** (`aether --gpu --lookup K`, Qwen2.5-0.5B-Instruct, greedy, the
+phase-6 prompts, decode tok/s; `raw/lookup-q8-sizes/`):
+
+| | plain | K = 3 | K = 4 |
+|---|---|---|---|
+| Q4_0 code (copies the function; 61 of 84 drafts at K = 4) | 104.3 | 112.6 | 123.0 |
+| Q4_0 prose | 102.5 | 110.8 | 103.9 |
+| Q4_0 story | 103.8 | 107.7 | 116.6 |
+| Q4_K_M code | 63.8 | 108.9 | 117.3 |
+| Q4_K_M prose (10 of 60 drafts) | 72.2 | 65.5 | 64.0 |
+| Q4_K_M story (14 of 100 drafts) | 74.4 | 65.3 | 63.0 |
+
+Text equal to plain decoding's in every run except the Q4_0 story, which
+parts at a near tie about 600 characters in ("a strange sight" against "a
+small, mysterious figure"), as the CPU's batched pass does (phase 6). With
+the 8-token kernel for every pass (`raw/lookup-q8/`), K = 4 was 95–100 tok/s
+against 99–104 plain.
+
+So on the GPU lookup now behaves as on the CPU and the DSP: up to +18 %
+(Q4_0) and +84 % (Q4_K_M, whose single step is slower) when the reply
+repeats the prompt, 10–15 % slower when few drafts are accepted. The C ABI
+(and so the app's "lookup" checkbox, K = 3) now uses it for GPU sessions.
+
+**Decode** could use the same products: the int8 kernel for 1 token is
+10 % faster than the decode shader on gate/up (110 against 123 µs, plus
+4 µs of `quant_x`). Not done: decode would then round x too and its
+perplexity would move like the few-token pass's.

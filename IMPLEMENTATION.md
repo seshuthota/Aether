@@ -85,8 +85,12 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    rows (it was loaded once per row): 8 tokens of gate/up 2947 → 1889 µs, PPL through
    `forward_few` equal to decode's on the phone. Still 1.4–1.9 one-token dispatches per
    extra token, because the Adreno's decode shader is limited by arithmetic (~40 GB/s), so
-   lookup is 47 against 120 tok/s plain and stays off. Next: int8 dot products
-   (`VK_KHR_shader_integer_dot_product`) with x quantized to 8 bits.
+   lookup is 47 against 120 tok/s plain and stays off. Done in step 14 (2026-10-31): x
+   rounded to 8 bits per 32 values (`quant_x.comp`, as llama.cpp's Q8_0) and int8 dot
+   products (`qx_gemv_q8.comp`, OpSDot), one kernel per pass size. 4 tokens cost 2.2 decode
+   steps (Q4_0) where they cost ~8; PPL through the pass within 0.05 of llama.cpp. Lookup
+   on the GPU: +18 % (Q4_0) / +84 % (Q4_K_M) on a copying prompt, −10–15 % when drafts
+   miss; on in the C ABI. Open: the same products for decode (+10 % on gate/up).
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
 4. **DSP attention at long positions.** Profiled

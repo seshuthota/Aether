@@ -472,9 +472,9 @@ impl GpuSession {
     /// draft tokens (at most [`crate::model::gpu::GpuModel::few`] − 1)
     /// copied from the last earlier match of the last `ngram` tokens,
     /// checked in one pass of the decode shader for several tokens
-    /// ([`crate::model::gpu::GpuModel::forward_few`]). Greedy text is the
-    /// GPU's greedy text under those products' numbers; sampled text keeps
-    /// the sampler's distribution.
+    /// ([`crate::model::gpu::GpuModel::forward_few`]; x in 8 bits where the
+    /// GPU has int8 dot products). Greedy text is plain GPU decoding's up
+    /// to near ties; sampled text keeps the sampler's distribution.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
         let steps = steps.min(self.model.config.seq_len);
         let k = k.min(self.model.few.saturating_sub(1));
@@ -767,12 +767,15 @@ mod tests {
     /// Prompt lookup on the GPU leaves greedy text as it is: the same text
     /// as plain GPU decoding of the same file, with drafts proposed (the
     /// reply repeats itself) and some accepted, checked by the few-token
-    /// pass. A different text would mean a wrong KV position or row.
+    /// pass. A different text would mean a wrong KV position or row. The
+    /// pass runs with x in f32 (`few_f32`), whose products are the decode
+    /// step's: the int8 pass rounds x and may part from plain decoding at
+    /// a near tie (it is checked against numpy and by perplexity).
     #[cfg(feature = "vulkan")]
     #[test]
     fn gpu_lookup_keeps_the_greedy_text() {
         let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
-        let Ok(mut s) = GpuSession::open(&model, 96) else {
+        let Ok(mut s) = GpuSession::open_with(&model, 96, crate::model::gpu::Options { few_f32: true, ..Default::default() }) else {
             assert!(!cfg!(target_os = "android"), "no GPU");
             return;
         };

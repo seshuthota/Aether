@@ -1,0 +1,4 @@
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 87.1 MB/s (14840840 bytes in 0.162s)
+scripts/../testdata/./: 0 files pushed, 1234 skipped.
+GPU: Adreno (TM) 830
+prefill (on the GPU): 46 tokens in 125.1 ms (367.6 tok/s) | decode: 354 tokens in 3411.3 ms (103.8 tok/s)

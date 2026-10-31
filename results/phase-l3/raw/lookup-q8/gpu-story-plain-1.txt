@@ -1,0 +1,14 @@
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Write a short story about a lighthouse keeper who finds a message in a bottle.<|im_end|>
+<|im_start|>assistant
+Once upon a time, in the quiet town of Willowbrook, there was a lighthouse keeper named Mr. Lee. He had been working at the lighthouse for many years, always keeping an eye on the sea and the waves that passed by. One day, a mysterious message was found in a bottle at the lighthouse. The keeper was intrigued and decided to investigate further.
+
+As he opened the bottle, a strange sight caught his eye. There was a message written in a small, ancient script that read: "To the brave souls who sail through the waves, I am here to guide you to the shore. Remember, the sea is always calm and the wind is always gentle. Do not fear the unknown, for the unknowns are always welcome. May you find your way home safely." The keeper was amazed and decided to read the message carefully.
+
+He realized that the message was not just a simple message, but a warning. He knew that the sea was always calm and the wind was always gentle, but he also knew that the unknowns were always there. He decided to take the message to the lighthouse keeper and ask for advice.
+
+The keeper listened to the message and then passed it on to Mr. Lee. He shared the message with him and asked him to look for the bottle. Mr. Lee went to the lighthouse and found the bottle. He opened it and read the message again and again.
+
+Finally, he read the message and understood the warning. He decided to take the bottle to the lighthouse keeper and ask for advice. The keeper listened to Mr. Lee's explanation and then passed it on to Mr. Lee. Mr. Lee went to the lighthouse and found the bottle. He opened it and read the message again and again
