@@ -1,0 +1,17 @@
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 1792 ms
+#   attn norm + quantize        185.5 us/token   2.0%
+#   q/k/v                       384.2 us/token   4.2%
+#   bias + RoPE + KV store      254.1 us/token   2.8%
+#   attention + quantize        234.3 us/token   2.6%
+#   wo                          321.2 us/token   3.5%
+#   ffn norm + quantize         177.8 us/token   1.9%
+#   gate/up                    2559.7 us/token  28.0%
+#   SwiGLU + quantize           474.9 us/token   5.2%
+#   down                       1913.8 us/token  20.9%
+#   final norm + quantize         7.3 us/token   0.1%
+#   classifier                 2433.5 us/token  26.6%
+#   argmax                      161.1 us/token   1.8%
+#   thread start                 48.5 us/token   0.5%
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 674.4 ms: 94.9 tok/s (9.15 ms per token on the DSP)
+Final estimate: PPL = 16.7422 +/- 0.68709  (5100 tokens scored, 125.1 s, 81.7 tok/s through the DSP)

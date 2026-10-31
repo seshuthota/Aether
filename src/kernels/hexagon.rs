@@ -674,6 +674,56 @@ mod tests {
         assert!(cases >= 20, "only {cases} golden cases");
     }
 
+    /// The K/V cache's f16 store and load (`dsp/f16_hvx.h`) against numpy
+    /// `astype(float16)`: the stored bits, the scalar store used for one
+    /// element, and the lane order of the load (element i comes back in
+    /// lane i). Includes values on a half-ulp boundary. HVX stores −0 as
+    /// +0; numpy keeps the sign, and that one lane is checked on its own.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn sim_f16_kv_convert_matches_numpy() {
+        let Some(run) = sim_program("f16cvt") else { return };
+        let py = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/.venv/bin/python");
+        assert!(py.exists(), "numpy venv is missing at {}", py.display());
+        let mut vals = vec![
+            0.0f32, 1.0, -1.0, 0.5, -0.5, 0.1, -0.1, 3.14159265, 100.0, -100.0, 65504.0, 65520.0, -65504.0, -65520.0,
+            1.0 + 2f32.powi(-11), 1.0 + 3.0 * 2f32.powi(-11), -(1.0 + 2f32.powi(-11)), -(1.0 + 3.0 * 2f32.powi(-11)),
+            2f32.powi(-25), 3.0 * 2f32.powi(-25), 1e-8, -1e-8,
+        ];
+        // −0 is the known miss. It sits at a fixed lane so the rest of the
+        // vector still has to match numpy bit for bit.
+        let neg0 = vals.len();
+        vals.push(-0.0);
+        for i in 0..200 {
+            vals.push(((i * 17) % 50) as f32 - 25.0 + (i as f32) * 0.013);
+        }
+        let n = vals.len().div_ceil(64) * 64;
+        vals.resize(n, 0.0);
+        let dir = std::env::temp_dir().join(format!("aether-sim-{}-f16cvt", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (inp, outp, want_h, want_f) = (dir.join("in.bin"), dir.join("out.bin"), dir.join("h.bin"), dir.join("f.bin"));
+        std::fs::write(&inp, vals.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>()).unwrap();
+        let script = "import numpy as np, sys\nx = np.fromfile(sys.argv[1], dtype='<f4')\nh = x.astype(np.float16)\nh.view(np.uint16).tofile(sys.argv[2])\nh.astype(np.float32).tofile(sys.argv[3])\n";
+        let st = std::process::Command::new(&py).args(["-c", script, inp.to_str().unwrap(), want_h.to_str().unwrap(), want_f.to_str().unwrap()]).status().unwrap();
+        assert!(st.success(), "numpy f16 reference failed");
+        run(&[inp.to_str().unwrap(), outp.to_str().unwrap(), &n.to_string()]);
+        let raw = std::fs::read(&outp).unwrap();
+        let (vec_b, rest) = raw.split_at(n * 2);
+        let (sca_b, back_b) = rest.split_at(n * 2);
+        let u16s = |b: &[u8]| b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>();
+        let f32s = |b: &[u8]| b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect::<Vec<_>>();
+        let (got_v, got_s, got_back) = (u16s(vec_b), u16s(sca_b), f32s(back_b));
+        let (want, want_back) = (u16s(&std::fs::read(&want_h).unwrap()), f32s(&std::fs::read(&want_f).unwrap()));
+        assert_eq!(want[neg0], 0x8000, "numpy should keep the sign of −0");
+        for i in 0..n {
+            let (wv, wb) = if i == neg0 { (0u16, 0.0f32) } else { (want[i], want_back[i]) };
+            assert_eq!(got_v[i], wv, "vector store lane {i}: input {}", vals[i]);
+            assert_eq!(got_s[i], wv, "scalar store lane {i}: input {}", vals[i]);
+            assert_eq!(got_back[i].to_bits(), wb.to_bits(), "load lane {i}: input {}", vals[i]);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn dsp() -> Option<Dsp> {
         let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         match Dsp::open(&dir) {

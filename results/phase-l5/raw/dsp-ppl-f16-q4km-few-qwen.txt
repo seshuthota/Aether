@@ -1,0 +1,26 @@
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 1589 ms
+#   attn norm + quantize        185.9 us/token   2.0%
+#   q/k/v                       389.4 us/token   4.2%
+#   bias + RoPE + KV store      253.2 us/token   2.7%
+#   attention + quantize        235.0 us/token   2.5%
+#   wo                          323.7 us/token   3.5%
+#   ffn norm + quantize         178.2 us/token   1.9%
+#   gate/up                    2594.1 us/token  28.0%
+#   SwiGLU + quantize           476.5 us/token   5.1%
+#   down                       1947.5 us/token  21.0%
+#   final norm + quantize         7.3 us/token   0.1%
+#   classifier                 2466.8 us/token  26.6%
+#   argmax                      158.8 us/token   1.7%
+#   thread start                 48.4 us/token   0.5%
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 645.5 ms: 99.2 tok/s (9.25 ms per token on the DSP)
+# decode step: 9044 us on the DSP (median of 5)
+# few-token pass, 1 tokens:   8894 us on the DSP, 0.98x one decode step, 8894 us per token
+# few-token pass, 2 tokens:  10421 us on the DSP, 1.15x one decode step, 5210 us per token
+# few-token pass, 3 tokens:  11974 us on the DSP, 1.32x one decode step, 3991 us per token
+# few-token pass, 4 tokens:  14040 us on the DSP, 1.55x one decode step, 3510 us per token
+# few-token pass, 5 tokens:  16383 us on the DSP, 1.81x one decode step, 3277 us per token
+# few-token pass, 6 tokens:  19194 us on the DSP, 2.12x one decode step, 3199 us per token
+# few-token pass, 7 tokens:  22075 us on the DSP, 2.44x one decode step, 3154 us per token
+# few-token pass, 8 tokens:  24838 us on the DSP, 2.75x one decode step, 3105 us per token
+Final estimate: PPL = 16.7422 +/- 0.68709  (5100 tokens scored, 52.4 s, 194.9 tok/s through the DSP)

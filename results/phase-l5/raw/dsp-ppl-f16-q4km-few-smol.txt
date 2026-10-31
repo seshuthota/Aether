@@ -1,0 +1,26 @@
+# testdata/gguf/smollm2-135m-q4_k_m.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 421 ms
+#   attn norm + quantize        140.5 us/token   4.2%
+#   q/k/v                       301.6 us/token   8.9%
+#   bias + RoPE + KV store      285.1 us/token   8.5%
+#   attention + quantize        223.6 us/token   6.6%
+#   wo                          217.4 us/token   6.5%
+#   ffn norm + quantize         141.6 us/token   4.2%
+#   gate/up                     696.9 us/token  20.7%
+#   SwiGLU + quantize           218.3 us/token   6.5%
+#   down                        546.7 us/token  16.2%
+#   final norm + quantize         4.7 us/token   0.1%
+#   classifier                  501.8 us/token  14.9%
+#   argmax                       45.7 us/token   1.4%
+#   thread start                 45.7 us/token   1.4%
+# greedy: The capital of France is the city of Paris. It is the largest city in France and the second largest in Europe. It is the capital of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department of the department
+# 64 positions in 263.3 ms: 243.0 tok/s (3.36 ms per token on the DSP)
+# decode step: 3290 us on the DSP (median of 5)
+# few-token pass, 1 tokens:   3245 us on the DSP, 0.99x one decode step, 3245 us per token
+# few-token pass, 2 tokens:   4260 us on the DSP, 1.29x one decode step, 2130 us per token
+# few-token pass, 3 tokens:   5247 us on the DSP, 1.59x one decode step, 1749 us per token
+# few-token pass, 4 tokens:   6374 us on the DSP, 1.94x one decode step, 1594 us per token
+# few-token pass, 5 tokens:   7515 us on the DSP, 2.28x one decode step, 1503 us per token
+# few-token pass, 6 tokens:   8733 us on the DSP, 2.65x one decode step, 1456 us per token
+# few-token pass, 7 tokens:   9949 us on the DSP, 3.02x one decode step, 1421 us per token
+# few-token pass, 8 tokens:  11200 us on the DSP, 3.40x one decode step, 1400 us per token
+Final estimate: PPL = 20.7288 +/- 0.84965  (5100 tokens scored, 24.5 s, 416.3 tok/s through the DSP)

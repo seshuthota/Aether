@@ -1,0 +1,5 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.00s
+     Running `/home/curious/Documents/hermes-projects/Aether-impl/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_ppl testdata/gguf/qwen2.5-0.5b-q4_0.gguf 20 512 6`
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 443.1 MB/s (12158056 bytes in 0.026s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+[1]10.6951,[2]14.7514,[3]15.4531,[4]15.8249,[5]16.2047,[6]16.8813,[7]17.1739,[8]18.5577,[9]19.8376,[10]20.5687,[11]21.0738,[12]21.0531,[13]21.9555,[14]21.3173,[15]21.1285,[16]21.7176,[17]20.0752,[18]20.0489,[19]19.8032,[20]19.7275,

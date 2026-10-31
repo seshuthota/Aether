@@ -966,3 +966,62 @@ does 533 tok/s on Qwen (was 514) and 1055 on SmolLM2 (was 859). Qwen
 gained while its product clock was slower, so the gain is the shared
 copy, and it is the smaller one because Qwen's attention is not most
 of a prefill. Lookup on a long prompt was not run.
+
+## f16 K/V cache (2026-10-31; `raw/dsp-ppl-f16-*.txt`, `raw/dsp-tests-f16.txt`)
+
+Keys and values are IEEE f16. `qkv_post` converts on the store, both
+attention paths convert back to f32 on the load, and the state buffer
+is half as many bytes. `att_stride` is a whole number of f16 vectors
+(64 halves), plus one vector when that count is a power of two, in
+both `aether_dsp_model_load` and `DspModel::new`. Context 512 is 576
+halves. There is no f32 switch: a branch in the inner loop is not
+cheap, and a per-model switch was not added.
+
+The convert was checked on hexagon-sim before the loops were wired
+(`sim_f16_kv_convert_matches_numpy`, numpy `astype(float16)`).
+`Q6_Wsf_vcvt_Vhf` splits a vector into even lanes and odd lanes, not
+into the low and high 32. A word shuffle puts them back in order, and
+the store is the inverse deal plus `Q6_Vhf_vcvt_VsfVsf`. Rounding
+matches numpy, including the half-ulp cases, except that −0 is stored
+as +0.
+
+114/114 phone tests. Decode and the few-token pass still agree: the
+Q4_K_M few-token perplexity is the same digits as that file's decode.
+
+Perplexity against the f32-cache digits, and against llama.cpp's f16
+cache (SmolLM2 27.7412 ± 1.18, Qwen 19.7283 ± 0.84; Q4_K_M 20.7784 ±
+0.85 and 16.7657 ± 0.69). Nothing moved by more than 0.1.
+
+| | f16 decode | f32 cache | llama.cpp f16 | gate/up µs |
+| --- | --- | --- | --- | --- |
+| SmolLM2 Q4_0 | 27.7234 | 27.7779 | 27.7412 | 577 (was 571) |
+| Qwen Q4_0 | 19.7275 | 19.7503 | 19.7283 | 2109 (was 2102) |
+| SmolLM2 Q4_K_M | 20.7288 | 20.7241 | 20.7784 | 745 |
+| Qwen Q4_K_M | 16.7422 | 16.7381 | 16.7657 | 2560 |
+
+Prefill, Q4_0 only (Q4_K_M still has no HMX prefill; its multi-token
+score is the few-token pass, same digits as its decode):
+
+| | f16 prefill | f32 prefill | tok/s | was | gate/up µs |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2 Q4_0 | 27.6933 | 27.6890 | 1026 | 1055 | 573 (was 570) |
+| Qwen Q4_0 | 19.7190 | 19.7196 | 542 | 533 | 1894 (was 2097) |
+
+SmolLM2's decode gate/up is within 2% (577 vs 571) and wikitext
+throughput goes 237 → 244 tok/s. Qwen's decode gate/up is flat (2109
+vs 2102) and throughput stays 104 tok/s. The store itself costs more:
+on the 64-token greedy prefix, bias + RoPE + KV store is 283 µs on
+SmolLM2 (was 160) and 254 µs on Qwen (was 164), with those same
+gate/up numbers. SmolLM2's prefill gate/up matches and throughput
+falls 1055 → 1026 tok/s, so at a 512-token chunk the conversion is
+not paying for the shorter copy. Qwen's prefill gate/up is 1894
+against 2097, about 10% faster, so 542 against 533 tok/s is not a
+clean comparison and was not rerun.
+
+The depth profile (0 / 512 / 2048, the DMA-wait split) was not run.
+The battery was 24% at the start of the phone tests and 19% when the
+perplexity runs finished, which is under the 20% line where the
+clocks change. Zone0 was waited under 40 °C before each perplexity
+run; it was 36 °C at the first and 40 °C at the last. Caps during the
+runs fell from cpu0 2.75 / cpu7 2.65 GHz to 2.00 / 2.25 GHz. The
+Q4_0 decode comparisons above are the ones whose gate/up stayed put.

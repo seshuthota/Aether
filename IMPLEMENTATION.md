@@ -107,7 +107,15 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    the attention itself is 6.2× and 3.7× one token, where it was 8×.
    Prefill in groups of 8 keeps the same perplexity and rises to 533 /
    1055 tok/s (was 514 / 859). Decode PPL unchanged (27.7779 / 19.7503).
-   f16 KV is next: SmolLM2 is still the copy.
+   The K/V cache is now f16 (simulator-checked lane order: the convert
+   is even/odd, then a word shuffle). Decode PPL 27.7234 / 19.7275,
+   within a few hundredths of llama.cpp's f16 cache (27.7412 / 19.7283)
+   and of the f32-cache digits. Q4_K_M moves 20.7241 → 20.7288 and
+   16.7381 → 16.7422. Qwen's decode throughput does not change (104
+   tok/s, gate/up 2109 vs 2102). SmolLM2's rises 237 → 244 tok/s
+   (gate/up 577 vs 571) and its prefill falls 1055 → 1026 (gate/up
+   flat). The depth-2048 cycle split was not measured: the battery was
+   at 19% after the perplexity runs.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
