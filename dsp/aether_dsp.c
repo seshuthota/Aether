@@ -294,6 +294,61 @@ static inline void dma_wait(volatile struct dma1d *d) {
     }
 }
 
+// v79's 2D descriptor (the v75+ 24-bit layout llama.cpp drives; the SDK's
+// header is the older 16-bit one). The first 16 bytes match dma1d, with
+// the 1D size field reused as the destination stride, so a 2D descriptor
+// can sit in a 1D ring slot and be linked from either kind.
+struct dma2d {
+    void *next;
+    uint32 dst_stride : 24;
+    uint32 desc_size : 2;  // 1: two-dimensional
+    uint32 dst_comp : 1;
+    uint32 src_comp : 1;
+    uint32 dst_bypass : 1;
+    uint32 src_bypass : 1;
+    uint32 order : 1;
+    uint32 done : 1;
+    const void *src;
+    void *dst;
+    uint32 desc_type : 8;  // 9: 24-bit 2D
+    uint32 reserved0 : 24;
+    uint32 row_size : 24;
+    uint32 nrows_lo : 8;
+    uint32 nrows_hi : 8;
+    uint32 src_stride : 24;
+    uint32 offset : 24;
+    uint32 reserved1 : 8;
+};
+_Static_assert(sizeof(struct dma2d) == 32, "v79 2D DMA descriptor is 32 bytes");
+
+void *dma_copy_2d(uint32 t, void *dst, const void *src, uint32 dst_stride, uint32 src_stride, uint32 row_size, uint32 nrows) {
+    struct dma2d *d = (struct dma2d *) &ring[t][ring_next[t]++ % DMA_RING];
+    memset(d, 0, sizeof(*d));
+    d->dst_stride = dst_stride;
+    d->desc_size = 1;
+    // VTCM is not cached. The source is: qkv_post just stored the new key
+    // and value through the cache, and L1 is write-through, so L2 has them.
+    // Bypassing L2 here would copy the stale DDR line.
+    d->dst_bypass = 1;
+    d->src_bypass = 0;
+    d->src = src;
+    d->dst = dst;
+    d->desc_type = 9;
+    d->row_size = row_size;
+    d->nrows_lo = nrows & 0xff;
+    d->nrows_hi = (nrows >> 8) & 0xff;
+    d->src_stride = src_stride;
+    asm volatile(" release(%0):at" : : "r"(d));
+    if (tail[t] && tail_gen[t] == dma_gen)
+        asm volatile(" dmlink(%0, %1)" : : "r"(tail[t]), "r"(d));
+    else
+        asm volatile(" dmstart(%0)" : : "r"(d));
+    tail[t] = (struct dma1d *) d, tail_gen[t] = dma_gen;
+    return d;
+}
+
+void dma_wait_copy(void *desc) { dma_wait(desc); }
+
 // VTCM, the DSP's 8 MB of on-chip memory, held from the first use on.
 // Asked for only by the thread FastRPC calls in on, before it starts
 // worker threads: workers that asked at once deadlocked (all but one

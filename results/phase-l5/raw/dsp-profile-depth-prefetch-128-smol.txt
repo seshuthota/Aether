@@ -1,0 +1,56 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f | upload 41 ms
+# at start: zone0 aoss-0 47.3 C, hottest cpu cpuss-1-0 49.0 C, cpu0 556/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# filling positions 0..128
+# before depth 128: zone0 aoss-0 49.2 C, hottest cpu cpu-0-1-1 50.3 C, cpu0 1996/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# depth 128: 64 decode steps at positions 128..191
+#   attn norm + quantize        146.1 us/token   4.6%
+#   q/k/v                       221.4 us/token   6.9%
+#   bias + RoPE + KV store      163.5 us/token   5.1%
+#   attention + quantize        874.6 us/token  27.2%
+#   wo                          142.4 us/token   4.4%
+#   ffn norm + quantize         146.4 us/token   4.6%
+#   gate/up                     579.4 us/token  18.1%
+#   SwiGLU + quantize           219.0 us/token   6.8%
+#   down                        329.6 us/token  10.3%
+#   final norm + quantize         5.0 us/token   0.2%
+#   classifier                  279.2 us/token   8.7%
+#   argmax                       45.4 us/token   1.4%
+#   thread start                 57.8 us/token   1.8%
+#   64 steps in 256.9 ms wall: 249.1 tok/s (3.21 ms per token on the DSP)
+# after depth 128: zone0 aoss-0 49.9 C, hottest cpu cpuss-1-0 49.4 C, cpu0 1996/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# filling positions 192..256
+# before depth 256: zone0 aoss-0 50.3 C, hottest cpu cpuss-1-0 49.4 C, cpu0 1996/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# depth 256: 64 decode steps at positions 256..319
+#   attn norm + quantize        146.9 us/token   3.9%
+#   q/k/v                       222.6 us/token   5.9%
+#   bias + RoPE + KV store      165.7 us/token   4.4%
+#   attention + quantize       1388.5 us/token  37.1%
+#   wo                          152.0 us/token   4.1%
+#   ffn norm + quantize         146.5 us/token   3.9%
+#   gate/up                     581.2 us/token  15.5%
+#   SwiGLU + quantize           221.3 us/token   5.9%
+#   down                        331.4 us/token   8.9%
+#   final norm + quantize         4.9 us/token   0.1%
+#   classifier                  278.4 us/token   7.4%
+#   argmax                       46.1 us/token   1.2%
+#   thread start                 58.7 us/token   1.6%
+#   64 steps in 295.8 ms wall: 216.3 tok/s (3.75 ms per token on the DSP)
+# after depth 256: zone0 aoss-0 50.3 C, hottest cpu cpu-0-5-1 49.9 C, cpu0 1785/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# filling positions 320..512
+# before depth 512: zone0 aoss-0 51.5 C, hottest cpu cpu-0-1-1 51.5 C, cpu0 1996/1996 MHz, cpu7 1017/2246 MHz, battery Discharging
+# depth 512: 64 decode steps at positions 512..575
+#   attn norm + quantize        148.2 us/token   3.2%
+#   q/k/v                       225.2 us/token   4.8%
+#   bias + RoPE + KV store      172.8 us/token   3.7%
+#   attention + quantize       2265.1 us/token  48.6%
+#   wo                          170.0 us/token   3.7%
+#   ffn norm + quantize         148.5 us/token   3.2%
+#   gate/up                     578.5 us/token  12.4%
+#   SwiGLU + quantize           231.1 us/token   5.0%
+#   down                        329.2 us/token   7.1%
+#   final norm + quantize         4.9 us/token   0.1%
+#   classifier                  278.5 us/token   6.0%
+#   argmax                       46.2 us/token   1.0%
+#   thread start                 58.4 us/token   1.3%
+#   64 steps in 358.6 ms wall: 178.5 tok/s (4.66 ms per token on the DSP)
+# after depth 512: zone0 aoss-0 51.9 C, hottest cpu cpuss-1-0 50.9 C, cpu0 1996/1996 MHz, cpu7 1017/2246 MHz, battery Discharging

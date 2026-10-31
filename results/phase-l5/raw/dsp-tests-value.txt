@@ -1,0 +1,146 @@
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 45.84s
+     Running unittests src/lib.rs (target/aarch64-linux-android/release/deps/aether-ab0b05a958287c85)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether-ab0b05a958287c85: 1 file pushed, 0 skipped. 13.8 MB/s (23941720 bytes in 1.649s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+
+running 114 tests
+test aligned::tests::chunks_can_be_shared_across_threads ... ok
+test aligned::tests::empty_buffer_gives_empty_slice ... ok
+test aligned::tests::empty_buffer_is_aligned_and_drops_cleanly ... ok
+test aligned::tests::huge_length_is_rejected - should panic ... ok
+test aligned::tests::start_is_64_aligned_for_awkward_lengths ... ok
+test aligned::tests::starts_zeroed_and_writes_are_visible ... ok
+test bench::tests::bench_runs_warmup_plus_iters ... ok
+test bench::tests::median_even_count_averages_middle_two ... ok
+test bench::tests::median_odd_count ... ok
+test bench::tests::outlier_moves_mean_but_not_median ... ok
+test chat::tests::matches_transformers_chat_template ... ok
+test eval::tests::log_probs_normalise ... ok
+test eval::tests::self_comparison_is_zero ... ok
+test ffi::tests::c_abi_gpu_session ... ok
+test ffi::tests::c_abi_round_trip ... ok
+test format::gguf::tests::reads_llama_cpp_files ... ok
+test format::imatrix::tests::collected_imatrix_matches_llama_imatrix ... ok
+test format::imatrix::tests::imatrix_conversion_matches_llama_quantize_pure ... ok
+test format::imatrix::tests::k_quant_mix_with_imatrix_matches_llama_quantize ... ok
+test format::imatrix::tests::reads_llama_imatrix_files ... ok
+test format::json::tests::errors_point_at_the_problem ... ok
+test format::json::tests::integers_for_shapes_and_ids ... ok
+test format::json::tests::parses_model_files ... ok
+test format::json::tests::scalars_and_nesting ... ok
+test format::json::tests::string_escapes_and_surrogates ... ok
+test format::mmap::tests::maps_a_file_and_an_empty_file ... ok
+test format::quantize::tests::writes_llama_quantize_files ... ok
+test format::quantize::tests::writes_llama_quantize_files_with_imatrix ... ok
+test format::quantize::tests::writes_llama_quantize_q4_k_m ... ok
+test format::safetensors::tests::bf16_widening_is_exact ... ok
+test format::safetensors::tests::f16_known_values ... ok
+test format::safetensors::tests::reads_smollm2_header ... ok
+test kernels::hexagon::tests::dsp_adds_arrays_with_hvx ... ok
+test kernels::hexagon::tests::dsp_adds_shared_buffers ... ok
+test kernels::hexagon::tests::dsp_answers_a_ping ... ok
+test kernels::hexagon::tests::dsp_hmx_gemm_matches_reference ... ok
+test kernels::hexagon::tests::dsp_q4_0_gemv_matches_reference ... ok
+test kernels::hexagon::tests::dsp_reads_every_word ... ok
+test kernels::hexagon::tests::dsp_vector_exp_and_swiglu_match_libm ... ok
+test kernels::tests::attention_group_matches_numpy ... ok
+test kernels::tests::attention_matches_numpy ... ok
+test kernels::tests::attention_parts_merge_to_numpy ... ok
+test kernels::tests::k_quant_linear_matches_reference ... ok
+test kernels::tests::matmul_batch_matches_numpy ... ok
+test kernels::tests::matmul_matches_numpy ... ok
+test kernels::tests::neon_gemv_steps_match_numpy ... ok
+test kernels::tests::quantized_linear_batch_matches_reference ... ok
+test kernels::tests::quantized_linear_matches_reference ... ok
+test kernels::tests::rmsnorm_softmax_swiglu_match_numpy ... ok
+test kernels::tests::rope_matches_numpy ... ok
+test kernels::tests::threaded_matmuls_are_bit_identical ... ok
+test membench::tests::byte_counts_follow_stream_rule ... ok
+test membench::tests::copy_scale_add ... ok
+test membench::tests::read_sum_is_exact_on_small_integers ... ok
+test membench::tests::read_sum_on_misaligned_slice ... ok
+test model::dsp::tests::few_tokens_get_the_decode_logits ... ok
+test model::gguf::tests::qwen2_gguf_matches_transformers ... ok
+test model::gguf::tests::smollm2_gguf_matches_transformers ... ok
+test model::hf::tests::qwen2_matches_transformers ... ok
+test model::hf::tests::smollm2_360m_matches_transformers ... ok
+test model::hf::tests::smollm2_matches_transformers ... ok
+test model::llama2c::tests::batched_prefill_matches_llama2c ... ok
+test model::llama2c::tests::greedy_matches_llama2c_at_every_layer ... ok
+test model::llama2c::tests::long_context_matches_llama2c ... ok
+test model::llama2c::tests::seeded_sampling_matches_llama2c ... ok
+test model::llama2c::tests::threaded_greedy_matches_llama2c ... ok
+test model::sampler::tests::draft_sampling_keeps_the_distribution ... ok
+test model::sampler::tests::rng_range ... ok
+test model::sampler::tests::temperature_zero_is_argmax ... ok
+test model::sampler::tests::top_k_one_is_argmax ... ok
+test model::sampler::tests::top_p_keeps_only_the_nucleus ... ok
+test monitor::tests::constant_power_integrates_to_power_times_time ... ok
+test monitor::tests::counter_energy_uses_the_window_between_steps ... ok
+test monitor::tests::samples_until_stopped ... ok
+test monitor::tests::trapezoid_is_exact_for_a_ramp ... ok
+test pool::tests::dynamic_blocks_cover_everything_once ... ok
+test pool::tests::every_share_runs_once_per_job ... ok
+test pool::tests::parked_workers_wake_up ... ok
+test pool::tests::split_covers_everything_once ... ok
+test quant::tests::f16_rounding_is_round_to_nearest_even ... ok
+test quant::tests::imatrix_quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::k_quants_match_gguf ... ok
+test quant::tests::quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::repacked_rows_dequantize_like_row_major ... ok
+test quant::tests::scalar_dots_match_reference ... ok
+test session::tests::draft_model_decoding_gives_llama2c_greedy_text ... ok
+test session::tests::dsp_lookup_keeps_the_greedy_text ... ok
+test session::tests::generates_llama2c_text_and_stops_on_request ... ok
+test session::tests::lookup_decoding_gives_llama2c_greedy_text ... ok
+test sys::affinity::tests::parses_singles_ranges_and_newline ... ok
+test sys::affinity::tests::pinning_moves_the_thread ... ok
+test sys::affinity::tests::rejects_core_beyond_cpu_set ... ok
+test sys::cpu::tests::cache_line_matches_aligned_buf ... ok
+test sys::sysfs::tests::every_online_core_has_a_max_frequency ... ok
+test sys::sysfs::tests::inventory ... ok
+test sys::sysfs::tests::missing_file_names_the_path ... ok
+test tensor::tests::from_vec_rejects_wrong_length - should panic ... ok
+test tensor::tests::get_set_roundtrip_and_row_major_order ... ok
+test tensor::tests::index_of_2_3_1_is_79 ... ok
+test tensor::tests::out_of_range_index_panics - should panic ... ok
+test tensor::tests::scalar_and_vector_shapes ... ok
+test tensor::tests::size_in_bytes ... ok
+test tensor::tests::strides_are_products_of_dims_to_the_right ... ok
+test tensor::tests::strides_of_3_by_4_are_4_and_1 ... ok
+test tests::prints_arch ... ok
+test tokenizer::bytelevel::tests::gguf_tokenizer_matches_hf_tokenizers ... ok
+test tokenizer::bytelevel::tests::gpt2_regex_cases ... ok
+test tokenizer::bytelevel::tests::matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_regex_cases ... ok
+test tokenizer::llama2c::tests::decode_inverts_encode ... ok
+test tokenizer::llama2c::tests::encode_matches_llama2c_on_corpus ... ok
+test tokenizer::nfc::tests::known_cases ... ok
+test tokenizer::nfc::tests::matches_python_unicodedata ... ok
+
+test result: ok. 114 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.65s
+
+     Running unittests src/main.rs (target/aarch64-linux-android/release/deps/aether-d2117141486baa20)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether-d2117141486baa20: 1 file pushed, 0 skipped. 383.0 MB/s (12755336 bytes in 0.032s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/aether-quantize.rs (target/aarch64-linux-android/release/deps/aether_quantize-adff53da5a4ac857)
+/home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-linux-android/release/deps/aether_quantize-adff53da5a4ac857: 1 file pushed, 0 skipped. 477.2 MB/s (12755464 bytes in 0.025s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests aether
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

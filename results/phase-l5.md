@@ -530,3 +530,340 @@ optimisations, folder watchers, properties) are not needed.
 
 The DSP on Q4_K_M ran in the app (session opened and closed with no
 errors) but its status line was not captured.
+
+## Decode profile at depth (2026-10-30; `raw/dsp-profile-depth-*.txt`)
+
+`dsp_ppl MODEL depth 0,512,2048` fills one cache in order, clears
+`DspModel::take_profile`, and times the next 64 decode steps. The stage
+times are the DSP's qtimer. Tokens are the start of wikitext-2. Nothing
+in the step changed; this is the baseline for the long-context work.
+`attend` is untouched, so perplexity was not rerun.
+
+Phone on battery, screen woken. zone0 (`aoss-0`) and the hottest CPU
+sensor, and the scaling cap (`scaling_cur/scaling_max`):
+
+| | Qwen2.5-0.5B Q4_0 | SmolLM2-135M Q4_0 |
+| --- | --- | --- |
+| depth 0 | 38–42 °C, caps 2.75 / 2.65 GHz | 40–45 °C, caps 2.40 / 2.44 GHz |
+| depth 512 | 47–48 °C, same caps | 47 °C, same caps |
+| depth 2048 | 53–55 °C, same caps | 51–53 °C, same caps |
+
+Prime-core cap was already 2.65 GHz (Qwen) and 2.44 GHz (SmolLM2) at the
+start, and cpu7 sat near 1.0 GHz during the DSP work. The matrix-product
+stages did not slow down as the phone warmed (Qwen gate/up 2092 → 1877 µs,
+classifier 1337 → 1209 µs), so the growth below is not the clock cap.
+
+DSP time per token, and the attention stage inside it (µs):
+
+| depth (positions timed) | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 (0–63) | 6.56 (126 tok/s) | 263 | 2.59 (297 tok/s) | 279 |
+| 512 (512–575) | 9.84 (84 tok/s) | 3464 | 6.29 (136 tok/s) | 3911 |
+| 2048 (2048–2111) | 23.08 (39 tok/s) | 17142 | 17.91 (51 tok/s) | 15553 |
+
+Every other stage stays within a few tens of microseconds of its depth-0
+time, apart from the small product speed-up above. From depth 0 to 512
+the step grows 3.28 ms on Qwen and 3.70 ms on SmolLM2, of which attention
+is 3.20 and 3.63 ms. From depth 0 to 2048 the step grows 16.5 and 15.3 ms,
+and attention is all of it (17.1 and 15.6 ms of the step: 74 % and 87 %).
+
+Attention grows with position: about 6.3 µs per extra position on Qwen
+between the depth-0 and depth-512 windows, and 8.9 µs per position from
+512 to 2048; SmolLM2 stays near 7.1 then 7.6 µs. Depth 0 matches the
+earlier short runs (Qwen 6.57 ms, SmolLM2 2.57 ms), so those runs were
+the flat part of this curve.
+
+**Why SmolLM2 costs more per head.** The stage time is the busiest
+thread, and `decode_thread` hands out whole query heads. Qwen has 14
+heads and 24 layers, so two of the six threads get 3 heads and the stage
+is 72 head-visits (3 × 24). SmolLM2-135M has 9 heads and 30 layers, so
+the busiest threads get 2 heads: 60 head-visits. At depth 512 that is
+48 µs per head on Qwen (3464 µs / 72) and 65 µs per head on SmolLM2
+(3911 / 60). A head is the same shape on both, 64 floats, so a visit at
+depth 512 reads the same 256 KB of K and V. That is about 5.3 GB/s on
+the Qwen thread and 3.9 GB/s on the SmolLM2 thread.
+
+The difference is how those visits share a K/V head. Qwen has 2 K/V
+heads and groups of 7; the busy thread's 3 heads are the same K/V head,
+read three times. SmolLM2 has 3 K/V heads and groups of 3; the busy
+thread reads one K/V head twice, and the other threads are on the other
+two K/V heads at the same time. One layer's live K/V is 512 KB on Qwen
+and 768 KB on SmolLM2 (2 against 3 heads). The per-head gap narrows at
+depth 2048 (238 µs against 259 µs), where a layer is 2.0 MB against
+3.0 MB and neither thread is rereading a small cache.
+
+## Wide value loop (2026-10-30; `raw/dsp-profile-depth-vloop-*.txt`, `raw/dsp-ppl-vloop-*.txt`)
+
+`attend` scales the scores by 1/sum in one vector pass, then sums values
+with four accumulators. Same f32 values, different add order. Decode,
+prefill and the few-token pass all call `attend`.
+
+Perplexity, wikitext-2, 20 × 512, against the transposed-key run
+(27.7876 / 19.7560 decode, 27.6893 / 19.7174 prefill) and llama.cpp
+(27.7412 / 19.7283):
+
+| | SmolLM2-135M | Qwen2.5-0.5B |
+| --- | --- | --- |
+| decode | 27.7623 | 19.7716 |
+| prefill, 128 tokens a call | 27.6943 | 19.7205 |
+
+A few hundredths, inside the spread. 114/114 phone tests, including
+`few_tokens_get_the_decode_logits`.
+
+Same profile as above, on battery, screen woken. zone0 38 °C at the
+start of Qwen, 49 °C at depth 512, 53 °C at depth 2048 (baseline was
+38 / 48 / 54). Caps 2.75 / 2.65 GHz. Products at depth 512 match the
+baseline to ~10 µs (gate/up 2092 against 2095).
+
+| depth | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 | 6.54 (was 6.56) | 248 (was 263) | 2.56 (was 2.59) | 255 (was 279) |
+| 512 | 9.47 (was 9.84) | 3087 (was 3464) | 5.92 (was 6.29) | 3548 (was 3911) |
+| 2048 | 24.14 (was 23.08) | 17680 (was 17142) | 17.47 (was 17.91) | 15108 (was 15553) |
+
+The clean gain is depth 512: −377 µs of attention on Qwen and −363 µs
+on SmolLM2, and the step moves by the same amount. That is about 5 µs
+off a 48 µs head, which is what a dependency chain of a few microseconds
+can be. At depth 2048 SmolLM2 is −445 µs and Qwen is +538 µs. The
+baseline's Qwen depth-2048 products were themselves ~10 % quicker than
+its own depth-512 products (gate/up 1877 against 2095 µs), so that one
+window was a fast clock; this run's products sit on the depth-512
+numbers (gate/up 2098). Either way the loop is not where the 17 ms goes.
+
+## Key-stride padding (2026-10-30; `raw/dsp-profile-pow2-*.txt`, `raw/dsp-profile-pad-*.txt`, `raw/dsp-ppl-pad-*.txt`)
+
+The depth profile above uses context 2112, so `att_stride` is 2112 floats
+(8448 bytes). 2112 is not a power of two, and a pad would not change that
+run. Context 512 and 4096 do round to a power of two (2048 and 16384
+bytes between key elements). The pad adds one vector, 32 floats, only in
+that case, and the state buffer grew to match (`dsp.rs` and `model_load`).
+
+Compared at context 4096, before and after, same caps (cpu0 1.79 GHz,
+cpu7 1.96 GHz) and the same gate/up time (2095 µs on Qwen), so the DSP
+was not on a different clock. Attention, µs/token:
+
+| depth | Qwen, stride 4096 | Qwen, 4128 | SmolLM2, 4096 | SmolLM2, 4128 |
+| --- | --- | --- | --- | --- |
+| 512 | 3815 (10.17 ms) | 2902 (9.28 ms) | 3678 (6.04 ms) | 3393 (5.77 ms) |
+| 2048 | 17725 (24.21 ms) | 17372 (23.85 ms) | 15382 (17.67 ms) | 14737 (17.09 ms) |
+
+At depth 512 the pad removes 912 µs on Qwen and 284 µs on SmolLM2: set
+conflicts were a real piece there, about a quarter of Qwen's attention.
+At depth 2048 it is 353 µs and 645 µs, a few percent of a 15–17 ms
+stage. An extra window at depth 4032 (stride still the power of two)
+moved 36000 → 35190 µs on Qwen. Conflicts are not the long-context slope.
+
+Perplexity is the wide-loop number to the last printed digit, as it
+should be: the values did not change, only their spacing. Decode
+27.7623 / 19.7716, prefill 27.6943 / 19.7205. 114/114 tests.
+
+## Key and value prefetch (2026-10-31; `raw/dsp-profile-depth-l2fetch-*.txt`, `raw/dsp-ppl-l2fetch-*.txt`)
+
+`attend` asks L2 for the key chunk four chunks ahead (one vector on
+each of the head's rows) and, once per 32 positions, for one block of
+this head's value rows four blocks ahead. The first 128 positions are
+not fetched. A stride that does not fit l2fetch's 16-bit field is
+skipped; 2112 floats is 8448 bytes, so this run does fetch. The
+arithmetic is unchanged.
+
+Same profile as the wide-loop table: context 2112, so the stride pad
+is off and the only difference is the prefetch. On battery, screen
+woken. Qwen zone0 41 °C at the start (hottest cpu 43 °C), 52 °C at
+depth 512, 58 °C at depth 2048. Caps were already 2.40 / 2.44 GHz.
+Qwen gate/up stays 2099 / 2089 / 2097 µs against 2090 / 2092 / 2098 in
+the wide-loop run, so the DSP clock matches even though the CPU cap
+does not. SmolLM2 gate/up matches at depth 512 (581 µs). At depth 2048
+it is 605 µs against 531 in the wide-loop window, which was the fast
+one; this window is the slower clock.
+
+| depth | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 | 6.59 (was 6.54) | 254 (was 248) | 2.58 (was 2.56) | 267 (was 255) |
+| 512 | 8.45 (was 9.47) | 2058 (was 3087) | 4.77 (was 5.92) | 2352 (was 3548) |
+| 2048 | 14.23 (was 24.14) | 7774 (was 17680) | 9.99 (was 17.47) | 7435 (was 15108) |
+
+Depth 0 does not issue a fetch (the window is shorter than the lead),
+and it does not move. At depth 512 the fetch removes 1.03 ms on Qwen
+and 1.20 ms on SmolLM2. At depth 2048 it removes 9.91 ms and 7.67 ms,
+about half of that stage. The step moves by the same amount. The
+dependent adds were 0.4 ms and the power-of-two conflicts were 0.35 ms
+at this depth, so the half that moved is DRAM latency: the bytes were
+already in the loop, waiting.
+
+What is left still scales with the bytes. Qwen's busy thread is 72
+head-visits, so 2058 µs is 29 µs per head at depth 512 and 7774 µs is
+108 µs per head at depth 2048. A head reads 256 KB and 1 MB of K and V
+at those depths, which is about 9 GB/s at both. SmolLM2's
+60 visits are 39 µs and 124 µs per head, about 7 GB/s then 8.5 GB/s.
+The same reasons as in the baseline: the busy SmolLM2 thread has two
+heads on one K/V head and the other threads are on the other two K/V
+heads (a layer is 768 KB at depth 512, against Qwen's 512 KB and a
+group of 7 reread by the busy thread). The gap narrows at depth 2048,
+where a layer is 3.0 MB against 2.0 MB.
+
+Perplexity is again the same digits: decode 27.7623 / 19.7716, prefill
+27.6943 / 19.7205. Context 512 does pad the stride (544 floats, 2176
+bytes), so this run also checks the prefetch together with the pad.
+114/114 phone tests, including `few_tokens_get_the_decode_logits`.
+
+The two experiments split the depth-2048 stage. Conflicts are a few
+hundred microseconds. Latency was about half, and this prefetch covers
+it on these contexts. The rest is the K/V bytes, reread by every query
+head on the thread (three times on Qwen's busy thread, twice on
+SmolLM2's). A single read of each K/V head into VTCM is aimed at that
+remainder, not at the latency. f16 KV stays off until that read has
+been measured: depth 2048 is still 7.8 ms of attention on Qwen.
+
+## One read of each K/V block (2026-10-31; `raw/dsp-profile-depth-stream-*.txt`, `raw/dsp-ppl-stream-*.txt`)
+
+Past 256 positions, attention streams the cache. A block is 256
+positions of one K/V head, DMA'd once into that thread's VTCM slot
+(keys packed, values in order, source read through L2). Every query
+head of that K/V head uses the block, and the thread keeps a running
+max, sum and output per query head. Blocks merge in order after a
+barrier. The pieces are (K/V head, block), spread over all six threads.
+A whole head is not copied: at depth 2048 that is 1 MB, and at 4096 it
+is 2 MB, and the products already use VTCM on either side of attention.
+Shorter contexts stay on the prefetch path. Decode, prefill and the
+few-token pass call the same function.
+
+Same depth profile as the prefetch section, context 2112, on battery.
+Qwen zone0 53 °C at the start (hottest cpu 56 °C), 61 °C before depth
+512, 64 °C before depth 2048. Caps cpu0 1.79 GHz, cpu7 1.96 GHz. Qwen
+gate/up is 2195 / 2115 / 2126 µs. The depth-0 figure is the high one;
+512 and 2048 match each other, and they sit next to the prefetch run's
+2089 / 2097 µs. SmolLM2 gate/up is 584 / 573 / 573 µs against 576 / 581
+/ 605. The clock is not what moved the long windows.
+
+| depth | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 | 6.83 (was 6.59) | 270 (was 254) | 2.60 (was 2.58) | 273 (was 267) |
+| 512 | 7.91 (was 8.45) | 1546 (was 2058) | 3.78 (was 4.77) | 1506 (was 2352) |
+| 2048 | 10.39 (was 14.23) | 4008 (was 7774) | 5.97 (was 9.99) | 3689 (was 7435) |
+
+Depth 0 is the prefetch path (the window ends at position 63) and does
+not move. At depth 512 the stream removes 0.51 ms on Qwen and 0.85 ms
+on SmolLM2. At depth 2048 it removes 3.77 ms and 3.75 ms, and the step
+moves by the same amount. Qwen's distinct K and V at that depth is
+about 48 MB (24 layers, 2 K/V heads, 1 MB each). At the 46–47 GB/s HVX
+read, those bytes are about 1 ms. The measured stage is 4.0 ms, so the
+bytes are no longer read once per query head, and what is left is more
+than the copy.
+
+The crossover is below 512. A same-session pair, prefetch against the
+stream, caps cpu0 2.00 GHz and cpu7 2.25 GHz, gate/up flat at about
+2100 µs on Qwen and 578 µs on SmolLM2 (`raw/dsp-profile-depth-prefetch-128-*.txt`,
+`raw/dsp-profile-depth-stream-128-*.txt`). Attention, µs/token:
+
+| depth | Qwen prefetch | Qwen stream | SmolLM2 prefetch | SmolLM2 stream |
+| --- | --- | --- | --- | --- |
+| 128 | 808 (7.21 ms) | 907 (7.17 ms) | 875 (3.21 ms) | 726 (3.01 ms) |
+| 256 | 1191 (7.55 ms) | 1289 (7.56 ms) | 1389 (3.75 ms) | 1052 (3.33 ms) |
+| 512 | 2094 (8.52 ms) | 1489 (7.76 ms) | 2265 (4.66 ms) | 1506 (3.79 ms) |
+
+At 128 and 256 a layer is one or two blocks. Qwen has two K/V heads, so
+two threads do the work and each runs all seven query heads; attention
+is about 100 µs slower and the step does not move. SmolLM2 has three
+K/V heads and is already faster at 128, by 0.20 ms then 0.42 ms.
+Streaming starts at 256 positions: Qwen's depth-128 window stays on the
+prefetch, and from there SmolLM2's step drops. Both models are faster
+at 512.
+
+Perplexity, 20 chunks of 512, the second half scored. The block merge
+changes the add order. Decode 27.7779 / 19.7503 (was 27.7623 / 19.7716),
+prefill 27.6890 / 19.7196 (was 27.6943 / 19.7205). The moves are a few
+hundredths, inside the ±1.18 / ±0.84 error. 114/114 phone tests,
+including `few_tokens_get_the_decode_logits`. That test now compares
+eight tokens at position 256, where the merge is two blocks, and decode
+still matches the few-token pass bit for bit. f16 KV stays off. Depth
+2048 attention is 4.0 ms, still the long stage next to 2.1 ms of gate/up.
+
+## Where the 4 ms goes (2026-10-31; `raw/dsp-profile-depth-split-*.txt`, `raw/dsp-profile-depth-value-*.txt`, `raw/dsp-few-at-2048-*.txt`)
+
+Before changing the loop, depth 2048 was split with per-thread cycle
+counters (`raw/dsp-profile-depth-split-qwen.txt`,
+`raw/dsp-profile-depth-split-smol.txt`). Qwen's step was 10.36 ms,
+attention 4024 µs, gate/up 2105 µs, zone0 56.5 °C, cpu0 at its 2.40 GHz
+cap. SmolLM2's step was 5.99 ms, attention 3710 µs, gate/up 573 µs.
+The busiest thread and the average match on total cycles (Qwen 8.12M
+vs 8.12M, SmolLM2 7.48M vs 7.46M), so the work is spread. The average
+barrier is higher than the busiest thread's because a thread with less
+merge work waits there. Busiest thread, then average, microseconds:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 531 | 531 | 631 | 636 |
+| score + softmax | 1345 | 1238 | 1001 | 1028 |
+| value accumulation | 1776 | 1641 | 1613 | 1633 |
+| barriers + merge | 200 | 439 | 300 | 240 |
+
+Exp, timed inside the score, is 0.35M cycles on Qwen's busiest thread,
+about 0.17 ms, and 0.29M on SmolLM2. It is not the long piece. `vexp`
+clamps each lane to [−80, 80], splits `x` into `n·ln2 + r`, takes the
+Taylor series of `e^r` through `r^8`, and writes `2^n` into the exponent
+bits. The cross-block merge uses scalar `expf` twice per later block,
+and that time sits in the barrier bucket.
+
+DMA was already double-buffered: the next block's copy is issued before
+the current block is computed, and the measured wait is what the copy
+still sticks out by. Barriers and the merge are the small bucket, so
+the block stayed 256. The long bucket was the value mix. Holding every
+query head's accumulators at once, or two heads, spilled the schedule
+and made Qwen's attention 9.2 ms, then 6.5 ms. One head with the scores
+sitting in VTCM was 6.2 ms: the scalar load of the score from VTCM
+stalled the chain. The loop that shipped keeps one head's four
+accumulator pairs as named vectors, so they stay in the register file,
+and the scores stay in a stack buffer. The add order per head is the
+one the single-head loop used.
+
+Same depth profile afterwards, on battery. Qwen zone0 53.8 °C at the
+start, 60.7 °C before depth 512, 63.8 °C before depth 2048, 64.2 °C
+after. Caps cpu0 1.79 GHz, cpu7 1.96 GHz. Gate/up is 2100 / 2102 / 2099
+µs on Qwen and 575 / 573 / 577 µs on SmolLM2.
+
+| depth | Qwen ms/token | Qwen attention | SmolLM2 ms/token | SmolLM2 attention |
+| --- | --- | --- | --- | --- |
+| 0 | 6.59 (was 6.83) | 256 (was 270) | 2.57 (was 2.60) | 265 (was 273) |
+| 512 | 7.60 (was 7.91) | 1292 (was 1546) | 3.63 (was 3.78) | 1341 (was 1506) |
+| 2048 | 9.30 (was 10.39) | 2994 (was 4008) | 5.57 (was 5.97) | 3273 (was 3689) |
+
+Depth 0 is still the prefetch path. At depth 2048 the new split, busiest
+thread then average, is:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 485 | 487 | 1302 | 1303 |
+| score + softmax | 1338 | 1229 | 957 | 989 |
+| value accumulation | 837 | 757 | 599 | 609 |
+| barriers + merge | 154 | 338 | 236 | 189 |
+
+Value fell from 1.78 ms to 0.84 ms on Qwen and from 1.61 ms to 0.60 ms
+on SmolLM2. Score did not move. Qwen's long piece is now the score,
+1.34 ms of the 3.0 ms stage, and exp is still about 0.18 ms of that.
+SmolLM2's long piece is now the DMA wait, 1.30 ms. The value loop no
+longer covers the copy, and the wait is the part that sticks out of the
+double-buffer that was already there. Totals stay balanced (Qwen 5.93M
+cycles on the busiest thread against 5.93M average). f16 KV stays off:
+on Qwen the bytes are still the smaller bucket.
+
+Perplexity did not move. Decode 27.7779 / 19.7503, prefill 27.6890 /
+19.7196, the same as the streamed run, inside the ±1.18 / ±0.84 error.
+114/114 phone tests, including `few_tokens_get_the_decode_logits`.
+
+A few-token pass at depth 2048 does not share one K/V DMA across its
+tokens. Each token calls the same `attend_token` as a decode step, so
+the streamed attention on the busiest thread scales with the token
+count (Qwen 2837 µs for one, 22664 µs for eight). The call gets cheaper
+per token because the matrix products read each weight once for the
+whole pass. Median of five, call microseconds and that attention:
+
+| tokens | Qwen call | Qwen attention | Qwen per token | SmolLM2 call | SmolLM2 attention | SmolLM2 per token |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 9375 (1.01×) | 2828 | 9375 | 5612 (1.03×) | 3018 | 5612 |
+| 2 | 13548 (1.46×) | 5673 | 6774 | 9453 (1.73×) | 6024 | 4726 |
+| 4 | 23463 (2.53×) | 11323 | 5866 | 17460 (3.20×) | 12050 | 4365 |
+| 8 | 45658 (4.93×) | 22664 | 5707 | 33761 (6.18×) | 24097 | 4220 |
+
+One decode step at the same position is 9264 µs on Qwen (attention
+2837 µs) and 5461 µs on SmolLM2 (attention 3002 µs). Zone0 was 61 °C,
+battery discharging.

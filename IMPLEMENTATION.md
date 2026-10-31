@@ -70,8 +70,33 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    weight load across the tokens is needed before lookup is turned back on for GPU sessions.
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
-4. **DSP attention at long positions** (decode slows from 123 to ~86 tok/s over 512 tokens):
-   f16 KV cache, or attention on HMX.
+4. **DSP attention at long positions.** Profiled
+   (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
+   is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /
+   2048). The wide value loop (four accumulators) was measured next: −0.38 ms
+   of attention at depth 512, nothing useful at 2048, PPL within a few
+   hundredths (27.7623 / 19.7716 decode). Padding a power-of-two key stride
+   by one vector (context 4096, where the stride is 4096 floats; the
+   depth-2048 profile's 2112 is not a power of two) cut Qwen attention
+   3815 → 2902 µs at depth 512 and 17725 → 17372 µs at depth 2048. Set
+   conflicts matter at 512 and are a small piece of the 17 ms. l2fetch of
+   the next key chunk and value block, four blocks ahead, on that same
+   context-2112 profile (the pad is inactive there) cut Qwen attention
+   3087 → 2058 µs at depth 512 and 17680 → 7774 µs at depth 2048, with
+   gate/up still ~2095 µs. About half of the depth-2048 stage was DRAM
+   latency; what remains scales with the K/V bytes (~9 GB/s per thread).
+   PPL unchanged (27.7623 / 19.7716 decode). Streaming 256-position K/V
+   blocks through VTCM, one DMA per block shared by that head's query
+   heads, starts at 256 positions (Qwen is ~100 µs slower below that;
+   both are faster at 512). Qwen attention 2058 → 1546 µs at depth 512
+   and 7774 → 4008 µs at depth 2048, gate/up still ~2115 µs. Decode PPL
+   27.7779 / 19.7503. A cycle split of that 4.0 ms put 1.78 ms in the
+   value mix, 1.34 ms in the score, 0.53 ms waiting on the DMA (already
+   double-buffered) and 0.20 ms in the barriers and the merge. Naming
+   the four value-accumulator pairs, with the scores kept on the stack,
+   cut the value mix to 0.84 ms. Qwen attention is 1292 µs at depth 512
+   and 2994 µs at depth 2048, and the step is 9.30 ms. The score, 1.34 ms,
+   is what is left; exp inside it is about 0.18 ms. f16 KV stays off.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
@@ -487,7 +512,8 @@ Goal: the yardstick table. This SoC has **no efficiency cores** (cores 0–5 per
         PPL against llama.cpp. (A request queue as `dspqueue` was not needed: one FastRPC call
         per token is ~150 µs.)
   - [x] Step 4b, weights by DMA into VTCM (products ~36 → ~60 GB/s; Qwen 6.75 ms a token,
-        123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Open: attention at long positions.
+        123 tok/s; SmolLM2 271 tok/s; PPL unchanged). Attention at long positions is
+        profiled (results/phase-l5.md, depths 0 / 512 / 2048): the growth is the attention stage.
   - [x] Step 5a, Q4_0 matrix-matrix product on HMX (fp16 tiles in VTCM; HVX threads dequantize
         while one drives HMX; Qwen's layer products 1512 tok/s at 128 tokens, 2413 at 256).
   - [x] Step 5b, prefill on the DSP through the whole model with HMX, PPL again (phone

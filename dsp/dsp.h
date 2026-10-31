@@ -50,6 +50,15 @@ enum { FETCH_NONE, FETCH_L2, FETCH_DMA };
 // in each call, so their DMA chains start afresh).
 extern uint32 dma_gen;
 
+// 2D copy on thread t's DMA queue: `nrows` rows of `row_size` bytes, from
+// `src` with `src_stride` to `dst` with `dst_stride` (all three in bytes).
+// The source is read through L2, so stores this DSP just did (the KV
+// cache) are visible; the destination bypasses L2 (it is VTCM). `row_size`
+// and both strides must fit in 24 bits, `nrows` in 16, and `row_size` must
+// not exceed either stride. The pointer is for `dma_wait_copy`.
+void *dma_copy_2d(uint32 t, void *dst, const void *src, uint32 dst_stride, uint32 src_stride, uint32 row_size, uint32 nrows);
+void dma_wait_copy(void *desc);
+
 // VTCM (all of it, held once asked for) and its size, or NULL. Only the
 // calling thread may ask, before it starts workers; q4_0_rows uses what
 // was got, and falls back to l2fetch without it.
