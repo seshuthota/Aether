@@ -41,7 +41,7 @@ void main() {
             uvec4 w = q[(4 * b + h) * rq + quad];
             for (uint j = 0; j < 8; j++) {
                 uint k = 32 * b + 8 * h + j;
-                f16vec4 wv = (f16vec4((w >> (4 * j)) & 15u) - float16_t(8.0)) * s;
+                f16vec4 wv = f16vec4((w >> (4 * j)) & 15u) - float16_t(8.0);
                 f16vec4 xa = xt[k * n4 + t0 / 4], xb = xt[k * n4 + t0 / 4 + 1];
                 part[0] += wv * xa.x;
                 part[1] += wv * xa.y;
@@ -53,7 +53,7 @@ void main() {
                 part[7] += wv * xb.w;
             }
         }
-        for (uint t = 0; t < 8; t++) acc[t] += vec4(part[t]);
+        for (uint t = 0; t < 8; t++) acc[t] += vec4(part[t]) * vec4(s);
     }
     for (uint t = 0; t < 8; t++) {
         uint tok = t0 + t;

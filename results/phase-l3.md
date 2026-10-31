@@ -982,3 +982,35 @@ GFLOP/s. The texel path stays in as an option (`q4_0_gemm_ht_kernel`) but
 the model does not use it. What is left of the gap to llama.cpp's OpenCL
 prefill is elsewhere (its 8 × 4 tile in f16 accumulators, or the
 dequantization per weight); this step rules out the reads.
+
+## Step 16: the block's scale applied once, not per weight (2026-10-31; `raw/vk-gemm-scalehoist-*.txt`)
+
+Looking for what else could speed prefill after step 15, I checked the
+device first: the Adreno 830 lists no `VK_KHR_cooperative_matrix` (or any
+matrix extension), so there is no matrix unit to reach from Vulkan. It does
+list `VK_KHR_shader_integer_dot_product` (used since step 14).
+
+`q4_0_gemm_h.comp` computed `(nibble − 8) · scale` for every weight, then
+multiplied by x. Now the f16 block sum is of `(nibble − 8) · x` and the
+scale multiplies the sum once, in f32 (`acc += part · s`): one vector
+multiply fewer per weight. (Taking the −8 out as well would cost 8 adds
+per input for Σx to save one vector subtract, so it was not tried.)
+The risk is f16 overflow, since the sums are no longer scaled down first;
+perplexity through `forward_batch` (20 chunks of 512, phone) shows none:
+27.6950 / 19.7205 (were 27.6961 / 19.7256; llama.cpp 27.7412 / 19.7283).
+`q4_0_gemm_h_matches_reference` passes; phone shapes (`vk_gemm`, same run,
+against the unchanged texel shader): gate/up 128 tokens 1.13 → 1.04 ms,
+512 tokens 4.32 → 3.94 ms (+9 %), down +9–10 %.
+
+`vk_prefill`, Qwen2.5-0.5B Q4_0, alternating old and new shaders in one
+session (`raw/vk-prefill-scalehoist-ab.txt`), tok/s at 16 / 64 / 128:
+
+| shader | 16 | 64 | 128 |
+|---|---|---|---|
+| before | 383 / 371 | 825 / 823 | 980 / 977 |
+| after | 368 / 364 | 884 / 880 | 1049 / 1046 |
+
++7 % at 64 and 128 tokens, nothing at 16 (the stages other than the
+products dominate there). An earlier run of the unchanged shader read 812
+at 128: the phone's clocks differ 10–20 % between sessions, so only
+same-session pairs are compared here.

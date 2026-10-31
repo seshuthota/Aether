@@ -1,0 +1,16 @@
+== old 37300
+16 tokens: 41.8 ms wall (383 tok/s), 40.0 
+64 tokens: 77.6 ms wall (825 tok/s), 74.3 
+128 tokens: 130.6 ms wall (980 tok/s), 127.7 
+== new 36900
+16 tokens: 43.5 ms wall (368 tok/s), 40.4 
+64 tokens: 72.4 ms wall (884 tok/s), 69.2 
+128 tokens: 122.1 ms wall (1049 tok/s), 119.1 
+== old 36100
+16 tokens: 43.1 ms wall (371 tok/s), 40.1 
+64 tokens: 77.8 ms wall (823 tok/s), 74.4 
+128 tokens: 131.0 ms wall (977 tok/s), 127.9 
+== new 36100
+16 tokens: 44.0 ms wall (364 tok/s), 40.8 
+64 tokens: 72.8 ms wall (880 tok/s), 69.5 
+128 tokens: 122.4 ms wall (1046 tok/s), 119.7 

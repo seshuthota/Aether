@@ -97,6 +97,10 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    (`q4_0_gemm_ht.comp`) are no faster than the storage-buffer reads (881 against 881
    GFLOP/s on gate/up at 128 tokens), so the gap is not the reads. Open: the f16
    accumulator tile and the per-weight dequantization.
+   Step 16: the scale applied once per block instead of per weight: +7 % (980 → 1049
+   tok/s at 128 tokens, same-session A/B), PPL unchanged. No cooperative matrix on the
+   Adreno. Next: int8 dot products in the prefill GEMM; the same scale change in
+   `qx_gemm_h.comp`.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /
