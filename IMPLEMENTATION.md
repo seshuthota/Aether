@@ -101,8 +101,13 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    bit-identical) cut that score 1338 → 764 µs on Qwen and 957 → 547 µs
    on SmolLM2. Qwen attention is 2435 µs and the step 8.79 ms at depth
    2048. SmolLM2's DMA wait rose 1302 → 1589 µs, so its step only moved
-   5.57 → 5.43 ms. PPL unchanged (27.7779 / 19.7503 decode). f16 KV stays
-   off.
+   5.57 → 5.43 ms. A few-token pass now DMAs each K/V block once for
+   every token that reaches it. At depth 2048 an 8-token pass is 4.27×
+   one decode step on Qwen (was 4.93×) and 3.84× on SmolLM2 (was 6.18×);
+   the attention itself is 6.2× and 3.7× one token, where it was 8×.
+   Prefill in groups of 8 keeps the same perplexity and rises to 533 /
+   1055 tok/s (was 514 / 859). Decode PPL unchanged (27.7779 / 19.7503).
+   f16 KV is next: SmolLM2 is still the copy.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.

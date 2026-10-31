@@ -1,0 +1,17 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 35 ms
+#   attn norm + quantize        141.9 us/token   5.5%
+#   q/k/v                       218.9 us/token   8.5%
+#   bias + RoPE + KV store      160.0 us/token   6.2%
+#   attention + quantize        262.7 us/token  10.3%
+#   wo                          137.8 us/token   5.4%
+#   ffn norm + quantize         143.9 us/token   5.6%
+#   gate/up                     570.9 us/token  22.3%
+#   SwiGLU + quantize           220.7 us/token   8.6%
+#   down                        325.8 us/token  12.7%
+#   final norm + quantize         4.7 us/token   0.2%
+#   classifier                  279.9 us/token  10.9%
+#   argmax                       46.4 us/token   1.8%
+#   thread start                 48.6 us/token   1.9%
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 213.5 ms: 299.8 tok/s (2.55 ms per token on the DSP)
+Final estimate: PPL = 27.7779 +/- 1.17809  (5100 tokens scored, 43.1 s, 237.1 tok/s through the DSP)

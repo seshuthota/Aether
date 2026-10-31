@@ -1,0 +1,8 @@
+# filling positions 0..512
+# before few-at 512: zone0 aoss-0 51.5 C, hottest cpu cpuss-1-0 50.2 C, cpu0 2400/2400 MHz, cpu7 1017/2438 MHz, battery Discharging
+# decode step at 512: 7347 us on the DSP, streamed attention 940 us on the busiest thread (median of 5)
+# few-token pass at 512, 1 tokens:   7471 us on the DSP, streamed attention 930 us, 1.02x one decode step, 7471 us per token
+# few-token pass at 512, 2 tokens:   9345 us on the DSP, streamed attention 1481 us, 1.27x one decode step, 4672 us per token
+# few-token pass at 512, 4 tokens:  14682 us on the DSP, streamed attention 2589 us, 2.00x one decode step, 3670 us per token
+# few-token pass at 512, 8 tokens:  27859 us on the DSP, streamed attention 4806 us, 3.79x one decode step, 3482 us per token
+# after few-at 512: zone0 aoss-0 51.5 C, hottest cpu cpuss-1-0 49.8 C, cpu0 1363/2400 MHz, cpu7 1017/2438 MHz, battery Discharging

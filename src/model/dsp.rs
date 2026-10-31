@@ -373,8 +373,10 @@ mod tests {
     /// for bit: its products add the same block sums in the same order,
     /// and both passes call the same attention. Checked for 1, 3 and 8
     /// tokens after decoded positions, again over cache entries a first
-    /// pass wrote (as after rejected drafts), and for 8 tokens where
-    /// attention is two streamed blocks; for Q4_0 and for the Q4_K_M mix
+    /// pass wrote (as after rejected drafts), for 8 tokens where attention
+    /// is two streamed blocks, for 8 tokens that cross the stream
+    /// threshold and a block boundary (252..259), and for 8 that cross
+    /// the next boundary (508..515); for Q4_0 and for the Q4_K_M mix
     /// (Q5_0, Q8_0, Q4_K, Q6_K).
     #[test]
     fn few_tokens_get_the_decode_logits() {
@@ -394,14 +396,15 @@ mod tests {
                 return;
             }
         };
-        // 320 covers the prefetch path, one streamed block (128..255) and a
-        // two-block merge (from 256). Both passes call the same attention,
-        // so the logits match on either side of those lines.
-        let (config, weights, _) = crate::model::gguf::load(&path, 320).unwrap();
+        // 520 covers the prefetch path, one streamed block (128..255), a
+        // pass that crosses 256 (some tokens prefetch, some stream, and
+        // the later ones take a second block) and a pass that crosses 512.
+        // Both passes call the same attention, so the logits match.
+        let (config, weights, _) = crate::model::gguf::load(&path, 520).unwrap();
         let vocab = config.vocab_size;
         let mut m = DspModel::new(&dsp, config, weights, 6, 1, false).unwrap();
         assert_eq!(m.q4_0_only, file.contains("q4_0"), "{file}");
-        let tokens: Vec<usize> = (0..320).map(|i| (i * 7919 + 13) % vocab).collect();
+        let tokens: Vec<usize> = (0..520).map(|i| (i * 7919 + 13) % vocab).collect();
         let want: Vec<Vec<f32>> = tokens.iter().enumerate().map(|(p, &t)| m.forward(&dsp, t, p).unwrap().to_vec()).collect();
         // Overwrite positions 4.. with other tokens first: their cache
         // entries must be replaced, not kept.
@@ -428,6 +431,15 @@ mod tests {
         let got = m.few(&dsp, &tokens[256..264], 256).unwrap();
         for i in 0..8 {
             assert!(got[i * vocab..][..vocab] == want_long[i][..], "{file}: streamed row {i} at 256 differs from the decode step's");
+        }
+        // 252..254 stay under the stream threshold, 255 is the first
+        // streamed token, 256..259 take a second block. 508..511 end in
+        // the block that starts at 256; 512..515 open the next one.
+        for (at, count) in [(252, 8), (508, 8)] {
+            let got = m.few(&dsp, &tokens[at..at + count], at).unwrap();
+            for i in 0..count {
+                assert!(got[i * vocab..][..vocab] == want[at + i][..], "{file}: row {i} at {at} differs from the decode step's");
+            }
         }
     }
 }

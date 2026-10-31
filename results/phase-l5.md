@@ -902,3 +902,67 @@ depth 512 Qwen attention is 1110 µs (was 1292) and SmolLM2 1238 µs
 Perplexity is the streamed-run digits exactly: decode 27.7779 /
 19.7503, prefill 27.6890 / 19.7196. 114/114 phone tests, including
 `few_tokens_get_the_decode_logits`.
+
+## Few-token passes share each K/V block (2026-10-31; `raw/dsp-few-at-share-*.txt`, `raw/dsp-ppl-fewshare-*.txt`)
+
+A few-token pass used to call `attend_token` once per token, so each
+token DMA'd every K/V block again. Tokens at or past 256 positions now
+share one DMA of each block, copied at the length the last token needs.
+Each token still scores only its own length (`kpos` for the count,
+`kstride` for the packed row), with the same block boundaries as a
+decode step, and merges its own partials in block order. Tokens under
+256 stay on the prefetch path. Prefill does the same in groups of 8.
+Decode is still one token and does not use the shared path.
+
+`few_tokens_get_the_decode_logits` now also checks 8 tokens at
+252..259 (the stream threshold and a block boundary) and at 508..515
+(the next boundary). 114/114 phone tests. Decode perplexity is the
+same digits, 27.7779 / 19.7503, which it has to be: decode does not
+run this code. Prefill perplexity is the same digits too, 27.6890 /
+19.7196, so the shared prefill stayed.
+
+Few-token passes at depth 2048, median of five, on battery. Qwen
+zone0 58 °C before the samples, caps cpu0 2.40 GHz and cpu7 2.44 GHz.
+SmolLM2 zone0 55 °C, the same caps. The few-token path does not time
+gate/up; the decode step here is 8.73 ms on Qwen and 5.36 ms on
+SmolLM2, next to the score-loop profile's 8.79 ms and 5.43 ms
+(gate/up 2116 / 571 µs there). Call microseconds, the ratio to that
+decode step, and streamed attention on the busiest thread. The old
+column is the per-token DMA, measured hotter (zone0 61 °C, lower
+caps):
+
+| tokens | Qwen call | Qwen × | Qwen attention | SmolLM2 call | SmolLM2 × | SmolLM2 attention |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 8858 | 1.02 | 2265 (was 2828) | 5490 | 1.02 | 2906 (was 3018) |
+| 2 | 11865 | 1.36 | 3935 (was 5673) | 6736 | 1.26 | 3296 (was 6024) |
+| 4 | 19471 | 2.23 | 7268 (was 11323) | 11233 | 2.09 | 5766 (was 12050) |
+| 8 | 37232 | 4.27 | 13929 (was 22664) | 20610 | 3.84 | 10782 (was 24097) |
+
+Within this run, eight tokens of attention are 6.2× one token on Qwen
+(13929 / 2265) and 3.7× on SmolLM2 (10782 / 2906). Before the share
+both were 8.0×, one DMA per token. SmolLM2 was the copy-bound model,
+and an 8-token pass falls from 6.18× a decode step to 3.84×. The piece
+split is the one decode uses, where the busiest thread and the average
+already match; every full block does all n tokens and only the last
+block is shorter.
+
+At depth 512, same caps, Qwen zone0 52 °C and SmolLM2 46 °C. One
+decode step is 7347 µs (attention 940) on Qwen and 3467 µs (attention
+1026) on SmolLM2.
+
+| tokens | Qwen call | Qwen × | Qwen attention | SmolLM2 call | SmolLM2 × | SmolLM2 attention |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 7471 | 1.02 | 930 | 3610 | 1.04 | 1028 |
+| 2 | 9345 | 1.27 | 1481 | 4772 | 1.38 | 1385 |
+| 4 | 14682 | 2.00 | 2589 | 7496 | 2.16 | 2107 |
+| 8 | 27859 | 3.79 | 4806 | 13209 | 3.81 | 3545 |
+
+Eight tokens are 5.2× and 3.4× one token's attention.
+
+Prefill keeps the shared path. Gate/up on the short greedy prefix is
+2097 µs on Qwen (the previous prefill run was 1888 µs, a faster clock)
+and 570 µs on SmolLM2 (was 570). Through the wikitext chunks the DSP
+does 533 tok/s on Qwen (was 514) and 1055 on SmolLM2 (was 859). Qwen
+gained while its product clock was slower, so the gain is the shared
+copy, and it is the smaller one because Qwen's attention is not most
+of a prefill. Lookup on a long prompt was not run.
