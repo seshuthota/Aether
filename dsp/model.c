@@ -463,7 +463,35 @@ static void block_head(const float *qh, const float *k, uint32 kpos, const float
     uint32 n = kpos / 32;
     HVX_Vector *av = (HVX_Vector *) a;
     uint64 c0 = HAP_perf_get_pcycles(), q0 = HAP_perf_get_qtimer_count();
-    for (uint32 j = 0; j < n; j++) {
+    // Four vectors of 32 positions at once: eight add chains instead of
+    // two, so the loop is not waiting on each add's latency, and each
+    // splat of q serves four loads. Each vector still adds its even and
+    // odd elements apart, then together: the same scores, bit for bit.
+    uint32 j = 0;
+    for (; j + 4 <= n; j += 4) {
+        HVX_Vector e0 = Q6_V_vzero(), e1 = Q6_V_vzero(), e2 = Q6_V_vzero(), e3 = Q6_V_vzero();
+        HVX_Vector o0 = Q6_V_vzero(), o1 = Q6_V_vzero(), o2 = Q6_V_vzero(), o3 = Q6_V_vzero();
+        const float *col = k + 32 * j;
+        for (uint32 e = 0; e < hs; e += 2) {
+            const HVX_Vector *re = (const HVX_Vector *) (col + (size_t) e * kpos);
+            const HVX_Vector *ro = (const HVX_Vector *) (col + (size_t) (e + 1) * kpos);
+            HVX_Vector qe = splat_f(qh[e]), qo = splat_f(qh[e + 1]);
+            e0 = VADD(e0, VMUL(qe, re[0]));
+            o0 = VADD(o0, VMUL(qo, ro[0]));
+            e1 = VADD(e1, VMUL(qe, re[1]));
+            o1 = VADD(o1, VMUL(qo, ro[1]));
+            e2 = VADD(e2, VMUL(qe, re[2]));
+            o2 = VADD(o2, VMUL(qo, ro[2]));
+            e3 = VADD(e3, VMUL(qe, re[3]));
+            o3 = VADD(o3, VMUL(qo, ro[3]));
+        }
+        HVX_Vector vscale = splat_f(scale);
+        av[j] = VMUL(VADD(e0, o0), vscale);
+        av[j + 1] = VMUL(VADD(e1, o1), vscale);
+        av[j + 2] = VMUL(VADD(e2, o2), vscale);
+        av[j + 3] = VMUL(VADD(e3, o3), vscale);
+    }
+    for (; j < n; j++) {
         HVX_Vector s0 = Q6_V_vzero(), s1 = Q6_V_vzero();
         const float *col = k + 32 * j;
         for (uint32 e = 0; e < hs; e += 2) {

@@ -1,0 +1,76 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f | upload 42 ms
+# at start: zone0 aoss-0 38.0 C, hottest cpu cpuss-1-1 40.1 C, cpu0 556/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# before depth 0: zone0 aoss-0 38.4 C, hottest cpu cpu-1-0-1 43.2 C, cpu0 556/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# depth 0: 64 decode steps at positions 0..63
+#   attn norm + quantize        142.6 us/token   5.5%
+#   q/k/v                       218.2 us/token   8.5%
+#   bias + RoPE + KV store      160.3 us/token   6.2%
+#   attention + quantize        265.7 us/token  10.3%
+#   wo                          139.1 us/token   5.4%
+#   ffn norm + quantize         144.1 us/token   5.6%
+#   gate/up                     570.9 us/token  22.2%
+#   SwiGLU + quantize           219.1 us/token   8.5%
+#   down                        326.5 us/token  12.7%
+#   final norm + quantize         4.7 us/token   0.2%
+#   classifier                  281.1 us/token  10.9%
+#   argmax                       45.5 us/token   1.8%
+#   thread start                 52.0 us/token   2.0%
+#   64 steps in 218.0 ms wall: 293.6 tok/s (2.57 ms per token on the DSP)
+# streamed attention split, 64 steps, 6 threads (qtimer us at 19.2 MHz)
+#   dma wait             busy          0 cyc     0.0 us    avg          0 cyc     0.0 us
+#   score + softmax      busy          0 cyc     0.0 us    avg          0 cyc     0.0 us
+#   value accumulate     busy          0 cyc     0.0 us    avg          0 cyc     0.0 us
+#   barriers + merge     busy          0 cyc     0.0 us    avg          0 cyc     0.0 us
+#   exp (inside score)   busy          0 cyc             avg          0 cyc
+#   busiest thread 5: 0 cyc/token, average 0
+# after depth 0: zone0 aoss-0 40.3 C, hottest cpu cpuss-1-0 40.9 C, cpu0 2400/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# filling positions 64..512
+# before depth 512: zone0 aoss-0 45.3 C, hottest cpu cpuss-1-0 44.4 C, cpu0 2400/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# depth 512: 64 decode steps at positions 512..575
+#   attn norm + quantize        141.6 us/token   4.0%
+#   q/k/v                       217.8 us/token   6.2%
+#   bias + RoPE + KV store      153.2 us/token   4.3%
+#   attention + quantize       1238.0 us/token  35.1%
+#   wo                          147.8 us/token   4.2%
+#   ffn norm + quantize         144.7 us/token   4.1%
+#   gate/up                     567.7 us/token  16.1%
+#   SwiGLU + quantize           220.9 us/token   6.3%
+#   down                        325.2 us/token   9.2%
+#   final norm + quantize         4.6 us/token   0.1%
+#   classifier                  281.0 us/token   8.0%
+#   argmax                       44.8 us/token   1.3%
+#   thread start                 44.2 us/token   1.3%
+#   64 steps in 272.9 ms wall: 234.5 tok/s (3.52 ms per token on the DSP)
+# streamed attention split, 64 steps, 6 threads (qtimer us at 19.2 MHz)
+#   dma wait             busy    1235913 cyc   585.5 us    avg    1238876 cyc   587.1 us
+#   score + softmax      busy     288680 cyc   136.9 us    avg     354070 cyc   167.9 us
+#   value accumulate     busy     315615 cyc   149.9 us    avg     336445 cyc   160.0 us
+#   barriers + merge     busy     426710 cyc   202.4 us    avg     325700 cyc   154.6 us
+#   exp (inside score)   busy      61333 cyc             avg      70161 cyc
+#   busiest thread 4: 2266918 cyc/token, average 2255090
+# after depth 512: zone0 aoss-0 45.7 C, hottest cpu cpuss-1-0 44.8 C, cpu0 2400/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# filling positions 576..2048
+# before depth 2048: zone0 aoss-0 53.8 C, hottest cpu cpuss-1-0 52.1 C, cpu0 2400/2745 MHz, cpu7 1017/2649 MHz, battery Discharging
+# depth 2048: 64 decode steps at positions 2048..2111
+#   attn norm + quantize        141.4 us/token   2.6%
+#   q/k/v                       219.1 us/token   4.0%
+#   bias + RoPE + KV store      153.9 us/token   2.8%
+#   attention + quantize       3151.2 us/token  57.9%
+#   wo                          145.0 us/token   2.7%
+#   ffn norm + quantize         144.3 us/token   2.6%
+#   gate/up                     570.8 us/token  10.5%
+#   SwiGLU + quantize           220.4 us/token   4.0%
+#   down                        326.3 us/token   6.0%
+#   final norm + quantize         4.7 us/token   0.1%
+#   classifier                  281.3 us/token   5.2%
+#   argmax                       44.5 us/token   0.8%
+#   thread start                 44.2 us/token   0.8%
+#   64 steps in 397.4 ms wall: 161.1 tok/s (5.43 ms per token on the DSP)
+# streamed attention split, 64 steps, 6 threads (qtimer us at 19.2 MHz)
+#   dma wait             busy    3354128 cyc  1588.8 us    avg    3352578 cyc  1588.1 us
+#   score + softmax      busy    1154022 cyc   547.1 us    avg    1217975 cyc   577.5 us
+#   value accumulate     busy    1261781 cyc   599.2 us    avg    1282803 cyc   609.3 us
+#   barriers + merge     busy     491452 cyc   233.3 us    avg     394710 cyc   187.3 us
+#   exp (inside score)   busy     246081 cyc             avg     254640 cyc
+#   busiest thread 0: 6261383 cyc/token, average 6248066
+# after depth 2048: zone0 aoss-0 53.4 C, hottest cpu cpuss-1-0 52.1 C, cpu0 2400/2745 MHz, cpu7 1017/2649 MHz, battery Discharging

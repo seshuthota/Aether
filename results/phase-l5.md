@@ -867,3 +867,38 @@ whole pass. Median of five, call microseconds and that attention:
 One decode step at the same position is 9264 µs on Qwen (attention
 2837 µs) and 5461 µs on SmolLM2 (attention 3002 µs). Zone0 was 61 °C,
 battery discharging.
+
+## Four score vectors at once (2026-10-31; `raw/dsp-profile-depth-score4-*.txt`, `raw/dsp-ppl-score4-*.txt`)
+
+`block_head` now computes four 32-position score vectors together:
+eight add chains instead of two, and each splat of q is shared by four
+loads. Each vector still adds its even and odd elements apart, then
+together, so every score is the same bits as before.
+
+Same depth profile, on battery. Qwen zone0 37 °C at the start, 48 °C
+before depth 512, 56 °C before depth 2048. Caps cpu0 2.92 GHz falling
+to 2.75 GHz, cpu7 3.07 GHz falling to 2.65 GHz. Gate/up is 2113 / 2105
+/ 2116 µs on Qwen and 571 / 568 / 571 µs on SmolLM2, flat against the
+value-loop run (2100 / 2102 / 2099 and 575 / 573 / 577).
+
+At depth 2048 the score on the busiest thread, then the average, and
+the stage around it:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 494 (was 485) | 495 (was 487) | 1589 (was 1302) | 1588 (was 1303) |
+| score + softmax | 764 (was 1338) | 718 (was 1229) | 547 (was 957) | 578 (was 989) |
+| value accumulation | 839 (was 837) | 758 (was 757) | 599 (was 599) | 609 (was 609) |
+| barriers + merge | 153 (was 154) | 275 (was 338) | 233 (was 236) | 187 (was 189) |
+
+Qwen's score drops 1338 → 764 µs and attention 2994 → 2435 µs, so the
+step goes 9.30 → 8.79 ms. SmolLM2's score drops 957 → 547 µs, but the
+DMA wait rises 1302 → 1589 µs: the shorter score no longer covers the
+copy, and attention is 3273 → 3151 µs, the step 5.57 → 5.43 ms. Value
+did not move. Depth 0 is still the prefetch path (262 / 266 µs). At
+depth 512 Qwen attention is 1110 µs (was 1292) and SmolLM2 1238 µs
+(was 1341).
+
+Perplexity is the streamed-run digits exactly: decode 27.7779 /
+19.7503, prefill 27.6890 / 19.7196. 114/114 phone tests, including
+`few_tokens_get_the_decode_logits`.

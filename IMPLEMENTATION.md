@@ -96,7 +96,13 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    the four value-accumulator pairs, with the scores kept on the stack,
    cut the value mix to 0.84 ms. Qwen attention is 1292 µs at depth 512
    and 2994 µs at depth 2048, and the step is 9.30 ms. The score, 1.34 ms,
-   is what is left; exp inside it is about 0.18 ms. f16 KV stays off.
+   is what is left; exp inside it is about 0.18 ms. Four score vectors at
+   once (eight add chains, each splat of q shared by four loads, scores
+   bit-identical) cut that score 1338 → 764 µs on Qwen and 957 → 547 µs
+   on SmolLM2. Qwen attention is 2435 µs and the step 8.79 ms at depth
+   2048. SmolLM2's DMA wait rose 1302 → 1589 µs, so its step only moved
+   5.57 → 5.43 ms. PPL unchanged (27.7779 / 19.7503 decode). f16 KV stays
+   off.
 5. **Verification leftovers** (all need the phone): 4.4 sweeps, 6.7 / 7.5 GB/s and footprint
    write-ups, a same-session `llama-bench` rerun for an exact CPU comparison, a screen-on
    comparison with the user present.
