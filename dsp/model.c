@@ -12,12 +12,14 @@
 // as the CPU path computes them), and the DSP does the rest.
 //
 // The activations are f32; before every matrix product they are quantized
-// to Q8_0, as on our CPU path and llama.cpp's.
+// to Q8_0, as on our CPU path and llama.cpp's. The K/V cache is IEEE f16
+// (dsp/f16_hvx.h): half the bytes, and llama.cpp's default cache type.
 //
 // A product is up to three runs of rows, each in one format: q/k/v are
 // one run when all three have the same format (their groups are back to
 // back), else a run per format change, and so for gate/up. The prefill
-// (on HMX) takes Q4_0 only.
+// (on HMX) takes a run when its format has a tile dequantizer
+// (hmx_tiles.h: Q4_0, Q5_0, Q8_0, Q4_K, Q6_K).
 //
 // One model per DSP process (it lives in a static).
 
@@ -29,6 +31,7 @@
 #include "HAP_perf.h"
 #include "aether_dsp.h"
 #include "dsp.h"
+#include "f16_hvx.h"
 #include "hvx_hexagon_protos.h"
 #include "qx_hvx.h"
 #include "qurt_barrier.h"
@@ -59,8 +62,8 @@ enum {
     D_ATT,         // S: n_heads rows of seq_len scores, rounded up to 32
     D_HB,          // S: 2 hidden (gate, up)
     D_LOGITS,      // S: vocab
-    D_KC,          // S: layers * kv_dim * att_stride: keys transposed (see attend)
-    D_VC,
+    D_KC,          // S: layers * kv_dim * att_stride f16: keys transposed (see attend)
+    D_VC,          // S: layers * seq_len * kv_dim f16, position-major
     D_ROT,   // S: head_size / 2 (sin, cos) pairs
     D_PROF,   // S: N_STAGES u64 of qtimer ticks, then at ATTN_CY_OFF the
               // per-thread streamed-attention counters
@@ -97,7 +100,8 @@ static struct model {
     int w_fd, s_fd;
     char *w, *s;
     uint32 s_bytes;
-    float *x, *xb, *qkv, *att, *hb, *logits, *kc, *vc, *rot;
+    float *x, *xb, *qkv, *att, *hb, *logits, *rot;
+    uint16 *kc, *vc; // f16 cache (see f16_hvx.h)
     uint64 *prof;
     // Streamed-attention pcycles, see ATTN_CY_OFF.
     uint64 *cy;
@@ -108,8 +112,8 @@ static struct model {
         struct run qkv[3], wo, gu[2], wdown;
         const float *attn_norm, *ffn_norm, *bq, *bk, *bv;
     } l[MAX_LAYERS];
-    // Every product Q4_0 in one run (what the prefill takes).
-    int q4_0_only;
+    // Every run's format has an HMX tile dequantizer (what the prefill takes).
+    int hmx_prefill;
 } M;
 
 // Positions per streamed K/V block, and the shortest context that streams.
@@ -146,7 +150,9 @@ static int read_runs(struct run *r, const uint32 *d, uint32 n, uint32 rows) {
     for (uint32 i = 0; i < n; i++, d += 3) {
         r[i] = (struct run) {(const HVX_Vector *) (M.w + d[0]), d[1], d[2]};
         if (r[i].fmt >= N_FORMATS || r[i].rows % 32) return 0;
-        if (r[i].rows && (i > 0 || r[i].fmt != F_Q4_0)) M.q4_0_only = 0;
+        // A format this process can load but not dequantize into a tile
+        // stays on the 8-token HVX path. The five formats all dequantize.
+        if (r[i].rows && r[i].fmt > F_Q6_K) M.hmx_prefill = 0;
         sum += r[i].rows;
     }
     return sum == rows;
@@ -166,16 +172,18 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     M.vocab = d[D_VOCAB], M.seq_len = d[D_SEQ_LEN], M.halves = d[D_HALVES], M.batch = d[D_BATCH];
     memcpy(&M.eps, &d[D_EPS], 4);
     M.hs = M.dim / M.heads, M.kv_dim = M.hs * M.kv_heads;
-    // Rounded up to a vector. A power-of-two stride lands every key element
-    // on the same cache sets, so add one vector (32 floats). The state
-    // buffer uses the same rule (DspModel in dsp.rs).
-    M.att_stride = (M.seq_len + 31) / 32 * 32;
-    if (M.att_stride && (M.att_stride & (M.att_stride - 1)) == 0) M.att_stride += 32;
+    // Rounded up to an f16 vector (64 halves). A power-of-two stride lands
+    // every key element on the same cache sets, so add one vector. The
+    // state buffer uses the same rule (DspModel in dsp.rs).
+    M.att_stride = (M.seq_len + 63) / 64 * 64;
+    if (M.att_stride && (M.att_stride & (M.att_stride - 1)) == 0) M.att_stride += 64;
     M.xq_stride = (40 * (M.hid > M.dim ? M.hid : M.dim) / 32 + 127) / 128 * 128;
     // Every matrix's rows must be whole groups of 32 (the products write
     // whole groups, and add them in place into x), and each head whole
     // Q8_0 blocks (the attention quantizes its heads' outputs).
-    if (M.dim % 32 || M.hid % 32 || M.hs % 32 || M.hs > 256 || M.vocab % 32 || M.heads % M.kv_heads || !M.batch) return AEE_EBADPARM;
+    // A head is whole f16 vectors (64 halves): a value row then starts on
+    // a vector, and the attention quantizer still sees whole Q8_0 blocks.
+    if (M.dim % 32 || M.hid % 32 || M.hs % 64 || M.hs > 256 || M.vocab % 32 || M.heads % M.kv_heads || !M.batch) return AEE_EBADPARM;
     M.w_fd = d[D_W_FD], M.s_fd = d[D_S_FD];
     M.w = mapped(M.w_fd), M.s = mapped(M.s_fd);
     if (!M.w || !M.s) return AEE_EBADPARM;
@@ -186,11 +194,11 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     char *s = M.s, *w = M.w;
     M.x = (float *) (s + d[D_X]), M.xb = (float *) (s + d[D_XB]), M.xq = s + d[D_XQ], M.qkv = (float *) (s + d[D_QKV]);
     M.att = (float *) (s + d[D_ATT]), M.hb = (float *) (s + d[D_HB]), M.logits = (float *) (s + d[D_LOGITS]);
-    M.kc = (float *) (s + d[D_KC]), M.vc = (float *) (s + d[D_VC]), M.rot = (float *) (s + d[D_ROT]);
+    M.kc = (uint16 *) (s + d[D_KC]), M.vc = (uint16 *) (s + d[D_VC]), M.rot = (float *) (s + d[D_ROT]);
     M.prof = (uint64 *) (s + d[D_PROF]);
     M.cy = (uint64 *) (s + d[D_PROF] + ATTN_CY_OFF);
     M.final_norm = (const float *) (w + d[D_FINAL_NORM]);
-    M.q4_0_only = 1;
+    M.hmx_prefill = 1;
     uint32 cls[3] = {d[D_CLS], d[D_CLS_FMT], M.vocab};
     int ok = read_runs(&M.cls, cls, 1, M.vocab);
     for (uint32 l = 0; l < M.layers; l++) {
@@ -216,8 +224,10 @@ AEEResult aether_dsp_model_load(remote_handle64 h, const uint32 *d, int n) {
     Attn.g = g;
     Attn.blocks = (M.seq_len + ATTN_BLOCK - 1) / ATTN_BLOCK;
     Attn.per = (g * M.hs + 2 * g + 31u) & ~31u;
+    // One set of partials per token of a few-token pass (decode uses the
+    // first). A pass shares one DMA of a block across its tokens.
     if (g <= ATTN_GMAX && Attn.blocks)
-        Attn.p = memalign(128, (size_t) Attn.blocks * M.kv_heads * Attn.per * sizeof(float));
+        Attn.p = memalign(128, (size_t) MAX_FEW * Attn.blocks * M.kv_heads * Attn.per * sizeof(float));
     M.loaded = 1;
     return AEE_SUCCESS;
 }
@@ -276,9 +286,11 @@ static void qkv_post(uint32 l, uint32 pos, float *qkv, const float *rot, uint32 
     const uint32 dim = M.dim, kv = M.kv_dim, hs = M.hs, half = hs / 2;
     const float *bq = M.l[l].bq, *bk = M.l[l].bk, *bv = M.l[l].bv;
     float *q = qkv, *k = qkv + dim, *v = qkv + dim + kv;
-    // Key element e of the layer at kc[e * att_stride] (see attend).
-    float *kc = M.kc + (size_t) l * kv * M.att_stride + pos, *vc = M.vc + ((size_t) l * M.seq_len + pos) * kv;
-    for (uint32 i = v0; i < v1; i++) vc[i] = v[i] + bv[i];
+    // Key element e of the layer at kc[e * att_stride], stored as f16
+    // (see attend). The scalar convert is the same instruction as the
+    // vector one, so a later load reads these bits back.
+    uint16 *kc = M.kc + (size_t) l * kv * M.att_stride + pos, *vc = M.vc + ((size_t) l * M.seq_len + pos) * kv;
+    for (uint32 i = v0; i < v1; i++) vc[i] = f32_to_f16_bits(v[i] + bv[i]);
     for (uint32 p = p0; p < p1; p++) {
         int isq = p < dim / 2;
         uint32 pp = isq ? p : p - dim / 2, hd = pp / half, i = pp % half;
@@ -291,8 +303,8 @@ static void qkv_post(uint32 l, uint32 pos, float *qkv, const float *rot, uint32 
             q[i0] = a * c - e * s;
             q[i1] = a * s + e * c;
         } else {
-            kc[(size_t) i0 * M.att_stride] = a * c - e * s;
-            kc[(size_t) i1 * M.att_stride] = a * s + e * c;
+            kc[(size_t) i0 * M.att_stride] = f32_to_f16_bits(a * c - e * s);
+            kc[(size_t) i1 * M.att_stride] = f32_to_f16_bits(a * s + e * c);
         }
     }
 }
@@ -364,34 +376,42 @@ static inline void l2fetch_2d(const void *p, uint32 stride, uint32 width, uint32
 // the short-context path: each query head reads its K/V from DDR, with
 // l2fetch. Past ATTN_STREAM_AT positions, attend_token streams instead.
 //
-// The keys are stored transposed: per layer, row e of the cache holds key
-// element e (of kv_dim) for every position, att_stride apart. So the
-// scores of 32 positions are one vector, the sum over the head's hs
-// elements of q[e] (in every lane) times row e's 32 positions: no sum
-// across the lanes per position.
+// The keys are stored transposed, as f16: per layer, row e of the cache
+// holds key element e (of kv_dim) for every position, att_stride apart.
+// One f16 vector is 64 positions. The convert splits it into even and odd
+// positions; one shuffle puts those back into two f32 vectors of 32, and
+// the sum over the head's elements is then the same shape as before.
 static void attend(uint32 l, uint32 h, uint32 pos, const float *qh, float *out_h, float *a) {
     const uint32 hs = M.hs, nv = hs / 32, kv = M.kv_dim, kvh = h / (M.heads / M.kv_heads), S = M.att_stride;
-    const float *kt = M.kc + ((size_t) l * kv + kvh * hs) * S, *vc = M.vc + (size_t) l * M.seq_len * kv + kvh * hs;
+    const uint16 *kt = M.kc + ((size_t) l * kv + kvh * hs) * S, *vc = M.vc + (size_t) l * M.seq_len * kv + kvh * hs;
     float scale = 1.0f / sqrtf((float) hs);
-    uint32 n = (pos + 1 + 31) / 32;
+    uint32 n64 = (pos + 1 + 63) / 64, n = n64 * 2;
     HVX_Vector *av = (HVX_Vector *) a;
-    for (uint32 j = 0; j < n; j++) {
-        // One key chunk (32 positions, one vector on each of the hs rows),
-        // four chunks ahead of this one. The first four chunks are not
-        // fetched; every later chunk is fetched once.
-        if (j + 4 < n) l2fetch_2d(kt + 32 * (j + 4), S * 4, 128, hs);
-        // Two sums, so the adds of one wait less on the other.
-        HVX_Vector s0 = Q6_V_vzero(), s1 = Q6_V_vzero();
-        const float *col = kt + 32 * j;
+    for (uint32 j = 0; j < n64; j++) {
+        // One key chunk (64 positions, one f16 vector on each of the hs
+        // rows), four chunks ahead. The first four are not fetched.
+        if (j + 4 < n64) l2fetch_2d(kt + 64 * (j + 4), S * 2, 128, hs);
+        // Even and odd elements apart, and the convert's even and odd
+        // positions apart: four chains, added once the rows are done.
+        HVX_Vector e0 = Q6_V_vzero(), e1 = Q6_V_vzero(), o0 = Q6_V_vzero(), o1 = Q6_V_vzero();
         for (uint32 e = 0; e < hs; e += 2) {
-            s0 = VADD(s0, VMUL(splat_f(qh[e]), *(const HVX_Vector *) (col + (size_t) e * S)));
-            s1 = VADD(s1, VMUL(splat_f(qh[e + 1]), *(const HVX_Vector *) (col + (size_t) (e + 1) * S)));
+            HVX_Vector ae, ao, be, bo;
+            hf_even_odd(*(const HVX_Vector *) (kt + (size_t) e * S + 64 * j), &ae, &ao);
+            hf_even_odd(*(const HVX_Vector *) (kt + (size_t) (e + 1) * S + 64 * j), &be, &bo);
+            HVX_Vector qe = splat_f(qh[e]), qo = splat_f(qh[e + 1]);
+            e0 = VADD(e0, VMUL(qe, ae));
+            o0 = VADD(o0, VMUL(qo, be));
+            e1 = VADD(e1, VMUL(qe, ao));
+            o1 = VADD(o1, VMUL(qo, bo));
         }
-        av[j] = VMUL(VADD(s0, s1), splat_f(scale));
+        HVX_Vector lo, hi, vs = splat_f(scale);
+        even_odd_to_halves(VADD(e0, o0), VADD(e1, o1), &lo, &hi);
+        av[2 * j] = VMUL(lo, vs);
+        av[2 * j + 1] = VMUL(hi, vs);
     }
     // The lanes past pos (keys not written yet) are -inf: e^-80 after the
     // clamp below, and not used.
-    for (uint32 t = pos + 1; t < 32 * n; t++) a[t] = -INFINITY;
+    for (uint32 t = pos + 1; t < 64 * n64; t++) a[t] = -INFINITY;
     HVX_Vector vm = av[0];
     for (uint32 j = 1; j < n; j++) vm = Q6_Vsf_vfmax_VsfVsf(vm, av[j]);
     float max = vmax_lanes(vm);
@@ -414,24 +434,34 @@ static void attend(uint32 l, uint32 h, uint32 pos, const float *qh, float *out_h
         for (uint32 i = 0; i < nv; i++) acc[k][i] = Q6_V_vzero();
     uint32 t = 0, npos = pos + 1;
     for (; t + 4 <= npos; t += 4) {
-        // This head's value rows (hs floats, stride kv), one block of 32
+        // This head's value rows (hs f16, stride kv), one block of 32
         // positions, four blocks ahead. Issued once per block.
         if ((t & 31) == 0 && t + 128 < npos && t + 128 < M.seq_len) {
             uint32 room = npos - (t + 128);
             uint32 cap = M.seq_len - (t + 128);
             if (room > cap) room = cap;
-            l2fetch_2d(vc + (size_t) (t + 128) * kv, kv * 4, hs * 4, room < 32 ? room : 32);
+            l2fetch_2d(vc + (size_t) (t + 128) * kv, kv * 2, hs * 2, room < 32 ? room : 32);
         }
         for (uint32 k = 0; k < 4; k++) {
-            const HVX_Vector *v = (const HVX_Vector *) (vc + (size_t) (t + k) * kv);
+            const uint16 *row = vc + (size_t) (t + k) * kv;
             HVX_Vector p = splat_f(a[t + k]);
-            for (uint32 i = 0; i < nv; i++) acc[k][i] = VADD(acc[k][i], VMUL(p, v[i]));
+            for (uint32 i = 0; i < hs / 64; i++) {
+                HVX_Vector lo, hi;
+                hf_to_f32(*(const HVX_Vector *) (row + i * 64), &lo, &hi);
+                acc[k][2 * i] = VADD(acc[k][2 * i], VMUL(p, lo));
+                acc[k][2 * i + 1] = VADD(acc[k][2 * i + 1], VMUL(p, hi));
+            }
         }
     }
     for (; t < npos; t++) {
-        const HVX_Vector *v = (const HVX_Vector *) (vc + (size_t) t * kv);
+        const uint16 *row = vc + (size_t) t * kv;
         HVX_Vector p = splat_f(a[t]);
-        for (uint32 i = 0; i < nv; i++) acc[0][i] = VADD(acc[0][i], VMUL(p, v[i]));
+        for (uint32 i = 0; i < hs / 64; i++) {
+            HVX_Vector lo, hi;
+            hf_to_f32(*(const HVX_Vector *) (row + i * 64), &lo, &hi);
+            acc[0][2 * i] = VADD(acc[0][2 * i], VMUL(p, lo));
+            acc[0][2 * i + 1] = VADD(acc[0][2 * i + 1], VMUL(p, hi));
+        }
     }
     HVX_Vector *out = (HVX_Vector *) out_h;
     for (uint32 i = 0; i < nv; i++) out[i] = VADD(VADD(acc[0][i], acc[1][i]), VADD(acc[2][i], acc[3][i]));
@@ -449,28 +479,81 @@ static void cy_add(uint32 t, uint32 part, uint64 c0, uint64 q0) {
 static void cy_cpu_in(void) { cpu_wrote(M.cy, 8u * MAX_THREADS * ATTN_CY_STRIDE); }
 static void cy_cpu_out(void) { cpu_reads(M.cy, 8u * MAX_THREADS * ATTN_CY_STRIDE); }
 
-static void mix_one_64(const float *s, const float *v, uint32 len, float *out);
-static void mix_one(const float *s, const float *v, uint32 len, float *out);
+static void mix_one_64(const float *s, const uint16 *v, uint32 len, float *out);
+static void mix_one(const float *s, const uint16 *v, uint32 len, float *out);
 
-// One query head over one packed block. Keys are kpos floats per element
-// (element e at k[e * kpos]); values are hs floats per position. The first
-// `len` positions are real. Scores stay in `a` (the caller's stack), not
-// in VTCM: a scalar load from VTCM stalled the value loop. Writes
+// One f16 key vector (64 positions) into its even and odd positions.
+static inline void key64(const uint16 *p, HVX_Vector *even, HVX_Vector *odd) {
+    hf_even_odd(*(const HVX_Vector *) p, even, odd);
+}
+
+// One query head over one packed block. Keys are `kstride` f16 per
+// element (element e at k[e * kstride]); this head scores the first
+// `kpos` of them (a multiple of 64, one f16 vector). A shared DMA uses
+// the last token's length as kstride, while this token still scores only
+// its own kpos, so the loads of those positions are the same ones a
+// decode step makes. Values are hs f16 per position. The first `len`
+// positions are real. Scores stay in `a` (the caller's stack), not in
+// VTCM: a scalar load from VTCM stalled the value loop. Writes
 // Σ e^(s−max)·v, unnormalised, and (max, sum).
-static void block_head(const float *qh, const float *k, uint32 kpos, const float *v, uint32 len, float *acc_out, float *max_out, float *sum_out, float *a, uint32 t) {
+static void block_head(const float *qh, const uint16 *k, uint32 kstride, uint32 kpos, const uint16 *v, uint32 len, float *acc_out, float *max_out, float *sum_out, float *a, uint32 t) {
     const uint32 hs = M.hs;
     float scale = 1.0f / sqrtf((float) hs);
     uint32 n = kpos / 32;
     HVX_Vector *av = (HVX_Vector *) a;
     uint64 c0 = HAP_perf_get_pcycles(), q0 = HAP_perf_get_qtimer_count();
-    for (uint32 j = 0; j < n; j++) {
-        HVX_Vector s0 = Q6_V_vzero(), s1 = Q6_V_vzero();
-        const float *col = k + 32 * j;
+    // Two f16 vectors (128 positions) at once: eight add chains, each
+    // splat of q serving four converted halves. Even and odd elements
+    // stay apart until the rows are done, then one shuffle per 64
+    // positions puts the convert's even/odd lanes into order.
+    uint32 j = 0;
+    for (; j + 4 <= n; j += 4) {
+        HVX_Vector e0 = Q6_V_vzero(), e1 = Q6_V_vzero(), e2 = Q6_V_vzero(), e3 = Q6_V_vzero();
+        HVX_Vector o0 = Q6_V_vzero(), o1 = Q6_V_vzero(), o2 = Q6_V_vzero(), o3 = Q6_V_vzero();
+        const uint16 *col = k + 32 * j;
         for (uint32 e = 0; e < hs; e += 2) {
-            s0 = VADD(s0, VMUL(splat_f(qh[e]), *(const HVX_Vector *) (col + (size_t) e * kpos)));
-            s1 = VADD(s1, VMUL(splat_f(qh[e + 1]), *(const HVX_Vector *) (col + (size_t) (e + 1) * kpos)));
+            const uint16 *re = col + (size_t) e * kstride, *ro = col + (size_t) (e + 1) * kstride;
+            HVX_Vector ae0, ao0, ae1, ao1, be0, bo0, be1, bo1;
+            key64(re, &ae0, &ao0);
+            key64(re + 64, &ae1, &ao1);
+            key64(ro, &be0, &bo0);
+            key64(ro + 64, &be1, &bo1);
+            HVX_Vector qe = splat_f(qh[e]), qo = splat_f(qh[e + 1]);
+            e0 = VADD(e0, VMUL(qe, ae0));
+            o0 = VADD(o0, VMUL(qo, be0));
+            e1 = VADD(e1, VMUL(qe, ao0));
+            o1 = VADD(o1, VMUL(qo, bo0));
+            e2 = VADD(e2, VMUL(qe, ae1));
+            o2 = VADD(o2, VMUL(qo, be1));
+            e3 = VADD(e3, VMUL(qe, ao1));
+            o3 = VADD(o3, VMUL(qo, bo1));
         }
-        av[j] = VMUL(VADD(s0, s1), splat_f(scale));
+        HVX_Vector vscale = splat_f(scale), lo, hi;
+        even_odd_to_halves(VADD(e0, o0), VADD(e1, o1), &lo, &hi);
+        av[j] = VMUL(lo, vscale);
+        av[j + 1] = VMUL(hi, vscale);
+        even_odd_to_halves(VADD(e2, o2), VADD(e3, o3), &lo, &hi);
+        av[j + 2] = VMUL(lo, vscale);
+        av[j + 3] = VMUL(hi, vscale);
+    }
+    for (; j + 2 <= n; j += 2) {
+        HVX_Vector e0 = Q6_V_vzero(), e1 = Q6_V_vzero(), o0 = Q6_V_vzero(), o1 = Q6_V_vzero();
+        const uint16 *col = k + 32 * j;
+        for (uint32 e = 0; e < hs; e += 2) {
+            HVX_Vector ae, ao, be, bo;
+            key64(col + (size_t) e * kstride, &ae, &ao);
+            key64(col + (size_t) (e + 1) * kstride, &be, &bo);
+            HVX_Vector qe = splat_f(qh[e]), qo = splat_f(qh[e + 1]);
+            e0 = VADD(e0, VMUL(qe, ae));
+            o0 = VADD(o0, VMUL(qo, be));
+            e1 = VADD(e1, VMUL(qe, ao));
+            o1 = VADD(o1, VMUL(qo, bo));
+        }
+        HVX_Vector lo, hi;
+        even_odd_to_halves(VADD(e0, o0), VADD(e1, o1), &lo, &hi);
+        HVX_Vector vscale = splat_f(scale);
+        av[j] = VMUL(lo, vscale);
+        av[j + 1] = VMUL(hi, vscale);
     }
     for (uint32 u = len; u < kpos; u++) a[u] = -INFINITY;
     HVX_Vector vm = av[0];
@@ -497,46 +580,48 @@ static void block_head(const float *qh, const float *k, uint32 kpos, const float
 
 // Head size 64: four named accumulator pairs. An array of them lands in
 // memory and the inner loop reloads it; naming them keeps the four chains
-// in the vector file. Positions 4k+c go into pair c, the tail into pair 0.
-static void __attribute__((noinline)) mix_one_64(const float *s, const float *v, uint32 len, float *out) {
+// in the vector file. One position is one f16 vector. The convert's even
+// and odd dims stay in the pair until the end, where one shuffle puts
+// dims 0..31 and 32..63 back. Positions 4k+c go into pair c, the tail
+// into pair 0.
+static void __attribute__((noinline)) mix_one_64(const float *s, const uint16 *v, uint32 len, float *out) {
     const uint32 hs = 64;
     HVX_Vector a00 = Q6_V_vzero(), a01 = Q6_V_vzero(), a10 = Q6_V_vzero(), a11 = Q6_V_vzero();
     HVX_Vector a20 = Q6_V_vzero(), a21 = Q6_V_vzero(), a30 = Q6_V_vzero(), a31 = Q6_V_vzero();
     uint32 u = 0;
     for (; u + 4 <= len; u += 4) {
-        const HVX_Vector *r;
-        HVX_Vector p;
-        r = (const HVX_Vector *) (v + (size_t) (u + 0) * hs);
+        HVX_Vector ev, od, p;
+        hf_even_odd(*(const HVX_Vector *) (v + (size_t) (u + 0) * hs), &ev, &od);
         p = splat_f(s[u + 0]);
-        a00 = VADD(a00, VMUL(p, r[0]));
-        a01 = VADD(a01, VMUL(p, r[1]));
-        r = (const HVX_Vector *) (v + (size_t) (u + 1) * hs);
+        a00 = VADD(a00, VMUL(p, ev));
+        a01 = VADD(a01, VMUL(p, od));
+        hf_even_odd(*(const HVX_Vector *) (v + (size_t) (u + 1) * hs), &ev, &od);
         p = splat_f(s[u + 1]);
-        a10 = VADD(a10, VMUL(p, r[0]));
-        a11 = VADD(a11, VMUL(p, r[1]));
-        r = (const HVX_Vector *) (v + (size_t) (u + 2) * hs);
+        a10 = VADD(a10, VMUL(p, ev));
+        a11 = VADD(a11, VMUL(p, od));
+        hf_even_odd(*(const HVX_Vector *) (v + (size_t) (u + 2) * hs), &ev, &od);
         p = splat_f(s[u + 2]);
-        a20 = VADD(a20, VMUL(p, r[0]));
-        a21 = VADD(a21, VMUL(p, r[1]));
-        r = (const HVX_Vector *) (v + (size_t) (u + 3) * hs);
+        a20 = VADD(a20, VMUL(p, ev));
+        a21 = VADD(a21, VMUL(p, od));
+        hf_even_odd(*(const HVX_Vector *) (v + (size_t) (u + 3) * hs), &ev, &od);
         p = splat_f(s[u + 3]);
-        a30 = VADD(a30, VMUL(p, r[0]));
-        a31 = VADD(a31, VMUL(p, r[1]));
+        a30 = VADD(a30, VMUL(p, ev));
+        a31 = VADD(a31, VMUL(p, od));
     }
     for (; u < len; u++) {
-        const HVX_Vector *r = (const HVX_Vector *) (v + (size_t) u * hs);
+        HVX_Vector ev, od;
+        hf_even_odd(*(const HVX_Vector *) (v + (size_t) u * hs), &ev, &od);
         HVX_Vector p = splat_f(s[u]);
-        a00 = VADD(a00, VMUL(p, r[0]));
-        a01 = VADD(a01, VMUL(p, r[1]));
+        a00 = VADD(a00, VMUL(p, ev));
+        a01 = VADD(a01, VMUL(p, od));
     }
     HVX_Vector *o = (HVX_Vector *) out;
-    o[0] = VADD(VADD(a00, a10), VADD(a20, a30));
-    o[1] = VADD(VADD(a01, a11), VADD(a21, a31));
+    even_odd_to_halves(VADD(VADD(a00, a10), VADD(a20, a30)), VADD(VADD(a01, a11), VADD(a21, a31)), &o[0], &o[1]);
 }
 
 // Other head sizes: the same four chains, held in an array. Head size is
 // at most 256, so eight vectors a chain.
-static void mix_one(const float *s, const float *v, uint32 len, float *out) {
+static void mix_one(const float *s, const uint16 *v, uint32 len, float *out) {
     const uint32 hs = M.hs, nv = hs / 32;
     HVX_Vector acc[4][8];
     for (uint32 c = 0; c < 4; c++)
@@ -544,18 +629,32 @@ static void mix_one(const float *s, const float *v, uint32 len, float *out) {
     uint32 u = 0;
     for (; u + 4 <= len; u += 4) {
         for (uint32 c = 0; c < 4; c++) {
-            const HVX_Vector *r = (const HVX_Vector *) (v + (size_t) (u + c) * hs);
+            const uint16 *row = v + (size_t) (u + c) * hs;
             HVX_Vector p = splat_f(s[u + c]);
-            for (uint32 i = 0; i < nv; i++) acc[c][i] = VADD(acc[c][i], VMUL(p, r[i]));
+            for (uint32 i = 0; i < hs / 64; i++) {
+                HVX_Vector ev, od;
+                hf_even_odd(*(const HVX_Vector *) (row + i * 64), &ev, &od);
+                acc[c][2 * i] = VADD(acc[c][2 * i], VMUL(p, ev));
+                acc[c][2 * i + 1] = VADD(acc[c][2 * i + 1], VMUL(p, od));
+            }
         }
     }
     for (; u < len; u++) {
-        const HVX_Vector *r = (const HVX_Vector *) (v + (size_t) u * hs);
+        const uint16 *row = v + (size_t) u * hs;
         HVX_Vector p = splat_f(s[u]);
-        for (uint32 i = 0; i < nv; i++) acc[0][i] = VADD(acc[0][i], VMUL(p, r[i]));
+        for (uint32 i = 0; i < hs / 64; i++) {
+            HVX_Vector ev, od;
+            hf_even_odd(*(const HVX_Vector *) (row + i * 64), &ev, &od);
+            acc[0][2 * i] = VADD(acc[0][2 * i], VMUL(p, ev));
+            acc[0][2 * i + 1] = VADD(acc[0][2 * i + 1], VMUL(p, od));
+        }
     }
     HVX_Vector *o = (HVX_Vector *) out;
-    for (uint32 i = 0; i < nv; i++) o[i] = VADD(VADD(acc[0][i], acc[1][i]), VADD(acc[2][i], acc[3][i]));
+    for (uint32 i = 0; i < hs / 64; i++) {
+        HVX_Vector ev = VADD(VADD(acc[0][2 * i], acc[1][2 * i]), VADD(acc[2][2 * i], acc[3][2 * i]));
+        HVX_Vector od = VADD(VADD(acc[0][2 * i + 1], acc[1][2 * i + 1]), VADD(acc[2][2 * i + 1], acc[3][2 * i + 1]));
+        even_odd_to_halves(ev, od, &o[2 * i], &o[2 * i + 1]);
+    }
 }
 
 // acc = sa·acc + sb·b, hs floats, both vector-aligned.
@@ -566,17 +665,19 @@ static void scale_add(float *acc, float sa, const float *b, float sb) {
     for (uint32 i = 0; i < M.hs / 32; i++) o[i] = VADD(VMUL(va, o[i]), VMUL(vb, p[i]));
 }
 
-// Query head h from the block partials of its K/V head, in block order:
-// with M the largest block max, out = Σ e^(m_i−M)·acc_i / Σ e^(m_i−M)·sum_i.
-static void merge_head(uint32 h, uint32 nblocks, float *out_h) {
+// Query head h of token `tok` from the block partials of its K/V head,
+// in block order: with M the largest block max,
+// out = Σ e^(m_i−M)·acc_i / Σ e^(m_i−M)·sum_i.
+static void merge_head(uint32 tok, uint32 h, uint32 nblocks, float *out_h) {
     const uint32 g = Attn.g, hs = M.hs, lh = h % g, kvh = h / g;
-    float *p0 = Attn.p + (size_t) kvh * nblocks * Attn.per;
+    float *base = Attn.p + (size_t) tok * M.kv_heads * Attn.blocks * Attn.per;
+    float *p0 = base + (size_t) kvh * nblocks * Attn.per;
     float m = p0[g * hs + 2 * lh], sum = p0[g * hs + 2 * lh + 1];
     HVX_Vector *o = (HVX_Vector *) out_h;
     const HVX_Vector *a0 = (const HVX_Vector *) (p0 + lh * hs);
     for (uint32 i = 0; i < hs / 32; i++) o[i] = a0[i];
     for (uint32 b = 1; b < nblocks; b++) {
-        float *pb = Attn.p + ((size_t) kvh * nblocks + b) * Attn.per;
+        float *pb = base + ((size_t) kvh * nblocks + b) * Attn.per;
         float mb = pb[g * hs + 2 * lh], lb = pb[g * hs + 2 * lh + 1];
         float m2 = fmaxf(m, mb), sa = expf(m - m2), sb = expf(mb - m2);
         scale_add(out_h, sa, pb + lh * hs, sb);
@@ -597,42 +698,47 @@ static int use_stream(uint32 npos, uint32 T) {
     if (!Attn.p || Attn.g > ATTN_GMAX || Attn.g != M.heads / M.kv_heads || npos < ATTN_STREAM_AT) return 0;
     uint32 nblocks = (npos + ATTN_BLOCK - 1) / ATTN_BLOCK;
     if (nblocks > Attn.blocks) return 0;
-    // The last block's keys are rounded up to a vector. That has to stay
-    // inside the key row.
-    uint32 t0 = (nblocks - 1) * ATTN_BLOCK, len = npos - t0, kpos = (len + 31u) & ~31u;
+    // The last block's keys are rounded up to an f16 vector (64 halves).
+    // That has to stay inside the key row.
+    uint32 t0 = (nblocks - 1) * ATTN_BLOCK, len = npos - t0, kpos = (len + 63u) & ~63u;
     if (t0 + kpos > M.att_stride) return 0;
-    if ((uint64) M.att_stride * 4 > 0xffffffu || (uint64) M.kv_dim * 4 > 0xffffffu) return 0;
+    if ((uint64) M.att_stride * 2 > 0xffffffu || (uint64) M.kv_dim * 2 > 0xffffffu) return 0;
     uint32 bytes = 0;
     char *v = vtcm_get(&bytes);
-    uint32 slot = 2u * M.hs * ATTN_BLOCK * 4u;
+    uint32 slot = 2u * M.hs * ATTN_BLOCK * 2u;
     return v && T && slot && bytes / slot >= T;
 }
 
 // DMA one block of K/V head `kvh` (positions t0 .. t0+len) into `dst`.
-// Keys are strided by att_stride and land packed; values are strided by
-// kv_dim. Returns the value copy, which finishes after the key copy.
+// Keys are strided by att_stride f16 and land packed; values are strided
+// by kv_dim f16. Returns the value copy, which finishes after the key copy.
 static void *dma_block(uint32 t, uint32 l, uint32 kvh, uint32 t0, uint32 len, uint32 kpos, char *dst) {
     const uint32 hs = M.hs;
-    const float *kt = M.kc + ((size_t) l * M.kv_dim + kvh * hs) * M.att_stride + t0;
-    const float *vc = M.vc + ((size_t) l * M.seq_len + t0) * M.kv_dim + kvh * hs;
-    dma_copy_2d(t, dst, kt, kpos * 4, M.att_stride * 4, kpos * 4, hs);
-    return dma_copy_2d(t, dst + hs * ATTN_BLOCK * 4, vc, hs * 4, M.kv_dim * 4, hs * 4, len);
+    const uint16 *kt = M.kc + ((size_t) l * M.kv_dim + kvh * hs) * M.att_stride + t0;
+    const uint16 *vc = M.vc + ((size_t) l * M.seq_len + t0) * M.kv_dim + kvh * hs;
+    dma_copy_2d(t, dst, kt, kpos * 2, M.att_stride * 2, kpos * 2, hs);
+    return dma_copy_2d(t, dst + hs * ATTN_BLOCK * 2, vc, hs * 2, M.kv_dim * 2, hs * 2, len);
 }
 
 // Long context: each (K/V head, block of ATTN_BLOCK positions) is one
 // piece of work, spread over the threads, so a layer's 2 or 3 K/V heads
 // do not leave threads idle the way 14 query heads on 6 threads did.
-// The block's keys and values are DMA'd into that thread's VTCM slots
-// once and used by every query head of that K/V head (7 on Qwen, 3 on
-// SmolLM2). A whole head is 1 MB at depth 2048 and is not copied in one
-// go; a block is 2·hs·256 floats. Products own VTCM outside this window
-// (VTCM_SHARE per thread). Attention runs only between the q/k/v product
-// and wo, and both barriers below are the step's, so every thread enters.
-static void attend_stream(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, const float *qkv, float *out, uint32 t) {
-    const uint32 hs = M.hs, g = Attn.g, npos = pos + 1;
+// The block is DMA'd into that thread's VTCM slots once, at the length
+// the last token needs, and every token i in [i0, i1) whose context
+// reaches the block scores it with its own length. Token i sits at
+// position pos+i, query row qkv + i*qstride, output row out + i*ostride.
+// A decode step is the one-token case (i0 = 0, i1 = 1). Block boundaries
+// stay at absolute multiples of ATTN_BLOCK, so token i sees the same
+// blocks a decode step at pos+i sees. A whole head is 1 MB at depth 2048
+// and is not copied in one go; a block is 2·hs·256 f16. Products own
+// VTCM outside this window (VTCM_SHARE per thread). Attention runs only
+// between the q/k/v product and wo, and both barriers below are the
+// step's, so every thread enters.
+static void attend_stream_range(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, uint32 i0, uint32 i1, const float *qkv, uint32 qstride, float *out, uint32 ostride, uint32 t) {
+    const uint32 hs = M.hs, g = Attn.g, npos = pos + i1;
     const uint32 nblocks = (npos + ATTN_BLOCK - 1) / ATTN_BLOCK;
     const uint32 items = M.kv_heads * nblocks;
-    const uint32 k_bytes = hs * ATTN_BLOCK * 4, slot_bytes = 2 * k_bytes;
+    const uint32 k_bytes = hs * ATTN_BLOCK * 2, slot_bytes = 2 * k_bytes;
     uint32 bytes = 0;
     char *vtcm = vtcm_get(&bytes);
     uint32 bufs = bytes / slot_bytes / T >= 2 ? 2 : 1;
@@ -640,26 +746,33 @@ static void attend_stream(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, c
     void *pend[2] = {NULL, NULL};
     uint32 mine0 = span0(items, t, T), mine1 = span1(items, t, T);
 
-    // Issue piece `p` into slot `s`: keys then values. The value copy is
-    // the one to wait on.
+    // Issue piece `p` into slot `s`: keys then values, long enough for
+    // the last token. The value copy is the one to wait on.
     #define ISSUE(p, s)                                                                                                      \
         do {                                                                                                                 \
             uint32 _kvh = (p) / nblocks, _b = (p) % nblocks, _t0 = _b * ATTN_BLOCK;                                          \
             uint32 _len = npos - _t0 < ATTN_BLOCK ? npos - _t0 : ATTN_BLOCK;                                                 \
-            uint32 _kpos = (_len + 31u) & ~31u;                                                                              \
+            uint32 _kpos = (_len + 63u) & ~63u;                                                                              \
             pend[s] = dma_block(t, l, _kvh, _t0, _len, _kpos, vtcm + ((size_t) t * bufs + (s)) * slot_bytes);                \
         } while (0)
-    #define COMPUTE(p, s)                                                                                                    \
-        do {                                                                                                                 \
-            uint32 _kvh = (p) / nblocks, _b = (p) % nblocks, _t0 = _b * ATTN_BLOCK;                                          \
-            uint32 _len = npos - _t0 < ATTN_BLOCK ? npos - _t0 : ATTN_BLOCK;                                                 \
-            uint32 _kpos = (_len + 31u) & ~31u;                                                                              \
-            char *_base = vtcm + ((size_t) t * bufs + (s)) * slot_bytes;                                                     \
-            float *_part = Attn.p + ((size_t) _kvh * nblocks + _b) * Attn.per;                                               \
-            const float *_q = qkv + _kvh * g * hs;                                                                          \
-            for (uint32 _lh = 0; _lh < g; _lh++)                                                                             \
-                block_head(_q + _lh * hs, (const float *) _base, _kpos, (const float *) (_base + k_bytes), _len,             \
-                    _part + _lh * hs, &_part[g * hs + 2 * _lh], &_part[g * hs + 2 * _lh + 1], scores, t);                    \
+    #define COMPUTE(p, s)                                                                                                                    \
+        do {                                                                                                                                 \
+            uint32 _kvh = (p) / nblocks, _b = (p) % nblocks, _t0 = _b * ATTN_BLOCK;                                                          \
+            uint32 _len = npos - _t0 < ATTN_BLOCK ? npos - _t0 : ATTN_BLOCK;                                                                 \
+            uint32 _kstride = (_len + 63u) & ~63u;                                                                                           \
+            char *_base = vtcm + ((size_t) t * bufs + (s)) * slot_bytes;                                                                     \
+            for (uint32 _i = i0; _i < i1; _i++) {                                                                                            \
+                uint32 _np = pos + _i + 1;                                                                                                   \
+                if (_np <= _t0) continue;                                                                                                    \
+                uint32 _li = _np - _t0 < ATTN_BLOCK ? _np - _t0 : ATTN_BLOCK;                                                                \
+                uint32 _kp = (_li + 63u) & ~63u;                                                                                             \
+                uint32 _nb = (_np + ATTN_BLOCK - 1) / ATTN_BLOCK;                                                                            \
+                float *_part = Attn.p + ((size_t) (_i % MAX_FEW) * M.kv_heads * Attn.blocks + (size_t) _kvh * _nb + _b) * Attn.per;       \
+                const float *_q = qkv + (size_t) _i * qstride + _kvh * g * hs;                                                               \
+                for (uint32 _lh = 0; _lh < g; _lh++)                                                                                         \
+                    block_head(_q + _lh * hs, (const uint16 *) _base, _kstride, _kp, (const uint16 *) (_base + k_bytes), _li,               \
+                        _part + _lh * hs, &_part[g * hs + 2 * _lh], &_part[g * hs + 2 * _lh + 1], scores, t);                                \
+            }                                                                                                                                \
         } while (0)
 
     if (mine0 < mine1) ISSUE(mine0, 0);
@@ -678,27 +791,51 @@ static void attend_stream(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, c
     }
     #undef ISSUE
     #undef COMPUTE
-    // Every partial is written. Merge this thread's query heads, then
-    // wait again so the next token may reuse the partials. Both waits are
-    // in this span: an idle thread's time is the barrier, not the merge.
+    // Every partial is written. Merge this thread's query heads for each
+    // token, in that token's own block order, then wait again so the next
+    // pass may reuse the partials. Both waits are in this span: an idle
+    // thread's time is the barrier, not the merge.
     uint64 c0 = HAP_perf_get_pcycles(), q0 = HAP_perf_get_qtimer_count();
     qurt_barrier_wait(bar);
-    for (uint32 h = span0(M.heads, t, T); h < span1(M.heads, t, T); h++) merge_head(h, nblocks, out + h * hs);
+    for (uint32 h = span0(M.heads, t, T); h < span1(M.heads, t, T); h++) {
+        for (uint32 i = i0; i < i1; i++) {
+            uint32 np = pos + i + 1, nb = (np + ATTN_BLOCK - 1) / ATTN_BLOCK;
+            merge_head(i % MAX_FEW, h, nb, out + (size_t) i * ostride + h * hs);
+        }
+    }
     qurt_barrier_wait(bar);
     cy_add(t, CY_MERGE, c0, q0);
 }
 
+static void attend_token(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, const float *qkv, float *out, uint32 t);
+
+// Tokens [i0, i1) of a pass that starts at `pos`. Tokens still under
+// ATTN_STREAM_AT stay on the prefetch path, one at a time. The rest share
+// one DMA per block when every one of them can stream; otherwise each
+// streams alone, as a decode step does. The decision uses only pos, the
+// range and the model, so every thread takes the same barriers.
+static void attend_pass(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, uint32 i0, uint32 i1, const float *qkv, uint32 qstride, float *out, uint32 ostride, uint32 t) {
+    uint32 i = i0;
+    for (; i < i1 && pos + i + 1 < ATTN_STREAM_AT; i++)
+        attend_token(bar, T, l, pos + i, qkv + (size_t) i * qstride, out + (size_t) i * ostride, t);
+    int share = i < i1;
+    for (uint32 j = i; j < i1; j++) share = share && use_stream(pos + j + 1, T);
+    if (share) attend_stream_range(bar, T, l, pos, i, i1, qkv, qstride, out, ostride, t);
+    else
+        for (uint32 j = i; j < i1; j++) attend_token(bar, T, l, pos + j, qkv + (size_t) j * qstride, out + (size_t) j * ostride, t);
+}
+
 // One token at `pos`: the prefetch path for a short context (this thread's
-// query heads, each reading DDR), or the streamed path once the context
-// is long enough that a second read of each K/V head is the cost. Decode
-// and the few-token pass both come through here, so they stay bit for bit.
+// query heads, each reading DDR), or one streamed block-pass. Decode comes
+// through here. A few-token pass uses attend_pass, which calls this for a
+// token that does not share a DMA.
 static void attend_token(qurt_barrier_t *bar, uint32 T, uint32 l, uint32 pos, const float *qkv, float *out, uint32 t) {
     if (!use_stream(pos + 1, T)) {
         for (uint32 h = span0(M.heads, t, T); h < span1(M.heads, t, T); h++)
             attend(l, h, pos, qkv + h * M.hs, out + h * M.hs, M.att + (size_t) t * M.att_stride);
         return;
     }
-    attend_stream(bar, T, l, pos, qkv, out, t);
+    attend_stream_range(bar, T, l, pos, 0, 1, qkv, 0, out, 0, t);
 }
 
 // SwiGLU into the gate half of hb for blocks (vectors) b0 .. b1: silu(g) u
@@ -869,47 +1006,58 @@ static void prefill_thread(void *arg, uint32 t) {
     const uint32 dim = M.dim, hid = M.hid, kv = M.kv_dim, hs = M.hs, qkv_n = dim + 2 * kv, pos = st->pos, n = st->n, T = st->threads;
     qurt_barrier_t *bar = &st->bar;
     char *vtcm = st->vtcm;
-    // A product on all threads; thread 0 keeps the first error.
-#define HMX(w, rows, nb, x, xs, out, os, acc)                                                                    \
-    do {                                                                                                        \
-        struct hmx_product p = {w, rows, nb, x, xs, n, out, os, acc, vtcm};                                     \
-        int e = hmx_rows(&p, t, T, bar);                                                                        \
-        if (e && !st->err) st->err = e;                                                                         \
+    // One product per run, so a matrix of mixed formats lands each run's
+    // rows at that run's offset. Every thread calls hmx_rows the same
+    // number of times (the runs do not depend on t). Thread 0 keeps the
+    // first error.
+#define HMX(runs, nr, nb, x, xs, out, os, acc)                                                                          \
+    do {                                                                                                                \
+        const struct run *hr = (runs);                                                                                 \
+        float *ho = (out);                                                                                             \
+        for (uint32 ri = 0; ri < (nr) && hr[ri].rows; ho += hr[ri].rows, ri++) {                                       \
+            struct hmx_product p = {hr[ri].w, hr[ri].rows, nb, x, xs, n, ho, os, acc, vtcm, hr[ri].fmt};               \
+            int e = hmx_rows(&p, t, T, bar);                                                                            \
+            if (e && !st->err) st->err = e;                                                                             \
+        }                                                                                                               \
     } while (0)
     for (uint32 l = 0; l < M.layers; l++) {
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].attn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].qkv[0].w, qkv_n, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
+        HMX(M.l[l].qkv, 3, dim / 32, M.xb, dim, M.qkv, qkv_n, 0);
         for (uint32 i = FROM(n); i < TO(n); i++) qkv_post(l, pos + i, M.qkv + (size_t) i * qkv_n, M.rot + (size_t) i * hs, 0, dim / 2 + kv / 2, 0, kv);
         qurt_barrier_wait(bar);
-        // Every token's keys and values are in the cache now. One token at
-        // a time, the same attend_token as decode, so a long token streams
-        // and a short one stays on the prefetch path.
-        for (uint32 i = 0; i < n; i++) attend_token(bar, T, l, pos + i, M.qkv + (size_t) i * qkv_n, M.xb + (size_t) i * dim, t);
+        // Every token's keys and values are in the cache now. Groups of
+        // MAX_FEW share one DMA of each K/V block; a token under the
+        // stream threshold stays on the prefetch path.
+        for (uint32 base = 0; base < n; base += MAX_FEW) {
+            uint32 i1 = base + MAX_FEW < n ? base + MAX_FEW : n;
+            attend_pass(bar, T, l, pos, base, i1, M.qkv, qkv_n, M.xb, dim, t);
+        }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wo.w, dim, dim / 32, M.xb, dim, M.x, dim, 1);
+        HMX(&M.l[l].wo, 1, dim / 32, M.xb, dim, M.x, dim, 1);
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.l[l].ffn_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.l[l].gu[0].w, 2 * hid, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
+        HMX(M.l[l].gu, 2, dim / 32, M.xb, dim, M.hb, 2 * hid, 0);
         for (uint32 k = FROM(n * (hid / 32)); k < TO(n * (hid / 32)); k++) {
             HVX_Vector *g = (HVX_Vector *) (M.hb + (size_t) (k / (hid / 32)) * 2 * hid) + k % (hid / 32);
             *g = silu_mul(*g, g[hid / 32]);
         }
         qurt_barrier_wait(bar);
-        HMX(M.l[l].wdown.w, dim, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
+        HMX(&M.l[l].wdown, 1, hid / 32, M.hb, 2 * hid, M.x, dim, 1);
     }
     const float *last;
     if (st->all) {
         // Every token's logits, on HMX.
         for (uint32 i = FROM(n); i < TO(n); i++) norm_row(M.xb + (size_t) i * dim, M.x + (size_t) i * dim, M.final_norm, dim);
         qurt_barrier_wait(bar);
-        HMX(M.cls.w, M.vocab, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
+        HMX(&M.cls, 1, dim / 32, M.xb, dim, M.logits, M.vocab, 0);
         last = M.logits + (size_t) (n - 1) * M.vocab;
     } else {
-        // The last token's only, as in decode_thread.
+        // The last token's only, as in decode_thread. Q4_0 goes through
+        // q4_0_rows; the other formats through their own HVX product.
         norm_quantize(M.xb, M.x + (size_t) (n - 1) * dim, M.final_norm, dim, FROM(dim / 32), TO(dim / 32));
         qurt_barrier_wait(bar);
-        q4_0_rows(M.cls.w, M.xq, dim / 32, (HVX_Vector *) M.logits, pair_split(M.vocab / 32, t, T), pair_split(M.vocab / 32, t + 1, T), st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, 0, t);
+        product(&M.cls, 1, dim / 32, M.logits, 0, st->dma >> 4 & 1 ? FETCH_DMA : FETCH_L2, t, T);
         qurt_barrier_wait(bar);
         last = M.logits;
     }
@@ -919,7 +1067,7 @@ static void prefill_thread(void *arg, uint32 t) {
 
 AEEResult aether_dsp_model_prefill(remote_handle64 h, uint32 pos, uint32 n, uint32 threads, uint32 all, uint32 *next, uint64 *us) {
     (void) h;
-    if (!M.loaded || !M.q4_0_only || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
+    if (!M.loaded || !M.hmx_prefill || !n || n > M.batch || pos + n > M.seq_len || threads < 1 || threads > MAX_THREADS) return AEE_EBADPARM;
     if (!hmx_fits(M.dim / 32, n) || !hmx_fits(M.hid / 32, n)) return AEE_EBADPARM;
     uint32 bytes = 0;
     char *vtcm = vtcm_get(&bytes);
@@ -980,12 +1128,14 @@ static void few_thread(void *arg, uint32 t) {
         qurt_barrier_wait(bar);
         for (uint32 i = 0; i < n; i++) qkv_post(l, pos + i, M.qkv + (size_t) i * qkv_n, M.rot + (size_t) i * hs, FROM(dim / 2 + kv / 2), TO(dim / 2 + kv / 2), FROM(kv), TO(kv));
         qurt_barrier_wait(bar);
-        // Every token's keys and values are in the cache now. Same
-        // attend_token as decode (bit for bit with a decode step at this
-        // position), then this thread's heads quantized for wo.
+        // Every token's keys and values are in the cache now. One shared
+        // DMA per K/V block for the tokens that stream; each of them still
+        // scores the positions a decode step at that position scores.
+        // Short tokens stay on the prefetch path. Then this thread's heads
+        // quantized for wo.
+        attend_pass(bar, T, l, pos, 0, n, M.qkv, qkv_n, M.xb, dim, t);
         for (uint32 i = 0; i < n; i++) {
             float *o = M.xb + (size_t) i * dim;
-            attend_token(bar, T, l, pos + i, M.qkv + (size_t) i * qkv_n, o, t);
             quantize_q8_0(o, dim / 32, span0(M.heads, t, T) * hs / 32, span1(M.heads, t, T) * hs / 32, XQ(i));
         }
         qurt_barrier_wait(bar);

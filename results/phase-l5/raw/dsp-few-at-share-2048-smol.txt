@@ -1,0 +1,8 @@
+# filling positions 0..2048
+# before few-at 2048: zone0 aoss-0 55.3 C, hottest cpu cpuss-1-0 53.2 C, cpu0 748/2400 MHz, cpu7 1017/2438 MHz, battery Discharging
+# decode step at 2048: 5363 us on the DSP, streamed attention 2897 us on the busiest thread (median of 5)
+# few-token pass at 2048, 1 tokens:   5490 us on the DSP, streamed attention 2906 us, 1.02x one decode step, 5490 us per token
+# few-token pass at 2048, 2 tokens:   6736 us on the DSP, streamed attention 3296 us, 1.26x one decode step, 3368 us per token
+# few-token pass at 2048, 4 tokens:  11233 us on the DSP, streamed attention 5766 us, 2.09x one decode step, 2808 us per token
+# few-token pass at 2048, 8 tokens:  20610 us on the DSP, streamed attention 10782 us, 3.84x one decode step, 2576 us per token
+# after few-at 2048: zone0 aoss-0 54.9 C, hottest cpu cpuss-1-0 53.2 C, cpu0 2400/2400 MHz, cpu7 1017/2438 MHz, battery Discharging

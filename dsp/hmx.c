@@ -12,9 +12,10 @@
 // - the result, 32 tokens x 32 outputs, laid out as an activation tile.
 // (As llama.cpp's backend lays them out; HMX is not in the SDK's docs.)
 //
-// The weights come in our Q4_0 layout of 32-row groups (aether_dsp.c),
-// whose 32-bit lane j is row j: that is output j of a weight tile, so
-// turning a block into a tile needs no shuffling across lanes.
+// The weights come in our 32-row groups (qx_hvx.h). Lane j of a group is
+// row j, which is output j of a weight tile, so a block becomes a tile
+// without shuffling across lanes. Q4_0, Q5_0, Q8_0, Q4_K and Q6_K all
+// land in the same fp16 tiles (hmx_tiles.h).
 
 #include <string.h>
 
@@ -26,6 +27,7 @@
 #include "dsp.h"
 #include "hmx_hexagon_protos.h"
 #include "hvx_hexagon_protos.h"
+#include "hmx_tiles.h"
 
 #define TILE 2048  // bytes
 // The most tiles one streamed load takes: longer streams gave wrong sums.
@@ -48,13 +50,6 @@ static inline void prefetch_l2(const void *p, uint32 bytes) {
     if (rows) Q6_l2fetch_AP((void *) p, (uint64) 4096 << 32 | 4096 << 16 | (rows > 0xffff ? 0xffff : rows));
 }
 
-// The f32 vectors a (token 2j) and b (token 2j + 1) as one activation
-// vector: fp16, interleaved.
-static inline HVX_Vector to_f16_pairs(HVX_Vector a, HVX_Vector b) {
-    HVX_Vector z = Q6_V_vzero();
-    return Q6_Vhf_equals_Wqf32(Q6_W_vcombine_VV(Q6_Vqf32_vadd_VsfVsf(b, z), Q6_Vqf32_vadd_VsfVsf(a, z)));
-}
-
 // Rows of X (`tokens` of nb * 32 floats, `stride` floats apart) into
 // activation tiles, tile (r, b) for tokens 32r.. and inputs 32b..; past
 // `tokens`, zeros.
@@ -65,30 +60,6 @@ static void activations(HVX_Vector *a, const float *x, uint32 stride, uint32 nb,
             HVX_Vector v1 = r + 1 < tokens ? *(const HVX_Vector *) (x + (size_t) (r + 1) * stride + b * 32) : Q6_V_vzero();
             a[((r / 32) * nb + b) * 16 + (r % 32) / 2] = to_f16_pairs(v0, v1);
         }
-}
-
-// Group g's nb blocks (five vectors each: four of quant bytes, the rows'
-// f32 scales) into nb weight tiles. Quant vector k's lane j has bytes
-// 4k..4k+3 of row j's block; byte i holds input i in its low nibble and
-// input i + 16 in its high one. So the low nibbles of bytes 0, 1 are the
-// pair of inputs 4k, 4k + 1 (tile vector 2k), of bytes 2, 3 the pair
-// 4k + 2, 4k + 3 (vector 2k + 1); the high nibbles the same 16 on.
-static void weights(HVX_Vector *t, const HVX_Vector *w, uint32 nb) {
-    const HVX_Vector nib = Q6_Vb_vsplat_R(0x0f), b0 = Q6_V_vsplat_R(0xff), b1 = Q6_V_vsplat_R(0xff0000), eight = Q6_Vh_vsplat_R(8);
-    for (uint32 b = 0; b < nb; b++, w += 5, t += 16) {
-        // The rows' scales, each twice (both inputs of a lane).
-        HVX_Vector s = to_f16_pairs(w[4], w[4]);
-        for (int k = 0; k < 4; k++)
-            for (int h = 0; h < 2; h++) {
-                HVX_Vector q = Q6_V_vand_VV(h ? Q6_Vuh_vlsr_VuhR(w[k], 4) : w[k], nib);
-                // Bytes 0, 1 and bytes 2, 3 of each lane as its two halfwords.
-                HVX_Vector p01 = Q6_V_vor_VV(Q6_V_vand_VV(q, b0), Q6_V_vand_VV(Q6_Vw_vasl_VwR(q, 8), b1));
-                HVX_Vector p23 = Q6_V_vor_VV(Q6_V_vand_VV(Q6_Vuw_vlsr_VuwR(q, 16), b0), Q6_V_vand_VV(Q6_Vuw_vlsr_VuwR(q, 8), b1));
-                // Q4_0 stores q + 8.
-                t[8 * h + 2 * k] = Q6_Vhf_vmpy_VhfVhf(Q6_Vhf_equals_Vh(Q6_Vh_vsub_VhVh(p01, eight)), s);
-                t[8 * h + 2 * k + 1] = Q6_Vhf_vmpy_VhfVhf(Q6_Vhf_equals_Vh(Q6_Vh_vsub_VhVh(p23, eight)), s);
-            }
-    }
 }
 
 // HMX on the groups g0 .. g1 whose weight tiles are in wt: for each and
@@ -159,9 +130,10 @@ int hmx_rows(const struct hmx_product *p, uint32 t, uint32 T, qurt_barrier_t *ba
         uint32 c0 = (s) * chunk, n = groups - c0 < chunk ? groups - c0 : chunk;     \
         from = c0 + n * wk / workers, to = c0 + n * (wk + 1) / workers;       \
     } while (0)
+    const uint32 pv = piece_vectors(p->fmt);
     if (deq) {
         SHARE(0);
-        prefetch_l2(p->w + (size_t) from * nb * 5, (to - from) * nb * 640);
+        prefetch_l2(p->w + (size_t) from * nb * pv, (to - from) * nb * pv * 128);
     }
     for (uint32 s = 0; s <= chunks; s++) {
         if (deq && s < chunks) {
@@ -170,12 +142,12 @@ int hmx_rows(const struct hmx_product *p, uint32 t, uint32 T, qurt_barrier_t *ba
             // for most of the time (~0.8 GB/s).
             if (s + 1 < chunks) {
                 SHARE(s + 1);
-                prefetch_l2(p->w + (size_t) from * nb * 5, (to - from) * nb * 640);
+                prefetch_l2(p->w + (size_t) from * nb * pv, (to - from) * nb * pv * 128);
             }
             SHARE(s);
             HVX_Vector *wt = (HVX_Vector *) (v + W_AT + (s % 2) * W_BUF);
             for (uint32 g = from; g < to; g++)
-                weights(wt + (size_t) (g - s * chunk) * nb * 16, p->w + (size_t) g * nb * 5, nb);
+                hmx_weight_tiles(wt + (size_t) (g - s * chunk) * nb * 16, p->w + (size_t) g * nb * pv, nb, p->fmt);
         }
         if (drive && locked && s > 0) {
             uint32 g0 = (s - 1) * chunk, g1 = g0 + chunk < groups ? g0 + chunk : groups;
@@ -217,7 +189,7 @@ AEEResult aether_dsp_hmx_gemm(remote_handle64 h, int w_fd, int x_fd, int out_fd,
     if (w && x && out) {
         uint32 stride = (rows + 31) / 32 * 32;
         cpu_wrote(x, tokens * nb * 128);
-        struct gemm_job j = {{w, rows, nb, x, nb * 32, tokens, out, stride, 0, v}, threads};
+        struct gemm_job j = {{w, rows, nb, x, nb * 32, tokens, out, stride, 0, v, F_Q4_0}, threads};
         qurt_barrier_init(&j.bar, threads);
         dsp_busy();
         err = run_threads(threads, gemm_thread, &j, us);

@@ -71,8 +71,9 @@ extern unsigned int vtcm_ctx;
 void dsp_busy(void);
 void dsp_free(void);
 
-// out = X Wᵀ on HMX (hmx.c): W `rows` rows of nb Q4_0 blocks in our
-// layout, X `tokens` rows of nb * 32 f32 (`x_stride` floats apart), out
+// out = X Wᵀ on HMX (hmx.c): W `rows` rows of nb blocks in our layout of
+// format `fmt` (qx_hvx.h's F_ enum; each dequantizes to the same fp16
+// tiles), X `tokens` rows of nb * 32 f32 (`x_stride` floats apart), out
 // `tokens` rows `out_stride` floats apart (whole groups of 32 written;
 // added to what is there with `accumulate`). X and W are rounded to fp16.
 struct hmx_product {
@@ -84,6 +85,7 @@ struct hmx_product {
     uint32 out_stride;
     int accumulate;
     char *vtcm;  // from vtcm_get, 8 MB
+    uint32 fmt;
 };
 // Whether X fits VTCM (up to ~320 tokens at nb 152) and a group's tiles a buffer.
 int hmx_fits(uint32 nb, uint32 tokens);

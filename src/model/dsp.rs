@@ -12,8 +12,9 @@
 //! once for all of them: speculative decoding's check of its drafts.
 //!
 //! The matrices may be Q4_0, Q5_0, Q8_0, Q4_K or Q6_K (a `--pure` Q4_0
-//! GGUF or llama.cpp's Q4_K_M mix); the prefill, on HMX, takes Q4_0 only
-//! ([`DspModel::q4_0_only`]).
+//! GGUF or llama.cpp's Q4_K_M mix). The prefill, on HMX, takes a matrix
+//! when every run has a tile dequantizer ([`DspModel::hmx_prefill`]);
+//! those five formats all do.
 
 use crate::kernels::hexagon::{Dsp, DspFormat, MAX_FEW, Result, Shared, repack_qx};
 use crate::model::transformer::Weights;
@@ -140,8 +141,8 @@ pub struct DspModel {
     pub batch: usize,
     /// Whether the state holds logits for every token of a prefill.
     all_logits: bool,
-    /// Every matrix in Q4_0: what [`DspModel::prefill`] needs.
-    pub q4_0_only: bool,
+    /// Every run has an HMX tile dequantizer: what [`DspModel::prefill`] needs.
+    pub hmx_prefill: bool,
     prof_at: usize,
     pub threads: u32,
     /// Which products fetch by DMA ([`Dsp::model_decode`]); all by default.
@@ -165,9 +166,12 @@ impl DspModel {
         let mut desc = vec![0u32; d::LAYER0 + nl * d::L_N];
         let mut mats = Vec::new();
         let floats = |wl: &mut Layout, n: usize| wl.take(4 * n);
-        let mut q4_0_only = true;
+        let mut hmx_prefill = true;
         let mut runs = |o: &mut [u32], max: usize, r: Vec<[u32; 3]>| {
-            q4_0_only &= r.len() == 1 && r[0][1] == DspFormat::Q4_0 as u32;
+            // An empty slot (rows 0) is not a product. A format this loader
+            // can place all dequantize into tiles; a later format would not
+            // until it grew a tile function.
+            hmx_prefill &= r.iter().all(|run| run[2] == 0 || DspFormat::on_hmx(run[1]));
             assert!(r.len() <= max);
             o[..3 * r.len()].copy_from_slice(r.as_flattened());
         };
@@ -221,11 +225,12 @@ impl DspModel {
         let kv = nl * c.seq_len * kv_dim;
         let b = batch.max(1);
         let rows = b.max(MAX_FEW);
-        // Same rule as model_load in dsp/model.c: round the context up to a
-        // vector of positions, then one extra vector when that is a power of
-        // two, so key rows are not a power-of-two distance apart.
-        let round = c.seq_len.div_ceil(32) * 32;
-        let stride = if round.is_power_of_two() { round + 32 } else { round };
+        // Same rule as model_load in dsp/model.c: the cache is f16, so round
+        // the context up to 64 positions (one f16 vector), then one extra
+        // vector when that is a power of two, so key rows are not a
+        // power-of-two distance apart.
+        let round = c.seq_len.div_ceil(64) * 64;
+        let stride = if round.is_power_of_two() { round + 64 } else { round };
         for (i, n) in [
             (d::X, 4 * dim * rows),
             (d::XB, 4 * dim * rows),
@@ -234,9 +239,9 @@ impl DspModel {
             (d::ATT, 4 * c.n_heads.max(8) * stride),
             (d::HB, 4 * 2 * hid * rows),
             (d::LOGITS, 4 * vocab * if all_logits { rows } else { MAX_FEW }),
-            // Keys transposed: a row of every position per element.
-            (d::KC, 4 * nl * kv_dim * stride),
-            (d::VC, 4 * kv),
+            // Keys transposed, f16: a row of every position per element.
+            (d::KC, 2 * nl * kv_dim * stride),
+            (d::VC, 2 * kv),
             (d::ROT, 4 * c.head_size() * rows),
             // Stage timers, then the per-thread streamed-attention counters
             // at the same offset dsp/model.c uses (ATTN_CY_OFF).
@@ -262,7 +267,7 @@ impl DspModel {
         desc[d::BATCH] = b as u32;
         dsp.model_load(&desc)?;
         let (x_at, rot_at, logits_at, prof_at) = (desc[d::X] as usize, desc[d::ROT] as usize, desc[d::LOGITS] as usize, desc[d::PROF] as usize);
-        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, batch: b, all_logits, q4_0_only, prof_at, threads, dma: DMA_ALL, next: 0, last_us: 0 })
+        Ok(DspModel { config, weights, _w: w, state, x_at, rot_at, logits_at, batch: b, all_logits, hmx_prefill, prof_at, threads, dma: DMA_ALL, next: 0, last_us: 0 })
     }
 
     /// Runs `token` at position `pos` and returns the logits for the next
@@ -291,16 +296,16 @@ impl DspModel {
     }
 
     /// Runs `tokens` (at most [`DspModel::batch`]) at positions `pos`..
-    /// in one call, the products on HMX (Q4_0 only: an error unless
-    /// [`DspModel::q4_0_only`]). Returns every token's logits, one
+    /// in one call, the products on HMX (an error unless
+    /// [`DspModel::hmx_prefill`]). Returns every token's logits, one
     /// row of `vocab_size` each, if the model was made with `all_logits`,
     /// else the last token's. Positions must follow those already run.
     pub fn prefill(&mut self, dsp: &Dsp, tokens: &[usize], pos: usize) -> Result<&[f32]> {
         let c = &self.config;
         let n = tokens.len();
         assert!(n >= 1 && n <= self.batch && pos + n <= c.seq_len);
-        if !self.q4_0_only {
-            return Err("the DSP's prefill needs every matrix in Q4_0".into());
+        if !self.hmx_prefill {
+            return Err("the DSP's prefill needs every matrix in a format it can dequantize into HMX tiles".into());
         }
         assert!(tokens.iter().all(|&t| t < c.vocab_size));
         for (i, &t) in tokens.iter().enumerate() {
@@ -373,14 +378,61 @@ mod tests {
     /// for bit: its products add the same block sums in the same order,
     /// and both passes call the same attention. Checked for 1, 3 and 8
     /// tokens after decoded positions, again over cache entries a first
-    /// pass wrote (as after rejected drafts), and for 8 tokens where
-    /// attention is two streamed blocks; for Q4_0 and for the Q4_K_M mix
+    /// pass wrote (as after rejected drafts), for 8 tokens where attention
+    /// is two streamed blocks, for 8 tokens that cross the stream
+    /// threshold and a block boundary (252..259), and for 8 that cross
+    /// the next boundary (508..515); for Q4_0 and for the Q4_K_M mix
     /// (Q5_0, Q8_0, Q4_K, Q6_K).
     #[test]
     fn few_tokens_get_the_decode_logits() {
         for file in ["gguf/smollm2-135m-q4_0.gguf", "gguf/smollm2-135m-q4_k_m.gguf"] {
             few_matches_decode(file);
         }
+    }
+
+    /// A Q4_K_M prompt on HMX and the same prompt in 8-token HVX passes
+    /// produce the same greedy continuation. Both paths are ours, so this
+    /// is a smoke test: perplexity against llama.cpp is the check.
+    #[test]
+    fn q4km_hmx_prompt_matches_few_greedy() {
+        let Some(path) = golden("gguf/smollm2-135m-q4_k_m.gguf") else { return };
+        let _one = crate::kernels::hexagon::MODEL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let dsp = match Dsp::open(&dir) {
+            Ok(d) => d,
+            Err(e) => {
+                assert!(!cfg!(target_os = "android"), "{e}");
+                return;
+            }
+        };
+        let (config, weights, _) = crate::model::gguf::load(&path, 64).unwrap();
+        let mut m = DspModel::new(&dsp, config, weights, 6, 32, false).unwrap();
+        assert!(m.hmx_prefill);
+        let vocab = m.config.vocab_size;
+        let prompt: Vec<usize> = (0..24).map(|i| (i * 7919 + 13) % vocab).collect();
+        for (i, part) in prompt.chunks(crate::kernels::hexagon::MAX_FEW).enumerate() {
+            m.few(&dsp, part, i * crate::kernels::hexagon::MAX_FEW).unwrap();
+        }
+        let mut few_seq = Vec::new();
+        let mut tok = m.greedy();
+        let mut pos = prompt.len();
+        for _ in 0..8 {
+            few_seq.push(tok);
+            m.forward(&dsp, tok, pos).unwrap();
+            tok = m.greedy();
+            pos += 1;
+        }
+        m.prefill(&dsp, &prompt, 0).unwrap();
+        let mut hmx_seq = Vec::new();
+        tok = m.greedy();
+        pos = prompt.len();
+        for _ in 0..8 {
+            hmx_seq.push(tok);
+            m.forward(&dsp, tok, pos).unwrap();
+            tok = m.greedy();
+            pos += 1;
+        }
+        assert_eq!(hmx_seq, few_seq, "HMX greedy tokens differ from the 8-token path");
     }
 
     fn few_matches_decode(file: &str) {
@@ -394,14 +446,15 @@ mod tests {
                 return;
             }
         };
-        // 320 covers the prefetch path, one streamed block (128..255) and a
-        // two-block merge (from 256). Both passes call the same attention,
-        // so the logits match on either side of those lines.
-        let (config, weights, _) = crate::model::gguf::load(&path, 320).unwrap();
+        // 520 covers the prefetch path, one streamed block (128..255), a
+        // pass that crosses 256 (some tokens prefetch, some stream, and
+        // the later ones take a second block) and a pass that crosses 512.
+        // Both passes call the same attention, so the logits match.
+        let (config, weights, _) = crate::model::gguf::load(&path, 520).unwrap();
         let vocab = config.vocab_size;
         let mut m = DspModel::new(&dsp, config, weights, 6, 1, false).unwrap();
-        assert_eq!(m.q4_0_only, file.contains("q4_0"), "{file}");
-        let tokens: Vec<usize> = (0..320).map(|i| (i * 7919 + 13) % vocab).collect();
+        assert!(m.hmx_prefill, "{file}");
+        let tokens: Vec<usize> = (0..520).map(|i| (i * 7919 + 13) % vocab).collect();
         let want: Vec<Vec<f32>> = tokens.iter().enumerate().map(|(p, &t)| m.forward(&dsp, t, p).unwrap().to_vec()).collect();
         // Overwrite positions 4.. with other tokens first: their cache
         // entries must be replaced, not kept.
@@ -428,6 +481,15 @@ mod tests {
         let got = m.few(&dsp, &tokens[256..264], 256).unwrap();
         for i in 0..8 {
             assert!(got[i * vocab..][..vocab] == want_long[i][..], "{file}: streamed row {i} at 256 differs from the decode step's");
+        }
+        // 252..254 stay under the stream threshold, 255 is the first
+        // streamed token, 256..259 take a second block. 508..511 end in
+        // the block that starts at 256; 512..515 open the next one.
+        for (at, count) in [(252, 8), (508, 8)] {
+            let got = m.few(&dsp, &tokens[at..at + count], at).unwrap();
+            for i in 0..count {
+                assert!(got[i * vocab..][..vocab] == want[at + i][..], "{file}: row {i} at {at} differs from the decode step's");
+            }
         }
     }
 }

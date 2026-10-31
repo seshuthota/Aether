@@ -867,3 +867,277 @@ whole pass. Median of five, call microseconds and that attention:
 One decode step at the same position is 9264 µs on Qwen (attention
 2837 µs) and 5461 µs on SmolLM2 (attention 3002 µs). Zone0 was 61 °C,
 battery discharging.
+
+## Four score vectors at once (2026-10-31; `raw/dsp-profile-depth-score4-*.txt`, `raw/dsp-ppl-score4-*.txt`)
+
+`block_head` now computes four 32-position score vectors together:
+eight add chains instead of two, and each splat of q is shared by four
+loads. Each vector still adds its even and odd elements apart, then
+together, so every score is the same bits as before.
+
+Same depth profile, on battery. Qwen zone0 37 °C at the start, 48 °C
+before depth 512, 56 °C before depth 2048. Caps cpu0 2.92 GHz falling
+to 2.75 GHz, cpu7 3.07 GHz falling to 2.65 GHz. Gate/up is 2113 / 2105
+/ 2116 µs on Qwen and 571 / 568 / 571 µs on SmolLM2, flat against the
+value-loop run (2100 / 2102 / 2099 and 575 / 573 / 577).
+
+At depth 2048 the score on the busiest thread, then the average, and
+the stage around it:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 494 (was 485) | 495 (was 487) | 1589 (was 1302) | 1588 (was 1303) |
+| score + softmax | 764 (was 1338) | 718 (was 1229) | 547 (was 957) | 578 (was 989) |
+| value accumulation | 839 (was 837) | 758 (was 757) | 599 (was 599) | 609 (was 609) |
+| barriers + merge | 153 (was 154) | 275 (was 338) | 233 (was 236) | 187 (was 189) |
+
+Qwen's score drops 1338 → 764 µs and attention 2994 → 2435 µs, so the
+step goes 9.30 → 8.79 ms. SmolLM2's score drops 957 → 547 µs, but the
+DMA wait rises 1302 → 1589 µs: the shorter score no longer covers the
+copy, and attention is 3273 → 3151 µs, the step 5.57 → 5.43 ms. Value
+did not move. Depth 0 is still the prefetch path (262 / 266 µs). At
+depth 512 Qwen attention is 1110 µs (was 1292) and SmolLM2 1238 µs
+(was 1341).
+
+Perplexity is the streamed-run digits exactly: decode 27.7779 /
+19.7503, prefill 27.6890 / 19.7196. 114/114 phone tests, including
+`few_tokens_get_the_decode_logits`.
+
+## Few-token passes share each K/V block (2026-10-31; `raw/dsp-few-at-share-*.txt`, `raw/dsp-ppl-fewshare-*.txt`)
+
+A few-token pass used to call `attend_token` once per token, so each
+token DMA'd every K/V block again. Tokens at or past 256 positions now
+share one DMA of each block, copied at the length the last token needs.
+Each token still scores only its own length (`kpos` for the count,
+`kstride` for the packed row), with the same block boundaries as a
+decode step, and merges its own partials in block order. Tokens under
+256 stay on the prefetch path. Prefill does the same in groups of 8.
+Decode is still one token and does not use the shared path.
+
+`few_tokens_get_the_decode_logits` now also checks 8 tokens at
+252..259 (the stream threshold and a block boundary) and at 508..515
+(the next boundary). 114/114 phone tests. Decode perplexity is the
+same digits, 27.7779 / 19.7503, which it has to be: decode does not
+run this code. Prefill perplexity is the same digits too, 27.6890 /
+19.7196, so the shared prefill stayed.
+
+Few-token passes at depth 2048, median of five, on battery. Qwen
+zone0 58 °C before the samples, caps cpu0 2.40 GHz and cpu7 2.44 GHz.
+SmolLM2 zone0 55 °C, the same caps. The few-token path does not time
+gate/up; the decode step here is 8.73 ms on Qwen and 5.36 ms on
+SmolLM2, next to the score-loop profile's 8.79 ms and 5.43 ms
+(gate/up 2116 / 571 µs there). Call microseconds, the ratio to that
+decode step, and streamed attention on the busiest thread. The old
+column is the per-token DMA, measured hotter (zone0 61 °C, lower
+caps):
+
+| tokens | Qwen call | Qwen × | Qwen attention | SmolLM2 call | SmolLM2 × | SmolLM2 attention |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 8858 | 1.02 | 2265 (was 2828) | 5490 | 1.02 | 2906 (was 3018) |
+| 2 | 11865 | 1.36 | 3935 (was 5673) | 6736 | 1.26 | 3296 (was 6024) |
+| 4 | 19471 | 2.23 | 7268 (was 11323) | 11233 | 2.09 | 5766 (was 12050) |
+| 8 | 37232 | 4.27 | 13929 (was 22664) | 20610 | 3.84 | 10782 (was 24097) |
+
+Within this run, eight tokens of attention are 6.2× one token on Qwen
+(13929 / 2265) and 3.7× on SmolLM2 (10782 / 2906). Before the share
+both were 8.0×, one DMA per token. SmolLM2 was the copy-bound model,
+and an 8-token pass falls from 6.18× a decode step to 3.84×. The piece
+split is the one decode uses, where the busiest thread and the average
+already match; every full block does all n tokens and only the last
+block is shorter.
+
+At depth 512, same caps, Qwen zone0 52 °C and SmolLM2 46 °C. One
+decode step is 7347 µs (attention 940) on Qwen and 3467 µs (attention
+1026) on SmolLM2.
+
+| tokens | Qwen call | Qwen × | Qwen attention | SmolLM2 call | SmolLM2 × | SmolLM2 attention |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 7471 | 1.02 | 930 | 3610 | 1.04 | 1028 |
+| 2 | 9345 | 1.27 | 1481 | 4772 | 1.38 | 1385 |
+| 4 | 14682 | 2.00 | 2589 | 7496 | 2.16 | 2107 |
+| 8 | 27859 | 3.79 | 4806 | 13209 | 3.81 | 3545 |
+
+Eight tokens are 5.2× and 3.4× one token's attention.
+
+Prefill keeps the shared path. Gate/up on the short greedy prefix is
+2097 µs on Qwen (the previous prefill run was 1888 µs, a faster clock)
+and 570 µs on SmolLM2 (was 570). Through the wikitext chunks the DSP
+does 533 tok/s on Qwen (was 514) and 1055 on SmolLM2 (was 859). Qwen
+gained while its product clock was slower, so the gain is the shared
+copy, and it is the smaller one because Qwen's attention is not most
+of a prefill. Lookup on a long prompt was not run.
+
+## f16 K/V cache (2026-10-31; `raw/dsp-ppl-f16-*.txt`, `raw/dsp-tests-f16.txt`)
+
+Keys and values are IEEE f16. `qkv_post` converts on the store, both
+attention paths convert back to f32 on the load, and the state buffer
+is half as many bytes. `att_stride` is a whole number of f16 vectors
+(64 halves), plus one vector when that count is a power of two, in
+both `aether_dsp_model_load` and `DspModel::new`. Context 512 is 576
+halves. There is no f32 switch: a branch in the inner loop is not
+cheap, and a per-model switch was not added.
+
+The convert was checked on hexagon-sim before the loops were wired
+(`sim_f16_kv_convert_matches_numpy`, numpy `astype(float16)`).
+`Q6_Wsf_vcvt_Vhf` splits a vector into even lanes and odd lanes, not
+into the low and high 32. A word shuffle puts them back in order, and
+the store is the inverse deal plus `Q6_Vhf_vcvt_VsfVsf`. Rounding
+matches numpy, including the half-ulp cases, except that −0 is stored
+as +0.
+
+114/114 phone tests. Decode and the few-token pass still agree: the
+Q4_K_M few-token perplexity is the same digits as that file's decode.
+
+Perplexity against the f32-cache digits, and against llama.cpp's f16
+cache (SmolLM2 27.7412 ± 1.18, Qwen 19.7283 ± 0.84; Q4_K_M 20.7784 ±
+0.85 and 16.7657 ± 0.69). Nothing moved by more than 0.1.
+
+| | f16 decode | f32 cache | llama.cpp f16 | gate/up µs |
+| --- | --- | --- | --- | --- |
+| SmolLM2 Q4_0 | 27.7234 | 27.7779 | 27.7412 | 577 (was 571) |
+| Qwen Q4_0 | 19.7275 | 19.7503 | 19.7283 | 2109 (was 2102) |
+| SmolLM2 Q4_K_M | 20.7288 | 20.7241 | 20.7784 | 745 |
+| Qwen Q4_K_M | 16.7422 | 16.7381 | 16.7657 | 2560 |
+
+Prefill, Q4_0 only (Q4_K_M still has no HMX prefill; its multi-token
+score is the few-token pass, same digits as its decode):
+
+| | f16 prefill | f32 prefill | tok/s | was | gate/up µs |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2 Q4_0 | 27.6933 | 27.6890 | 1026 | 1055 | 573 (was 570) |
+| Qwen Q4_0 | 19.7190 | 19.7196 | 542 | 533 | 1894 (was 2097) |
+
+SmolLM2's decode gate/up is within 2% (577 vs 571) and wikitext
+throughput goes 237 → 244 tok/s. Qwen's decode gate/up is flat (2109
+vs 2102) and throughput stays 104 tok/s. The store itself costs more:
+on the 64-token greedy prefix, bias + RoPE + KV store is 283 µs on
+SmolLM2 (was 160) and 254 µs on Qwen (was 164), with those same
+gate/up numbers. SmolLM2's prefill gate/up matches and throughput
+falls 1055 → 1026 tok/s, so at a 512-token chunk the conversion is
+not paying for the shorter copy. Qwen's prefill gate/up is 1894
+against 2097, about 10% faster, so 542 against 533 tok/s is not a
+clean comparison and was not rerun.
+
+The depth profile was skipped at first: the battery was 24% at the
+start of the phone tests and 19% when the perplexity runs finished,
+under the 20% line where the clocks change. Zone0 was waited under
+40 °C before each perplexity run; it was 36 °C at the first and 40 °C
+at the last. Caps during those runs fell from cpu0 2.75 / cpu7 2.65
+GHz to 2.00 / 2.25 GHz. The Q4_0 decode comparisons above are the ones
+whose gate/up stayed put. The profile was run later the same day, on
+battery at 91%, and supersedes that skip
+(`raw/dsp-profile-depth-f16-{smol,qwen}.txt`).
+
+SmolLM2 zone0 41.5 °C at the start, 48.0 °C before depth 512, 56.1 °C
+before depth 2048. Qwen 43.4 / 54.2 / 61.1 °C. Caps stayed cpu0
+2.40 GHz and cpu7 2.44 GHz (cpu7's current frequency sat at 1.02 GHz).
+That is a lower cap than the score-loop profile's 2.75 / 2.65 GHz.
+Gate/up is the DSP check and it matches: Qwen 2107 / 2114 / 2100 µs
+against 2113 / 2105 / 2116, SmolLM2 571 / 569 / 566 µs against 571 /
+568 / 571. Depth 2048 is within 1% on both, so the split below is a
+clean comparison.
+
+At depth 2048, busiest thread then average, against the f32-cache
+score-loop split:
+
+| part | Qwen busy | Qwen avg | SmolLM2 busy | SmolLM2 avg |
+| --- | --- | --- | --- | --- |
+| DMA wait | 254 (was 494) | 253 (was 495) | 265 (was 1589) | 345 (was 1588) |
+| score + softmax | 684 (was 764) | 801 (was 718) | 677 (was 547) | 647 (was 578) |
+| value accumulation | 570 (was 839) | 716 (was 758) | 588 (was 599) | 576 (was 609) |
+| barriers + merge | 547 (was 153) | 270 (was 275) | 324 (was 233) | 272 (was 187) |
+
+SmolLM2's DMA wait falls 1589 → 265 µs on the busiest thread and
+1588 → 345 µs on average, about a sixth of the f32 wait, more than
+the halving of the bytes. Its score rises 547 → 677 µs (the f16
+convert). Attention goes 3151 → 2031 µs and the step 5.43 → 4.43 ms
+(191 tok/s wall). Qwen's DMA wait halves, 494 → 254 µs. Its average
+score rises 718 → 801 µs and its average value falls 758 → 716 µs;
+the busiest thread's cycles move into the barrier bucket (merge 153
+→ 547 µs) while the average merge stays 270 µs. Attention goes
+2435 → 2234 µs and the step 8.79 → 8.60 ms (97 tok/s wall). Qwen
+does not lose to the conversion, so there is no per-model switch.
+
+Depth 0 is still the prefetch path: attention 236 µs on Qwen (was
+262) and 227 µs on SmolLM2 (was 266). At depth 512 attention is
+953 µs on Qwen (was 1110) and 937 µs on SmolLM2 (was 1238). Qwen's
+busiest thread at 512 is the barrier thread (merge 616 µs, DMA 29
+µs); the average is DMA 114, score 227, value 187, merge 257.
+SmolLM2's depth-512 split is balanced: DMA 235 / 269, score 213 /
+182, value 162 / 151, merge 178 / 165 (busy / average).
+
+## Q4_K_M prompts on HMX (2026-10-31; `raw/dsp-ppl-hmx-q4km-*.txt`, `raw/dsp-speed-hmx-q4km-*.txt`, `raw/dsp-tests-hmx.txt`)
+
+`hmx_weight_tiles` fills the same fp16 weight tile for every format
+in a Q4_K_M file (Q5_0, Q8_0, Q4_K, Q6_K, and Q4_0). Q4_0, Q5_0 and
+Q8_0 scale in f16. Q4_K and Q6_K multiply the integer by the scale in
+f32, subtract Q4_K's offset there, and round to f16 once: an f16
+multiply flushed a small Q4_K weight to 0 (reference about 7.6e-5).
+The activation tile stays plain fp16. `prefill_thread` calls
+`hmx_rows` once per run, so a Q5_0 run and a Q8_0 run in the same
+matrix land on the right rows. `hmx_prefill` stays set for these five
+formats; anything past Q6_K would keep the 8-token HVX path. The
+last-token classifier (sessions, `all_logits` off) goes through the
+format's HVX product. Perplexity asks for every token, so that
+classifier stays on HMX.
+
+The tile values were checked on hexagon-sim before the phone
+(`sim_hmx_weight_tiles_match_gguf`): the first 64 rows of each
+quant_batch and quant_k golden, against gguf-py dequantized to f16,
+relative error under 2e-3. HMX itself does not run on the simulator.
+On the phone, 115 tests passed, including
+`q4km_hmx_prompt_matches_few_greedy` (SmolLM2 Q4_K_M, 24-token
+prompt, the HMX prompt and the 8-token path then pick the same 8
+greedy tokens). Zone0 was 37.6 °C and the battery 91% at the start
+of the tests. `dsp_ppl` does not print clock caps.
+
+Prefill perplexity, wikitext-2, 20 × 512, batch 128. The f16-cache
+decode digits are 20.7288 / 16.7422. llama.cpp's f16 cache is
+20.7784 ± 0.85 and 16.7657 ± 0.69. Nothing moved by more than 0.1.
+
+| | HMX prefill | f16 decode | llama.cpp | zone0 | gate/up µs |
+| --- | --- | --- | --- | --- | --- |
+| SmolLM2 Q4_K_M | 20.6872 ± 0.847 | 20.7288 | 20.7784 | 39.2 °C, battery 90% | 691 |
+| Qwen Q4_K_M | 16.7155 ± 0.686 | 16.7422 | 16.7657 | 39.9 °C (waited from 50.3), battery 90% | 2301 |
+
+Those gate/up times are the decode steps of the perplexity run, and
+they are faster than the f16 Q4_K_M decode runs (745 µs and 2560 µs),
+by about 7% and 10%. The scoring rates in the same runs, 1086 tok/s
+on SmolLM2 (9.4 s) and 517 tok/s on Qwen (19.8 s), sit on that faster
+clock. The earlier few-token scoring of the same chunks was 360 tok/s
+and 163 tok/s (`raw/dsp-q4km-ppl.txt`). The prompt medians printed
+inside the perplexity runs are not the speed table below.
+
+Speed is a separate `dsp_ppl` with zero chunks, median of five, DSP
+time. Gate/up here is within 1% of the f16 Q4_K_M decode figure, so
+these rows are the clean clock. Battery 90% throughout. Caps are not
+printed.
+
+| | zone0 start | gate/up µs | 32 | 64 | 128 | longer |
+| --- | --- | --- | --- | --- | --- | --- |
+| SmolLM2, batch 512 | 39.6 °C (from 41.5) | 739 (decode 745) | 973 | 1341 | 1544 | 1285 at 512 |
+| Qwen, batch 256 | 39.9 °C (from 48.8) | 2582 (decode 2560) | 311 | 502 | 696 | 799 at 256 |
+| Qwen, batch 320 | 38.0 °C | 2560 | 311 | 540 | 746 | 813 at 320 |
+
+Qwen's two runs agree at 32 tokens and on gate/up, and disagree by
+about 7% at 64 and 128. The 256-token run had just cooled from
+48.8 °C; the 320-token run started at 38.0 °C. A pass at 37.3 °C
+with gate/up 2295 µs (not a matched clock) still scored 813 tok/s at
+320 tokens; that stdout was replaced by the matched rerun. The
+published 8-token HVX prompt is 272 tok/s over 241 tokens, and the
+published Q4_0 HMX prompt is 755 tok/s over the same 241 tokens
+(step 6). Q4_0 on this same tool, 2026-10-30, was SmolLM2 1205 /
+1636 / 1608 and Qwen 376 / 596 / 778 at 32 / 64 / 128, with no
+gate/up recorded in that table. At 128 tokens SmolLM2 Q4_K_M is
+1544 against that 1608. Qwen is 696 in the warmer run and 746 in
+the cooler one, against 778. The tool does not time dequantization
+apart from the HMX product, so there is no per-format split. The
+big decode products in the matched runs are gate/up 739 µs and down
+572 µs on SmolLM2, gate/up 2560–2582 µs and down 1917–1930 µs on
+Qwen.
+
+Qwen cannot take 512 tokens in one HMX call. The activation bank is
+3 MB (`A_MAX`). The down matrix has 152 blocks of 32, and each
+row-tile is 2048 bytes, so 512 tokens is 16 row-tiles and 4.98 MB.
+320 tokens is 10 row-tiles and 3.11 MB, which fits. 321 does not.
+SmolLM2's hidden size is 1536, so 512 tokens fits (1.57 MB).
