@@ -1,0 +1,6 @@
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 23.55s
+     Running `/home/curious/Documents/hermes-projects/Aether-impl/scripts/adb-run.sh target/aarch64-linux-android/release/examples/vk_ppl testdata/gguf/smollm2-135m-q4_0.gguf 20 512 few`
+target/aarch64-linux-android/release/examples/vk_ppl: 1 file pushed, 0 skipped. 493.6 MB/s (13688976 bytes in 0.026s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1234 skipped.
+[1]14.0453,[2]21.0550,[3]20.2511,[4]20.8704,[5]21.2137,[6]21.4448,[7]22.2876,[8]23.1708,[9]24.9501,[10]25.3819,[11]25.4432,[12]25.9039,[13]26.1313,[14]27.2611,[15]27.9363,[16]28.4138,[17]26.7056,[18]27.0401,[19]27.4931,[20]27.6910,

@@ -1,0 +1,4 @@
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 3005 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 1070.9 ms: 59.8 tok/s
+Final estimate: PPL = 16.7167 +/- 0.68578  (5100 tokens scored, 196.0 s, 52.1 tok/s through the GPU, 8 tokens a pass, qx_gemv_n)

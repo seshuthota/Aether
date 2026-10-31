@@ -34,8 +34,8 @@
 // most NT), so each weight is read once for all of them: a few tokens in
 // one pass (a short prompt, speculative decoding's check) cost about one
 // decode step, where the prefill shaders' 64-token tiles would cost a
-// whole tile. Each piece is dequantized once (`deq`) and dotted with
-// every token's 32 values. Token t's x starts 8·nb vec4s after token
+// whole tile. Each token's 32 values of a piece are loaded once and
+// dotted with the piece of each of 4 rows. Token t's x starts 8·nb vec4s after token
 // t − 1's (16·nb with GLU: gate then up), and its output row `ostride`
 // floats after (0: rows). No NORM: the batched pass normalizes first.
 #extension GL_KHR_shader_subgroup_shuffle : enable
@@ -124,43 +124,6 @@ float piece(uint i, uint n, vec4 xs[8]) {
     return dd.x * float(sbyte(at + 1, 2 * j)) * s0 + dd.x * float(sbyte(at + 1, 2 * j + 1)) * s1;
 }
 
-// W's piece i dequantized: values 4k .. 4k + 3 in w[k].
-void deq(uint i, uint n, out vec4 w[8]) {
-    if (FMT == 8) {
-        uvec4 a = qs[2 * i], b = qs[2 * i + 1];
-        float d = half_d(i);
-        w = vec4[8](i8(a.x) * d, i8(a.y) * d, i8(a.z) * d, i8(a.w) * d, i8(b.x) * d, i8(b.y) * d, i8(b.z) * d, i8(b.w) * d);
-        return;
-    }
-    uvec4 q = qs[i];
-    w = vec4[8](lo(q.x), lo(q.y), lo(q.z), lo(q.w), hi(q.x), hi(q.y), hi(q.z), hi(q.w));
-    if (FMT == 2) {
-        float d = half_d(i);
-        for (uint k = 0; k < 8; k++) w[k] = (w[k] - 8.0) * d;
-        return;
-    }
-    if (FMT == 6) {
-        uint h = word(4 * n + i);
-        float d = half_d(i);
-        for (uint k = 0; k < 8; k++) w[k] = (w[k] + b1(h, 4 * k) - 16.0) * d;
-        return;
-    }
-    uint at = 5 * (i / 8), j = i % 8;
-    vec2 dd = unpackHalf2x16(sc[at]);
-    if (FMT == 12) {
-        float d1 = dd.x * float(ubyte(at + 1, j)), m1 = dd.y * float(ubyte(at + 3, j));
-        for (uint k = 0; k < 8; k++) w[k] = w[k] * d1 - m1;
-        return;
-    }
-    // FMT == 14
-    uint h0 = word(4 * n + 2 * i), h1 = word(4 * n + 2 * i + 1);
-    float s0 = dd.x * float(sbyte(at + 1, 2 * j)), s1 = dd.x * float(sbyte(at + 1, 2 * j + 1));
-    for (uint k = 0; k < 4; k++) {
-        w[k] = (w[k] + b2(h0, 4 * k) - 32.0) * s0;
-        w[k + 4] = (w[k + 4] + b2(h1, 4 * k) - 32.0) * s1;
-    }
-}
-
 // Token t's x's i-th vec4, through silu(gate) · up with GLU.
 vec4 xtok(uint t, uint i, uint nb) {
     if (!GLU) return x[t * 8 * nb + i];
@@ -168,27 +131,28 @@ vec4 xtok(uint t, uint i, uint nb) {
     return g / (1.0 + exp(-g)) * x[t * 16 * nb + 8 * nb + i];
 }
 
-// NT > 1: 4 rows × `tokens` tokens per 32 lanes. The loops run to the
-// constants 4 and NT (with guards), so the compiler unrolls them and keeps
-// acc and w in registers; runtime-sized loops indexing them put the arrays
-// in memory (4–6× slower on the Intel GPU). Each row's piece is dequantized
-// once; the tokens' values are loaded where used (from cache: 8 tokens'
-// x is at most 8 · 4864 floats).
+// NT > 1: 4 rows × `tokens` tokens per 32 lanes. For each piece, a
+// token's 32 x values are loaded once and dotted with the 4 rows'
+// pieces (`piece`, the one-token path), as one token's are there. The
+// first version dequantized each row's piece once and loaded every
+// token's x again for each row: 4× the x loads of a decode step per
+// token (and down's SwiGLU 4× over). Dequantizing the 4 rows once
+// instead (128 floats a lane) spilled, and 8 rows a lane cost more
+// registers than they saved (results/phase-l3.md, step 13).
+// The loops run to the constants 4 and NT (with guards), so the compiler
+// unrolls them and keeps acc in registers; runtime-sized loops indexing
+// it put the array in memory (4–6× slower on the Intel GPU).
 void main_tokens(uint lane, uint row0) {
     vec4 acc[NT];
     for (uint t = 0; t < NT; t++) acc[t] = vec4(0.0);
     uint nr = min(4, rows - min(rows, row0)), nt = min(tokens, NT);
     for (uint b = lane; b < nb; b += 32) {
-        for (uint r = 0; r < 4; r++) {
-            if (r < nr) {
-                vec4 w[8];
-                deq((row0 + r) * nb + b, rows * nb, w);
-                for (uint t = 0; t < NT; t++) {
-                    if (t < nt) {
-                        float s = 0.0;
-                        for (uint k = 0; k < 8; k++) s += dot(w[k], xtok(t, 8 * b + k, nb));
-                        acc[t][r] += s;
-                    }
+        for (uint t = 0; t < NT; t++) {
+            if (t < nt) {
+                vec4 xs[8];
+                for (uint k = 0; k < 8; k++) xs[k] = xtok(t, 8 * b + k, nb);
+                for (uint r = 0; r < 4; r++) {
+                    if (r < nr) acc[t][r] += piece((row0 + r) * nb + b, rows * nb, xs);
                 }
             }
         }

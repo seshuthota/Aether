@@ -352,9 +352,9 @@ pub unsafe extern "C" fn aether_open_dsp(path: *const c_char, dir: *const c_char
 /// distribution. `k` = 0 turns it off; `ngram` must be at least 1. The DSP
 /// checks up to 7 drafts in one few-token pass
 /// (`DspSession::generate_lookup`). A GPU session ignores it: on the
-/// Adreno each extra token of the few-token shader costs about a whole
-/// decode dispatch, and lookup made decoding 2.4× slower
-/// (results/phase-l3.md, step 12).
+/// Adreno each extra token of the few-token shader costs 1.4–1.9 decode
+/// dispatches, and lookup makes decoding 2.5× slower
+/// (results/phase-l3.md, step 13).
 ///
 /// # Safety
 /// `session` must come from `aether_open` and not be closed.

@@ -81,6 +81,12 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
 2. **GPU lookup that pays on the Adreno.** The few-token shader costs about a whole dispatch per
    extra token there (`results/phase-l3/raw/vk-gemv-n-adreno.txt`); a shader that shares each
    weight load across the tokens is needed before lookup is turned back on for GPU sessions.
+   Step 13 of results/phase-l3.md (2026-10-31): x is now loaded once per token for the 4
+   rows (it was loaded once per row): 8 tokens of gate/up 2947 → 1889 µs, PPL through
+   `forward_few` equal to decode's on the phone. Still 1.4–1.9 one-token dispatches per
+   extra token, because the Adreno's decode shader is limited by arithmetic (~40 GB/s), so
+   lookup is 47 against 120 tok/s plain and stays off. Next: int8 dot products
+   (`VK_KHR_shader_integer_dot_product`) with x quantized to 8 bits.
 3. **GPU prefill**: the texel-buffer path for the activations (~1.7× behind llama.cpp's OpenCL
    on long prompts; L.3).
 4. **DSP attention at long positions.** Profiled
