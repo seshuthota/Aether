@@ -437,8 +437,12 @@ mod tests {
 
     /// A GPU session through the C ABI (skipped without a Vulkan GPU or
     /// the feature), with the prompt on the GPU and on two CPU cores:
-    /// greedy output on SmolLM2-135M Q4_0 is real text, the same both ways,
-    /// and generation stops at max_tokens.
+    /// greedy output on SmolLM2-135M Q4_0 is real text, starting the same
+    /// both ways, and generation stops at max_tokens. Only the start: with
+    /// x rounded to 8 bits in decode, the prompt pass's last bits can flip
+    /// a near tie a few tokens on (on the PC's GPU, at the 5th token: "the
+    /// capital of the United States" / "of the country"); its KL against
+    /// the f32 model is llama.cpp's (results/phase-l3.md, step 24).
     #[test]
     fn c_abi_gpu_session() {
         let Some(model) = golden("gguf/smollm2-135m-q4_0.gguf") else { return };
@@ -459,7 +463,7 @@ mod tests {
                 texts.push(String::from_utf8(out).unwrap());
             }
         }
-        assert!(texts[0].contains("capital"), "{}", texts[0]);
-        assert_eq!(texts[0], texts[1]);
+        assert!(texts[0].starts_with(" the capital of the"), "{}", texts[0]);
+        assert!(texts[1].starts_with(" the capital of the"), "{}", texts[1]);
     }
 }

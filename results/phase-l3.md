@@ -1308,8 +1308,8 @@ the pass is equal to the old shader's to four decimals in f32 storage
 130 / 130 tests on the phone (`--features vulkan,hexagon`).
 
 With attention at 57 instead of 135 ms, the 512-token prompt's GPU time
-falls from ~476 to ~400 ms (−16 %, phone charging). The battery A/B
-(`scripts/opt-ab.sh prompt`, against `Options::attn_per_token`) is to do.
+falls from ~476 to ~400 ms (−16 %, phone charging); on battery, +15–22 %
+prompt speed at 512 tokens (step 24).
 This is the first piece of flash attention on the GPU; the full version
 (one pass over all positions with the online softmax, no merge, for long
 contexts) is the next topic.
@@ -1320,8 +1320,8 @@ contexts) is the next topic.
 per 32 values and int8 dot products, as the few-token pass does (step 14):
 `quant_x.comp` then `qx_gemv_q8.comp` at one token, so the RMS norm before
 q/k/v and the SwiGLU before down are no longer fused into the products
-(the classifier keeps the fused f32 product). Off by default until the
-battery A/B (`scripts/opt-ab.sh decode`).
+(the classifier keeps the fused f32 product). The default since the
+battery A/B of step 24 (`Options::decode_f32` keeps x in f32).
 
 Perplexity through the decode step, wikitext-2 20 × 512, phone (charging;
 the tok/s include the CPU's scoring and are only indicative):
@@ -1337,3 +1337,106 @@ Q4_K_M gains most: its K-quant decode was limited by arithmetic (12.3 ms
 of GPU time a token against Q4_0's 9.0, step 11), and the int8 path
 unpacks scales and weights with fewer instructions. On the PC's Intel GPU:
 +12 % (Q4_0), +36 % (Q4_K_M).
+
+## Step 24: the three changes on battery, same session (2026-11-01; `raw/opt-ab/`)
+
+`scripts/opt-ab.sh`: Qwen2.5-0.5B, phone on battery over Wi-Fi adb,
+screen kept on, every run cooled below 45 °C first, conditions at the top
+of each file; each pair or triple back to back, reversed in round 2.
+Prompt and decode ran 00:32–00:58 (battery 89 → 87 %, clock caps
+2.0–2.4 GHz). The lookup stage was cut at 01:01 by the phone's scheduled
+power-off (`sys.boot.reason` `shutdown,shutdown_from_crontab`; its 11 runs
+are in `raw/opt-ab/lookup-cut/`), and once more by wireless adb dropping
+(the script now reconnects and retries a run); all 108 runs again
+14:42–16:50 (battery 66 → 55 %, caps 2.4–2.7 GHz).
+
+**Prompt attention** (`vk_pp`, tok/s, round 1 / round 2; `attn1` is
+`attention.comp`, one workgroup per token):
+
+| | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| Q4_0, per token | 1221 / 1202 | 1350 / 1362 | 1256 / 1241 | 1068 / 1065 |
+| Q4_0, tiled | 1151 / 1173 | 1431 / 1422 | 1392 / 1372 | **1307 / 1281** |
+| Q4_K_M, per token | 827 / 818 | 1022 / 1023 | 957 / 954 | 849 / 856 |
+| Q4_K_M, tiled | 823 / 817 | 1065 / 1060 | 1031 / 1030 | **989 / 982** |
+
++20–22 % at 512 tokens for Q4_0, +15–16 % for Q4_K_M; +4–8 % at 128; at
+64 tokens (one chunk, 2 workgroups of 32 per head) the per-token shader is
+2–6 % ahead on Q4_0, even on Q4_K_M.
+
+**Decode, x in 8 bits** (`vk_decode plain`, tok/s at depth 0 / 256 / 1024):
+
+| | f32 x | int8 x |
+| --- | --- | --- |
+| Q4_0, round 1 | 100.9 / 104.2 / 90.9 | 101.2 / 100.6 / 87.0 |
+| Q4_0, round 2 | 101.0 / 107.5 / 87.4 | 102.6 / 95.9 / 85.6 |
+| Q4_K_M, round 1 | 62.1 / 62.7 / 58.5 | **86.0 / 85.6 / 76.2** |
+| Q4_K_M, round 2 | 63.7 / 61.8 / 56.3 | **102.5 / 98.6 / 68.6** |
+
+Q4_0 about the same (+2 % to −11 %, the sign changing with depth and
+round); Q4_K_M +22–60 %, as on the charger (step 23) and with the same perplexity, so int8 x is now the
+default (`Options::decode_f32`, `vk_decode … f32`, `vk_ppl … decode-f32`
+for the old path).
+
+KL divergence of the decode step against the f32 model (wikitext-2, 20 ×
+512, token by token, on the PC's Intel GPU, base on the CPU;
+`raw/vk-kld-*-decode*-intel.txt`):
+
+| | int8 x | f32 x | llama.cpp |
+| --- | --- | --- | --- |
+| SmolLM2-135M Q4_0 | 0.334478 (64.78 %) | 0.333092 (64.90 %) | 0.335355 ± 0.004256 |
+| Qwen2.5-0.5B Q4_K_M | 0.031263 (90.47 %) | 0.030086 (90.49 %) | 0.033112 ± 0.000638 |
+
+Same top token in brackets. int8 x costs 0.001 of KL, within llama.cpp's
+figure. Greedy text can still change at a near tie: `c_abi_gpu_session`
+(SmolLM2 Q4_0, prompt on the GPU against two CPU cores) now gives "the
+capital of the United States" one way and "the capital of the country"
+the other on the PC (the same both ways with f32 x, and on the phone), so
+it checks the common start. 130 / 130 tests on the phone
+(`raw/vk-tests-decode-q8-phone.txt`), 118 on the PC.
+
+**Prompt lookup, K = 4** (`aether --chat -t 0 -n 512`, the phase-6 prompts;
+decode tok/s, round 1 / round 2; adaptive is the first `DraftLen`, fixed
+`--lookup-fixed`; accepted of drafted in brackets, the same both rounds;
+the GPU with f32 x in decode):
+
+| | prompt | adaptive | fixed | plain |
+| --- | --- | --- | --- | --- |
+| CPU 2–7, Q4_0 | code | 330 / 264 (57/82) | 334 / 264 (61/84) | 179 / 173 |
+| | prose | **323 / 310** (298/378) | 301 / 240 (301/405) | 178 / 178 |
+| | story | 203 / 201 (96/177) | **243 / 242** (200/315) | 178 / 176 |
+| CPU 2–7, Q4_K_M | code | 228 / 214 | **242 / 226** | 117 / 120 |
+| | prose | 119 / 121 (12/43) | 119 / 118 (17/96) | 122 / 120 |
+| | story | 123 / 122 (16/54) | 114 / 114 (13/128) | 120 / 111 |
+| GPU, Q4_0 | code | 135 / 131 | 133 / 139 | 121 / 120 |
+| | prose | 127 / 123 (253/327) | 126 / 120 (267/372) | 119 / 119 |
+| | story | 113 / 114 (109/152) | 101 / 99 (173/388) | **120 / 119** |
+| GPU, Q4_K_M | code | 106 / 101 | **121 / 115** | 73 / 72 |
+| | prose | 68 / 60 (8/31) | 64 / 58 (10/60) | **72 / 64** |
+| | story | **68 / 59** (4/22) | 52 / 56 (32/216) | 65 / 63 |
+| DSP, Q4_0 | code | 158 / 156 | 151 / 165 | 137 / 129 |
+| | prose | 118 / 120 (34/76) | 107 / 111 (36/112) | **128 / 132** |
+| | story | 126 / 131 (151/229) | 114 / 116 (160/342) | 128 / 128 |
+| DSP, Q4_K_M | code | 145 / 146 | **157 / 160** | 98 / 97 |
+| | prose | 91 / 90 (10/34) | 87 / 87 (12/60) | **100 / 100** |
+| | story | **125 / 125** (225/272) | 116 / 116 (230/367) | 97 / 97 |
+
+(The CPU Q4_0 code cells change between rounds by 20 % for all three
+alike: the clock caps moved, the comparison within a round holds.)
+
+- Where most drafts are accepted (code; Q4_0 prose), lookup is 1.1–1.9×
+  plain everywhere. There the adaptive rule lost 4 of 61 accepted drafts
+  by shrinking after a partial acceptance, 5–14 % behind the fixed length
+  on Q4_K_M (CPU, GPU, DSP).
+- Where most are rejected, the adaptive rule stops paying for them (GPU
+  Q4_K_M story 68 against 52; DSP Q4_K_M story 125 against 116) but is
+  still a little behind plain on the GPU and DSP with prose, where a
+  failed pass costs more than a step.
+- CPU Q4_0 story: the adaptive rule backed off (up to 64 drafts skipped)
+  through passages the reply later repeats, and drafted 177 tokens to the
+  fixed length's 315: 202 against 243 tok/s.
+
+So the rule changes (`session::DraftLen`): any acceptance returns to the
+full length, and the backoff after failed 1-token drafts stops at 8. Its
+battery A/B is next (`scripts/opt-ab.sh … lookup`).
+

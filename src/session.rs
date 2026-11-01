@@ -132,16 +132,16 @@ fn lookup_draft(hist: &[usize], ngram: usize, k: usize) -> &[usize] {
 /// accepted 10 of 60 drafts and decoded at 64 against 72 tok/s plain
 /// (results/phase-l3.md, step 14). So:
 ///
-/// - every draft accepted: one more next time, up to the `k` asked for;
-/// - some accepted: one fewer than were checked, but at least one more
-///   than were accepted (shrinking to "accepted + 1" at once lost a fifth
-///   of the accepted drafts on a prompt the reply copies);
+/// - any accepted: back to the `k` asked for;
 /// - none accepted: one fewer, and once a 1-token draft fails, the next
-///   1, 2, 4, … 64 drafts are skipped (plain decoding), the wait doubling
+///   1, 2, 4 or 8 drafts are skipped (plain decoding), the wait doubling
 ///   while probes keep failing and resetting when one is accepted.
 ///
-/// Text that copies the prompt keeps the full length; text that does not
-/// falls back to plain decoding, with a probe now and then.
+/// The first version shrank after a partial acceptance (to one fewer than
+/// checked, at least one past the accepted) and waited up to 64: on the
+/// phone (results/phase-l3.md, step 24) that lost 5-14 % against the fixed
+/// length on a reply that copies the prompt, and on a story it drafted 177
+/// tokens where the fixed length drafted 315 and was 20 % faster.
 #[derive(Debug, Clone, Copy)]
 pub struct DraftLen {
     k: usize,
@@ -168,10 +168,10 @@ impl DraftLen {
     pub fn update(&mut self, drafted: usize, accepted: usize) {
         if accepted > 0 {
             self.wait = 1;
-            self.k = if accepted == drafted { self.k + 1 } else { (drafted - 1).max(accepted + 1) }.min(self.max);
+            self.k = self.max;
         } else if drafted <= 1 {
             self.skip = self.wait;
-            self.wait = (2 * self.wait).min(64);
+            self.wait = (2 * self.wait).min(8);
         } else {
             self.k = (drafted - 1).max(1);
         }
@@ -755,17 +755,17 @@ mod tests {
     use super::*;
     use crate::testutil::golden;
 
-    /// [`DraftLen`]'s rules: grow while every draft is accepted, shrink by
-    /// one (not below one past the last accepted) otherwise, back off from 1
-    /// by 1, 2, 4, … plain tokens while 1-token drafts fail, and reset on
-    /// an acceptance.
+    /// [`DraftLen`]'s rules: back to full length on any acceptance, shrink
+    /// by one when nothing is accepted,
+    /// back off from 1 by 1, 2, 4, 8, 8 plain tokens while 1-token drafts
+    /// fail, and reset on an acceptance.
     #[test]
     fn draft_length_adapts() {
         let mut l = DraftLen::new(4);
         assert_eq!(l.allow(), 4);
         l.update(4, 1);
-        assert_eq!(l.allow(), 3);
-        l.update(3, 2);
+        assert_eq!(l.allow(), 4);
+        l.update(4, 0);
         assert_eq!(l.allow(), 3);
         l.update(3, 3);
         assert_eq!(l.allow(), 4);
@@ -776,7 +776,7 @@ mod tests {
         l.update(2, 0);
         assert_eq!(l.allow(), 1);
         let mut skipped = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             l.update(1, 0);
             let mut n = 0;
             while l.allow() == 0 {
@@ -784,10 +784,10 @@ mod tests {
             }
             skipped.push(n);
         }
-        assert_eq!(skipped, [1, 2, 4, 8]);
+        assert_eq!(skipped, [1, 2, 4, 8, 8]);
         l.update(1, 1);
         l.update(1, 0);
-        assert_eq!((l.allow(), l.allow()), (0, 2));
+        assert_eq!((l.allow(), l.allow()), (0, 4));
     }
 
     /// The session reproduces llama2.c's greedy text byte for byte, and

@@ -1,0 +1,110 @@
+# 2026-11-01T14:42:38+05:30 on battery, starting
+>>> lookup-cpu-q4_0-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 134.8 ms (956.7 tok/s) | decode: 87 tokens in 263.9 ms (329.7 tok/s) | peak RSS 365496 kB 
+>>> lookup-cpu-q4_0-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 138.7 ms (930.0 tok/s) | decode: 87 tokens in 260.3 ms (334.3 tok/s) | peak RSS 364208 kB 
+>>> lookup-cpu-q4_0-code-plain-r1: prefill: 129 tokens in 133.2 ms (968.3 tok/s) | decode: 87 tokens in 486.8 ms (178.7 tok/s) | peak RSS 358436 kB 
+>>> lookup-cpu-q4_0-prose-adaptive-r1: speculative: 105 passes, 298 of 378 drafts accepted prefill: 41 tokens in 46.9 ms (874.7 tok/s) | decode: 471 tokens in 1459.8 ms (322.7 tok/s) | peak RSS 360660 kB 
+>>> lookup-cpu-q4_0-prose-fixed-r1: speculative: 102 passes, 301 of 405 drafts accepted prefill: 41 tokens in 47.6 ms (862.0 tok/s) | decode: 471 tokens in 1563.3 ms (301.3 tok/s) | peak RSS 358820 kB 
+>>> lookup-cpu-q4_0-prose-plain-r1: prefill: 41 tokens in 46.9 ms (874.2 tok/s) | decode: 471 tokens in 2653.8 ms (177.5 tok/s) | peak RSS 352776 kB 
+>>> lookup-cpu-q4_0-story-adaptive-r1: speculative: 79 passes, 96 of 177 drafts accepted prefill: 46 tokens in 52.8 ms (871.0 tok/s) | decode: 466 tokens in 2298.7 ms (202.7 tok/s) | peak RSS 359096 kB 
+>>> lookup-cpu-q4_0-story-fixed-r1: speculative: 79 passes, 200 of 315 drafts accepted prefill: 46 tokens in 52.3 ms (880.0 tok/s) | decode: 466 tokens in 1916.0 ms (243.2 tok/s) | peak RSS 358940 kB 
+>>> lookup-cpu-q4_0-story-plain-r1: prefill: 46 tokens in 52.5 ms (876.9 tok/s) | decode: 466 tokens in 2622.3 ms (177.7 tok/s) | peak RSS 352796 kB 
+>>> lookup-cpu-q4_k_m-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 246.3 ms (523.8 tok/s) | decode: 87 tokens in 382.4 ms (227.5 tok/s) | peak RSS 479632 kB 
+>>> lookup-cpu-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 164.6 ms (783.7 tok/s) | decode: 87 tokens in 359.6 ms (241.9 tok/s) | peak RSS 484588 kB 
+>>> lookup-cpu-q4_k_m-code-plain-r1: prefill: 129 tokens in 168.5 ms (765.5 tok/s) | decode: 87 tokens in 744.9 ms (116.8 tok/s) | peak RSS 478476 kB 
+>>> lookup-cpu-q4_k_m-prose-adaptive-r1: speculative: 25 passes, 12 of 43 drafts accepted prefill: 41 tokens in 123.4 ms (332.4 tok/s) | decode: 137 tokens in 1152.1 ms (118.9 tok/s) | peak RSS 477980 kB 
+>>> lookup-cpu-q4_k_m-prose-fixed-r1: speculative: 24 passes, 17 of 96 drafts accepted prefill: 41 tokens in 70.6 ms (580.7 tok/s) | decode: 137 tokens in 1148.0 ms (119.3 tok/s) | peak RSS 478364 kB 
+>>> lookup-cpu-q4_k_m-prose-plain-r1: prefill: 41 tokens in 64.0 ms (640.8 tok/s) | decode: 144 tokens in 1178.9 ms (122.1 tok/s) | peak RSS 472568 kB 
+>>> lookup-cpu-q4_k_m-story-adaptive-r1: speculative: 33 passes, 16 of 54 drafts accepted prefill: 46 tokens in 121.8 ms (377.7 tok/s) | decode: 205 tokens in 1661.4 ms (123.4 tok/s) | peak RSS 478828 kB 
+>>> lookup-cpu-q4_k_m-story-fixed-r1: speculative: 32 passes, 13 of 128 drafts accepted prefill: 46 tokens in 71.0 ms (647.5 tok/s) | decode: 206 tokens in 1806.2 ms (114.1 tok/s) | peak RSS 478916 kB 
+>>> lookup-cpu-q4_k_m-story-plain-r1: prefill: 46 tokens in 67.9 ms (677.6 tok/s) | decode: 270 tokens in 2254.8 ms (119.7 tok/s) | peak RSS 473212 kB 
+>>> lookup-gpu-q4_0-code-adaptive-r1: speculative: 25 passes, 57 of 82 prefill (on the GPU): 129 tokens in 146.3 ms (881.8 tok/s) | decode: 87 tokens in 642.3 ms (135.4 tok/s) 
+>>> lookup-gpu-q4_0-code-fixed-r1: speculative:  prefill (on the GPU): 129 tokens in 99.3 ms (1299.0 tok/s) | decode: 87 tokens in 653.0 ms (133.2 tok/s) 
+>>> lookup-gpu-q4_0-code-plain-r1: prefill (on the GPU): 129 tokens in 100.8 ms (1280.2 tok/s) | decode: 87 tokens in 721.6 ms (120.6 tok/s) 
+>>> lookup-gpu-q4_0-prose-adaptive-r1: speculative: 102 passes, 253 of 327 drafts accepted prefill (on the GPU): 41 tokens in 47.6 ms (860.7 tok/s) | decode: 471 tokens in 3707.7 ms (127.0 tok/s) 
+>>> lookup-gpu-q4_0-prose-fixed-r1: speculative: 93 passes, 267 of 372 drafts accepted prefill (on the GPU): 41 tokens in 47.7 ms (859.9 tok/s) | decode: 471 tokens in 3752.8 ms (125.5 tok/s) 
+>>> lookup-gpu-q4_0-prose-plain-r1: prefill (on the GPU): 41 tokens in 47.2 ms (868.6 tok/s) | decode: 471 tokens in 3957.7 ms (119.0 tok/s) 
+>>> lookup-gpu-q4_0-story-adaptive-r1: speculative: 51 passes, 109 of 152 drafts accepted prefill (on the GPU): 46 tokens in 48.5 ms (949.2 tok/s) | decode: 466 tokens in 4111.9 ms (113.3 tok/s) 
+>>> lookup-gpu-q4_0-story-fixed-r1: speculative: 97 passes, 173 of 388 drafts accepted prefill (on the GPU): 46 tokens in 92.4 ms (497.8 tok/s) | decode: 466 tokens in 4633.1 ms (100.6 tok/s) 
+>>> lookup-gpu-q4_0-story-plain-r1: prefill (on the GPU): 46 tokens in 107.3 ms (428.9 tok/s) | decode: 466 tokens in 3895.1 ms (119.6 tok/s) 
+>>> lookup-gpu-q4_k_m-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill (on the GPU): 129 tokens in 130.7 ms (986.7 tok/s) | decode: 87 tokens in 823.7 ms (105.6 tok/s) 
+>>> lookup-gpu-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill (on the GPU): 129 tokens in 129.3 ms (997.5 tok/s) | decode: 87 tokens in 716.8 ms (121.4 tok/s) 
+>>> lookup-gpu-q4_k_m-code-plain-r1: prefill (on the GPU): 129 tokens in 130.4 ms (989.2 tok/s) | decode: 87 tokens in 1185.8 ms (73.4 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-adaptive-r1: speculative: 16 passes, 8 of 31 drafts accepted prefill (on the GPU): 41 tokens in 66.6 ms (615.4 tok/s) | decode: 109 tokens in 1608.8 ms (67.8 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-fixed-r1: speculative: 15 passes, 10 of 60 drafts accepted prefill (on the GPU): 41 tokens in 111.8 ms (366.7 tok/s) | decode: 109 tokens in 1706.8 ms (63.9 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-plain-r1: prefill (on the GPU): 41 tokens in 68.3 ms (600.7 tok/s) | decode: 109 tokens in 1516.6 ms (71.9 tok/s) 
+>>> lookup-gpu-q4_k_m-story-adaptive-r1: speculative: 14 passes, 4 of 22 drafts accepted prefill (on the GPU): 46 tokens in 67.6 ms (680.9 tok/s) | decode: 283 tokens in 4166.9 ms (67.9 tok/s) 
+>>> lookup-gpu-q4_k_m-story-fixed-r1: speculative: 54 passes, 32 of 216 drafts accepted prefill (on the GPU): 46 tokens in 96.8 ms (475.1 tok/s) | decode: 298 tokens in 5691.4 ms (52.4 tok/s) 
+>>> lookup-gpu-q4_k_m-story-plain-r1: prefill (on the GPU): 46 tokens in 77.2 ms (596.1 tok/s) | decode: 334 tokens in 5155.7 ms (64.8 tok/s) 
+>>> lookup-dsp-q4_0-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill (DSP): 129 tokens in 211.0 ms (611.4 tok/s) | decode: 87 tokens in 552.4 ms (157.5 tok/s) 
+>>> lookup-dsp-q4_0-code-fixed-r1: speculative:  prefill (DSP): 129 tokens in 208.9 ms (617.5 tok/s) | decode: 87 tokens in 577.3 ms (150.7 tok/s) 
+>>> lookup-dsp-q4_0-code-plain-r1: prefill (DSP): 129 tokens in 207.5 ms (621.8 tok/s) | decode: 87 tokens in 635.6 ms (136.9 tok/s) 
+>>> lookup-dsp-q4_0-prose-adaptive-r1: speculative: 30 passes, 34 of 76 drafts accepted prefill (DSP): 41 tokens in 82.2 ms (498.8 tok/s) | decode: 157 tokens in 1335.0 ms (117.6 tok/s) 
+>>> lookup-dsp-q4_0-prose-fixed-r1: speculative: 28 passes, 36 of 112 drafts accepted prefill (DSP): 41 tokens in 83.9 ms (488.8 tok/s) | decode: 157 tokens in 1471.3 ms (106.7 tok/s) 
+>>> lookup-dsp-q4_0-prose-plain-r1: prefill (DSP): 41 tokens in 82.6 ms (496.5 tok/s) | decode: 157 tokens in 1224.9 ms (128.2 tok/s) 
+>>> lookup-dsp-q4_0-story-adaptive-r1: speculative: 91 passes, 151 of 229 drafts accepted prefill (DSP): 46 tokens in 89.5 ms (513.7 tok/s) | decode: 466 tokens in 3699.4 ms (126.0 tok/s) 
+>>> lookup-dsp-q4_0-story-fixed-r1: speculative: 86 passes, 160 of 342 drafts accepted prefill (DSP): 46 tokens in 87.3 ms (527.1 tok/s) | decode: 466 tokens in 4076.0 ms (114.3 tok/s) 
+>>> lookup-dsp-q4_0-story-plain-r1: prefill (DSP): 46 tokens in 86.7 ms (530.7 tok/s) | decode: 466 tokens in 3647.9 ms (127.7 tok/s) 
+>>> lookup-dsp-q4_k_m-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill (DSP): 129 tokens in 231.2 ms (558.0 tok/s) | decode: 87 tokens in 599.9 ms (145.0 tok/s) 
+>>> lookup-dsp-q4_k_m-code-fixed-r1: speculative:  prefill (DSP): 129 tokens in 235.2 ms (548.4 tok/s) | decode: 87 tokens in 554.0 ms (157.1 tok/s) 
+>>> lookup-dsp-q4_k_m-code-plain-r1: prefill (DSP): 129 tokens in 229.6 ms (561.9 tok/s) | decode: 87 tokens in 889.5 ms (97.8 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-adaptive-r1: speculative: 17 passes, 10 of 34 drafts accepted prefill (DSP): 41 tokens in 91.9 ms (446.0 tok/s) | decode: 109 tokens in 1196.8 ms (91.1 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-fixed-r1: speculative:  prefill (DSP): 41 tokens in 91.7 ms (447.1 tok/s) | decode: 109 tokens in 1259.6 ms (86.5 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-plain-r1: prefill (DSP): 41 tokens in 90.4 ms (453.4 tok/s) | decode: 109 tokens in 1093.4 ms (99.7 tok/s) 
+>>> lookup-dsp-q4_k_m-story-adaptive-r1: speculative: 92 passes, 225 of 272 drafts accepted prefill (DSP): 46 tokens in 96.6 ms (476.2 tok/s) | decode: 466 tokens in 3721.6 ms (125.2 tok/s) 
+>>> lookup-dsp-q4_k_m-story-fixed-r1: speculative: 92 passes, 230 of 367 drafts accepted prefill (DSP): 46 tokens in 96.1 ms (478.7 tok/s) | decode: 466 tokens in 4024.6 ms (115.8 tok/s) 
+>>> lookup-dsp-q4_k_m-story-plain-r1: prefill (DSP): 46 tokens in 95.3 ms (482.5 tok/s) | decode: 466 tokens in 4796.4 ms (97.2 tok/s) 
+>>> lookup-cpu-q4_0-code-plain-r2: prefill: 129 tokens in 146.3 ms (882.0 tok/s) | decode: 87 tokens in 504.0 ms (172.6 tok/s) | peak RSS 358404 kB 
+>>> lookup-cpu-q4_0-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 148.4 ms (869.0 tok/s) | decode: 87 tokens in 329.8 ms (263.8 tok/s) | peak RSS 364416 kB 
+>>> lookup-cpu-q4_0-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 153.7 ms (839.3 tok/s) | decode: 87 tokens in 330.0 ms (263.6 tok/s) | peak RSS 365452 kB 
+>>> lookup-cpu-q4_0-prose-plain-r2: prefill: 41 tokens in 137.4 ms (298.3 tok/s) | decode: 471 tokens in 2645.3 ms (178.1 tok/s) | peak RSS 352532 kB 
+>>> lookup-cpu-q4_0-prose-fixed-r2: speculative: 102 passes, 301 of 405 drafts accepted prefill: 41 tokens in 48.1 ms (851.8 tok/s) | decode: 471 tokens in 1965.8 ms (239.6 tok/s) | peak RSS 358600 kB 
+>>> lookup-cpu-q4_0-prose-adaptive-r2: speculative: 105 passes, 298 of 378 drafts accepted prefill: 41 tokens in 49.0 ms (837.3 tok/s) | decode: 471 tokens in 1519.6 ms (309.9 tok/s) | peak RSS 360660 kB 
+>>> lookup-cpu-q4_0-story-plain-r2: prefill: 46 tokens in 50.3 ms (914.3 tok/s) | decode: 466 tokens in 2651.5 ms (175.7 tok/s) | peak RSS 353168 kB 
+>>> lookup-cpu-q4_0-story-fixed-r2: speculative: 79 passes, 200 of 315 drafts accepted prefill: 46 tokens in 51.6 ms (891.7 tok/s) | decode: 466 tokens in 1922.5 ms (242.4 tok/s) | peak RSS 358744 kB 
+>>> lookup-cpu-q4_0-story-adaptive-r2: speculative: 79 passes, 96 of 177 drafts accepted prefill: 46 tokens in 52.6 ms (874.1 tok/s) | decode: 466 tokens in 2314.5 ms (201.3 tok/s) | peak RSS 358500 kB 
+>>> lookup-cpu-q4_k_m-code-plain-r2: prefill: 129 tokens in 166.6 ms (774.3 tok/s) | decode: 87 tokens in 723.3 ms (120.3 tok/s) | peak RSS 478036 kB 
+>>> lookup-cpu-q4_k_m-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 169.0 ms (763.1 tok/s) | decode: 87 tokens in 385.1 ms (225.9 tok/s) | peak RSS 484420 kB 
+>>> lookup-cpu-q4_k_m-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 169.6 ms (760.7 tok/s) | decode: 87 tokens in 406.4 ms (214.1 tok/s) | peak RSS 485576 kB 
+>>> lookup-cpu-q4_k_m-prose-plain-r2: prefill: 41 tokens in 67.0 ms (612.1 tok/s) | decode: 144 tokens in 1203.3 ms (119.7 tok/s) | peak RSS 472676 kB 
+>>> lookup-cpu-q4_k_m-prose-fixed-r2: speculative: 24 passes, 17 of 96 drafts accepted prefill: 41 tokens in 66.6 ms (615.8 tok/s) | decode: 137 tokens in 1157.9 ms (118.3 tok/s) | peak RSS 478908 kB 
+>>> lookup-cpu-q4_k_m-prose-adaptive-r2: speculative: 25 passes, 12 of 43 drafts accepted prefill: 41 tokens in 63.6 ms (645.0 tok/s) | decode: 137 tokens in 1135.1 ms (120.7 tok/s) | peak RSS 477992 kB 
+>>> lookup-cpu-q4_k_m-story-plain-r2: prefill: 46 tokens in 69.0 ms (666.9 tok/s) | decode: 270 tokens in 2426.1 ms (111.3 tok/s) | peak RSS 472424 kB 
+>>> lookup-cpu-q4_k_m-story-fixed-r2: speculative: 32 passes, 13 of 128 drafts accepted prefill: 46 tokens in 68.6 ms (670.2 tok/s) | decode: 206 tokens in 1804.7 ms (114.1 tok/s) | peak RSS 478324 kB 
+>>> lookup-cpu-q4_k_m-story-adaptive-r2: speculative: 33 passes, 16 of 54 drafts accepted prefill: 46 tokens in 68.7 ms (669.9 tok/s) | decode: 205 tokens in 1684.4 ms (121.7 tok/s) | peak RSS 478048 kB 
+>>> lookup-gpu-q4_0-code-plain-r2: prefill (on the GPU): 129 tokens in 143.5 ms (899.0 tok/s) | decode: 87 tokens in 724.2 ms (120.1 tok/s) 
+>>> lookup-gpu-q4_0-code-fixed-r2: speculative: 21 passes, 61 of 84 prefill (on the GPU): 129 tokens in 144.3 ms (894.2 tok/s) | decode: 87 tokens in 624.5 ms (139.3 tok/s) 
+>>> lookup-gpu-q4_0-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill (on the GPU): 129 tokens in 144.2 ms (894.7 tok/s) | decode: 87 tokens in 663.3 ms (131.2 tok/s) 
+>>> lookup-gpu-q4_0-prose-plain-r2: prefill (on the GPU): 41 tokens in 92.6 ms (442.9 tok/s) | decode: 471 tokens in 3954.8 ms (119.1 tok/s) 
+>>> lookup-gpu-q4_0-prose-fixed-r2: speculative: 93 prefill (on the GPU): 41 tokens in 86.7 ms (473.1 tok/s) | decode: 471 tokens in 3929.9 ms (119.8 tok/s) 
+>>> lookup-gpu-q4_0-prose-adaptive-r2: speculative: 102 passes, 253 of 327 drafts accepted prefill (on the GPU): 41 tokens in 91.4 ms (448.7 tok/s) | decode: 471 tokens in 3839.3 ms (122.7 tok/s) 
+>>> lookup-gpu-q4_0-story-plain-r2: prefill (on the GPU): 46 tokens in 93.4 ms (492.3 tok/s) | decode: 466 tokens in 3913.2 ms (119.1 tok/s) 
+>>> lookup-gpu-q4_0-story-fixed-r2: speculative: 97 passes, 173 of 388 drafts accepted prefill (on the GPU): 46 tokens in 95.5 ms (481.8 tok/s) | decode: 466 tokens in 4728.4 ms (98.6 tok/s) 
+>>> lookup-gpu-q4_0-story-adaptive-r2: speculative: 51 passes, 109 of 152 drafts accepted prefill (on the GPU): 46 tokens in 76.5 ms (601.5 tok/s) | decode: 466 tokens in 4089.1 ms (114.0 tok/s) 
+>>> lookup-gpu-q4_k_m-code-plain-r2: prefill (on the GPU): 129 tokens in 136.1 ms (948.1 tok/s) | decode: 87 tokens in 1212.4 ms (71.8 tok/s) 
+>>> lookup-gpu-q4_k_m-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill (on the GPU): 129 tokens in 203.3 ms (634.6 tok/s) | decode: 87 tokens in 759.0 ms (114.6 tok/s) 
+>>> lookup-gpu-q4_k_m-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill (on the GPU): 129 tokens in 171.1 ms (754.2 tok/s) | decode: 87 tokens in 864.6 ms (100.6 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-plain-r2: prefill (on the GPU): 41 tokens in 66.6 ms (615.7 tok/s) | decode: 109 tokens in 1700.3 ms (64.1 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-fixed-r2: speculative: 15 passes, 10 of 60 drafts accepted prefill (on the GPU): 41 tokens in 72.7 ms (563.9 tok/s) | decode: 109 tokens in 1883.0 ms (57.9 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-adaptive-r2: speculative: 16 passes, 8 of 31 drafts accepted prefill (on the GPU): 41 tokens in 116.3 ms (352.6 tok/s) | decode: 109 tokens in 1828.7 ms (59.6 tok/s) 
+>>> lookup-gpu-q4_k_m-story-plain-r2: prefill (on the GPU): 46 tokens in 117.8 ms (390.6 tok/s) | decode: 334 tokens in 5339.5 ms (62.6 tok/s) 
+>>> lookup-gpu-q4_k_m-story-fixed-r2: speculative: 54 passes, 32 of 216 drafts accepted prefill (on the GPU): 46 tokens in 129.6 ms (355.0 tok/s) | decode: 298 tokens in 5349.4 ms (55.7 tok/s) 
+>>> lookup-gpu-q4_k_m-story-adaptive-r2: speculative: 14 passes, 4 of 22 drafts accepted prefill (on the GPU): 46 tokens in 110.3 ms (417.0 tok/s) | decode: 283 tokens in 4796.8 ms (59.0 tok/s) 
+>>> lookup-dsp-q4_0-code-plain-r2: prefill (DSP): 129 tokens in 215.2 ms (599.4 tok/s) | decode: 87 tokens in 676.6 ms (128.6 tok/s) 
+>>> lookup-dsp-q4_0-code-fixed-r2: speculative:  prefill (DSP): 129 tokens in 213.2 ms (604.9 tok/s) | decode: 87 tokens in 527.9 ms (164.8 tok/s) 
+>>> lookup-dsp-q4_0-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill (DSP): 129 tokens in 210.7 ms (612.4 tok/s) | decode: 87 tokens in 557.4 ms (156.1 tok/s) 
+>>> lookup-dsp-q4_0-prose-plain-r2: prefill (DSP): 41 tokens in 82.6 ms (496.3 tok/s) | decode: 157 tokens in 1193.9 ms (131.5 tok/s) 
+>>> lookup-dsp-q4_0-prose-fixed-r2: speculative: 28 passes, 36 of 112 drafts accepted prefill (DSP): 41 tokens in 82.4 ms (497.3 tok/s) | decode: 157 tokens in 1413.5 ms (111.1 tok/s) 
+>>> lookup-dsp-q4_0-prose-adaptive-r2: speculative: 30 passes, 34 of 76 drafts accepted prefill (DSP): 41 tokens in 82.9 ms (494.3 tok/s) | decode: 157 tokens in 1309.0 ms (119.9 tok/s) 
+>>> lookup-dsp-q4_0-story-plain-r2: prefill (DSP): 46 tokens in 86.8 ms (529.9 tok/s) | decode: 466 tokens in 3649.3 ms (127.7 tok/s) 
+>>> lookup-dsp-q4_0-story-fixed-r2: speculative: 86 passes, 160 of 342 drafts accepted prefill (DSP): 46 tokens in 86.8 ms (530.1 tok/s) | decode: 466 tokens in 4011.8 ms (116.2 tok/s) 
+>>> lookup-dsp-q4_0-story-adaptive-r2: speculative: 91 passes, 151 of 229 drafts accepted prefill (DSP): 46 tokens in 87.2 ms (527.8 tok/s) | decode: 466 tokens in 3564.0 ms (130.8 tok/s) 
+>>> lookup-dsp-q4_k_m-code-plain-r2: prefill (DSP): 129 tokens in 229.7 ms (561.6 tok/s) | decode: 87 tokens in 897.0 ms (97.0 tok/s) 
+>>> lookup-dsp-q4_k_m-code-fixed-r2: speculative:  prefill (DSP): 129 tokens in 232.9 ms (554.0 tok/s) | decode: 87 tokens in 542.6 ms (160.3 tok/s) 
+>>> lookup-dsp-q4_k_m-code-adaptive-r2: speculative: 25 passes, 57 of 82 drafts accepted prefill (DSP): 129 tokens in 233.2 ms (553.2 tok/s) | decode: 87 tokens in 596.1 ms (145.9 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-plain-r2: prefill (DSP): 41 tokens in 92.1 ms (445.2 tok/s) | decode: 109 tokens in 1094.4 ms (99.6 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-fixed-r2: speculative: 15 passes, 12 of 60 drafts accepted prefill (DSP): 41 tokens in 90.9 ms (450.8 tok/s) | decode: 109 tokens in 1260.6 ms (86.5 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-adaptive-r2: speculative: 17 passes, 10 of 34 drafts accepted prefill (DSP): 41 tokens in 92.3 ms (444.1 tok/s) | decode: 109 tokens in 1214.1 ms (89.8 tok/s) 
+>>> lookup-dsp-q4_k_m-story-plain-r2: prefill (DSP): 46 tokens in 94.5 ms (486.7 tok/s) | decode: 466 tokens in 4806.2 ms (97.0 tok/s) 
+>>> lookup-dsp-q4_k_m-story-fixed-r2: speculative: 92 passes, 230 of 367 drafts accepted prefill (DSP): 46 tokens in 94.9 ms (484.9 tok/s) | decode: 466 tokens in 4016.6 ms (116.0 tok/s) 
+>>> lookup-dsp-q4_k_m-story-adaptive-r2: speculative: 92 passes, 225 of 272 drafts accepted prefill (DSP): 46 tokens in 96.9 ms (474.9 tok/s) | decode: 466 tokens in 3732.7 ms (124.8 tok/s) 
+# done 2026-11-01T16:50:58+05:30

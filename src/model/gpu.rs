@@ -260,12 +260,14 @@ pub struct Options {
     /// The few-token pass with the f32 shader (`qx_gemv_n`) even where
     /// the int8 one ([`Q8`]) could run.
     pub few_f32: bool,
-    /// The decode step's layer products with x in 8 bits and int8 dot
-    /// products as well ([`Q8`] at one token), where the GPU has them: the
-    /// RMS norm before q/k/v and the SwiGLU before down become their own
-    /// dispatches. On the Adreno the int8 kernel for one token was 10 %
-    /// faster on gate/up (results/phase-l3.md, step 14).
-    pub decode_q8: bool,
+    /// The decode step's layer products with x in f32 (`qx_gemv`), instead
+    /// of x in 8 bits and int8 dot products ([`Q8`] at one token), where the
+    /// GPU has them; with those the RMS norm before q/k/v and the SwiGLU
+    /// before down are their own dispatches. On the Adreno, on battery, int8
+    /// decoded Qwen2.5-0.5B Q4_K_M at 86-102 tok/s against 62-64, Q4_0 at
+    /// the same speed, with the same perplexity (results/phase-l3.md, steps
+    /// 23-24).
+    pub decode_f32: bool,
     /// A prompt's attention with one workgroup per token
     /// (`attention.comp`, as decode) instead of `attention_tile.comp`
     /// (A/B timing only).
@@ -279,7 +281,7 @@ pub struct Options {
 /// step 14).
 struct Q8 {
     /// Kernel sizes in tokens, 2 to [`FEW`] (and 1 with
-    /// [`Options::decode_q8`]): a pass of n tokens takes the
+    /// unless [`Options::decode_f32`]): a pass of n tokens takes the
     /// first that holds n. One kernel per size: on the Adreno 5 tokens
     /// through the 8-token kernel cost 3.4 decode steps against 2.1 for
     /// 4 through the 4-token one (results/phase-l3.md, step 14).
@@ -587,7 +589,7 @@ impl GpuModel {
         // The int8 few-token products ([`Q8`]), by format, accumulation and
         // size, all reading `xq`.
         let q8_few = gpu.info.int_dot && !opt.few_f32 && few >= 2;
-        let decode_q8 = gpu.info.int_dot && opt.decode_q8;
+        let decode_q8 = gpu.info.int_dot && !opt.decode_f32;
         let q8_sizes: Vec<usize> = (if decode_q8 { 1 } else { 2 }..=if q8_few { few } else { 1 }).collect();
         let xq = gpu.buffer(few * dim.max(hid) / 32 * 48)?;
         let mut q8_ks: Vec<((u32, bool, usize), Kernel)> = Vec::new();

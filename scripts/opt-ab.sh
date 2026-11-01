@@ -5,8 +5,8 @@
 #
 #   prompt  GPU prompt attention: attention_tile.comp against one workgroup
 #           per token (`vk_pp` against `vk_pp attn1`), Qwen2.5 Q4_0 and Q4_K_M
-#   decode  GPU decode: layer products with x in 8 bits (`vk_decode plain q8`)
-#           against f32 x (`vk_decode plain`)
+#   decode  GPU decode: layer products with x in 8 bits (`vk_decode plain`, the
+#           default since step 24) against f32 x (`vk_decode plain f32`)
 #   lookup  prompt lookup K = 4, adaptive (session::DraftLen) against fixed
 #           (--lookup-fixed) against plain decoding, on the CPU (cores 2-7),
 #           the GPU and the DSP, the phase-6 prompts (code copies the
@@ -26,6 +26,19 @@ QWEN=testdata/gguf/qwen2.5-0.5b
 PROMPTS=results/phase-6/raw/lookup
 FEAT=vulkan,hexagon
 
+# Wireless adb drops now and then while the phone stays up (2026-11-01,
+# twice in a night): reconnect to the address the phone advertises and carry
+# on. The serial (ip:port) goes to $OUT/.serial for the keep-awake loop.
+reconnect() {
+  until timeout 15 adb shell true >/dev/null 2>&1; do
+    echo "# $(date -Iseconds) adb lost, reconnecting"
+    local a
+    a=$(adb mdns services | awk '/_adb-tls-connect/ {print $3; exit}')
+    if [ -n "$a" ]; then adb connect "$a" >/dev/null 2>&1 || true; export ANDROID_SERIAL=$a; fi
+    sleep 15
+  done
+  echo "${ANDROID_SERIAL:-}" > "$OUT/.serial"
+}
 wait_cool() {
   while :; do
     local max
@@ -42,20 +55,24 @@ conditions() {
 }
 run() { # name, cargo run args...
   local name=$1; shift
-  wait_cool; adb shell input keyevent KEYCODE_WAKEUP
-  { conditions; cargo run -q --release --target aarch64-linux-android --features $FEAT "$@" 2>&1 | grep -v pushed || echo "FAILED"; } > "$OUT/$name.txt"
+  for try in 1 2 3; do
+    reconnect; wait_cool; adb shell input keyevent KEYCODE_WAKEUP
+    { conditions; cargo run -q --release --target aarch64-linux-android --features $FEAT "$@" 2>&1 | grep -v pushed || echo "FAILED"; } > "$OUT/$name.txt"
+    grep -q -E 'FAILED|device .* not found|no devices' "$OUT/$name.txt" || break
+  done
   echo ">>> $name: $(grep -E '^pp[0-9]|tok/s|speculative' "$OUT/$name.txt" | tr '\n' ' ' | cut -c1-300)"
 }
 # Reverses the arguments on even rounds.
 order() { if [ $(($1 % 2)) = 1 ]; then shift; echo "$@"; else shift; echo "$@" | tr ' ' '\n' | tac | tr '\n' ' '; fi; }
 
+reconnect
 # Battery numbers only: wait until the phone is off the charger.
 until adb shell dumpsys battery | grep -q -E 'AC powered: false' && ! adb shell dumpsys battery | grep -q -E '(USB|Wireless) powered: true'; do
   echo "# $(date -Iseconds) waiting for the phone to be unplugged"; sleep 60
 done
 echo "# $(date -Iseconds) on battery, starting"
 adb shell input keyevent KEYCODE_WAKEUP
-( while :; do sleep 60; adb shell taskset 1 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
+( while :; do sleep 60; ANDROID_SERIAL=$(cat "$OUT/.serial") adb shell taskset 1 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
 KEEPALIVE=$!; trap 'kill $KEEPALIVE 2>/dev/null' EXIT
 cargo build -q --release --target aarch64-linux-android --features $FEAT --bin aether --example vk_pp --example vk_decode
 
@@ -67,7 +84,7 @@ prompt)
   done; done; done ;;
 decode)
   for r in $(seq 1 "$ROUNDS"); do for q in q4_0 q4_k_m; do for v in $(order $r q8 f32); do
-    a=; [ $v = q8 ] && a=q8
+    a=; [ $v = f32 ] && a=f32
     run "decode-$q-$v-r$r" --example vk_decode -- $QWEN-$q.gguf plain $a
   done; done; done ;;
 lookup)
