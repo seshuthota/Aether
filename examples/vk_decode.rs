@@ -3,7 +3,10 @@
 //! the wall time per token around it (submit + wait + the CPU's part).
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_decode -- \
-//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf [plain|split|queued|qprofile|spin|sustain SECONDS [spin]]
+//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf [plain|split|queued|qprofile|spin|sustain SECONDS [spin]] [f32]
+//!
+//! `f32` (anywhere after the model): the layer products with x in f32
+//! (`Options::decode_f32`) instead of 8 bits and int8 dot products.
 //!
 //! `queued`: 8 forward passes per submit (timing only), as a GPU that
 //! never waits for the CPU would run.
@@ -17,7 +20,7 @@
 //! power, so the two can be compared token for token and joule for joule.
 
 use aether::kernels::vulkan::Gpu;
-use aether::model::gpu::GpuModel;
+use aether::model::gpu::{GpuModel, Options};
 use aether::monitor::Monitor;
 use std::time::{Duration, Instant};
 
@@ -25,7 +28,8 @@ fn main() {
     let path = std::env::args().nth(1).expect("usage: vk_decode MODEL.gguf [plain|sleep]");
     // plain: no timestamps, only wall time (the timestamps cost ~2 ms per
     // token); spin: also poll the fence instead of sleeping on it.
-    let mode = std::env::args().nth(2).unwrap_or_default();
+    let decode_f32 = std::env::args().skip(2).any(|a| a == "f32");
+    let mode = std::env::args().nth(2).filter(|a| a != "f32").unwrap_or_default();
     let depths = [0usize, 256, 1024];
     let (config, weights, _) = aether::model::gguf::load(&path, depths[2] + 64).unwrap();
     let gpu = Gpu::new().unwrap();
@@ -34,9 +38,9 @@ fn main() {
     // qprofile: the same with the per-stage profile.
     let repeat = if mode == "queued" || mode == "qprofile" { 8 } else { 1 };
     let profiled = mode.is_empty() || mode == "qprofile";
-    let mut m = GpuModel::with_repeat(&gpu, config, weights, profiled, repeat).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { profile: profiled, repeat, decode_f32, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
     m.spin = mode == "spin" || std::env::args().nth(4).is_some_and(|a| a == "spin");
-    println!("# {path} on {} | {} | fence: {}", gpu.info.name, if mode.is_empty() { "profiled" } else { &mode }, if m.spin { "polled" } else { "slept on" });
+    println!("# {path} on {} | {} | fence: {} | x for the products: {}", gpu.info.name, if mode.is_empty() { "profiled" } else { &mode }, if m.spin { "polled" } else { "slept on" }, if decode_f32 { "f32" } else { "int8 where the GPU has it" });
     if mode == "sustain" {
         let secs: u64 = std::env::args().nth(3).map_or(120, |v| v.parse().unwrap());
         let monitor = Monitor::start(Duration::from_millis(500), None).unwrap();

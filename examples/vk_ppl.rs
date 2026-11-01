@@ -5,7 +5,7 @@
 //! prints a greedy continuation and the decode speed.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_ppl -- \
-//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f16|batch-f32|few|few-f32] [BASE.gguf]
+//!       testdata/gguf/smollm2-135m-q4_0.gguf [CHUNKS] [CTX] [batch|batch-f16|batch-f32|few|few-f32|decode-f32] [BASE.gguf]
 //!
 //! `batch`: score each chunk through `GpuModel::forward_batch` (the prompt
 //! path: matrix-matrix products, up to `batch` tokens per pass) instead of
@@ -13,6 +13,10 @@
 //! fp16 arithmetic, with `batch-f32` the f32 shaders (the shader used is
 //! printed). A Q4_0 file's products are int8 (`q4_0_gemm_q8`) where the
 //! GPU has int8 dot products; `batch-f16` keeps the f16 ones.
+//!
+//! `decode-f32`: token by token through the decode step with
+//! `Options::decode_f32` (x in f32; by default it is in 8 bits, with int8
+//! dot products, where the GPU has them).
 //!
 //! `few`: score each chunk `GpuModel::few` tokens at a time through
 //! `GpuModel::forward_few` (the decode shader for several tokens, as
@@ -47,7 +51,7 @@ fn main() {
     let (config, weights, _) = aether::model::gguf::load(&path, ctx).unwrap();
     let gpu = Gpu::new().unwrap();
     let t0 = Instant::now();
-    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, f32_gemm, f16_gemm, few_f32, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let mut m = GpuModel::with(&gpu, config, weights, Options { all_logits: batched, f32_gemm, f16_gemm, few_f32, decode_f32: mode == "decode-f32", ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
     let vocab = m.config.vocab_size;
     println!("# {} on {} | upload + record {:.0} ms", path.display(), gpu.info.name, t0.elapsed().as_secs_f64() * 1e3);
 

@@ -126,9 +126,64 @@ fn lookup_draft(hist: &[usize], ngram: usize, k: usize) -> &[usize] {
     &[]
 }
 
+/// How many of a proposed draft to check, adapted to how the last passes
+/// went. A pass whose drafts are all rejected costs more than a decode step
+/// and yields the same one token: on prose a Q4_K_M model on the GPU
+/// accepted 10 of 60 drafts and decoded at 64 against 72 tok/s plain
+/// (results/phase-l3.md, step 14). So:
+///
+/// - any accepted: back to the `k` asked for;
+/// - none accepted: one fewer, and once a 1-token draft fails, the next
+///   1, 2, 4 or 8 drafts are skipped (plain decoding), the wait doubling
+///   while probes keep failing and resetting when one is accepted.
+///
+/// The first version shrank after a partial acceptance (to one fewer than
+/// checked, at least one past the accepted) and waited up to 64: on the
+/// phone (results/phase-l3.md, step 24) that lost 5-14 % against the fixed
+/// length on a reply that copies the prompt, and on a story it drafted 177
+/// tokens where the fixed length drafted 315 and was 20 % faster.
+#[derive(Debug, Clone, Copy)]
+pub struct DraftLen {
+    k: usize,
+    max: usize,
+    skip: usize,
+    wait: usize,
+}
+
+impl DraftLen {
+    pub fn new(max: usize) -> DraftLen {
+        DraftLen { k: max, max, skip: 0, wait: 1 }
+    }
+
+    /// The draft length to check now; 0 means decode this token plainly.
+    pub fn allow(&mut self) -> usize {
+        if self.skip > 0 {
+            self.skip -= 1;
+            return 0;
+        }
+        self.k
+    }
+
+    /// After a pass that checked `drafted` tokens and accepted `accepted`.
+    pub fn update(&mut self, drafted: usize, accepted: usize) {
+        if accepted > 0 {
+            self.wait = 1;
+            self.k = self.max;
+        } else if drafted <= 1 {
+            self.skip = self.wait;
+            self.wait = (2 * self.wait).min(8);
+        } else {
+            self.k = (drafted - 1).max(1);
+        }
+    }
+}
+
 pub struct Session {
     pub model: Transformer,
     pub text: Text,
+    /// Lookup and draft-model decoding check the `k` tokens asked for every
+    /// time, instead of adapting the length ([`DraftLen`]).
+    pub lookup_fixed: bool,
 }
 
 impl Session {
@@ -167,7 +222,7 @@ impl Session {
             // One thread per core; the calling thread becomes the first.
             model.set_pool(ThreadPool::new(cores)?);
         }
-        Ok(Session { model, text })
+        Ok(Session { model, text, lookup_fixed: false })
     }
 
     /// Generates from `prompt` for at most `steps` positions (prompt
@@ -238,7 +293,7 @@ impl Session {
     /// (results/phase-6.md, "Prompt lookup decoding"), so a greedy run can
     /// fork from plain greedy decoding where two tokens are that close.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
-        self.generate_speculative(prompt, sampler, steps, |_, hist, max| lookup_draft(hist, ngram, k.min(max)).to_vec(), emit)
+        self.generate_speculative(prompt, sampler, steps, k, |_, hist, max| lookup_draft(hist, ngram, k.min(max)).to_vec(), emit)
     }
 
     /// Speculative decoding with a small draft model of the same family
@@ -264,19 +319,22 @@ impl Session {
             draft.fed.extend_from_slice(&tokens[..np - 1]);
         }
         let ahead = t0.elapsed();
-        let (mut stats, look) = self.generate_speculative(prompt, sampler, steps, |target, hist, max| draft.propose(target, hist, k.min(max)), emit);
+        let (mut stats, look) = self.generate_speculative(prompt, sampler, steps, k, |target, hist, max| draft.propose(target, hist, k.min(max)), emit);
         stats.prefill += ahead;
         (stats, look)
     }
 
     /// The loop shared by lookup and draft-model decoding. `propose(target,
     /// hist, max)` returns at most `max` draft tokens to follow `hist` (all
-    /// certain tokens so far); the target model is passed so a draft model
-    /// can borrow its thread pool.
-    fn generate_speculative(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut propose: impl FnMut(&mut Transformer, &[usize], usize) -> Vec<usize>, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+    /// certain tokens so far; `max` is at most `k`, less as [`DraftLen`]
+    /// adapts it); the target model is passed so a draft model can borrow
+    /// its thread pool.
+    #[allow(clippy::too_many_arguments)]
+    fn generate_speculative(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, mut propose: impl FnMut(&mut Transformer, &[usize], usize) -> Vec<usize>, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
         let steps = steps.min(self.model.config.seq_len);
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let mut len = DraftLen::new(k);
         let np = hist.len().min(steps);
         let t0 = Instant::now();
         let mut next = sampler.sample(&mut self.model.forward_batch(&hist[..np], 0).to_vec());
@@ -292,7 +350,8 @@ impl Session {
                     break;
                 }
                 hist.push(next);
-                let draft = propose(&mut self.model, &hist, steps - pos - 1);
+                let allow = if self.lookup_fixed { k } else { len.allow() };
+                let draft = if allow == 0 { Vec::new() } else { propose(&mut self.model, &hist, (steps - pos - 1).min(allow)) };
                 if draft.is_empty() {
                     next = sampler.sample(&mut self.model.forward(next, pos).to_vec());
                     pos += 1;
@@ -305,9 +364,10 @@ impl Session {
                 pos += 1;
                 // Row r follows input[r]; draft[r] = input[r + 1].
                 let mut rows = rows.chunks_exact_mut(vocab);
-                for &d in &draft {
+                for (i, &d) in draft.iter().enumerate() {
                     let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
                     if !accepted {
+                        len.update(draft.len(), i);
                         next = t;
                         continue 'tokens;
                     }
@@ -319,6 +379,7 @@ impl Session {
                     pos += 1;
                 }
                 // Every draft accepted: the last row gives the next token.
+                len.update(draft.len(), draft.len());
                 next = sampler.sample(rows.next().unwrap());
             }
         }
@@ -381,6 +442,8 @@ pub struct GpuSession {
     /// With [`GpuSession::open_hybrid`]: the CPU model that runs the
     /// prompt (batched), whose KV cache is then copied to the GPU.
     pub cpu: Option<Transformer>,
+    /// As [`Session::lookup_fixed`].
+    pub lookup_fixed: bool,
 }
 
 #[cfg(feature = "vulkan")]
@@ -394,7 +457,7 @@ impl GpuSession {
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
         let model = crate::model::gpu::GpuModel::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
-        Ok(GpuSession { model, gpu, text, cpu: None })
+        Ok(GpuSession { model, gpu, text, cpu: None, lookup_fixed: false })
     }
 
     /// [`GpuSession::open`] plus a CPU copy of the model on `cores` for the
@@ -480,6 +543,7 @@ impl GpuSession {
         let k = k.min(self.model.few.saturating_sub(1));
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let mut len = DraftLen::new(k);
         let np = hist.len().min(steps);
         let t0 = Instant::now();
         let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
@@ -495,7 +559,8 @@ impl GpuSession {
                     break;
                 }
                 hist.push(next);
-                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                let allow = if self.lookup_fixed { k } else { len.allow() };
+                let draft = lookup_draft(&hist, ngram, allow.min(steps - pos - 1)).to_vec();
                 if draft.is_empty() {
                     next = sampler.sample(&mut self.model.forward(&self.gpu, next, pos).expect("GPU step").to_vec());
                     pos += 1;
@@ -508,9 +573,10 @@ impl GpuSession {
                 pos += 1;
                 // Row r follows input[r]; draft[r] = input[r + 1].
                 let mut rows = rows.chunks_exact_mut(vocab);
-                for &d in &draft {
+                for (i, &d) in draft.iter().enumerate() {
                     let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
                     if !accepted {
+                        len.update(draft.len(), i);
                         next = t;
                         continue 'tokens;
                     }
@@ -522,6 +588,7 @@ impl GpuSession {
                     pos += 1;
                 }
                 // Every draft accepted: the last row gives the next token.
+                len.update(draft.len(), draft.len());
                 next = sampler.sample(rows.next().unwrap());
             }
         }
@@ -543,6 +610,8 @@ pub struct DspSession {
     pub model: crate::model::dsp::DspModel,
     pub dsp: crate::kernels::hexagon::Dsp,
     pub text: Text,
+    /// As [`Session::lookup_fixed`].
+    pub lookup_fixed: bool,
 }
 
 #[cfg(feature = "hexagon")]
@@ -560,7 +629,7 @@ impl DspSession {
         let dsp = crate::kernels::hexagon::Dsp::open(dir).map_err(io::Error::other)?;
         let batch = Self::BATCH.min(config.seq_len);
         let model = crate::model::dsp::DspModel::new(&dsp, config, weights, threads, batch, false).map_err(io::Error::other)?;
-        Ok(DspSession { model, dsp, text })
+        Ok(DspSession { model, dsp, text, lookup_fixed: false })
     }
 
     /// As [`Session::generate`] without echoing the prompt.
@@ -626,6 +695,7 @@ impl DspSession {
         let k = k.min(crate::kernels::hexagon::MAX_FEW - 1);
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
+        let mut len = DraftLen::new(k);
         let np = hist.len().min(steps);
         let t0 = Instant::now();
         let mut next = sampler.sample(&mut self.prompt(&hist[..np]));
@@ -641,7 +711,8 @@ impl DspSession {
                     break;
                 }
                 hist.push(next);
-                let draft = lookup_draft(&hist, ngram, k.min(steps - pos - 1)).to_vec();
+                let allow = if self.lookup_fixed { k } else { len.allow() };
+                let draft = lookup_draft(&hist, ngram, allow.min(steps - pos - 1)).to_vec();
                 if draft.is_empty() {
                     next = sampler.sample(&mut self.model.forward(&self.dsp, next, pos).expect("DSP step").to_vec());
                     pos += 1;
@@ -654,9 +725,10 @@ impl DspSession {
                 pos += 1;
                 // Row r follows input[r]; draft[r] = input[r + 1].
                 let mut rows = rows.chunks_exact_mut(vocab);
-                for &d in &draft {
+                for (i, &d) in draft.iter().enumerate() {
                     let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
                     if !accepted {
+                        len.update(draft.len(), i);
                         next = t;
                         continue 'tokens;
                     }
@@ -668,6 +740,7 @@ impl DspSession {
                     pos += 1;
                 }
                 // Every draft accepted: the last row gives the next token.
+                len.update(draft.len(), draft.len());
                 next = sampler.sample(rows.next().unwrap());
             }
         }
@@ -681,6 +754,41 @@ impl DspSession {
 mod tests {
     use super::*;
     use crate::testutil::golden;
+
+    /// [`DraftLen`]'s rules: back to full length on any acceptance, shrink
+    /// by one when nothing is accepted,
+    /// back off from 1 by 1, 2, 4, 8, 8 plain tokens while 1-token drafts
+    /// fail, and reset on an acceptance.
+    #[test]
+    fn draft_length_adapts() {
+        let mut l = DraftLen::new(4);
+        assert_eq!(l.allow(), 4);
+        l.update(4, 1);
+        assert_eq!(l.allow(), 4);
+        l.update(4, 0);
+        assert_eq!(l.allow(), 3);
+        l.update(3, 3);
+        assert_eq!(l.allow(), 4);
+        l.update(4, 0);
+        assert_eq!(l.allow(), 3);
+        l.update(3, 0);
+        assert_eq!(l.allow(), 2);
+        l.update(2, 0);
+        assert_eq!(l.allow(), 1);
+        let mut skipped = Vec::new();
+        for _ in 0..5 {
+            l.update(1, 0);
+            let mut n = 0;
+            while l.allow() == 0 {
+                n += 1;
+            }
+            skipped.push(n);
+        }
+        assert_eq!(skipped, [1, 2, 4, 8, 8]);
+        l.update(1, 1);
+        l.update(1, 0);
+        assert_eq!((l.allow(), l.allow()), (0, 4));
+    }
 
     /// The session reproduces llama2.c's greedy text byte for byte, and
     /// stops early when `emit` says so.

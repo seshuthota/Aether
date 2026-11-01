@@ -1,0 +1,14 @@
+# 2026-11-01T00:44:14+05:30, commit 442de3b
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 88
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | plain | fence: slept on | x for the products: f32
+depth 0: 16.11 ms per token wall (62.1 tok/s)
+depth 256: 15.95 ms per token wall (62.7 tok/s)
+depth 1024: 17.09 ms per token wall (58.5 tok/s)

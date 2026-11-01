@@ -1,0 +1,6 @@
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 5191 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 1459.0 ms: 43.9 tok/s
+Final estimate: PPL = 16.7581 +/- 0.68794  (5100 tokens scored, 208.6 s, 49.0 tok/s through the GPU, batches of 128, qx_gemm_q8)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.029719
+Mean KLD: 0.031558   Same top p: 90.333 %   (time and tok/s include the base model on the CPU)

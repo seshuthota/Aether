@@ -1,0 +1,7 @@
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-Aether/c077017d-8f97-433b-8f3e-172808a90489/scratchpad/vk_ppl_q8: 1 file pushed, 0 skipped. 301.5 MB/s (14315784 bytes in 0.045s)
+scripts/../testdata/./: 0 files pushed, 1246 skipped.
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 1718 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 741.0 ms: 86.4 tok/s
+[1]10.6248,[2]14.7416,[3]15.4776,[4]15.8381,[5]16.2038,[6]16.8820,[7]17.1645,[8]18.5322,[9]19.8083,[10]20.5345,[11]21.0430,[12]21.0325,[13]21.9446,[14]21.3051,[15]21.1172,[16]21.7076,[17]20.0686,[18]20.0324,[19]19.8012,[Final estimate: PPL = 19.7367 +/- 0.83615  (5100 tokens scored, 126.4 s, 80.9 tok/s through the GPU)
+20]19.7367,

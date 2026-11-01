@@ -118,6 +118,14 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    at pp256, 3–11 % behind at pp512; Q4_K_M 4–5× (no Adreno Q4_K kernel there).
    Open: our prompt speed falls 20 % from 128 to 512 tokens (attention over the cache,
    not yet profiled at those positions); int8 for decode.
+   Steps 22–24 (2026-11-01, results/phase-l3.md): the prompt's attention 32 tokens a
+   workgroup with K/V as f16 in shared memory and an online softmax (`attention_tile.comp`):
+   +15–22 % prompt speed at 512 tokens on battery, KL within llama.cpp's error bar. Decode
+   products with x in 8 bits, now the default: Qwen Q4_K_M +22–60 %, Q4_0 unchanged, PPL
+   unchanged. Prompt lookup's draft length adapts (`session::DraftLen`); after the battery
+   A/B the rule returns to full length on any acceptance and backs off at most 8 drafts.
+   Its A/B on battery is open. Next topic: flash attention for long contexts (one pass,
+   no merge), then other model architectures.
 4. **DSP attention at long positions.** Profiled
    (`dsp_ppl … depth 0,512,2048`, results/phase-l5.md): the whole slowdown
    is the attention stage (Qwen 0.26 → 3.46 → 17.14 ms at depths 0 / 512 /

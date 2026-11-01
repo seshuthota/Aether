@@ -1,0 +1,29 @@
+# 2026-11-01T00:32:20+05:30 on battery, starting
+>>> prompt-q4_0-tile-r1: pp64,1151.1,55.6 pp128,1430.9,89.5 pp256,1392.4,183.9 pp512,1307.4,391.6 
+>>> prompt-q4_0-attn1-r1: pp64,1221.1,52.4 pp128,1350.2,94.8 pp256,1255.6,203.9 pp512,1068.3,479.3 
+>>> prompt-q4_k_m-tile-r1: pp64,822.5,77.8 pp128,1064.5,120.2 pp256,1030.7,248.4 pp512,989.3,517.5 
+>>> prompt-q4_k_m-attn1-r1: pp64,826.8,77.4 pp128,1022.3,125.2 pp256,957.1,267.5 pp512,849.4,602.8 
+>>> prompt-q4_0-attn1-r2: pp64,1201.8,53.3 pp128,1361.9,94.0 pp256,1240.8,206.3 pp512,1065.4,480.6 
+>>> prompt-q4_0-tile-r2: pp64,1172.5,54.6 pp128,1421.5,90.0 pp256,1371.7,186.6 pp512,1281.4,399.6 
+>>> prompt-q4_k_m-attn1-r2: pp64,817.7,78.3 pp128,1023.0,125.1 pp256,954.3,268.3 pp512,855.6,598.4 
+>>> prompt-q4_k_m-tile-r2: pp64,817.1,78.3 pp128,1059.7,120.8 pp256,1030.4,248.4 pp512,982.3,521.3 
+>>> decode-q4_0-q8-r1: depth 0: 9.88 ms per token wall (101.2 tok/s) depth 256: 9.94 ms per token wall (100.6 tok/s) depth 1024: 11.49 ms per token wall (87.0 tok/s) 
+>>> decode-q4_0-f32-r1: depth 0: 9.92 ms per token wall (100.9 tok/s) depth 256: 9.60 ms per token wall (104.2 tok/s) depth 1024: 11.00 ms per token wall (90.9 tok/s) 
+>>> decode-q4_k_m-q8-r1: depth 0: 11.62 ms per token wall (86.0 tok/s) depth 256: 11.68 ms per token wall (85.6 tok/s) depth 1024: 13.12 ms per token wall (76.2 tok/s) 
+>>> decode-q4_k_m-f32-r1: depth 0: 16.11 ms per token wall (62.1 tok/s) depth 256: 15.95 ms per token wall (62.7 tok/s) depth 1024: 17.09 ms per token wall (58.5 tok/s) 
+>>> decode-q4_0-f32-r2: depth 0: 9.90 ms per token wall (101.0 tok/s) depth 256: 9.30 ms per token wall (107.5 tok/s) depth 1024: 11.45 ms per token wall (87.4 tok/s) 
+>>> decode-q4_0-q8-r2: depth 0: 9.74 ms per token wall (102.6 tok/s) depth 256: 10.42 ms per token wall (95.9 tok/s) depth 1024: 11.69 ms per token wall (85.6 tok/s) 
+>>> decode-q4_k_m-f32-r2: depth 0: 15.69 ms per token wall (63.7 tok/s) depth 256: 16.18 ms per token wall (61.8 tok/s) depth 1024: 17.76 ms per token wall (56.3 tok/s) 
+>>> decode-q4_k_m-q8-r2: depth 0: 9.76 ms per token wall (102.5 tok/s) depth 256: 10.14 ms per token wall (98.6 tok/s) depth 1024: 14.58 ms per token wall (68.6 tok/s) 
+>>> lookup-cpu-q4_0-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 148.2 ms (870.7 tok/s) | decode: 87 tokens in 284.1 ms (306.2 tok/s) | peak RSS 365808 kB 
+>>> lookup-cpu-q4_0-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 211.8 ms (609.2 tok/s) | decode: 87 tokens in 287.7 ms (302.4 tok/s) | peak RSS 364296 kB 
+>>> lookup-cpu-q4_0-code-plain-r1: prefill: 129 tokens in 147.1 ms (877.1 tok/s) | decode: 87 tokens in 528.0 ms (164.8 tok/s) | peak RSS 358448 kB 
+>>> lookup-cpu-q4_0-prose-adaptive-r1: speculative: 105 passes, 298 of 378 drafts accepted prefill: 41 tokens in 51.6 ms (795.0 tok/s) | decode: 471 tokens in 1526.6 ms (308.5 tok/s) | peak RSS 361252 kB 
+>>> lookup-cpu-q4_0-prose-fixed-r1: speculative: 102 passes, 301 of 405 drafts accepted prefill: 41 tokens in 52.2 ms (785.5 tok/s) | decode: 471 tokens in 1672.3 ms (281.7 tok/s) | peak RSS 359008 kB 
+>>> lookup-cpu-q4_0-prose-plain-r1: prefill: 41 tokens in 51.3 ms (799.4 tok/s) | decode: 471 tokens in 2698.1 ms (174.6 tok/s) | peak RSS 353112 kB 
+>>> lookup-cpu-q4_0-story-adaptive-r1: speculative: 79 passes, 96 of 177 drafts accepted prefill: 46 tokens in 53.7 ms (856.4 tok/s) | decode: 466 tokens in 2388.6 ms (195.1 tok/s) | peak RSS 358472 kB 
+>>> lookup-cpu-q4_0-story-fixed-r1: speculative: 79 passes, 200 of 315 drafts accepted prefill: 46 tokens in 55.2 ms (832.9 tok/s) | decode: 466 tokens in 1990.2 ms (234.2 tok/s) | peak RSS 359604 kB 
+>>> lookup-cpu-q4_0-story-plain-r1: prefill: 46 tokens in 54.5 ms (843.9 tok/s) | decode: 466 tokens in 2701.0 ms (172.5 tok/s) | peak RSS 353052 kB 
+>>> lookup-cpu-q4_k_m-code-adaptive-r1: speculative: 25 passes, 57 of 82 drafts accepted prefill: 129 tokens in 190.8 ms (676.2 tok/s) | decode: 87 tokens in 425.1 ms (204.7 tok/s) | peak RSS 485704 kB 
+>>> lookup-cpu-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 183.0 ms (705.0 tok/s) | decode: 87 tokens in 406.0 ms (214.3 tok/s) | peak RSS 485248 kB 
+adb: device 'adb-10BF6M0R0R004FR-zfjPc2._adb-tls-connect._tcp' not found
