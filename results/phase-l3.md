@@ -1440,3 +1440,61 @@ So the rule changes (`session::DraftLen`): any acceptance returns to the
 full length, and the backoff after failed 1-token drafts stops at 8. Its
 battery A/B is next (`scripts/opt-ab.sh … lookup`).
 
+
+## Step 25: the new lookup rule on battery (2026-11-01; `raw/opt-ab-lookup2/`)
+
+`scripts/opt-ab.sh … lookup` again, with the step-24 rule change: any
+acceptance returns to K = 4, and the backoff after failed 1-token drafts
+stops at 8 skipped steps. 108 runs, 19:01–22:34 (wireless adb lost
+19:11–20:50 after 9 runs, the script waited and resumed), battery 46 → 27 %,
+screen on, clock caps 2.4–2.7 GHz. Since step 24 the GPU decodes with int8
+x, which changes its greedy text (GPU prose and story are other replies
+than in step 24, so only their within-session columns compare); the CPU
+and DSP text is the same as in step 24.
+
+Decode tok/s, round 1 / round 2, accepted of drafted in brackets (the same
+both rounds); "step 24" is the old adaptive rule from that session:
+
+| | prompt | adaptive | fixed | plain | step 24 adaptive / fixed |
+| --- | --- | --- | --- | --- | --- |
+| CPU 2–7, Q4_0 | code | 339 / 298 (60/83) | 334 / 314 (61/84) | 173 / 163 | 330 / 334 (r1) |
+| | prose | **312 / 293** (301/392) | 307 / 277 (301/405) | 153 / 172 | 323 / 301 (r1) |
+| | story | **244 / 233** (189/244) | 219 / 226 (200/315) | 144 / 172 | 203 / 243 (r1) |
+| CPU 2–7, Q4_K_M | code | 240 / 214 | 241 / 218 | 87 / 119 | 228 / 242 (r1) |
+| | prose | 123 / 117 (14/72) | 121 / 115 (17/96) | 124 / 118 | 119 / 119 (r1) |
+| | story | 119 / 114 (13/90) | 115 / 105 (13/128) | 122 / 119 | 123 / 114 (r1) |
+| GPU, Q4_0 | code | **139 / 127** | 127 / 121 | 120 / 100 | |
+| | prose | 100 / 98 (46/113) | 95 / 94 (47/124) | **115 / 123** | |
+| | story | 97 / 93 (36/151) | 88 / 83 (43/247) | **118 / 116** | |
+| GPU, Q4_K_M | code | 117 / 108 | 118 / 110 | 97 / 95 | |
+| | prose | 78 / 77 (8/49) | 77 / 66 (10/60) | **95 / 95** | |
+| | story | 76 / 56¹ (17/112) | 70 / 72 (17/156) | **96 / 93** | |
+| DSP, Q4_0 | code | 148 / 147 | **157 / 165** | 130 / 137 | 158 / 151 (r1) |
+| | prose | 110 / 107 (33/104) | 108 / 106 (36/112) | **131 / 130** | 118 / 107 (r1) |
+| | story | 117 / 117 (157/302) | 113 / 115 (160/342) | **126 / 127** | 126 / 114 (r1) |
+| DSP, Q4_K_M | code | 143 / 142 | **163 / 150** | 96 / 95 | 145 / 157 (r1) |
+| | prose | 86 / 84 (10/54) | 85 / 85 (12/60) | **98 / 98** | 91 / 87 (r1) |
+| | story | **121 / 116** (229/335) | 113 / 112 (230/367) | 93 / 96 | 125 / 116 (r1) |
+
+¹ An outlier: its prompt pass was slow too (401 tok/s against 486 in the
+other runs), so something else ran on the phone.
+
+- The case the change was for is fixed: CPU Q4_0 story drafts 244 tokens
+  (the old rule 177, fixed 315) and is 4–11 % ahead of the fixed length,
+  where the old rule was 17 % behind. On the CPU the rule is now never
+  more than 5 % behind fixed (code, round 2) and up to 11 % ahead.
+- On code the new rule loses one accepted draft of 61 and takes one pass
+  more (22 against 21): within noise on the CPU and GPU, but the DSP is
+  still 4–13 % behind fixed on code, both formats and both rounds, as in
+  step 24. One extra pass of an expensive verify explains part of it, not
+  all; left open.
+- Where few drafts are accepted, plain decoding wins on the GPU (15–25 %)
+  and the DSP (8–15 %), with both rules: there a 5-token verify costs
+  more than the step it replaces, and the backoff to 8 skipped steps still
+  pays for a verify every 9. On the CPU (Q4_K_M prose, story) a failed
+  verify is nearly free and all three are within 5 %. The old rule's
+  backoff to 64 got closer to plain there (DSP prose 118 against 128) but
+  cost the CPU story case above; a per-engine cost of a failed verify
+  would settle it, not tried.
+
+The rule stays as changed.

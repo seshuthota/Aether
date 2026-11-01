@@ -1,0 +1,503 @@
+# 2026-11-01T19:01:16+05:30 on battery, starting
+>>> lookup-cpu-q4_0-code-adaptive-r1: speculative: 22 passes, 60 of 83 drafts accepted prefill: 129 tokens in 154.0 ms (837.8 tok/s) | decode: 87 tokens in 256.8 ms (338.8 tok/s) | peak RSS 358356 kB 
+>>> lookup-cpu-q4_0-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 142.9 ms (902.6 tok/s) | decode: 87 tokens in 260.8 ms (333.5 tok/s) | peak RSS 364564 kB 
+>>> lookup-cpu-q4_0-code-plain-r1: prefill: 129 tokens in 175.3 ms (735.8 tok/s) | decode: 87 tokens in 503.7 ms (172.7 tok/s) | peak RSS 357876 kB 
+>>> lookup-cpu-q4_0-prose-adaptive-r1: speculative: 102 passes, 301 of 392 drafts accepted prefill: 41 tokens in 82.6 ms (496.1 tok/s) | decode: 471 tokens in 1510.0 ms (311.9 tok/s) | peak RSS 358784 kB 
+>>> lookup-cpu-q4_0-prose-fixed-r1: speculative: 102 passes, 301 of 405 drafts accepted prefill: 41 tokens in 52.2 ms (784.8 tok/s) | decode: 471 tokens in 1532.0 ms (307.4 tok/s) | peak RSS 358776 kB 
+>>> lookup-cpu-q4_0-prose-plain-r1: prefill: 41 tokens in 52.9 ms (774.8 tok/s) | decode: 471 tokens in 3084.6 ms (152.7 tok/s) | peak RSS 352320 kB 
+>>> lookup-cpu-q4_0-story-adaptive-r1: speculative: 72 passes, 189 of 244 drafts accepted prefill: 46 tokens in 88.1 ms (522.4 tok/s) | decode: 466 tokens in 1911.9 ms (243.7 tok/s) | peak RSS 358652 kB 
+>>> lookup-cpu-q4_0-story-fixed-r1: speculative: 79 passes, 200 of 315 drafts accepted prefill: 46 tokens in 60.8 ms (756.4 tok/s) | decode: 466 tokens in 2132.1 ms (218.6 tok/s) | peak RSS 358644 kB 
+>>> lookup-cpu-q4_0-story-plain-r1: prefill: 46 tokens in 249.2 ms (184.6 tok/s) | decode: 466 tokens in 3248.3 ms (143.5 tok/s) | peak RSS 352676 kB 
+# 2026-11-01T19:11:26+05:30 adb lost, reconnecting
+# 2026-11-01T19:11:45+05:30 adb lost, reconnecting
+# 2026-11-01T19:12:03+05:30 adb lost, reconnecting
+# 2026-11-01T19:12:21+05:30 adb lost, reconnecting
+# 2026-11-01T19:12:39+05:30 adb lost, reconnecting
+# 2026-11-01T19:12:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:13:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:13:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:13:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:13:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:14:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:14:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:14:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:14:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:15:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:15:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:15:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:15:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:16:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:16:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:16:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:16:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:17:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:17:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:17:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:17:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:18:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:18:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:18:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:18:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:19:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:19:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:19:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:19:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:20:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:20:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:20:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:20:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:21:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:21:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:21:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:21:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:22:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:22:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:22:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:22:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:23:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:23:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:23:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:23:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:24:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:24:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:24:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:24:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:25:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:25:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:25:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:25:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:26:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:26:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:26:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:26:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:27:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:27:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:27:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:27:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:28:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:28:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:28:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:28:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:29:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:29:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:29:42+05:30 adb lost, reconnecting
+# 2026-11-01T19:29:57+05:30 adb lost, reconnecting
+# 2026-11-01T19:30:12+05:30 adb lost, reconnecting
+# 2026-11-01T19:30:27+05:30 adb lost, reconnecting
+# 2026-11-01T19:30:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:30:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:31:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:31:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:31:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:31:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:32:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:32:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:32:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:32:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:33:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:33:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:33:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:33:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:34:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:34:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:34:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:34:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:35:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:35:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:35:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:35:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:36:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:36:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:36:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:36:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:37:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:37:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:37:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:37:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:38:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:38:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:38:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:38:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:39:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:39:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:39:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:39:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:40:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:40:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:40:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:40:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:41:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:41:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:41:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:41:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:42:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:42:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:42:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:42:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:43:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:43:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:43:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:43:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:44:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:44:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:44:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:44:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:45:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:45:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:45:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:45:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:46:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:46:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:46:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:46:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:47:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:47:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:47:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:47:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:48:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:48:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:48:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:48:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:49:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:49:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:49:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:49:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:50:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:50:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:50:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:50:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:51:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:51:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:51:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:51:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:52:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:52:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:52:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:52:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:53:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:53:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:53:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:53:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:54:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:54:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:54:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:54:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:55:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:55:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:55:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:55:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:56:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:56:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:56:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:56:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:57:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:57:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:57:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:57:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:58:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:58:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:58:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:58:58+05:30 adb lost, reconnecting
+# 2026-11-01T19:59:13+05:30 adb lost, reconnecting
+# 2026-11-01T19:59:28+05:30 adb lost, reconnecting
+# 2026-11-01T19:59:43+05:30 adb lost, reconnecting
+# 2026-11-01T19:59:58+05:30 adb lost, reconnecting
+# 2026-11-01T20:00:13+05:30 adb lost, reconnecting
+# 2026-11-01T20:00:28+05:30 adb lost, reconnecting
+# 2026-11-01T20:00:43+05:30 adb lost, reconnecting
+# 2026-11-01T20:00:58+05:30 adb lost, reconnecting
+# 2026-11-01T20:01:13+05:30 adb lost, reconnecting
+# 2026-11-01T20:01:28+05:30 adb lost, reconnecting
+# 2026-11-01T20:01:43+05:30 adb lost, reconnecting
+# 2026-11-01T20:01:58+05:30 adb lost, reconnecting
+# 2026-11-01T20:02:13+05:30 adb lost, reconnecting
+# 2026-11-01T20:02:28+05:30 adb lost, reconnecting
+# 2026-11-01T20:02:43+05:30 adb lost, reconnecting
+# 2026-11-01T20:02:58+05:30 adb lost, reconnecting
+# 2026-11-01T20:03:13+05:30 adb lost, reconnecting
+# 2026-11-01T20:03:28+05:30 adb lost, reconnecting
+# 2026-11-01T20:03:43+05:30 adb lost, reconnecting
+# 2026-11-01T20:03:58+05:30 adb lost, reconnecting
+# 2026-11-01T20:04:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:04:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:04:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:04:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:05:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:05:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:05:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:05:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:06:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:06:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:06:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:06:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:07:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:07:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:07:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:07:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:08:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:08:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:08:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:08:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:09:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:09:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:09:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:09:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:10:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:10:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:10:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:10:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:11:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:11:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:11:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:11:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:12:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:12:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:12:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:12:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:13:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:13:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:13:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:13:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:14:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:14:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:14:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:14:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:15:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:15:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:15:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:15:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:16:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:16:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:16:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:16:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:17:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:17:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:17:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:17:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:18:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:18:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:18:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:18:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:19:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:19:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:19:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:19:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:20:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:20:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:20:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:20:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:21:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:21:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:21:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:21:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:22:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:22:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:22:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:22:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:23:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:23:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:23:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:23:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:24:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:24:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:24:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:24:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:25:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:25:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:25:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:25:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:26:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:26:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:26:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:26:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:27:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:27:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:27:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:27:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:28:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:28:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:28:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:28:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:29:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:29:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:29:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:29:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:30:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:30:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:30:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:30:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:31:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:31:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:31:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:31:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:32:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:32:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:32:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:32:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:33:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:33:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:33:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:33:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:34:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:34:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:34:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:34:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:35:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:35:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:35:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:35:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:36:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:36:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:36:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:36:59+05:30 adb lost, reconnecting
+# 2026-11-01T20:37:14+05:30 adb lost, reconnecting
+# 2026-11-01T20:37:29+05:30 adb lost, reconnecting
+# 2026-11-01T20:37:44+05:30 adb lost, reconnecting
+# 2026-11-01T20:38:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:38:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:38:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:38:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:39:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:39:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:39:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:39:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:40:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:40:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:40:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:40:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:41:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:41:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:41:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:41:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:42:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:42:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:42:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:42:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:43:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:43:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:43:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:43:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:44:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:44:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:44:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:44:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:45:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:45:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:45:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:45:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:46:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:46:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:46:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:46:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:47:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:47:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:47:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:47:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:48:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:48:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:48:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:48:45+05:30 adb lost, reconnecting
+# 2026-11-01T20:49:00+05:30 adb lost, reconnecting
+# 2026-11-01T20:49:15+05:30 adb lost, reconnecting
+# 2026-11-01T20:49:30+05:30 adb lost, reconnecting
+# 2026-11-01T20:49:45+05:30 adb lost, reconnecting
+>>> lookup-cpu-q4_k_m-code-adaptive-r1: speculative: 22 passes, 60 of 83 drafts accepted prefill: 129 tokens in 271.0 ms (476.0 tok/s) | decode: 87 tokens in 362.2 ms (240.2 tok/s) | peak RSS 478272 kB 
+>>> lookup-cpu-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 173.6 ms (743.0 tok/s) | decode: 87 tokens in 361.6 ms (240.6 tok/s) | peak RSS 484008 kB 
+>>> lookup-cpu-q4_k_m-code-plain-r1: prefill: 129 tokens in 194.3 ms (664.0 tok/s) | decode: 87 tokens in 1005.4 ms (86.5 tok/s) | peak RSS 477744 kB 
+>>> lookup-cpu-q4_k_m-prose-adaptive-r1: speculative: 26 passes, 14 of 72 drafts accepted prefill: 41 tokens in 73.9 ms (555.1 tok/s) | decode: 137 tokens in 1117.1 ms (122.6 tok/s) | peak RSS 478244 kB 
+>>> lookup-cpu-q4_k_m-prose-fixed-r1: speculative: 24 passes, 17 of 96 drafts accepted prefill: 41 tokens in 70.9 ms (578.5 tok/s) | decode: 137 tokens in 1136.7 ms (120.5 tok/s) | peak RSS 478192 kB 
+>>> lookup-cpu-q4_k_m-prose-plain-r1: prefill: 41 tokens in 75.2 ms (544.9 tok/s) | decode: 144 tokens in 1164.4 ms (123.7 tok/s) | peak RSS 472368 kB 
+>>> lookup-cpu-q4_k_m-story-adaptive-r1: speculative: 32 passes, 13 of 90 drafts accepted prefill: 46 tokens in 72.5 ms (634.1 tok/s) | decode: 206 tokens in 1730.9 ms (119.0 tok/s) | peak RSS 478396 kB 
+>>> lookup-cpu-q4_k_m-story-fixed-r1: speculative: 32 passes, 13 of 128 drafts accepted prefill: 46 tokens in 76.8 ms (598.6 tok/s) | decode: 206 tokens in 1798.8 ms (114.5 tok/s) | peak RSS 478412 kB 
+>>> lookup-cpu-q4_k_m-story-plain-r1: prefill: 46 tokens in 78.2 ms (587.9 tok/s) | decode: 270 tokens in 2217.0 ms (121.8 tok/s) | peak RSS 472308 kB 
+>>> lookup-gpu-q4_0-code-adaptive-r1: speculative: 22 passes, 60 of 83 drafts accepted prefill (on the GPU): 129 tokens in 147.6 ms (874.2 tok/s) | decode: 87 tokens in 627.9 ms (138.6 tok/s) 
+>>> lookup-gpu-q4_0-code-fixed-r1: speculative:  prefill (on the GPU): 129 tokens in 102.7 ms (1256.6 tok/s) | decode: 87 tokens in 687.3 ms (126.6 tok/s) 
+>>> lookup-gpu-q4_0-code-plain-r1: prefill (on the GPU): 129 tokens in 98.4 ms (1311.3 tok/s) | decode: 87 tokens in 726.5 ms (119.8 tok/s) 
+>>> lookup-gpu-q4_0-prose-adaptive-r1: speculative: 32 passes, 46 of 113 drafts accepted prefill (on the GPU): 41 tokens in 45.8 ms (895.5 tok/s) | decode: 160 tokens in 1607.6 ms (99.5 tok/s) 
+>>> lookup-gpu-q4_0-prose-fixed-r1: speculative: 31 passes, 47 of 124 drafts accepted prefill (on the GPU): 41 tokens in 48.0 ms (854.4 tok/s) | decode: 160 tokens in 1676.3 ms (95.4 tok/s) 
+>>> lookup-gpu-q4_0-prose-plain-r1: prefill (on the GPU): 41 tokens in 45.5 ms (901.9 tok/s) | decode: 471 tokens in 4086.2 ms (115.3 tok/s) 
+>>> lookup-gpu-q4_0-story-adaptive-r1: speculative: 58 passes, 36 of 151 drafts accepted prefill (on the GPU): 46 tokens in 47.5 ms (967.4 tok/s) | decode: 386 tokens in 3999.8 ms (96.5 tok/s) 
+>>> lookup-gpu-q4_0-story-fixed-r1: speculative: 62 passes, 43 of 247 drafts accepted prefill (on the GPU): 46 tokens in 106.3 ms (432.6 tok/s) | decode: 386 tokens in 4365.7 ms (88.4 tok/s) 
+>>> lookup-gpu-q4_0-story-plain-r1: prefill (on the GPU): 46 tokens in 92.5 ms (497.1 tok/s) | decode: 466 tokens in 3948.9 ms (118.0 tok/s) 
+>>> lookup-gpu-q4_k_m-code-adaptive-r1: speculative: 22 passes, 60 of 83 drafts accepted prefill (on the GPU): 129 tokens in 174.6 ms (738.9 tok/s) | decode: 87 tokens in 743.1 ms (117.1 tok/s) 
+>>> lookup-gpu-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill (on the GPU): 129 tokens in 172.5 ms (747.8 tok/s) | decode: 87 tokens in 740.5 ms (117.5 tok/s) 
+>>> lookup-gpu-q4_k_m-code-plain-r1: prefill (on the GPU): 129 tokens in 173.0 ms (745.6 tok/s) | decode: 87 tokens in 899.4 ms (96.7 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-adaptive-r1: speculative: 17 passes, 8 of 49 drafts accepted prefill (on the GPU): 41 tokens in 111.3 ms (368.4 tok/s) | decode: 109 tokens in 1395.5 ms (78.1 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-fixed-r1: speculative: 15 passes, 10 of 60 drafts accepted prefill (on the GPU): 41 tokens in 113.5 ms (361.1 tok/s) | decode: 109 tokens in 1419.1 ms (76.8 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-plain-r1: prefill (on the GPU): 41 tokens in 121.1 ms (338.4 tok/s) | decode: 109 tokens in 1144.9 ms (95.2 tok/s) 
+>>> lookup-gpu-q4_k_m-story-adaptive-r1: speculative:  prefill (on the GPU): 46 tokens in 114.3 ms (402.5 tok/s) | decode: 237 tokens in 3104.6 ms (76.3 tok/s) 
+>>> lookup-gpu-q4_k_m-story-fixed-r1: speculative:  prefill (on the GPU): 46 tokens in 114.7 ms (401.0 tok/s) | decode: 237 tokens in 3372.3 ms (70.3 tok/s) 
+>>> lookup-gpu-q4_k_m-story-plain-r1: prefill (on the GPU): 46 tokens in 113.5 ms (405.3 tok/s) | decode: 273 tokens in 2841.9 ms (96.1 tok/s) 
+>>> lookup-dsp-q4_0-code-adaptive-r1: speculative:  prefill (DSP): 129 tokens in 212.1 ms (608.1 tok/s) | decode: 87 tokens in 587.7 ms (148.0 tok/s) 
+>>> lookup-dsp-q4_0-code-fixed-r1: speculative:  prefill (DSP): 129 tokens in 209.1 ms (616.8 tok/s) | decode: 87 tokens in 556.0 ms (156.5 tok/s) 
+>>> lookup-dsp-q4_0-code-plain-r1: prefill (DSP): 129 tokens in 212.3 ms (607.6 tok/s) | decode: 87 tokens in 671.2 ms (129.6 tok/s) 
+>>> lookup-dsp-q4_0-prose-adaptive-r1: speculative: 31 passes, 33 of 104 drafts accepted prefill (DSP): 41 tokens in 82.5 ms (497.1 tok/s) | decode: 157 tokens in 1432.4 ms (109.6 tok/s) 
+>>> lookup-dsp-q4_0-prose-fixed-r1: speculative: 28 passes, 36 of 112 drafts accepted prefill (DSP): 41 tokens in 84.9 ms (483.1 tok/s) | decode: 157 tokens in 1458.0 ms (107.7 tok/s) 
+>>> lookup-dsp-q4_0-prose-plain-r1: prefill (DSP): 41 tokens in 85.8 ms (477.8 tok/s) | decode: 157 tokens in 1199.6 ms (130.9 tok/s) 
+>>> lookup-dsp-q4_0-story-adaptive-r1: speculative: 89 passes, 157 of 302 drafts accepted prefill (DSP): 46 tokens in 90.8 ms (506.5 tok/s) | decode: 466 tokens in 3976.4 ms (117.2 tok/s) 
+>>> lookup-dsp-q4_0-story-fixed-r1: speculative: 86 passes,  prefill (DSP): 46 tokens in 87.8 ms (524.0 tok/s) | decode: 466 tokens in 4124.4 ms (113.0 tok/s) 
+>>> lookup-dsp-q4_0-story-plain-r1: prefill (DSP): 46 tokens in 85.0 ms (541.0 tok/s) | decode: 466 tokens in 3689.0 ms (126.3 tok/s) 
+>>> lookup-dsp-q4_k_m-code-adaptive-r1: speculative:  prefill (DSP): 129 tokens in 227.9 ms (566.1 tok/s) | decode: 87 tokens in 607.8 ms (143.1 tok/s) 
+>>> lookup-dsp-q4_k_m-code-fixed-r1: speculative: 21 passes, 61 of 84 drafts accepted prefill (DSP): 129 tokens in 228.7 ms (564.0 tok/s) | decode: 87 tokens in 532.4 ms (163.4 tok/s) 
+>>> lookup-dsp-q4_k_m-code-plain-r1: prefill (DSP): 129 tokens in 227.4 ms (567.3 tok/s) | decode: 87 tokens in 902.2 ms (96.4 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-adaptive-r1: speculative: 17 passes, 10 of 54 drafts accepted prefill (DSP): 41 tokens in 87.7 ms (467.3 tok/s) | decode: 109 tokens in 1269.7 ms (85.8 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-fixed-r1: speculative:  prefill (DSP): 41 tokens in 92.3 ms (444.1 tok/s) | decode: 109 tokens in 1276.5 ms (85.4 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-plain-r1: prefill (DSP): 41 tokens in 90.9 ms (450.8 tok/s) | decode: 109 tokens in 1110.4 ms (98.2 tok/s) 
+>>> lookup-dsp-q4_k_m-story-adaptive-r1: speculative: 92 passes, 229 of 335 drafts accepted prefill (DSP): 46 tokens in 95.3 ms (482.8 tok/s) | decode: 466 tokens in 3850.9 ms (121.0 tok/s) 
+>>> lookup-dsp-q4_k_m-story-fixed-r1: speculative: 92 passes, 230 of 367 drafts accepted prefill (DSP): 46 tokens in 95.8 ms (480.2 tok/s) | decode: 466 tokens in 4115.5 ms (113.2 tok/s) 
+>>> lookup-dsp-q4_k_m-story-plain-r1: prefill (DSP): 46 tokens in 95.7 ms (480.8 tok/s) | decode: 466 tokens in 5022.6 ms (92.8 tok/s) 
+>>> lookup-cpu-q4_0-code-plain-r2: prefill: 129 tokens in 380.7 ms (338.8 tok/s) | decode: 87 tokens in 532.6 ms (163.4 tok/s) | peak RSS 357728 kB 
+>>> lookup-cpu-q4_0-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 166.6 ms (774.3 tok/s) | decode: 87 tokens in 277.2 ms (313.9 tok/s) | peak RSS 364276 kB 
+>>> lookup-cpu-q4_0-code-adaptive-r2: speculative: 22 passes, 60 of 83 drafts accepted prefill: 129 tokens in 162.5 ms (793.6 tok/s) | decode: 87 tokens in 291.8 ms (298.1 tok/s) | peak RSS 366124 kB 
+>>> lookup-cpu-q4_0-prose-plain-r2: prefill: 41 tokens in 58.5 ms (700.4 tok/s) | decode: 471 tokens in 2739.3 ms (171.9 tok/s) | peak RSS 352608 kB 
+>>> lookup-cpu-q4_0-prose-fixed-r2: speculative: 102 passes, 301 of 405 drafts accepted prefill: 41 tokens in 59.9 ms (685.0 tok/s) | decode: 471 tokens in 1697.6 ms (277.4 tok/s) | peak RSS 358516 kB 
+>>> lookup-cpu-q4_0-prose-adaptive-r2: speculative: 102 passes, 301 of 392 drafts accepted prefill: 41 tokens in 61.0 ms (672.5 tok/s) | decode: 471 tokens in 1607.0 ms (293.1 tok/s) | peak RSS 359092 kB 
+>>> lookup-cpu-q4_0-story-plain-r2: prefill: 46 tokens in 62.1 ms (740.8 tok/s) | decode: 466 tokens in 2707.8 ms (172.1 tok/s) | peak RSS 352956 kB 
+>>> lookup-cpu-q4_0-story-fixed-r2: speculative: 79 passes, 200 of 315 drafts accepted prefill: 46 tokens in 62.7 ms (733.5 tok/s) | decode: 466 tokens in 2065.2 ms (225.6 tok/s) | peak RSS 358916 kB 
+>>> lookup-cpu-q4_0-story-adaptive-r2: speculative: 72 passes, 189 of 244 drafts accepted prefill: 46 tokens in 63.8 ms (721.0 tok/s) | decode: 466 tokens in 1996.2 ms (233.4 tok/s) | peak RSS 358664 kB 
+>>> lookup-cpu-q4_k_m-code-plain-r2: prefill: 129 tokens in 196.3 ms (657.2 tok/s) | decode: 87 tokens in 729.4 ms (119.3 tok/s) | peak RSS 477696 kB 
+>>> lookup-cpu-q4_k_m-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill: 129 tokens in 210.5 ms (612.7 tok/s) | decode: 87 tokens in 398.4 ms (218.4 tok/s) | peak RSS 484340 kB 
+>>> lookup-cpu-q4_k_m-code-adaptive-r2: speculative: 22 passes, 60 of 83 drafts accepted prefill: 129 tokens in 197.5 ms (653.0 tok/s) | decode: 87 tokens in 406.7 ms (213.9 tok/s) | peak RSS 485952 kB 
+>>> lookup-cpu-q4_k_m-prose-plain-r2: prefill: 41 tokens in 79.6 ms (515.2 tok/s) | decode: 144 tokens in 1223.3 ms (117.7 tok/s) | peak RSS 472712 kB 
+>>> lookup-cpu-q4_k_m-prose-fixed-r2: speculative: 24 passes, 17 of 96 drafts accepted prefill: 41 tokens in 77.9 ms (526.3 tok/s) | decode: 137 tokens in 1187.3 ms (115.4 tok/s) | peak RSS 478544 kB 
+>>> lookup-cpu-q4_k_m-prose-adaptive-r2: speculative: 26 passes, 14 of 72 drafts accepted prefill: 41 tokens in 79.1 ms (518.3 tok/s) | decode: 137 tokens in 1175.6 ms (116.5 tok/s) | peak RSS 478084 kB 
+>>> lookup-cpu-q4_k_m-story-plain-r2: prefill: 46 tokens in 81.9 ms (561.8 tok/s) | decode: 270 tokens in 2272.6 ms (118.8 tok/s) | peak RSS 472700 kB 
+>>> lookup-cpu-q4_k_m-story-fixed-r2: speculative: 32 passes, 13 of 128 drafts accepted prefill: 46 tokens in 80.7 ms (569.8 tok/s) | decode: 206 tokens in 1966.5 ms (104.8 tok/s) | peak RSS 478044 kB 
+>>> lookup-cpu-q4_k_m-story-adaptive-r2: speculative: 32 passes, 13 of 90 drafts accepted prefill: 46 tokens in 91.9 ms (500.7 tok/s) | decode: 206 tokens in 1803.1 ms (114.2 tok/s) | peak RSS 478164 kB 
+>>> lookup-gpu-q4_0-code-plain-r2: prefill (on the GPU): 129 tokens in 169.0 ms (763.4 tok/s) | decode: 87 tokens in 866.2 ms (100.4 tok/s) 
+>>> lookup-gpu-q4_0-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill (on the GPU): 129 tokens in 155.3 ms (830.7 tok/s) | decode: 87 tokens in 718.9 ms (121.0 tok/s) 
+>>> lookup-gpu-q4_0-code-adaptive-r2: speculative: 22 passes, 60 of 83 drafts accepted prefill (on the GPU): 129 tokens in 146.8 ms (878.9 tok/s) | decode: 87 tokens in 685.9 ms (126.8 tok/s) 
+>>> lookup-gpu-q4_0-prose-plain-r2: prefill (on the GPU): 41 tokens in 104.4 ms (392.7 tok/s) | decode: 471 tokens in 3845.6 ms (122.5 tok/s) 
+>>> lookup-gpu-q4_0-prose-fixed-r2: speculative: 31 passes, 47 of 124 drafts accepted prefill (on the GPU): 41 tokens in 79.1 ms (518.4 tok/s) | decode: 160 tokens in 1695.9 ms (94.3 tok/s) 
+>>> lookup-gpu-q4_0-prose-adaptive-r2: speculative: 32 passes, 46 of 113 drafts accepted prefill (on the GPU): 41 tokens in 99.3 ms (413.0 tok/s) | decode: 160 tokens in 1630.0 ms (98.2 tok/s) 
+>>> lookup-gpu-q4_0-story-plain-r2: prefill (on the GPU): 46 tokens in 91.4 ms (503.2 tok/s) | decode: 466 tokens in 4002.3 ms (116.4 tok/s) 
+>>> lookup-gpu-q4_0-story-fixed-r2: speculative:  prefill (on the GPU): 46 tokens in 119.9 ms (383.6 tok/s) | decode: 386 tokens in 4659.0 ms (82.9 tok/s) 
+>>> lookup-gpu-q4_0-story-adaptive-r2: speculative: 58 passes, 36 of  prefill (on the GPU): 46 tokens in 94.7 ms (486.0 tok/s) | decode: 386 tokens in 4153.6 ms (92.9 tok/s) 
+>>> lookup-gpu-q4_k_m-code-plain-r2: prefill (on the GPU): 129 tokens in 194.2 ms (664.2 tok/s) | decode: 87 tokens in 919.9 ms (94.6 tok/s) 
+>>> lookup-gpu-q4_k_m-code-fixed-r2: speculative:  prefill (on the GPU): 129 tokens in 171.8 ms (751.0 tok/s) | decode: 87 tokens in 788.1 ms (110.4 tok/s) 
+>>> lookup-gpu-q4_k_m-code-adaptive-r2: speculative: 22 passes, 60 of 83 drafts accepted prefill (on the GPU): 129 tokens in 188.2 ms (685.4 tok/s) | decode: 87 tokens in 805.0 ms (108.1 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-plain-r2: prefill (on the GPU): 41 tokens in 125.4 ms (327.0 tok/s) | decode: 109 tokens in 1145.7 ms (95.1 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-fixed-r2: speculative:  prefill (on the GPU): 41 tokens in 127.1 ms (322.6 tok/s) | decode: 109 tokens in 1655.5 ms (65.8 tok/s) 
+>>> lookup-gpu-q4_k_m-prose-adaptive-r2: speculative: 17 passes, 8 of 49 drafts accepted prefill (on the GPU): 41 tokens in 111.5 ms (367.7 tok/s) | decode: 109 tokens in 1410.7 ms (77.3 tok/s) 
+>>> lookup-gpu-q4_k_m-story-plain-r2: prefill (on the GPU): 46 tokens in 126.1 ms (364.8 tok/s) | decode: 273 tokens in 2944.6 ms (92.7 tok/s) 
+>>> lookup-gpu-q4_k_m-story-fixed-r2: speculative:  prefill (on the GPU): 46 tokens in 111.4 ms (412.8 tok/s) | decode: 237 tokens in 3272.7 ms (72.4 tok/s) 
+>>> lookup-gpu-q4_k_m-story-adaptive-r2: speculative: 39 prefill (on the GPU): 46 tokens in 114.8 ms (400.6 tok/s) | decode: 237 tokens in 4201.7 ms (56.4 tok/s) 
+>>> lookup-dsp-q4_0-code-plain-r2: prefill (DSP): 129 tokens in 215.1 ms (599.8 tok/s) | decode: 87 tokens in 635.4 ms (136.9 tok/s) 
+>>> lookup-dsp-q4_0-code-fixed-r2: speculative:  prefill (DSP): 129 tokens in 209.8 ms (615.0 tok/s) | decode: 87 tokens in 527.5 ms (164.9 tok/s) 
+>>> lookup-dsp-q4_0-code-adaptive-r2: speculative:  prefill (DSP): 129 tokens in 212.5 ms (606.9 tok/s) | decode: 87 tokens in 592.6 ms (146.8 tok/s) 
+>>> lookup-dsp-q4_0-prose-plain-r2: prefill (DSP): 41 tokens in 81.9 ms (500.6 tok/s) | decode: 157 tokens in 1205.8 ms (130.2 tok/s) 
+>>> lookup-dsp-q4_0-prose-fixed-r2: speculative: 28 passes, 36 of 112 drafts accepted prefill (DSP): 41 tokens in 82.1 ms (499.3 tok/s) | decode: 157 tokens in 1484.0 ms (105.8 tok/s) 
+>>> lookup-dsp-q4_0-prose-adaptive-r2: speculative: 31 passes, 33 of 104 drafts accepted prefill (DSP): 41 tokens in 83.4 ms (491.6 tok/s) | decode: 157 tokens in 1464.1 ms (107.2 tok/s) 
+>>> lookup-dsp-q4_0-story-plain-r2: prefill (DSP): 46 tokens in 86.7 ms (530.5 tok/s) | decode: 466 tokens in 3673.7 ms (126.8 tok/s) 
+>>> lookup-dsp-q4_0-story-fixed-r2: speculative:  prefill (DSP): 46 tokens in 86.8 ms (530.2 tok/s) | decode: 466 tokens in 4053.0 ms (115.0 tok/s) 
+>>> lookup-dsp-q4_0-story-adaptive-r2: speculative: 89 passes, 157 of 302 drafts accepted prefill (DSP): 46 tokens in 87.2 ms (527.6 tok/s) | decode: 466 tokens in 3993.1 ms (116.7 tok/s) 
+>>> lookup-dsp-q4_k_m-code-plain-r2: prefill (DSP): 129 tokens in 229.6 ms (561.8 tok/s) | decode: 87 tokens in 912.5 ms (95.3 tok/s) 
+>>> lookup-dsp-q4_k_m-code-fixed-r2: speculative: 21 passes, 61 of 84 drafts accepted prefill (DSP): 129 tokens in 233.8 ms (551.7 tok/s) | decode: 87 tokens in 579.1 ms (150.2 tok/s) 
+>>> lookup-dsp-q4_k_m-code-adaptive-r2: speculative:  prefill (DSP): 129 tokens in 232.3 ms (555.2 tok/s) | decode: 87 tokens in 614.0 ms (141.7 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-plain-r2: prefill (DSP): 41 tokens in 90.8 ms (451.3 tok/s) | decode: 109 tokens in 1113.4 ms (97.9 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-fixed-r2: speculative: 15 passes, 12 of 60 prefill (DSP): 41 tokens in 92.4 ms (443.8 tok/s) | decode: 109 tokens in 1282.6 ms (85.0 tok/s) 
+>>> lookup-dsp-q4_k_m-prose-adaptive-r2: speculative:  prefill (DSP): 41 tokens in 91.3 ms (449.0 tok/s) | decode: 109 tokens in 1301.6 ms (83.7 tok/s) 
+>>> lookup-dsp-q4_k_m-story-plain-r2: prefill (DSP): 46 tokens in 95.3 ms (482.6 tok/s) | decode: 466 tokens in 4876.5 ms (95.6 tok/s) 
+>>> lookup-dsp-q4_k_m-story-fixed-r2: speculative: 92 passes, 230 of 367 drafts accepted prefill (DSP): 46 tokens in 94.8 ms (485.0 tok/s) | decode: 466 tokens in 4148.5 ms (112.3 tok/s) 
+>>> lookup-dsp-q4_k_m-story-adaptive-r2: speculative: 92 passes, 229 of 335 drafts accepted prefill (DSP): 46 tokens in 95.3 ms (482.9 tok/s) | decode: 466 tokens in 4027.7 ms (115.7 tok/s) 
+# done 2026-11-01T22:34:50+05:30
