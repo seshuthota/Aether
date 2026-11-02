@@ -1572,3 +1572,77 @@ level or slightly ahead at chunked lengths of ≤ 512, and behind at depth
 is the workgroup count — a 128-token pass gives Qwen 14 heads × 4
 token-groups = 56 workgroups, each walking every position in turn, against
 thousands of short workgroups in the chunked path.
+
+## Step 26: the GPU prompt at depth, on the path flash attention replaces (2026-11-02; `raw/flash-ab/flash-*-chunked-*.txt`)
+
+`scripts/opt-ab.sh … flash`'s chunked arm is the prompt path before flash
+attention (`attention_tile.comp` + `attention_merge.comp`), at depth for
+the first time: Qwen2.5-0.5B Q4_0 and Q4_K_M, pp64-512 after
+0/1024/2048/4096 cached tokens, two rounds with the order reversed,
+cooled below 45 °C before each run, screen on, battery 63 → 60 %,
+22:14–22:30, commit `5357ac2`. The clock caps fell during the session
+(cpu0 2.92 → 2.40 GHz, cpu6 3.07 → 2.44), so the rounds are compared
+within a pair, not across the hour. The model is loaded with room for
+4,608 positions, so this path's batch is **126**: pp512 is 5 passes,
+pp64 is 1.
+
+GPU time of attention + merge at pp512, and its share of the pass
+(profiled runs, one per variant at the end of the session):
+
+| depth | attention + merge | of the whole pass | tok/s, r1 / r2 |
+| --- | --- | --- | --- |
+| 0 | 67 ms | 417 ms (16 %) | 1347 / 1191 |
+| 1024 | 281 ms | 643 ms (44 %) | 905 / 800 |
+| 2048 | 483 ms | 846 ms (57 %) | 658 / 554 |
+| 4096 | 918 ms | 1296 ms (71 %) | 346 / 358 |
+
+- Attention grows with the context and is 71 % of the pass at depth
+  4096; at 918 ms for 128 tokens over ~4.3k positions it runs at
+  ~260 GFLOP/s of scores and value sums (the same measure step 22 used:
+  ~84 GFLOP/s at 512 tokens on the old shader).
+- `attention merge` is 109 ms of that 918 at depth 4096: it reads every
+  token's, head's and chunk's partial result (128 × 14 × 72 × 66 floats
+  = 34 MB a layer, written by the tile shader and read back), at about
+  7.5 GB/s.
+
+## Step 27: flash attention against it, same session (2026-11-02; `raw/flash-ab/flash-*-flash-*`)
+
+Same runs, the other arm. Attention time (flash writes `xb2` directly, so
+its figure is the kernel alone; the chunked figure is
+`attention_tile.comp` + `attention_merge.comp`), ms:
+
+| | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| d0 flash / chunked | 3 / 4 | **7 / 10** | 23 / 22 | 83 / 67 |
+| d1024 | 44 / 28 | 81 / 68 | 173 / 130 | 384 / 281 |
+| d2048 | 86 / 52 | 156 / 126 | 322 / 240 | 686 / 483 |
+| d4096 | 169 / 101 | 308 / 252 | 626 / 463 | 1292 / 918 |
+
+- **Flash's attention is 1.2–1.7× slower on the Adreno**, at every depth
+  and length except pp128 at depth 0 (where the chunked path's batch of
+  126 splits a 128-token prompt into passes of 126 and 2, so its 10 ms is
+  two small dispatch rounds against flash's one).
+- The ratio is the work partition, not extra work: both read the same
+  K/V bytes. A 128-token pass gives flash `n_heads × ceil(128/32)` = 56
+  workgroups (224 at pp512), each walking every position in turn; the
+  chunked path dispatches `n_heads × chunks × groups`, ~1,000–4,000 short
+  workgroups of at most 64 positions, and the GPU stays full. Step 22's
+  shader won on the same hardware for the same reason.
+- End to end the pass is level at depth 0 (408 against 417 ms at pp512 —
+  and flash does 4 passes to chunked's 5) and 25 % slower at depth 4096
+  (1621 against 1296 ms at pp512). Its other stages are cheaper for the
+  same batch reason: q/k/v 25.8 against 30.2 ms, wo 23.8 against 28.9,
+  swiglu + down 118.0 against 142.0, classifier 6.8 against 11.8.
+- **Not**: a correctness difference. The F4 checks above put flash within
+  llama.cpp's error bar at 20 × 512 and at context 2048/4096, and the
+  `chunked` arm reproduces step 20/22's numbers to the digit.
+- The tok/s columns have more spread than the profiles (e.g. Q4_K_M
+  pp512@d1024 309 in round 1 against 608 in round 2, with that whole run
+  slow: its pp64 was 540 against 636); the profiled figures above were
+  taken back-to-back at the end of the session and are the ones to read.
+
+Flash attention stays the default on the branch for now — it is the
+correct path and the one long contexts need once the work partition is
+fixed. Next: F6c (a 256-token pass, `vk_pp batch 256`) for the cheapest
+extra parallelism, then F6b (split a token group's positions across
+workgroups when there are too few, with `parts` + merge sized by splits).
