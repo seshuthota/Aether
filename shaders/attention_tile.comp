@@ -45,6 +45,14 @@ shared uvec2 vs[SUB * 16];
 
 uvec2 pack4(vec4 v) { return uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw)); }
 vec4 unpack4(uvec2 p) { return vec4(unpackHalf2x16(p.x), unpackHalf2x16(p.y)); }
+// The lanes of a vec4 at d that lie inside a head of `n` values: a head
+// whose size is not a multiple of four ends in the middle of one vec4, and
+// the lanes past it hold its neighbour's values. Zeroing them keeps the
+// scores and the parts exact for such heads (hs 64 and 48, the models',
+// are whole vec4s).
+vec4 in_head(vec4 v, uint d, uint n) {
+    return vec4(d < n ? v.x : 0.0, d + 1 < n ? v.y : 0.0, d + 2 < n ? v.z : 0.0, d + 3 < n ? v.w : 0.0);
+}
 
 void main() {
     uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, id = gl_LocalInvocationID.x;
@@ -65,7 +73,7 @@ void main() {
         [[unroll]] for (uint i = 0; i < 4; i++) {
             uint d = 16 * part + 4 * i;
             uint qo = (tok0 + t + 16 * u) * qstride + h * hs + d;
-            qv[u][i] = live[u] && d < hs ? vec4(q[qo], q[qo + 1], q[qo + 2], q[qo + 3]) : vec4(0.0);
+            qv[u][i] = live[u] && d < hs ? in_head(vec4(q[qo], q[qo + 1], q[qo + 2], q[qo + 3]), d, hs) : vec4(0.0);
             acc[u][i] = vec4(0.0);
         }
     }
@@ -81,8 +89,8 @@ void main() {
         for (uint k = id; k < SUB * 16; k += 64) {
             uint j = k / 16, d = 4 * (k % 16), at_k = kvo + (t0 + j0 + j) * kv_dim + d;
             bool ok = j0 + j < n && d < hs;
-            ks[k] = pack4(ok ? vec4(kc[at_k], kc[at_k + 1], kc[at_k + 2], kc[at_k + 3]) : vec4(0.0));
-            vs[k] = pack4(ok ? vec4(vc[at_k], vc[at_k + 1], vc[at_k + 2], vc[at_k + 3]) : vec4(0.0));
+            ks[k] = pack4(in_head(ok ? vec4(kc[at_k], kc[at_k + 1], kc[at_k + 2], kc[at_k + 3]) : vec4(0.0), d, hs));
+            vs[k] = pack4(in_head(ok ? vec4(vc[at_k], vc[at_k + 1], vc[at_k + 2], vc[at_k + 3]) : vec4(0.0), d, hs));
         }
         barrier();
         uint nj = min(SUB, n - j0);
@@ -112,12 +120,10 @@ void main() {
         uint base = (((tok0 + t + 16 * u) * n_heads + h) * chunks + c) * (hs + 2);
         [[unroll]] for (uint i = 0; i < 4; i++) {
             uint d = 16 * part + 4 * i;
-            if (d < hs) {
-                parts[base + 2 + d] = acc[u][i].x;
-                parts[base + 3 + d] = acc[u][i].y;
-                parts[base + 4 + d] = acc[u][i].z;
-                parts[base + 5 + d] = acc[u][i].w;
-            }
+            if (d + 0 < hs) parts[base + 2 + d] = acc[u][i].x;
+            if (d + 1 < hs) parts[base + 3 + d] = acc[u][i].y;
+            if (d + 2 < hs) parts[base + 4 + d] = acc[u][i].z;
+            if (d + 3 < hs) parts[base + 5 + d] = acc[u][i].w;
         }
         if (part == 0) {
             parts[base] = m[u];
