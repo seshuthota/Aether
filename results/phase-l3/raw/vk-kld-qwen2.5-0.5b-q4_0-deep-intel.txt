@@ -1,0 +1,19 @@
+# Intel host (RPL-P) preview of F4.3, not the phone run: Qwen2.5-0.5B Q4_0
+# against the f32 file, wikitext-2, 1 chunk, vk_ppl batch (flash) and
+# batch-chunked. Compare with llamacpp-kld-qwen2.5-0.5b-q4_0-deep.txt
+# (llama.cpp's CUDA build, same chunks, same base): KLD 0.169484 +- 0.005911
+# at 2048 and 0.190900 +- 0.003943 at 4096, same top 79.277 / 74.206 %.
+# Flash lands on both (0.169378 / 0.190390; 79.277 / 74.450 %), chunked a
+# little above (0.170260 / 0.191820).
+== qwen q4_0 ctx=2048 batch vs f32 base
+Final estimate: PPL = 13.3646 +/- 1.17815  (1023 tokens scored, 414.9 s, 4.9 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+Mean KLD: 0.169378   Same top p: 79.277 %   (time and tok/s include the base model on the CPU)
+== qwen q4_0 ctx=2048 batch-chunked vs f32 base
+Final estimate: PPL = 13.4193 +/- 1.18539  (1023 tokens scored, 403.0 s, 5.1 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+Mean KLD: 0.170260   Same top p: 78.788 %   (time and tok/s include the base model on the CPU)
+== qwen q4_0 ctx=4096 batch vs f32 base
+Final estimate: PPL = 18.3745 +/- 1.15471  (2047 tokens scored, 879.1 s, 4.7 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+Mean KLD: 0.190390   Same top p: 74.450 %   (time and tok/s include the base model on the CPU)
+== qwen q4_0 ctx=4096 batch-chunked vs f32 base
+Final estimate: PPL = 18.4387 +/- 1.15978  (2047 tokens scored, 850.8 s, 4.8 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+Mean KLD: 0.191820   Same top p: 74.060 %   (time and tok/s include the base model on the CPU)
