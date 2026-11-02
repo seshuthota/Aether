@@ -205,6 +205,8 @@ struct Bl {
     attn: Bound,
     /// attention_tile.comp: a prompt's attention, 32 tokens a workgroup.
     attn_tile: Bound,
+    /// attention_flash.comp: a prompt's attention in one pass, no parts.
+    attn_flash: Bound,
     merge: Bound,
     o: Bound,
     norm2: Bound,
@@ -269,9 +271,14 @@ pub struct Options {
     /// 23-24).
     pub decode_f32: bool,
     /// A prompt's attention with one workgroup per token
-    /// (`attention.comp`, as decode) instead of `attention_tile.comp`
+    /// (`attention.comp`, as decode) instead of the tiled shader
     /// (A/B timing only).
     pub attn_per_token: bool,
+    /// A prompt's attention in the two passes before flash attention
+    /// (`attention_tile.comp` + `attention_merge.comp`): chunks of 64
+    /// positions, partial results in `parts`, a merge dispatch per layer
+    /// (A/B timing only; the default is `attention_flash.comp`).
+    pub attn_chunked: bool,
 }
 
 /// The few-token pass with x quantized to 8 bits per 32 values and int8
@@ -424,6 +431,7 @@ pub struct GpuModel {
     q8_few: bool,
     decode_q8: bool,
     attn_per_token: bool,
+    attn_chunked: bool,
     /// The two passes of the argmax of `logits` into `best`.
     amax: Bound,
     best: Buffer,
@@ -457,9 +465,15 @@ impl GpuModel {
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Attention works in chunks of 64 positions (shaders/attention.comp).
+        // Flash attention has no parts and no merge, so its batch does not
+        // shrink with the context; the two older prompt shaders' still does.
         let chunks = c.seq_len.div_ceil(64);
         let parts_per_token = c.n_heads * chunks * (hs + 2);
-        let batch = (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128);
+        let batch = if opt.attn_chunked || opt.attn_per_token {
+            (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128)
+        } else {
+            128
+        };
         let f32buf = |v: &[f32]| -> Result<Buffer> {
             let mut b = gpu.buffer(v.len().max(1) * 4)?;
             b.as_mut_slice::<f32>()[..v.len()].copy_from_slice(v);
@@ -515,7 +529,11 @@ impl GpuModel {
         let logits_few = cached(few * c.vocab_size)?;
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
-        let parts = zeros(batch * parts_per_token)?;
+        // A prompt with flash attention does not read parts; decode and a
+        // few-token pass do (the full chunk count, since decode's dispatch
+        // is recorded once for every chunk the cache can hold).
+        let parts_tokens = if opt.attn_chunked || opt.attn_per_token { batch } else { few };
+        let parts = zeros(parts_tokens * parts_per_token)?;
         // pos, 3 × padding, then (sin, cos) per rotation pair, per token.
         let params = zeros(4 + batch * hs)?;
 
@@ -523,6 +541,7 @@ impl GpuModel {
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
         let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
         let attn_tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28)?;
+        let attn_flash = Kernel::new(gpu, crate::spirv!("attention_flash"), 5, 24)?;
         let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
         let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
@@ -648,6 +667,7 @@ impl GpuModel {
                 post: post.bind_at(gpu, &[(&qkv, 0), (&qkv, k_at), (&qkv, v_at), (&ly.bq, 0), (&ly.bk, 0), (&ly.bv, 0), (&kc, 0), (&vc, 0), (&params, 0)])?,
                 attn: attn.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
                 attn_tile: attn_tile.bind(gpu, &[&qkv, &kc, &vc, &parts, &params])?,
+                attn_flash: attn_flash.bind(gpu, &[&qkv, &kc, &vc, &xb2, &params])?,
                 merge: merge.bind(gpu, &[&parts, &xb2, &params])?,
                 o: gemv_bind(&ly.wo, true, None, &xb2, (&x, 0))?,
                 norm2: rms.bind(gpu, &[&x, &ly.ffn_norm, &xb])?,
@@ -712,7 +732,7 @@ impl GpuModel {
 
         let mut keep = vec![xb, xb2, qkv, hb12, parts, final_norm, amax_parts];
         keep.shrink_to_fit();
-        let mut kernels = vec![rms, post, attn, attn_tile, merge, swiglu, argmax, mm, mm_acc, mm_glu];
+        let mut kernels = vec![rms, post, attn, attn_tile, attn_flash, merge, swiglu, argmax, mm, mm_acc, mm_glu];
         kernels.append(&mut f16_kernels);
         kernels.extend(gemv_ks.into_iter().map(|(_, k)| k));
         kernels.extend(gemm_ks.into_iter().map(|(_, k)| k));
@@ -731,6 +751,7 @@ impl GpuModel {
             q8_few,
             decode_q8,
             attn_per_token: opt.attn_per_token,
+            attn_chunked: opt.attn_chunked,
             kc,
             vc,
             params,
@@ -846,16 +867,22 @@ impl GpuModel {
             end(r, "q/k/v");
             r.dispatch(&b.post, &push(&[dim as u32, kv_dim as u32, hs as u32, halves, layer_off, qkv_dim]), [nt, 1, 1]);
             end(r, "bias + RoPE + cache");
-            // A prompt: 32 tokens a workgroup; decode and a few-token
-            // pass: one.
-            if n > 1 && !few && !self.attn_per_token {
-                r.dispatch(&b.attn_tile, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, nt]), [c.n_heads as u32, chunks, nt.div_ceil(32)]);
+            // A prompt: flash attention, one pass over the positions, unless
+            // the older tiled or per-token shaders are asked for; decode and
+            // a few-token pass: one workgroup a token, merged over chunks.
+            if n > 1 && !few && !self.attn_chunked && !self.attn_per_token {
+                r.dispatch(&b.attn_flash, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, layer_off, qkv_dim, nt]), [c.n_heads as u32, nt.div_ceil(32), 1]);
+                end(r, "attention");
             } else {
-                r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+                if n > 1 && !few && !self.attn_per_token {
+                    r.dispatch(&b.attn_tile, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, nt]), [c.n_heads as u32, chunks, nt.div_ceil(32)]);
+                } else {
+                    r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+                }
+                end(r, "attention");
+                r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
+                end(r, "attention merge");
             }
-            end(r, "attention");
-            r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
-            end(r, "attention merge");
             product(r, std::slice::from_ref(&b.o), &b.mm[1], &b.few[1], &[&ly.wo], 0, h(l, 1, |f| &f.t_xb2), (1, q8_b(1)));
             end(r, "wo + add");
             r.dispatch(&b.norm2, &push(&[dim as u32, eps, 0]), [nt, 1, 1]);

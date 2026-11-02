@@ -5,10 +5,12 @@
 //! llama-bench's in the same session.
 //!
 //!   cargo run --release --target aarch64-linux-android --features vulkan --example vk_pp -- \
-//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf [f16] [profile] [attn1] [REPS] [depth D]...
+//!       testdata/gguf/qwen2.5-0.5b-q4_0.gguf [f16] [profile] [attn1] [chunked] [REPS] [depth D]...
 //!
 //! `attn1`: the prompt's attention one workgroup per token
 //! (`Options::attn_per_token`), the shader before attention_tile.comp.
+//! `chunked`: the prompt's attention in two passes
+//! (`Options::attn_chunked`), as before flash attention.
 //!
 //! `depth D`: fill the cache to position D through `forward_batch`
 //! (untimed), then time the prompt from there, as llama-bench's `-d` does.
@@ -27,7 +29,7 @@ use std::time::Instant;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.first().expect("usage: vk_pp MODEL.gguf [f16] [profile] [attn1] [REPS] [depth D]...");
-    let (mut f16_gemm, mut profile, mut attn_per_token, mut reps) = (false, false, false, 5);
+    let (mut f16_gemm, mut profile, mut attn_per_token, mut attn_chunked, mut reps) = (false, false, false, false, 5);
     let mut depths: Vec<usize> = Vec::new();
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
@@ -35,8 +37,9 @@ fn main() {
             "f16" => f16_gemm = true,
             "profile" => profile = true,
             "attn1" => attn_per_token = true,
+            "chunked" => attn_chunked = true,
             "depth" => depths.push(it.next().expect("depth needs a value").parse().expect("depth")),
-            _ => reps = a.parse().expect("unknown argument (f16, profile, attn1, REPS, depth D)"),
+            _ => reps = a.parse().expect("unknown argument (f16, profile, attn1, chunked, REPS, depth D)"),
         }
     }
     // With an explicit depth, time only that; the label says which.
@@ -48,8 +51,9 @@ fn main() {
     let seq = depths.iter().max().unwrap() + lengths.iter().max().unwrap();
     let (config, weights, _) = aether::model::gguf::load(path, seq).unwrap();
     let gpu = Gpu::new().unwrap();
-    let mut m = GpuModel::with(&gpu, config, weights, Options { f16_gemm, profile, attn_per_token, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
-    println!("# {path} on {} | batches of {}, {} | attention {} | mean of {reps} runs", gpu.info.name, m.batch, m.gemm_shader(), if attn_per_token { "per token" } else { "tiled" });
+    let mut m = GpuModel::with(&gpu, config, weights, Options { f16_gemm, profile, attn_per_token, attn_chunked, ..Options::default() }).unwrap_or_else(|e| panic!("{e}"));
+    let attention = if attn_per_token { "per token" } else if attn_chunked { "chunked" } else { "flash" };
+    println!("# {path} on {} | batches of {}, {} | attention {attention} | mean of {reps} runs", gpu.info.name, m.batch, m.gemm_shader());
     println!("test,tok_per_s,ms");
     for &depth in &depths {
         if depth > 0 {
