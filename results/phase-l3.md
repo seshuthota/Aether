@@ -1498,3 +1498,75 @@ other runs), so something else ran on the phone.
   would settle it, not tried.
 
 The rule stays as changed.
+
+
+## Flash attention, the F4 checks before the A/B (2026-11-02; `raw/flash/`)
+
+`plans/flash-attention.md` F4, on the phone (iQOO 13, Adreno 830), battery,
+cooled, conditions in each raw file, commit `32b18ff`. The timed A/B (F5,
+step 27) and the per-depth baseline (F0, step 26) had only started when the
+phone was disconnected, so their numbers are not here yet; this section is
+what F4 established before any timing claim.
+
+**The suite**: 133/133 with `--features vulkan,hexagon`
+(`vk-tests-flash-phone.txt`), including `attention_flash_matches_reference`
+and `attention_chunked_matches_reference` on the Adreno (66 numpy cases
+each, worst 1.6 · 2⁻¹¹ of max |v| against the bound 4 · 2⁻¹¹) and
+`c_abi_gpu_session`.
+
+**Accuracy at 20 × 512** (wikitext-2, against the f32 file's logits,
+`vk-kld-*-flash*.txt`). Step 20's int8 tile path and llama.cpp for
+comparison; flash and chunked score the same tokens:
+
+| model, path | PPL | Mean KLD | same top |
+| --- | --- | --- | --- |
+| SmolLM2-135M Q4_0, flash | 27.7418 | 0.335796 | 64.67 % |
+| SmolLM2-135M Q4_0, chunked | 27.7794 | 0.336116 | 64.88 % |
+| SmolLM2-135M Q4_0, step 20 tile / llama.cpp | 27.7581 / 27.7412 | 0.335616 / 0.335355 ± 0.004256 | 64.82 / 64.77 % |
+| Qwen2.5-0.5B Q4_0, flash | 19.7443 | 0.180887 | 77.26 % |
+| Qwen2.5-0.5B Q4_0, chunked | 19.7425 | 0.180747 | 77.08 % |
+| Qwen2.5-0.5B Q4_0, step 20 tile / llama.cpp | 19.7371 / 19.7283 | 0.181107 / 0.181010 ± 0.002752 | 77.08 / 76.98 % |
+| Qwen2.5-0.5B Q4_K_M, flash | 16.7539 | 0.031514 | 90.28 % |
+| Qwen2.5-0.5B Q4_K_M, chunked | 16.7581 | 0.031558 | 90.33 % |
+| Qwen2.5-0.5B Q4_K_M, step 20 tile / llama.cpp | 16.7356 / 16.7657 | 0.031790 / 0.033112 ± 0.000638 | 89.98 / 90.10 % |
+
+- Every flash figure is inside llama.cpp's error bar, and within 0.02 PPL
+  and 0.0005 KLD of the tile path it replaces.
+- The `chunked` arm is the old path: Qwen Q4_0 comes out at 19.7425 /
+  0.180747, the same digits as step 20's `vk-kld-*-batch-tile.txt`, so
+  `Options::attn_chunked` reproduces it (and the per-lane tail loads are a
+  no-op at head size 64). The greedy line is identical between the arms on
+  all three files.
+
+**Accuracy at depth** (Qwen2.5-0.5B Q4_0, one chunk against the f32 file,
+`vk-kld-*-batch*-c2048/c4096.txt`). This is the first check of the GPU
+prompt path beyond 512 tokens:
+
+| ctx | path | PPL | Mean KLD | same top |
+| --- | --- | --- | --- | --- |
+| 2048 | flash | 13.4075 | 0.170176 | 79.277 % |
+| 2048 | chunked | 13.4314 | 0.170230 | 78.886 % |
+| 2048 | llama.cpp (CUDA, one chunk) | 13.3704 | 0.169484 ± 0.005911 | 79.277 % |
+| 4096 | flash | 18.4284 | 0.191220 | 73.718 % |
+| 4096 | chunked | 18.4020 | 0.191446 | 74.206 % |
+| 4096 | llama.cpp | 18.3963 | 0.190900 ± 0.003943 | 74.206 % |
+
+Flash's KLD is 0.0007 from llama.cpp's at both depths and the same-top
+figures match at 2048. The llama.cpp rows were produced on the PC's CUDA
+build (`raw/llamacpp-kld-*.txt`); the same chunks went through `vk_ppl` on
+the Intel GPU first (`raw/vk-kld-*-deep-intel.txt`), which landed on the
+same KLD.
+
+**Same-session reference for the coming A/B**: llama-bench on the phone's
+OpenCL build at pp512 after 0/1024/2048/4096 cached tokens
+(`llamacpp-qwen2.5-0.5b-*-pp512.txt`): Q4_0 1123 / 775 / 599 / 367 tok/s,
+Q4_K_M 132 / 76 / 84 / 124.
+
+**What the runs suggest about speed (not the A/B)**: the `kld` and `deep`
+runs are single, unpairs, and their times include the shared f32 base on
+the CPU, so they are not a comparison. They hint at what F5 will test:
+level or slightly ahead at chunked lengths of ≤ 512, and behind at depth
+(c2048: 17.3 against 44.8 tok/s through the GPU including the base), which
+is the workgroup count — a 128-token pass gives Qwen 14 heads × 4
+token-groups = 56 workgroups, each walking every position in turn, against
+thousands of short workgroups in the chunked path.
