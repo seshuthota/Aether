@@ -1,0 +1,25 @@
+# 2026-11-03T00:35:28+05:30, commit 0b60563
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 51
+# temperature: 347
+# Capacity level: -1
+# cpu0 cap 2745600 kHz
+# cpu6 cap 2649600 kHz
+# mScreenState=ON
+MemTotal:       15472808 kB
+MemFree:          982692 kB
+MemAvailable:    6241320 kB
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| lfm3 1.7B Q4_0                 | 993.13 MiB |     1.73 B | CPU        |       6 |            pp64 |       292.18 ± 28.72 |
+| lfm3 1.7B Q4_0                 | 993.13 MiB |     1.73 B | CPU        |       6 |           pp128 |       298.99 ± 11.19 |
+| lfm3 1.7B Q4_0                 | 993.13 MiB |     1.73 B | CPU        |       6 |           pp512 |        262.71 ± 0.69 |
+| lfm3 1.7B Q4_0                 | 993.13 MiB |     1.73 B | CPU        |       6 |            tg64 |         50.71 ± 1.13 |
+
+build: d02b4c0d6 (12061)

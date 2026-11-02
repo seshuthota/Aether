@@ -1,0 +1,44 @@
+# 2026-11-03T00:24:51+05:30, commit 0b60563
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 53
+# temperature: 342
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1017600 kHz
+MemTotal:       15472808 kB
+MemFree:          156556 kB
+MemAvailable:    5968020 kB
+# cpu-0-0-0 41900
+# cpu-0-4-1 42300
+# cpu-0-5-0 41500
+# cpu-0-5-1 42300
+# cpuss-0-0 42600
+# cpuss-0-1 42300
+# cpu-1-0-0 40500
+# cpu-0-0-1 42300
+# cpu-1-0-1 40500
+# cpu-1-1-0 40900
+# cpu-1-1-1 40500
+# cpuss-1-0 40500
+# cpuss-1-1 40900
+# cpu-0-1-0 42300
+# cpu-0-1-1 41900
+# cpu-0-2-0 41900
+# cpu-0-2-1 41500
+# cpu-0-3-0 41900
+# cpu-0-3-1 41500
+# cpu-0-4-0 42600
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |            pp64 |         96.58 ± 5.52 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |           pp128 |        100.93 ± 1.34 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |           pp512 |        100.15 ± 0.20 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |            tg64 |         31.18 ± 0.58 |
+
+build: d02b4c0d6 (12061)

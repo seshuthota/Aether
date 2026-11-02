@@ -3,14 +3,17 @@
 # GGUF files with llama.cpp's own tools (so both engines read the same bytes).
 # Files that already exist are skipped, so it is safe to re-run.
 #
-#   tools/fetch_models.sh [stories15m|smollm2-135m|smollm2-360m|qwen2.5|gguf|wikitext|all]
+#   tools/fetch_models.sh [stories15m|smollm2-135m|smollm2-360m|qwen2.5|lfm3|gguf|wikitext|all]
 #
-# Fetch only what the phase being worked on needs: the full set is ~6 GB.
+# Fetch only what the phase being worked on needs: the full set is ~14 GB.
 #
 #   stories15m     testdata/models/stories15M/       ~60 MB  (llama2.c, Phase 2)
 #   smollm2-135m   testdata/models/SmolLM2-135M/     ~270 MB (Phase 5)
 #   smollm2-360m   testdata/models/SmolLM2-360M/     ~720 MB (Phase 5)
 #   qwen2.5        testdata/models/Qwen2.5-0.5B-Instruct/ ~1 GB (Phase 7)
+#   lfm3           testdata/models/LFM3-1.7B/ and the official GGUF
+#                  quantizations in testdata/gguf/ (~4 GB); the BF16 file
+#                  goes to hostdata/gguf/ (host-only, ~3.5 GB)
 #   gguf           f32 GGUFs in hostdata/gguf/ (host-only, ~2.5 GB) and
 #                  Q8_0 / Q4_0 / Q5_0 GGUFs in testdata/gguf/ (`llama-quantize
 #                  --pure`) plus llama.cpp's usual Q4_K_M mix, for SmolLM2-135M
@@ -57,6 +60,21 @@ stories15m() {
 smollm2_135m() { hf_model HuggingFaceTB/SmolLM2-135M testdata/models/SmolLM2-135M "${HF_FILES[@]}" special_tokens_map.json; }
 smollm2_360m() { hf_model HuggingFaceTB/SmolLM2-360M testdata/models/SmolLM2-360M "${HF_FILES[@]}" special_tokens_map.json; }
 qwen25() { hf_model Qwen/Qwen2.5-0.5B-Instruct testdata/models/Qwen2.5-0.5B-Instruct "${HF_FILES[@]}"; }
+
+# LFM3 (plans/lfm3.md, A0): the official GGUFs, not a local quantization.
+# Revisions pinned 2026-11-03; the BF16 reference is host-only.
+LFM3_REV=ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7
+LFM3_GGUF_REV=bad5729bba61d076fff20d2548e62526665af215
+lfm3() {
+  local d=testdata/models/LFM3-1.7B g=LiquidAI/LFM3-1.7B-GGUF
+  for f in config.json generation_config.json tokenizer.json tokenizer_config.json special_tokens_map.json chat_template.jinja; do
+    fetch "$HF/LiquidAI/LFM3-1.7B/resolve/$LFM3_REV/$f" "$d/$f"
+  done
+  for f in Q4_K_M Q8_0 QAD-Q4_0; do
+    fetch "$HF/$g/resolve/$LFM3_GGUF_REV/LFM3-1.7B-$f.gguf" "testdata/gguf/LFM3-1.7B-$f.gguf"
+  done
+  fetch "$HF/$g/resolve/$LFM3_GGUF_REV/LFM3-1.7B-BF16.gguf" hostdata/gguf/LFM3-1.7B-BF16.gguf
+}
 
 # gguf_of HF_DIR NAME: NAME-f32.gguf (host-only), NAME-{q8_0,q4_0,q5_0}.gguf
 # and NAME-q4_k_m.gguf.
@@ -133,9 +151,10 @@ case "${1:-all}" in
   smollm2-135m) smollm2_135m ;;
   smollm2-360m) smollm2_360m ;;
   qwen2.5) qwen25 ;;
+  lfm3) lfm3 ;;
   gguf) gguf ;;
   wikitext) wikitext ;;
   imatrix) imatrix ;;
-  all) stories15m; smollm2_135m; smollm2_360m; qwen25; gguf; wikitext ;;
+  all) stories15m; smollm2_135m; smollm2_360m; qwen25; lfm3; gguf; wikitext ;;
   *) sed -n 2,25p "$0"; exit 1 ;;
 esac
