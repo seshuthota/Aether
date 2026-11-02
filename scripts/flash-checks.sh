@@ -75,7 +75,7 @@ adb shell input keyevent KEYCODE_WAKEUP
 
 for stage in "${STAGES[@]}"; do case $stage in
 tests)
-  wait_cool
+  wait_cool; adb shell input keyevent KEYCODE_WAKEUP
   { conditions; cargo test -q --release $PHONE --features vulkan,hexagon 2>&1 | grep -v pushed || echo "FAILED"; } > "$OUT/vk-tests-flash-phone.txt"
   grep -E '^test result|FAILED' "$OUT/vk-tests-flash-phone.txt" | tail -3 ;;
 kld)
