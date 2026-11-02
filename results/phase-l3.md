@@ -1505,8 +1505,10 @@ The rule stays as changed.
 `plans/flash-attention.md` F4, on the phone (iQOO 13, Adreno 830), battery,
 cooled, conditions in each raw file, commit `32b18ff`. The timed A/B (F5,
 step 27) and the per-depth baseline (F0, step 26) had only started when the
-phone was disconnected, so their numbers are not here yet; this section is
-what F4 established before any timing claim.
+phone was disconnected, so their numbers are not here yet; they are
+`scripts/opt-ab.sh OUT flash` (both arms at depth 0/1024/2048/4096, plain
+and profiled) and, optionally, `scripts/opt-ab.sh OUT flash-batch` (F6c).
+This section is what F4 established before any timing claim.
 
 **The suite**: 133/133 with `--features vulkan,hexagon`
 (`vk-tests-flash-phone.txt`), including `attention_flash_matches_reference`

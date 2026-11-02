@@ -181,6 +181,20 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    the plan is now ticked; open items below are optimizations.
 6. **Learning track** (with the user): pages and films for what the implementation track built.
 
+**Flash attention for the GPU prompt pass (2026-11-02, `plans/flash-attention.md`)**:
+F0–F4 are built on branch `flash-attention` (`attention_flash.comp`, wired as the default
+prompt attention with `Options::attn_chunked` keeping the old two passes for A/B; `vk_pp`
+gained `depth`, `chunked` and `batch N`). On the phone (results/phase-l3.md, "Flash
+attention, the F4 checks"): 133/133 tests with `vulkan,hexagon`; accuracy at wikitext-2
+20 × 512 within llama.cpp's error bar and within noise of the tile path (Qwen Q4_0 flash
+0.180887 against llama.cpp's 0.181010 ± 0.002752), and at context 2048/4096 the same
+(0.170176 / 0.191220 against 0.169484 ± 0.005911 / 0.190900 ± 0.003943) — the first prompt
+check beyond 512 tokens. The timings (step 26 baseline and step 27 A/B) were interrupted
+when the phone was disconnected and are the next thing; the single-run speeds suggest flash
+is level at ≤ 512-token chunks and behind at depth, where a 128-token pass gives only
+`n_heads × 4` workgroups (56 for Qwen) — F6b (a span split with `parts`+merge sized by
+splits) is the expected next change, with F6c's 256-token batch as the cheap check.
+
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 
 Items 9–13 ran on the phone on 2026-10-30, 22:00–23:15 (results/phase-l5.md "Step 6"):
