@@ -1929,11 +1929,12 @@ mod tests {
     ///
     /// The keys and values pass through f16 in shared memory (2⁻¹¹
     /// relative each). The output is a weighted average of values, so its
-    /// error is about one value's rounding, plus the scores' error carried
-    /// through exp: a score is hs products each off by 2⁻¹¹ of its size, so
-    /// δs ≈ √hs·2⁻¹¹ (≈ 8·2⁻¹¹ at hs = 64 for unit-variance inputs), and
-    /// the weights follow by about w·δs. 4·2⁻¹¹ is the bound the f16
-    /// products' test uses.
+    /// absolute error is about one value's rounding of max |v|, plus the
+    /// scores' error carried through exp: a score is hs products each off
+    /// by 2⁻¹¹ of its size, so δs ≈ √hs·2⁻¹¹ (≈ 8·2⁻¹¹ at hs = 64 for
+    /// unit-variance inputs), and the weights follow by about w·δs. The
+    /// bound is 4·2⁻¹¹ of max |v| — the largest value, not the largest
+    /// output, whose size falls as the average takes in more positions.
     fn prompt_attention_matches(gpu: &Gpu, flash: bool) -> Option<(f32, usize)> {
         let root = crate::testutil::golden("kernels")?;
         let mut dirs: Vec<_> = std::fs::read_dir(root)
@@ -2000,9 +2001,19 @@ mod tests {
                 .unwrap()
             };
             gpu.submit(&cmds, false).unwrap();
-            let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
-            assert!(rel <= 4.0 * 2f32.powi(-11), "{name}: rel {rel:.2e}");
-            worst = worst.max(rel);
+            // The error is relative to the largest value, not to the largest
+            // output: every value is rounded to f16 in shared memory (2⁻¹¹
+            // relative), so the weighted average's absolute error is about
+            // 2⁻¹¹ of max |v| whatever the context, while the output itself
+            // shrinks as the average takes in more values (at 4000 positions
+            // its largest component is 0.12 against v's 4.2). The scores'
+            // f16 error moves the weights by a similar amount. Measured:
+            // 1.6 · 2⁻¹¹ of max |v| on the Adreno, 0.73 on the Intel GPU.
+            let (abs, _) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            let vmax = v.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            let bound = 4.0 * 2f32.powi(-11) * vmax;
+            assert!(abs <= bound, "{name}: abs {abs:.2e}, {:.2e} of max |v| (bound {bound:.2e})", abs / vmax);
+            worst = worst.max(abs / vmax);
         }
         Some((worst, dirs.len()))
     }
@@ -2011,7 +2022,7 @@ mod tests {
     fn attention_chunked_matches_reference() {
         let Ok(gpu) = Gpu::new() else { return };
         let Some((worst, cases)) = prompt_attention_matches(&gpu, false) else { return };
-        println!("attention chunked: {cases} cases vs numpy, worst relative error {worst:.2e}");
+        println!("attention chunked: {cases} cases vs numpy, worst {worst:.2e} of max |v|");
         assert!(cases >= 60, "only {cases} golden cases");
     }
 
@@ -2019,7 +2030,7 @@ mod tests {
     fn attention_flash_matches_reference() {
         let Ok(gpu) = Gpu::new() else { return };
         let Some((worst, cases)) = prompt_attention_matches(&gpu, true) else { return };
-        println!("attention flash: {cases} cases vs numpy, worst relative error {worst:.2e}");
+        println!("attention flash: {cases} cases vs numpy, worst {worst:.2e} of max |v|");
         assert!(cases >= 60, "only {cases} golden cases");
     }
 }
