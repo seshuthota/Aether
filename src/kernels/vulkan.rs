@@ -1921,11 +1921,11 @@ mod tests {
     }
 
     /// The prompt's attention shaders on causal, grouped-query batches
-    /// (`attention_causal_<nh>x<nkv>x<hs>_p<pos0>_t<nt>`, tools/gen_kernels.py):
-    /// `attention_tile.comp` with `attention_merge.comp`, the `chunked`
-    /// option. q, k and v are laid out and dispatched as
-    /// `GpuModel::record_pass` does for a batch, and `o` is what
-    /// `attention_merge.comp` writes into `xb2`.
+    /// (`attention_causal_<nh>x<nkv>x<hs>_p<pos0>_t<nt>`, tools/gen_kernels.py).
+    /// q, k and v are laid out and dispatched as `GpuModel::record_pass`
+    /// does for a batch; `flash` runs `attention_flash.comp` (into `xb2`),
+    /// else `attention_tile.comp` + `attention_merge.comp` (the `chunked`
+    /// option, through `parts`).
     ///
     /// The keys and values pass through f16 in shared memory (2⁻¹¹
     /// relative each). The output is a weighted average of values, so its
@@ -1934,10 +1934,8 @@ mod tests {
     /// δs ≈ √hs·2⁻¹¹ (≈ 8·2⁻¹¹ at hs = 64 for unit-variance inputs), and
     /// the weights follow by about w·δs. 4·2⁻¹¹ is the bound the f16
     /// products' test uses.
-    #[test]
-    fn attention_chunked_matches_reference() {
-        let Some(root) = crate::testutil::golden("kernels") else { return };
-        let Ok(gpu) = Gpu::new() else { return };
+    fn prompt_attention_matches(gpu: &Gpu, flash: bool) -> Option<(f32, usize)> {
+        let root = crate::testutil::golden("kernels")?;
         let mut dirs: Vec<_> = std::fs::read_dir(root)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -1970,31 +1968,58 @@ mod tests {
             kb.as_mut_slice::<f32>().copy_from_slice(&k);
             let mut vb = gpu.buffer(v.len() * 4).unwrap();
             vb.as_mut_slice::<f32>().copy_from_slice(&v);
-            let mut parts = gpu.buffer(nt * nh * chunks * (hs + 2) * 4).unwrap();
-            parts.as_mut_slice::<f32>().fill(f32::NAN);
+            // Only the chunked path reads parts; NaN in it would fail the
+            // test if a shader read a chunk it did not write.
+            let mut prts = (!flash).then(|| {
+                let mut b = gpu.buffer(nt * nh * chunks * (hs + 2) * 4).unwrap();
+                b.as_mut_slice::<f32>().fill(f32::NAN);
+                b
+            });
             let mut out = gpu.buffer(nt * nh * hs * 4).unwrap();
             out.as_mut_slice::<f32>().fill(f32::NAN);
             let mut params = gpu.buffer(4).unwrap();
             params.as_mut_slice::<u32>()[0] = pos0 as u32;
-            let tile = Kernel::new(&gpu, crate::spirv!("attention_tile"), 5, 28).unwrap();
-            let merge = Kernel::new(&gpu, crate::spirv!("attention_merge"), 3, 8).unwrap();
-            let tb = tile.bind(&gpu, &[&qb, &kb, &vb, &parts, &params]).unwrap();
-            let mb = merge.bind(&gpu, &[&parts, &out, &params]).unwrap();
-            let tp = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, qstride as u32, nt as u32]);
-            let mp = push_u32(&[hs as u32, chunks as u32]);
-            let cmds = gpu
-                .record(|r| {
+            let cmds = if flash {
+                let k = Kernel::new(gpu, crate::spirv!("attention_flash"), 5, 24).unwrap();
+                let b = k.bind(gpu, &[&qb, &kb, &vb, &out, &params]).unwrap();
+                let p = push_u32(&[nh as u32, nkv as u32, hs as u32, 0, qstride as u32, nt as u32]);
+                gpu.record(|r| r.dispatch(&b, &p, [nh as u32, nt.div_ceil(32) as u32, 1])).unwrap()
+            } else {
+                let parts = prts.as_mut().unwrap();
+                let tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28).unwrap();
+                let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8).unwrap();
+                let tb = tile.bind(gpu, &[&qb, &kb, &vb, parts, &params]).unwrap();
+                let mb = merge.bind(gpu, &[parts, &out, &params]).unwrap();
+                let tp = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, qstride as u32, nt as u32]);
+                let mp = push_u32(&[hs as u32, chunks as u32]);
+                gpu.record(|r| {
                     r.dispatch(&tb, &tp, [nh as u32, chunks as u32, nt.div_ceil(32) as u32]);
                     r.barrier();
                     r.dispatch(&mb, &mp, [nh as u32, nt as u32, 1]);
                 })
-                .unwrap();
+                .unwrap()
+            };
             gpu.submit(&cmds, false).unwrap();
             let (_, rel) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
             assert!(rel <= 4.0 * 2f32.powi(-11), "{name}: rel {rel:.2e}");
             worst = worst.max(rel);
         }
-        println!("attention chunked: {} cases vs numpy, worst relative error {worst:.2e}", dirs.len());
-        assert!(dirs.len() >= 60, "only {} golden cases", dirs.len());
+        Some((worst, dirs.len()))
+    }
+
+    #[test]
+    fn attention_chunked_matches_reference() {
+        let Ok(gpu) = Gpu::new() else { return };
+        let Some((worst, cases)) = prompt_attention_matches(&gpu, false) else { return };
+        println!("attention chunked: {cases} cases vs numpy, worst relative error {worst:.2e}");
+        assert!(cases >= 60, "only {cases} golden cases");
+    }
+
+    #[test]
+    fn attention_flash_matches_reference() {
+        let Ok(gpu) = Gpu::new() else { return };
+        let Some((worst, cases)) = prompt_attention_matches(&gpu, true) else { return };
+        println!("attention flash: {cases} cases vs numpy, worst relative error {worst:.2e}");
+        assert!(cases >= 60, "only {cases} golden cases");
     }
 }
