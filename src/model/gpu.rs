@@ -171,9 +171,10 @@ const PARTS_BUDGET: usize = 32 << 20;
 /// Tokens per prompt pass with flash attention: 256. A 128-token pass
 /// gives only `n_heads × 4` workgroups; 256 doubles them (and halves the
 /// passes, so the norms, RoPE and every dispatch are half as many). On the
-/// Adreno that made the attention kernel 26-29 % faster at pp256/512 and
-/// the pass 8-10 % faster (results/phase-l3.md step 28); at pp128 and
-/// below nothing changes, since it is one pass either way.
+/// Adreno that made the attention kernel 26-29 % faster at pp256/512, the
+/// other stages 8-10 % and the whole pass 11-19 % at pp512, Qwen Q4_0
+/// (results/phase-l3.md step 28); at pp128 and below nothing changes,
+/// since it is one pass either way.
 const BATCH: usize = 256;
 
 /// Tokens per prompt pass and floats `parts` must hold, for a cache of

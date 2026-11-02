@@ -194,10 +194,15 @@ attention kernel is 1.35–1.4× slower than the chunked path at depth (the work
 128-token pass gives 56 workgroups) and 1.2–1.7× at short lengths; with **256 tokens a pass**
 (now the default) the attention is 1.26–1.29× faster than at 128 and the whole pass is ahead
 at pp256 at every depth and at pp512 through 2048, level at 4096 — and the batch no longer
-shrinks with the context (17 tokens at 32K before). Accuracy is unchanged to the digit by
-the batch (PPL 19.7443 / KLD 0.180887 at both sizes). Open: F6b (split a group's positions
-across workgroups when short of workgroups) would close the remaining attention gap at
-depth; F8 measures decode at long context. Merge into `main` is the last step.
+shrinks with the context (17 tokens at 32K before). The gain is the batch (the weight
+products read each matrix half as often), not the flash kernel, which is still 1.10× the
+chunked path's attention at depth 4096; flash is what lets the batch stay at 256 at any
+context. Accuracy is unchanged to the digit by the batch (PPL 19.7443 / KLD 0.180887 at both
+sizes). Merged into `main` 2026-11-02. Open: F6b (split a group's positions across
+workgroups when short of workgroups) would close the remaining attention gap at depth;
+F7a (one rescale per sub-tile) and F7c (one load of K/V per GQA group) for the inner loop;
+F8 measures decode at long context; not measured, the chunked shaders at 256 tokens with a
+larger `PARTS_BUDGET` (possible below ~4K).
 
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 

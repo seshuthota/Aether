@@ -1669,14 +1669,27 @@ Attention ms (profiled), 128 vs 256 tokens a pass:
   faster at pp256 and pp512**, which is the workgroup count: 256 tokens
   double the token groups (8 instead of 4 per head) and halve the passes.
 - Whole pass, Qwen Q4_0 (GPU ms, 128 → 256): pp512 408 → 364 at depth 0,
-  728 → 612 at 1024, 1011 → 826 at 2048, 1615 → 1313 at 4096; pp256
-  186 → 167, 337 → 282, 485 → 400, 794 → 642.
+  728 → 612 at 1024, 1011 → 826 at 2048, 1615 → 1313 at 4096 (−11 to
+  −19 %); pp256 186 → 167, 337 → 282, 485 → 400, 794 → 642. Q4_K_M pp512:
+  538 → 495, 827 → 717, 1148 → 968, 1735 → 1468 (−8 to −16 %). The stages
+  other than attention drop 8–10 % (Q4_0 pp512 325 → 297 ms): each weight
+  matrix is read twice for 512 tokens instead of four times.
 - Against the chunked path of step 26/27 (different session, same clock
   caps): flash-256 is ahead at pp256 at every depth (167/282/400/642
   against 209/317/430/665) and at pp512 through depth 2048 (364/612/826
   against 417/643/846), level at depth 4096 (1313 against 1296). Its
   attention kernel alone is still 1.10× chunked's at depth 4096 (1007
-  against 918); the halved dispatch count is what brings the pass level.
+  against 918). What brings the pass level is everything else: the
+  chunked path reads each weight matrix five times for 512 tokens
+  (batches of 126) against flash-256's two (swiglu + down 107 against 142
+  ms, q/k/v 23 against 30, classifier 5 against 12), and has no merge
+  (108 ms at depth 4096).
+- **So the gain is the batch, not the flash kernel.** Flash's part is
+  that it makes the batch possible: it writes no `parts`, so 256 tokens a
+  pass costs nothing extra at any context, where the chunked path's
+  partial results would take ~68 MB at a 4.6K cache and ~480 MB at 32K.
+  Not measured: the chunked shaders at 256 tokens with `PARTS_BUDGET`
+  raised to fit (possible below ~4K); they might beat flash-256 there.
 - **Adopted as the default**: `BATCH = 256` in `prompt_batch` (capped by
   the cache size), with `Options::batch` kept for A/B. Only the prompt
   path changes; decode, the few-token pass and `parts` are untouched.
