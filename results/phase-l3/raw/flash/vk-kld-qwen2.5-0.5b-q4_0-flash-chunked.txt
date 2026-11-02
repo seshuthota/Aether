@@ -1,0 +1,17 @@
+# 2026-11-02T20:14:40+05:30, commit 2cd4538
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 76
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 1936 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 765.4 ms: 83.6 tok/s
+[1]10.7548,kld 0.16480,[2]14.8391,kld 0.16587,[3]15.5438,kld 0.17924,[4]15.9089,kld 0.17969,[5]16.2727,kld 0.18158,[6]16.9376,kld 0.18078,[7]17.2189,kld 0.18033,[8]18.5929,kld 0.18477,[9]19.8538,kld 0.18540,[10]20.5738,kld 0.18378,[11]21.0806,kld 0.18554,[12]21.0558,kld 0.18449,[13]21.9595,kld 0.18509,[14]21.3177,kld 0.18586,[15]21.1316,kld 0.18551,[16]21.7248,kld 0.18531,[17]20.0856,kld 0.18186,[18]20.0562,kld 0.18263,[19]19.8149,kld 0.18147,[20]19.7425,kld 0.18075,Final estimate: PPL = 19.7425 +/- 0.83637  (5100 tokens scored, 423.4 s, 24.1 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.213097
+Mean KLD: 0.180747   Same top p: 77.078 %   (time and tok/s include the base model on the CPU)
+
