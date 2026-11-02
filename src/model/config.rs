@@ -87,6 +87,10 @@ impl Config {
         matches!(self.layers[layer], LayerKind::Attention { .. })
     }
 
+    pub fn has_conv(&self) -> bool {
+        self.layers.iter().any(|l| matches!(l, LayerKind::Conv { .. }))
+    }
+
     /// The positions a token at `i` can see in this layer, or `None` for all
     /// of `0..=i`.
     pub fn window(&self, layer: usize) -> Option<usize> {

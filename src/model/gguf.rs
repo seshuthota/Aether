@@ -193,7 +193,10 @@ mod tests {
     use super::*;
     use crate::model::Transformer;
     use crate::model::reference::check_against_transformers;
-    use crate::testutil::host_golden;
+    use crate::testutil::{host_golden, max_errors};
+    use crate::format::safetensors::SafeTensors;
+    use crate::model::Observer;
+    use std::collections::HashMap;
 
     fn model(rel: &str) -> Option<Transformer> {
         let (config, weights, _) = load(host_golden(rel)?, 256).unwrap();
@@ -223,6 +226,121 @@ mod tests {
         assert_eq!(a.k_norm.as_ref().unwrap().len(), 128);
         assert!(a.gate.is_some());
         assert!(w.layers[0].post_attn_norm.is_some() && w.layers[0].post_ffn_norm.is_some());
+    }
+
+
+    #[derive(Default)]
+    struct Collect(HashMap<(String, i32, usize), Vec<f32>>);
+    impl Observer for Collect {
+        fn tap(&mut self, name: &str, layer: Option<usize>, pos: usize, data: &[f32]) {
+            self.0.insert((name.to_string(), layer.map_or(-1, |l| l as i32), pos), data.to_vec());
+        }
+    }
+
+    fn ref_tensor(st: &SafeTensors, name: &str) -> (Vec<usize>, Vec<f32>) {
+        let v = st.get(name).unwrap_or_else(|| panic!("reference has no {name}"));
+        let mut all = vec![0.0; v.numel()];
+        v.to_f32(&mut all);
+        (v.shape.to_vec(), all)
+    }
+
+    fn ref_row(st: &SafeTensors, name: &str, row: usize, width: usize) -> Vec<f32> {
+        let (shape, all) = ref_tensor(st, name);
+        assert!(row < shape[0] && shape[1] == width);
+        all[row * width..(row + 1) * width].to_vec()
+    }
+
+    fn check_logits(label: &str, ours: &[f32], want: &[f32]) {
+        let (_, rel) = max_errors(ours, want);
+        assert!(rel < 1e-3, "{label}: logits relative error {rel:.2e}");
+    }
+
+    /// LFM3 against the pinned HF repository (f32, eager): every layer's
+    /// residual after a 29-token prompt, full short logits, selected logits
+    /// from a 320-token prompt (past the 256-position sliding window), and
+    /// 16 greedy tokens.
+    #[test]
+    fn lfm3_matches_transformers() {
+        let (Some(p), Some(refp)) = (host_golden("gguf/LFM3-1.7B-BF16.gguf"), host_golden("lfm3/ref.safetensors")) else { return };
+        let (c, w, _) = load(p, 320).unwrap();
+        let mut t = Transformer::new(c.clone(), w);
+        let st = SafeTensors::open(refp).unwrap();
+        let vocab = c.vocab_size;
+
+        let (_, ids) = ref_tensor(&st, "short_ids");
+        let ids: Vec<usize> = ids.into_iter().map(|x| x as usize).collect();
+        let (_, want) = ref_tensor(&st, "short_logits");
+        let ours = t.forward_batch_logits(&ids, 0, 0).to_vec();
+        for pos in 0..ids.len() {
+            check_logits(&format!("short logits pos {pos}"), &ours[pos * vocab..(pos + 1) * vocab], &want[pos * vocab..(pos + 1) * vocab]);
+        }
+
+        let mut obs = Collect::default();
+        t.forward_batch_traced(&ids, 0, &mut obs);
+        for l in 0..c.n_layers {
+            for pos in 0..ids.len() {
+                let key = ("resid_ffn".to_string(), l as i32, pos);
+                let got = obs.0.get(&key).unwrap_or_else(|| panic!("no tap {key:?}"));
+                let want = ref_row(&st, &format!("L{l}.resid_ffn"), pos, c.dim);
+                let (_, rel) = max_errors(got, &want);
+                if rel >= 1e-3 {
+                    let mut best = (usize::MAX, f32::INFINITY);
+                    for ll in 0..c.n_layers {
+                        let (_, r) = max_errors(got, &ref_row(&st, &format!("L{ll}.resid_ffn"), pos, c.dim));
+                        if r < best.1 { best = (ll, r); }
+                    }
+                    println!("L{l} pos{pos} rel {rel:.3e}; best HF layer {:?}; got {:?} want {:?}", best, &got[..4], &want[..4]);
+                }
+                assert!(rel < 1e-3, "L{l}.resid_ffn pos {pos}: relative error {rel:.2e}");
+            }
+        }
+
+        let (_, long) = ref_tensor(&st, "long_ids");
+        let long: Vec<usize> = long.into_iter().map(|x| x as usize).collect();
+        let (_, posv) = ref_tensor(&st, "long_positions");
+        let (_, want_long) = ref_tensor(&st, "long_logits");
+        let long_logits = t.forward_batch_logits(&long, 0, 0).to_vec();
+        for (r, pv) in posv.iter().enumerate() {
+            let pos = *pv as usize;
+            check_logits(&format!("long logits pos {pos}"), &long_logits[pos * vocab..(pos + 1) * vocab], &want_long[r * vocab..(r + 1) * vocab]);
+        }
+
+        let (_, greedy) = ref_tensor(&st, "greedy_ids");
+        let mut logits = t.forward_batch(&ids, 0).to_vec();
+        for k in 0..16 {
+            let next = crate::kernels::argmax(&logits);
+            assert_eq!(next, greedy[ids.len() + k] as usize, "greedy token {k}");
+            logits.copy_from_slice(t.forward(next, ids.len() + k));
+        }
+        println!("LFM3: 29 short + 9 long logits, every layer tap and 16 greedy tokens match HF");
+    }
+
+
+    /// Speculative decoding must roll the conv state back with the KV cache:
+    /// after a batched check that contains rejected drafts, continuing from
+    /// the accepted prefix gives the same next-token logits as plain decode.
+    #[test]
+    fn lfm3_conv_state_rolls_back() {
+        let Some(p) = crate::testutil::golden("gguf/LFM3-1.7B-Q4_K_M.gguf") else { return };
+        let (c, w, _) = load(&p, 64).unwrap();
+        let (c2, w2, _) = load(&p, 64).unwrap();
+        let mut plain = Transformer::new(c, w);
+        let mut spec = Transformer::new(c2, w2);
+        let tokens: Vec<usize> = (0..16).map(|i| 100 + (i * 37) % 5000).collect();
+        let logits = plain.forward_batch(&tokens, 0).to_vec();
+        let next = crate::kernels::argmax(&logits);
+        let mut logits2 = spec.forward_batch(&tokens, 0).to_vec();
+        assert_eq!(next, crate::kernels::argmax(&logits2));
+        // The batched check: the certain token and two drafts.
+        let drafts = [next, 1234, 5678];
+        let _rows = spec.forward_batch_logits(&drafts, 16, 0).to_vec();
+        let l16 = plain.forward(next, 16).to_vec();
+        let next2 = crate::kernels::argmax(&l16);
+        let plain17 = plain.forward(next2, 17).to_vec();
+        spec.restore_conv(16);
+        logits2.copy_from_slice(spec.forward(next2, 17));
+        let (_, rel) = max_errors(&plain17, &logits2);
+        assert!(rel < 0.5, "conv rollback: logits relative error {rel:.2e}");
     }
 
     /// llama.cpp's own f32 conversion of SmolLM2 (`llama`: Q/K rows

@@ -20,9 +20,9 @@ use std::time::{Duration, Instant};
 pub enum Text {
     /// llama2.c: BOS first; BOS again means "story over".
     Llama2c(l2c_tok::Tokenizer),
-    /// Hugging Face byte-level BPE (SmolLM2, Qwen2): no BOS added; stops at
-    /// end-of-text or the chat end-of-turn token.
-    Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize> },
+    /// Hugging Face byte-level BPE (SmolLM2, Qwen2, LFM3): no BOS added;
+    /// stops at end-of-text or the chat end-of-turn token.
+    Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize>, lfm3: bool },
 }
 
 impl Text {
@@ -34,7 +34,8 @@ impl Text {
         stops.extend(tok.token_id("<|im_end|>"));
         stops.extend(tok.token_id("<|endoftext|>"));
         let start = id("tokenizer.ggml.bos_token_id").or(stops.first().copied()).unwrap_or(0);
-        Ok(Text::Hf { tok: Box::new(tok), start, stops })
+        let lfm3 = g.get("general.architecture").and_then(Value::as_str) == Some("lfm3");
+        Ok(Text::Hf { tok: Box::new(tok), start, stops, lfm3 })
     }
 
     pub fn encode(&self, prompt: &str) -> Vec<usize> {
@@ -82,6 +83,19 @@ impl Text {
         match self {
             Text::Llama2c(_) => id == l2c_tok::BOS,
             Text::Hf { stops, .. } => stops.contains(&id),
+        }
+    }
+
+    pub fn is_lfm3(&self) -> bool {
+        matches!(self, Text::Hf { lfm3: true, .. })
+    }
+
+    /// The prompt for a one-turn chat, in this model family's template.
+    pub fn chat_prompt(&self, system: Option<&str>, user: &str, thinking: bool) -> String {
+        match self {
+            Text::Llama2c(_) => user.to_string(),
+            Text::Hf { lfm3: true, .. } => crate::chat::lfm3(system, user, thinking),
+            Text::Hf { .. } => crate::chat::chatml(system.unwrap_or(crate::chat::QWEN_DEFAULT_SYSTEM), user),
         }
     }
 }
@@ -208,7 +222,7 @@ impl Session {
             let mut stops: Vec<usize> = id("eos_token_id").into_iter().collect();
             stops.extend(tok.token_id("<|im_end|>"));
             let start = id("bos_token_id").or(stops.first().copied()).unwrap_or(0);
-            (config, weights, Text::Hf { tok: Box::new(tok), start, stops })
+            (config, weights, Text::Hf { tok: Box::new(tok), start, stops, lfm3: false })
         } else {
             let (mut config, weights) = llama2c::load(path)?;
             config.seq_len = config.seq_len.min(max_seq);
@@ -293,6 +307,7 @@ impl Session {
     /// (results/phase-6.md, "Prompt lookup decoding"), so a greedy run can
     /// fork from plain greedy decoding where two tokens are that close.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let k = k.min(crate::model::transformer::MAX_DRAFT - 1);
         self.generate_speculative(prompt, sampler, steps, k, |_, hist, max| lookup_draft(hist, ngram, k.min(max)).to_vec(), emit)
     }
 
@@ -304,6 +319,7 @@ impl Session {
     /// is decided by the target, so greedy text is the target's greedy text
     /// (under its batched numbers) and sampled text keeps its distribution.
     pub fn generate_draft(&mut self, draft: &mut Drafter, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let k = k.min(crate::model::transformer::MAX_DRAFT - 1);
         assert_eq!(draft.model.config.vocab_size, self.model.config.vocab_size, "draft and target models need the same vocabulary");
         assert!(draft.model.config.seq_len >= steps.min(self.model.config.seq_len), "draft model's context is too short");
         // The draft reads the prompt up front, all but its last token (the
@@ -368,6 +384,7 @@ impl Session {
                     let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
                     if !accepted {
                         len.update(draft.len(), i);
+                        self.model.restore_conv(pos - 1);
                         next = t;
                         continue 'tokens;
                     }

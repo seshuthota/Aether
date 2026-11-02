@@ -222,12 +222,12 @@ impl Weights {
 /// computed in chunks ([`attention_chunked`]), otherwise whole
 /// ([`attention_whole`]).
 #[allow(clippy::too_many_arguments)]
-fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
+fn attention(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
     #[cfg(target_arch = "aarch64")]
-    if (c.head_size() == 64 || c.head_size() == 48 || c.head_size() == 128) && pos + 1 > ATTN_CHUNK {
+    if c.window(layer).is_none() && (c.head_size() == 64 || c.head_size() == 48 || c.head_size() == 128) && pos + 1 > ATTN_CHUNK {
         return attention_chunked(pool, c, out, q, kc, vc, pos);
     }
-    attention_whole(pool, c, out, q, kc, vc, scores, pos)
+    attention_whole(pool, c, layer, out, q, kc, vc, scores, pos)
 }
 
 /// [`attention`] with every head over the whole context in one piece (no
@@ -237,13 +237,14 @@ fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], 
 /// `scores`), so with a pool they run in parallel, one thread per head at a
 /// time.
 #[allow(clippy::too_many_arguments)]
-fn attention_whole(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
+fn attention_whole(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
     let (hs, kv_dim, group, seq) = (c.head_size(), c.kv_dim(), c.kv_group(), c.seq_len);
+    let window = c.window(layer).unwrap_or(usize::MAX);
     let head = |h: usize, out_h: &mut [f32], scores_h: &mut [f32]| {
         let kv_off = (h / group) * hs; // which K/V head this query head reads
         let keys = |t: usize| &kc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
         let values = |t: usize| &vc[t * kv_dim + kv_off..t * kv_dim + kv_off + hs];
-        k::attention_head(out_h, &q[h * hs..(h + 1) * hs], keys, values, pos, scores_h);
+        k::attention_head_window(out_h, &q[h * hs..(h + 1) * hs], keys, values, pos, window, scores_h);
     };
     match pool.filter(|p| p.threads() > 1) {
         None => {
@@ -332,11 +333,12 @@ fn attention_chunked(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: 
 /// ones fill in at the end. Each block of items has its own scores buffer;
 /// every head's result is computed exactly as in [`attention`].
 #[allow(clippy::too_many_arguments)]
-fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], start: usize, t: usize) {
+fn attention_batch(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], start: usize, t: usize) {
+    let window = c.window(layer).unwrap_or(usize::MAX);
     let Some(p) = pool.filter(|p| p.threads() > 1 && t > 1) else {
         for i in 0..t {
             let dim = c.n_heads * c.head_size();
-            attention_whole(pool, c, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
+            attention_whole(pool, c, layer, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
         }
         return;
     };
@@ -360,7 +362,7 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[
             // slice of `out` is disjoint from every other item's (length
             // checked above).
             let og = unsafe { std::slice::from_raw_parts_mut(o.ptr().add(h0), group * hs) };
-            k::attention_group(og, qg, hs, keys, values, start + i, &mut sc);
+            k::attention_group_window(og, qg, hs, keys, values, start + i, window, &mut sc);
         }
     });
 }
@@ -368,7 +370,7 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[
 /// One token through a gated short convolution: `in_proj` → split B, C, x →
 /// `u = B ⊙ x` → causal depthwise conv with the 6 saved rows → `C ⊙ y` →
 /// `out_proj`. Writes the mixer output to `s.xb2`.
-fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw: &ConvWeights, width: usize, _pos: usize) {
+fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw: &ConvWeights, width: usize, pos: usize) {
     let dim = c.dim;
     assert!(width <= 7 && width >= 1);
     k::linear_on(pool, &mut s.conv[..3 * dim], &s.xb, &cw.in_proj);
@@ -383,6 +385,9 @@ fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw
     };
     let state = &mut s.conv_state[s.conv_off[l]..s.conv_off[l] + 6 * dim];
     k::short_conv_step(&s.xb[..dim], w, state, dim, width, &mut s.q[..dim]);
+    let base = s.conv_off[l] * (MAX_DRAFT + 1);
+    let slot = base + (pos % (MAX_DRAFT + 1)) * 6 * dim;
+    s.conv_snap[slot..slot + 6 * dim].copy_from_slice(state);
     for ch in 0..dim {
         s.xb2[ch] = cc[ch] * s.q[ch];
     }
@@ -392,7 +397,7 @@ fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw
 
 /// [`conv_token`] for `t` tokens; the conv state is advanced token by token.
 #[allow(clippy::too_many_arguments)]
-fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batch, l: usize, cw: &ConvWeights, width: usize, _start: usize, t: usize) {
+fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batch, l: usize, cw: &ConvWeights, width: usize, start: usize, t: usize) {
     let dim = c.dim;
     assert!(width <= 7 && width >= 1);
     k::linear_batch_on(pool, &mut b.conv[..t * 3 * dim], &b.xb[..t * dim], &cw.in_proj, t);
@@ -409,7 +414,18 @@ fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batc
             b.hb2[i * dim + ch] = bb[ch] * xx[ch];
         }
     }
-    k::short_conv_rows(&b.hb2[..t * dim], w, state, dim, width, &mut b.q[..t * dim], t);
+    if t <= MAX_DRAFT {
+        let off = s.conv_off[l];
+        let base = off * (MAX_DRAFT + 1);
+        for i in 0..t {
+            let state = &mut s.conv_state[off..off + 6 * dim];
+            k::short_conv_step(&b.hb2[i * dim..(i + 1) * dim], w, state, dim, width, &mut b.q[i * dim..(i + 1) * dim]);
+            let slot = base + ((start + i) % (MAX_DRAFT + 1)) * 6 * dim;
+            s.conv_snap[slot..slot + 6 * dim].copy_from_slice(state);
+        }
+    } else {
+        k::short_conv_rows(&b.hb2[..t * dim], w, state, dim, width, &mut b.q[..t * dim], t);
+    }
     for i in 0..t {
         let bcx = &b.conv[i * 3 * dim..(i + 1) * 3 * dim];
         let (_, rest) = bcx.split_at(dim);
@@ -457,6 +473,13 @@ impl Observer for NoTrace {
     fn tap(&mut self, _: &str, _: Option<usize>, _: usize, _: &[f32]) {}
 }
 
+/// The deepest speculative draft the conv-state snapshots cover.
+pub(crate) const MAX_DRAFT: usize = 32;
+
+/// Prefill is cut into chunks this large for hybrid models, so the sliding
+/// ring only has to keep `window + chunk` positions.
+const PREFILL_CHUNK: usize = 256;
+
 /// Buffers reused by every forward call, allocated once.
 struct State {
     x: AlignedBuf,      // residual stream [dim]
@@ -479,6 +502,12 @@ struct State {
     /// The last 6 `u` rows of every conv layer, concatenated.
     conv_state: AlignedBuf,
     conv_off: Vec<usize>,
+    /// The last `MAX_DRAFT + 1` states of every conv layer, for rollback.
+    conv_snap: AlignedBuf,
+    /// A linear copy of the sliding window for the current layer/token
+    /// (or chunk): `window + PREFILL_CHUNK` K/V rows.
+    slide_k: AlignedBuf,
+    slide_v: AlignedBuf,
 }
 
 /// Buffers for [`Transformer::forward_batch`]: the single-token buffers,
@@ -535,10 +564,18 @@ impl Transformer {
         let mut total = 0;
         for l in 0..c.n_layers {
             cache_off.push(total);
-            let rows = if c.is_attention(l) { c.seq_len } else { 0 };
+            let rows = if c.is_attention(l) {
+                match c.window(l) {
+                    Some(w) => (w + PREFILL_CHUNK).min(c.seq_len),
+                    None => c.seq_len,
+                }
+            } else {
+                0
+            };
             cache_rows.push(rows);
             total += rows;
         }
+        let max_window = (0..c.n_layers).filter_map(|l| c.window(l)).max().unwrap_or(0);
         let mut conv_off = Vec::with_capacity(c.n_layers);
         let mut conv_total = 0;
         for l in 0..c.n_layers {
@@ -564,6 +601,9 @@ impl Transformer {
             cache_rows,
             conv_state: AlignedBuf::zeros(conv_total),
             conv_off,
+            conv_snap: AlignedBuf::zeros(conv_total * (MAX_DRAFT + 1)),
+            slide_k: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.kv_dim() } else { 0 }),
+            slide_v: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.kv_dim() } else { 0 }),
         };
         let batch = Batch::new(&config, 0);
         Transformer { config, weights, state, batch, pool: None }
@@ -580,6 +620,28 @@ impl Transformer {
     /// target's threads for a few steps instead of spinning its own).
     pub fn swap_pool(&mut self, other: &mut Transformer) {
         std::mem::swap(&mut self.pool, &mut other.pool);
+    }
+
+    /// Restores every conv layer to the state after position `pos` (the
+    /// snapshots of the last [`MAX_DRAFT`] + 1 tokens). Speculative decoding
+    /// calls this after rejecting drafts; the KV entries of rejected drafts
+    /// are simply overwritten later.
+    pub fn restore_conv(&mut self, pos: usize) {
+        let c = &self.config;
+        let s = &mut self.state;
+        for l in 0..c.n_layers {
+            if c.is_attention(l) {
+                continue;
+            }
+            let off = s.conv_off[l];
+            let slot = off * (MAX_DRAFT + 1) + (pos % (MAX_DRAFT + 1)) * 6 * c.dim;
+            s.conv_state[off..off + 6 * c.dim].copy_from_slice(&s.conv_snap[slot..slot + 6 * c.dim]);
+        }
+    }
+
+    /// A debug view of the conv state (tests and speculative rollback).
+    pub fn conv_state(&self) -> &[f32] {
+        &self.state.conv_state
     }
 
     /// The KV cache, keys and values, each `[layer, pos, kv_dim]` (with
@@ -606,6 +668,9 @@ impl Transformer {
         assert!(pos < c.seq_len, "position {pos} beyond seq_len {}", c.seq_len);
         assert!(token < c.vocab_size, "token {token} beyond vocab {}", c.vocab_size);
 
+        if pos == 0 {
+            s.conv_state.fill(0.0);
+        }
         w.token_embedding.row_f32(token, &mut s.x);
         obs.tap("embed", None, pos, &s.x);
 
@@ -615,35 +680,63 @@ impl Transformer {
 
             match &lw.mixer {
                 Mixer::Attention(a) => {
-                    // This position's k and v go straight into the cache.
+                    let window = c.window(l);
                     let layer_off = s.cache_off[l] * kv_dim;
-                    let at = layer_off + pos * kv_dim;
+                    let (att_pos, at);
+                    if let Some(w) = window {
+                        let ring = s.cache_rows[l];
+                        let pre = (w - 1).min(pos);
+                        for j in 0..pre {
+                            let src = layer_off + ((pos - pre + j) % ring) * kv_dim;
+                            let dst = j * kv_dim;
+                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[src..src + kv_dim]);
+                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[src..src + kv_dim]);
+                        }
+                        att_pos = pre;
+                        at = pre * kv_dim;
+                    } else {
+                        att_pos = pos;
+                        at = pos * kv_dim;
+                    }
                     if let Some(g) = &a.gate {
                         k::linear_on(pool, &mut s.gate, &s.xb, g);
                     }
-                    let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut s.key_cache[at..at + kv_dim], &mut s.value_cache[at..at + kv_dim]];
+                    let (k, v): (&mut [f32], &mut [f32]) = match window {
+                        Some(_) => (&mut s.slide_k[..], &mut s.slide_v[..]),
+                        None => (&mut s.key_cache[layer_off..], &mut s.value_cache[layer_off..]),
+                    };
+                    let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut k[at..at + kv_dim], &mut v[at..at + kv_dim]];
                     k::linear_many_on(pool, qkv, &s.xb, &[&a.wq, &a.wk, &a.wv]);
                     add_bias(&mut s.q, a.bq.as_ref());
-                    add_bias(&mut s.key_cache[at..at + kv_dim], a.bk.as_ref());
-                    add_bias(&mut s.value_cache[at..at + kv_dim], a.bv.as_ref());
+                    add_bias(&mut k[at..at + kv_dim], a.bk.as_ref());
+                    add_bias(&mut v[at..at + kv_dim], a.bv.as_ref());
                     if let Some(n) = &a.q_norm {
                         k::rmsnorm_heads(&mut s.q, n, hs, c.norm_eps);
                     }
                     if let Some(n) = &a.k_norm {
-                        k::rmsnorm_heads(&mut s.key_cache[at..at + kv_dim], n, hs, c.norm_eps);
+                        k::rmsnorm_heads(&mut k[at..at + kv_dim], n, hs, c.norm_eps);
                     }
 
                     bias_rope(c, l, &mut s.q, None, pos);
-                    bias_rope(c, l, &mut s.key_cache[at..at + kv_dim], None, pos);
+                    bias_rope(c, l, &mut k[at..at + kv_dim], None, pos);
                     obs.tap("q", Some(l), pos, &s.q);
-                    obs.tap("k", Some(l), pos, &s.key_cache[at..at + kv_dim]);
-                    obs.tap("v", Some(l), pos, &s.value_cache[at..at + kv_dim]);
+                    obs.tap("k", Some(l), pos, &k[at..at + kv_dim]);
+                    obs.tap("v", Some(l), pos, &v[at..at + kv_dim]);
 
-                    let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
-                    attention(pool, c, &mut s.xb, &s.q, kc, vc, &mut s.att, pos);
+                    attention(pool, c, l, &mut s.xb, &s.q, k, v, &mut s.att, att_pos);
                     obs.tap("attn", Some(l), pos, &s.xb);
                     if a.gate.is_some() {
                         k::gate_heads(&mut s.xb, &s.gate, hs);
+                    }
+
+                    let _ = k;
+                    let _ = v;
+                    if let Some(w) = window {
+                        let ring = s.cache_rows[l];
+                        let slot = layer_off + (pos % ring) * kv_dim;
+                        s.key_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_k[at..at + kv_dim]);
+                        s.value_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_v[at..at + kv_dim]);
+                        let _ = w;
                     }
 
                     k::linear_on(pool, &mut s.xb2, &s.xb, &a.wo);
@@ -699,7 +792,17 @@ impl Transformer {
     /// one call per token, with the same names and positions as
     /// [`Transformer::forward_traced`].
     pub fn forward_batch_traced<O: Observer>(&mut self, tokens: &[usize], start: usize, obs: &mut O) -> &[f32] {
-        self.batch_impl(tokens, start, tokens.len() - 1, obs)
+        let t = tokens.len();
+        if t <= PREFILL_CHUNK || !self.config.has_conv() {
+            return self.batch_impl(tokens, start, t - 1, obs);
+        }
+        let mut last = Vec::new();
+        for a in (0..t).step_by(PREFILL_CHUNK) {
+            let b = (a + PREFILL_CHUNK).min(t);
+            last = self.batch_impl(&tokens[a..b], start + a, b - a - 1, obs).to_vec();
+        }
+        self.state.logits[..last.len()].copy_from_slice(&last);
+        &self.state.logits[..last.len()]
     }
 
     /// Runs `tokens` at positions `start ..` and returns the logits of every
@@ -708,7 +811,25 @@ impl Transformer {
     /// text: perplexity needs a prediction at every position.
     pub fn forward_batch_logits(&mut self, tokens: &[usize], start: usize, from: usize) -> &[f32] {
         assert!(from < tokens.len());
-        self.batch_impl(tokens, start, from, &mut NoTrace)
+        let t = tokens.len();
+        if t <= PREFILL_CHUNK || !self.config.has_conv() {
+            return self.batch_impl(tokens, start, from, &mut NoTrace);
+        }
+        let vocab = self.config.vocab_size;
+        let mut out = Vec::with_capacity((t - from) * vocab);
+        for a in (0..t).step_by(PREFILL_CHUNK) {
+            let b = (a + PREFILL_CHUNK).min(t);
+            let local_from = if b <= from { b - a - 1 } else { from.saturating_sub(a) };
+            let rows = self.batch_impl(&tokens[a..b], start + a, local_from, &mut NoTrace).to_vec();
+            if b > from {
+                let first = from.max(a);
+                let skip = first - a - local_from;
+                let count = b - first;
+                out.extend_from_slice(&rows[skip * vocab..(skip + count) * vocab]);
+            }
+        }
+        self.batch.logits = out;
+        &self.batch.logits
     }
 
     fn batch_impl<O: Observer>(&mut self, tokens: &[usize], start: usize, logits_from: usize, obs: &mut O) -> &[f32] {
@@ -721,6 +842,9 @@ impl Transformer {
         let c = &self.config;
         let w = &self.weights;
         let (s, b, pool) = (&mut self.state, &mut self.batch, self.pool.as_ref());
+        if start == 0 {
+            s.conv_state.fill(0.0);
+        }
         let (dim, hidden, kv_dim, hs) = (c.dim, c.hidden_dim, c.kv_dim(), c.head_size());
 
         for (i, &tok) in tokens.iter().enumerate() {
@@ -741,40 +865,63 @@ impl Transformer {
             }
             match &lw.mixer {
                 Mixer::Attention(a) => {
-                    // K and V for positions start..start+t are consecutive
-                    // rows of this layer's cache, so the GEMM writes them in
-                    // place.
+                    let window = c.window(l);
                     let layer_off = s.cache_off[l] * kv_dim;
-                    let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
-                    let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut s.key_cache[c0..c1], &mut s.value_cache[c0..c1]];
+                    let (att_start, c0, c1) = if let Some(w) = window {
+                        let ring = s.cache_rows[l];
+                        let pre = (w - 1).min(start);
+                        for j in 0..pre {
+                            let src = layer_off + ((start - pre + j) % ring) * kv_dim;
+                            let dst = j * kv_dim;
+                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[src..src + kv_dim]);
+                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[src..src + kv_dim]);
+                        }
+                        (pre, pre * kv_dim, (pre + t) * kv_dim)
+                    } else {
+                        (start, start * kv_dim, (start + t) * kv_dim)
+                    };
+                    let (k, v): (&mut [f32], &mut [f32]) = match window {
+                        Some(_) => (&mut s.slide_k[..], &mut s.slide_v[..]),
+                        None => (&mut s.key_cache[layer_off..], &mut s.value_cache[layer_off..]),
+                    };
+                    let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut k[c0..c1], &mut v[c0..c1]];
                     k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&a.wq, &a.wk, &a.wv], t);
                     par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| add_bias(q, a.bq.as_ref()));
-                    par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|_, kr| add_bias(kr, a.bk.as_ref()));
-                    par_chunks_mut(pool, &mut s.value_cache[c0..c1], kv_dim, &|_, v| add_bias(v, a.bv.as_ref()));
+                    par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| add_bias(kr, a.bk.as_ref()));
+                    par_chunks_mut(pool, &mut v[c0..c1], kv_dim, &|_, vv| add_bias(vv, a.bv.as_ref()));
                     if let Some(n) = &a.q_norm {
                         par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| k::rmsnorm_heads(q, n, hs, c.norm_eps));
                     }
                     if let Some(n) = &a.k_norm {
-                        par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|_, kr| k::rmsnorm_heads(kr, n, hs, c.norm_eps));
+                        par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| k::rmsnorm_heads(kr, n, hs, c.norm_eps));
                     }
                     par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, l, q, None, start + i));
-                    par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|i, kr| bias_rope(c, l, kr, None, start + i));
+                    par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|i, kr| bias_rope(c, l, kr, None, start + i));
                     if let Some(g) = &a.gate {
                         k::linear_batch_on(pool, &mut b.gate[..t * c.n_heads], &b.xb[..t * dim], g, t);
                     }
                     for i in 0..t {
                         let pos = start + i;
                         obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
-                        obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
-                        obs.tap("v", Some(l), pos, &s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                        obs.tap("k", Some(l), pos, &k[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                        obs.tap("v", Some(l), pos, &v[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                     }
 
-                    let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
-                    attention_batch(pool, c, &mut b.xb[..t * dim], &b.q[..t * dim], kc, vc, &mut s.att, start, t);
+                    attention_batch(pool, c, l, &mut b.xb[..t * dim], &b.q[..t * dim], k, v, &mut s.att, att_start, t);
                     for i in 0..t {
                         obs.tap("attn", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
                         if a.gate.is_some() {
                             k::gate_heads(&mut b.xb[i * dim..(i + 1) * dim], &b.gate[i * c.n_heads..(i + 1) * c.n_heads], hs);
+                        }
+                    }
+                    let _ = k;
+                    let _ = v;
+                    if window.is_some() {
+                        let ring = s.cache_rows[l];
+                        for i in 0..t {
+                            let slot = layer_off + ((start + i) % ring) * kv_dim;
+                            s.key_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_k[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                            s.value_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_v[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                         }
                     }
                     k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &a.wo, t);
