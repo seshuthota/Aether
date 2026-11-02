@@ -163,9 +163,28 @@ fn push(v: &[u32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
-/// Bytes the batched attention's partial results may take: the batch is
-/// as many tokens as fit (at most 128).
+/// Bytes the batched attention's partial results may take: with the two
+/// passes before flash attention, the batch is as many tokens as fit (at
+/// most 128).
 const PARTS_BUDGET: usize = 32 << 20;
+
+/// Tokens per prompt pass and floats `parts` must hold, for a cache of
+/// `seq_len` positions. Flash attention has no parts and no merge, so its
+/// batch is 128 whatever the context; `old` (the chunked and per-token
+/// prompt shaders) keeps today's sizing: the partial results of every
+/// token, head and 64-position chunk, as many tokens as [`PARTS_BUDGET`]
+/// holds. Decode and a few-token pass always write `parts`, for at most
+/// [`FEW`] tokens, with the full chunk count (decode's dispatch is
+/// recorded once for every chunk the cache can hold).
+fn prompt_batch(seq_len: usize, n_heads: usize, hs: usize, old: bool) -> (usize, usize) {
+    let parts_per_token = n_heads * seq_len.div_ceil(64) * (hs + 2);
+    if old {
+        let batch = (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128);
+        (batch, batch * parts_per_token)
+    } else {
+        (128, FEW.min(128) * parts_per_token)
+    }
+}
 
 /// [`GpuModel::forward_few`] takes at most this many tokens. Its products
 /// run the decode shader for several tokens (`qx_gemv_n_kernel`): each
@@ -464,16 +483,9 @@ impl GpuModel {
         let c = &config;
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
-        // Attention works in chunks of 64 positions (shaders/attention.comp).
         // Flash attention has no parts and no merge, so its batch does not
         // shrink with the context; the two older prompt shaders' still does.
-        let chunks = c.seq_len.div_ceil(64);
-        let parts_per_token = c.n_heads * chunks * (hs + 2);
-        let batch = if opt.attn_chunked || opt.attn_per_token {
-            (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128)
-        } else {
-            128
-        };
+        let (batch, parts_len) = prompt_batch(c.seq_len, c.n_heads, hs, opt.attn_chunked || opt.attn_per_token);
         let f32buf = |v: &[f32]| -> Result<Buffer> {
             let mut b = gpu.buffer(v.len().max(1) * 4)?;
             b.as_mut_slice::<f32>()[..v.len()].copy_from_slice(v);
@@ -530,10 +542,8 @@ impl GpuModel {
         let cache = c.n_layers * c.seq_len * kv_dim;
         let (kc, vc) = (zeros(cache)?, zeros(cache)?);
         // A prompt with flash attention does not read parts; decode and a
-        // few-token pass do (the full chunk count, since decode's dispatch
-        // is recorded once for every chunk the cache can hold).
-        let parts_tokens = if opt.attn_chunked || opt.attn_per_token { batch } else { few };
-        let parts = zeros(parts_tokens * parts_per_token)?;
+        // few-token pass do.
+        let parts = zeros(parts_len)?;
         // pos, 3 × padding, then (sin, cos) per rotation pair, per token.
         let params = zeros(4 + batch * hs)?;
 
@@ -1083,4 +1093,30 @@ fn per_stage(stages: &[&'static str], t: &[f64]) -> Vec<(&'static str, f64)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Flash attention's batch is 128 whatever the context, and parts then
+    /// holds only decode's and the few-token pass's (the old prompt shaders
+    /// still size the batch by [`PARTS_BUDGET`]). Qwen2.5-0.5B's shapes:
+    /// 14 heads, head size 64; the old figures are plans/flash-attention.md
+    /// §1's table.
+    #[test]
+    fn flash_batch_does_not_shrink_with_context() {
+        let (nh, hs) = (14, 64);
+        for seq in [512, 1024, 4096, 8192, 32768] {
+            let (batch, parts) = prompt_batch(seq, nh, hs, false);
+            assert_eq!(batch, 128, "seq_len {seq}");
+            assert_eq!(parts, FEW * nh * seq.div_ceil(64) * (hs + 2), "seq_len {seq}");
+        }
+        for (seq, want) in [(1024, 128), (4096, 128), (8192, 70), (32768, 17)] {
+            let (batch, parts) = prompt_batch(seq, nh, hs, true);
+            assert_eq!(batch, want, "seq_len {seq}");
+            assert_eq!(parts, batch * nh * seq.div_ceil(64) * (hs + 2));
+            assert!(parts * 4 <= PARTS_BUDGET, "seq_len {seq}");
+        }
+    }
 }
