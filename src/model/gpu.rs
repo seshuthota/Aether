@@ -496,6 +496,9 @@ impl GpuModel {
     pub fn with(gpu: &Gpu, config: Config, weights: Weights, opt: Options) -> Result<GpuModel> {
         let c = &config;
         let (dim, kv_dim, hid, hs) = (c.dim, c.kv_dim(), c.hidden_dim, c.head_size());
+        if c.layers.iter().any(|l| matches!(l, crate::model::config::LayerKind::Conv { .. })) {
+            return Err("LFM3's hybrid conv/attention stack is CPU-only; the GPU path is a later plan".into());
+        }
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Flash attention has no parts and no merge, so its batch does not
         // shrink with the context; the two older prompt shaders' still does.
@@ -512,20 +515,21 @@ impl GpuModel {
 
         let mut layers = Vec::new();
         for (l, lw) in weights.layers.iter().enumerate() {
+            let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
             let bias = |b: &Option<crate::aligned::AlignedBuf>, n: usize| match b {
                 Some(b) => f32buf(b),
                 None => zeros(n),
             };
             layers.push(Layer {
-                wqkv: parts(gpu, &[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
-                wo: mat(&lw.wo, dim, "wo")?,
+                wqkv: parts(gpu, &[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
+                wo: mat(&a.wo, dim, "wo")?,
                 w_gate_up: parts(gpu, &[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", |ws| Mat::new(gpu, ws, "w_gate/w_up"))?,
                 w_down: mat(&lw.w_down, dim, "w_down")?,
                 attn_norm: f32buf(&lw.attn_norm)?,
                 ffn_norm: f32buf(&lw.ffn_norm)?,
-                bq: bias(&lw.bq, dim)?,
-                bk: bias(&lw.bk, kv_dim)?,
-                bv: bias(&lw.bv, kv_dim)?,
+                bq: bias(&a.bq, dim)?,
+                bk: bias(&a.bk, kv_dim)?,
+                bv: bias(&a.bv, kv_dim)?,
             });
         }
         let cls = mat(weights.classifier.as_ref().unwrap_or(&weights.token_embedding), c.vocab_size, "classifier")?;
@@ -732,10 +736,11 @@ impl GpuModel {
             let mut ks = Vec::new();
             let mut mm = Vec::new();
             for (l, lw) in weights.layers.iter().enumerate() {
+                let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
                 let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, int8, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
                 mm.push([
-                    h(&[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
-                    h(&[(&lw.wo, dim)], "wo", true, &x)?,
+                    h(&[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
+                    h(&[(&a.wo, dim)], "wo", true, &x)?,
                     h(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", false, &hb12)?,
                     h(&[(&lw.w_down, dim)], "w_down", true, &x)?,
                 ]);

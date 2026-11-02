@@ -196,7 +196,7 @@ fn main() {
     // Every matrix format in the file, in order of first use ("q5_0+q8_0+q4_k+q6_k" for a Q4_K_M).
     let mut formats: Vec<&str> = Vec::new();
     for l in &weights.layers {
-        for w in [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down] {
+        for (_, w) in l.matrices() {
             if !formats.contains(&w.format_name()) {
                 formats.push(w.format_name());
             }

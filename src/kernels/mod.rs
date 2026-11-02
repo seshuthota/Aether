@@ -18,7 +18,25 @@ pub mod vulkan;
 use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
-pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax};
+pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, rope_halves_pairs, softmax};
+
+/// RMSNorm each head of `x` with the same gain (LFM3's QK-norm).
+pub fn rmsnorm_heads(x: &mut [f32], weight: &[f32], head_size: usize, eps: f32) {
+    assert_eq!(weight.len(), head_size);
+    for head in x.chunks_exact_mut(head_size) {
+        rmsnorm_inplace(head, weight, eps);
+    }
+}
+
+/// Multiply head `h` of `x` by `sigmoid(gates[h])` (LFM3's output gate).
+pub fn gate_heads(x: &mut [f32], gates: &[f32], head_size: usize) {
+    for (head, &g) in x.chunks_exact_mut(head_size).zip(gates) {
+        let s = 1.0 / (1.0 + (-g).exp());
+        for v in head {
+            *v *= s;
+        }
+    }
+}
 
 /// SwiGLU in place, `gate_i = silu(gate_i) * up_i` (see [`scalar::swiglu`]);
 /// NEON with a polynomial `exp` on aarch64.

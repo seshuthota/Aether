@@ -25,10 +25,9 @@ use crate::format::imatrix::Imatrix;
 use crate::weight::{Format, Weight};
 use std::io;
 
-/// One layer's weights. Matrices are row-major `[out, in]`, in any storage
-/// format; norm gains are always f32.
-pub struct LayerWeights {
-    pub attn_norm: AlignedBuf,
+/// Attention weights of one layer. Matrices are row-major `[out, in]`, in
+/// any storage format; norm gains and biases are always f32.
+pub struct AttentionWeights {
     pub wq: Weight,
     pub wk: Weight,
     pub wv: Weight,
@@ -38,13 +37,75 @@ pub struct LayerWeights {
     pub bq: Option<AlignedBuf>,
     pub bk: Option<AlignedBuf>,
     pub bv: Option<AlignedBuf>,
+    /// Per-head RMSNorm gains before RoPE (LFM3).
+    pub q_norm: Option<AlignedBuf>,
+    pub k_norm: Option<AlignedBuf>,
+    /// One sigmoid gate per query head, from the normed layer input.
+    pub gate: Option<Weight>,
+}
+
+/// The gated short convolution of one layer.
+pub struct ConvWeights {
+    /// `[3·dim, dim]`: B, C and x, in that order.
+    pub in_proj: Weight,
+    /// `[dim, width]`: row `ch` holds the width taps of channel `ch`.
+    pub conv: Weight,
+    /// `[dim, dim]`.
+    pub out_proj: Weight,
+}
+
+pub enum Mixer {
+    Attention(AttentionWeights),
+    Conv(ConvWeights),
+}
+
+/// One layer's weights.
+pub struct LayerWeights {
+    pub attn_norm: AlignedBuf,
+    pub mixer: Mixer,
+    /// RMSNorm on the mixer output before the residual add (LFM3).
+    pub post_attn_norm: Option<AlignedBuf>,
     pub ffn_norm: AlignedBuf,
+    /// RMSNorm on the FFN output before the residual add (LFM3).
+    pub post_ffn_norm: Option<AlignedBuf>,
     /// W1 in llama2.c: the branch that goes through SiLU.
     pub w_gate: Weight,
     /// W2: projects the MLP back to `dim`.
     pub w_down: Weight,
     /// W3: the branch multiplied by the gate.
     pub w_up: Weight,
+}
+
+impl LayerWeights {
+    pub fn attention(&self) -> Option<&AttentionWeights> {
+        match &self.mixer {
+            Mixer::Attention(a) => Some(a),
+            Mixer::Conv(_) => None,
+        }
+    }
+
+    pub fn conv(&self) -> Option<&ConvWeights> {
+        match &self.mixer {
+            Mixer::Conv(c) => Some(c),
+            Mixer::Attention(_) => None,
+        }
+    }
+
+    /// Every matrix of this layer, with its llama.cpp tensor name (without
+    /// the `blk.N.` prefix), in a stable order.
+    pub fn matrices(&self) -> Vec<(&'static str, &Weight)> {
+        let mut v = vec![("ffn_gate", &self.w_gate), ("ffn_down", &self.w_down), ("ffn_up", &self.w_up)];
+        match &self.mixer {
+            Mixer::Attention(a) => {
+                v.extend([("attn_q", &a.wq), ("attn_k", &a.wk), ("attn_v", &a.wv), ("attn_output", &a.wo)]);
+                if let Some(g) = &a.gate {
+                    v.push(("attn_gate", g));
+                }
+            }
+            Mixer::Conv(c) => v.extend([("shortconv.in_proj", &c.in_proj), ("shortconv.conv", &c.conv), ("shortconv.out_proj", &c.out_proj)]),
+        }
+        v
+    }
 }
 
 pub struct Weights {
@@ -99,16 +160,32 @@ impl Weights {
                 .enumerate()
                 .map(|(i, l)| {
                     let g = |w, cols, name: &str| f(w, cols, &format!("blk.{i}.{name}.weight"));
+                    let mixer = match l.mixer {
+                        Mixer::Attention(a) => Mixer::Attention(AttentionWeights {
+                            wq: g(a.wq, dim, "attn_q"),
+                            wk: g(a.wk, dim, "attn_k"),
+                            wv: g(a.wv, dim, "attn_v"),
+                            wo: g(a.wo, dim, "attn_output"),
+                            bq: a.bq,
+                            bk: a.bk,
+                            bv: a.bv,
+                            q_norm: a.q_norm,
+                            k_norm: a.k_norm,
+                            gate: a.gate.map(|w| g(w, dim, "attn_gate")),
+                        }),
+                        // The depthwise kernel is small and stays f32.
+                        Mixer::Conv(cw) => Mixer::Conv(ConvWeights {
+                            in_proj: g(cw.in_proj, dim, "shortconv.in_proj"),
+                            conv: cw.conv,
+                            out_proj: g(cw.out_proj, dim, "shortconv.out_proj"),
+                        }),
+                    };
                     LayerWeights {
                         attn_norm: l.attn_norm,
-                        wq: g(l.wq, dim, "attn_q"),
-                        wk: g(l.wk, dim, "attn_k"),
-                        wv: g(l.wv, dim, "attn_v"),
-                        wo: g(l.wo, dim, "attn_output"),
-                        bq: l.bq,
-                        bk: l.bk,
-                        bv: l.bv,
+                        mixer,
+                        post_attn_norm: l.post_attn_norm,
                         ffn_norm: l.ffn_norm,
+                        post_ffn_norm: l.post_ffn_norm,
                         w_gate: g(l.w_gate, dim, "ffn_gate"),
                         w_down: g(l.w_down, hidden, "ffn_down"),
                         w_up: g(l.w_up, dim, "ffn_up"),
@@ -122,12 +199,21 @@ impl Weights {
 
     /// Bytes of all matrices and norms: what one decode step streams.
     pub fn bytes(&self) -> usize {
-        let norms = |l: &LayerWeights| (l.attn_norm.len() + l.ffn_norm.len()) * 4;
-        let mats = |l: &LayerWeights| [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_down, &l.w_up].iter().map(|w| w.bytes()).sum::<usize>();
+        let norms = |l: &LayerWeights| {
+            let a = l.attn_norm.len() + l.ffn_norm.len() + l.post_attn_norm.as_ref().map_or(0, |n| n.len()) + l.post_ffn_norm.as_ref().map_or(0, |n| n.len());
+            let qk = l.attention().map_or(0, |a| a.q_norm.as_ref().map_or(0, |n| n.len()) + a.k_norm.as_ref().map_or(0, |n| n.len()));
+            (a + qk) * 4
+        };
+        let mats = |l: &LayerWeights| l.matrices().iter().map(|(_, w)| w.bytes()).sum::<usize>();
         self.token_embedding.bytes()
             + self.layers.iter().map(|l| norms(l) + mats(l)).sum::<usize>()
             + self.final_norm.len() * 4
             + self.classifier.as_ref().map_or(0, Weight::bytes)
+    }
+
+    /// The storage format of the first matrix, for the CLI's load line.
+    pub fn format_name(&self) -> &'static str {
+        self.layers.iter().flat_map(|l| l.matrices()).next().map_or_else(|| self.token_embedding.format_name(), |(_, w)| w.format_name())
     }
 }
 
@@ -279,12 +365,86 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[
     });
 }
 
-/// One token's Q or K row: `+= bias` (if any), then RoPE at `pos`.
-fn bias_rope(c: &Config, v: &mut [f32], bias: Option<&AlignedBuf>, pos: usize) {
+/// One token through a gated short convolution: `in_proj` → split B, C, x →
+/// `u = B ⊙ x` → causal depthwise conv with the 6 saved rows → `C ⊙ y` →
+/// `out_proj`. Writes the mixer output to `s.xb2`.
+fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw: &ConvWeights, width: usize, _pos: usize) {
+    let dim = c.dim;
+    assert!(width <= 7 && width >= 1);
+    k::linear_on(pool, &mut s.conv[..3 * dim], &s.xb, &cw.in_proj);
+    let (b, rest) = s.conv[..3 * dim].split_at_mut(dim);
+    let (cc, x) = rest.split_at_mut(dim);
+    for i in 0..dim {
+        s.xb[i] = b[i] * x[i];
+    }
+    let w = match &cw.conv {
+        Weight::F32(f) => &f[..],
+        _ => panic!("the short-conv kernel must be f32"),
+    };
+    assert_eq!(w.len(), dim * width);
+    let state = &mut s.conv_state[s.conv_off[l]..s.conv_off[l] + 6 * dim];
+    for ch in 0..dim {
+        let mut acc = 0.0;
+        for k in 0..width - 1 {
+            acc += state[k * dim + ch] * w[ch * width + k];
+        }
+        acc += s.xb[ch] * w[ch * width + width - 1];
+        s.q[ch] = acc;
+    }
+    state.copy_within(dim..6 * dim, 0);
+    state[5 * dim..].copy_from_slice(&s.xb[..dim]);
+    for ch in 0..dim {
+        s.xb2[ch] = cc[ch] * s.q[ch];
+    }
+    k::linear_on(pool, &mut s.xb, &s.xb2, &cw.out_proj);
+    s.xb2.copy_from_slice(&s.xb);
+}
+
+/// [`conv_token`] for `t` tokens; the conv state is advanced token by token.
+#[allow(clippy::too_many_arguments)]
+fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batch, l: usize, cw: &ConvWeights, width: usize, _start: usize, t: usize) {
+    let dim = c.dim;
+    assert!(width <= 7 && width >= 1);
+    k::linear_batch_on(pool, &mut b.conv[..t * 3 * dim], &b.xb[..t * dim], &cw.in_proj, t);
+    let w = match &cw.conv {
+        Weight::F32(f) => &f[..],
+        _ => panic!("the short-conv kernel must be f32"),
+    };
+    assert_eq!(w.len(), dim * width);
+    let state = &mut s.conv_state[s.conv_off[l]..s.conv_off[l] + 6 * dim];
+    for i in 0..t {
+        let bcx = &b.conv[i * 3 * dim..(i + 1) * 3 * dim];
+        let (bb, rest) = bcx.split_at(dim);
+        let (cc, xx) = rest.split_at(dim);
+        for ch in 0..dim {
+            b.hb2[i * dim + ch] = bb[ch] * xx[ch];
+        }
+        for ch in 0..dim {
+            let mut acc = 0.0;
+            for k in 0..width - 1 {
+                acc += state[k * dim + ch] * w[ch * width + k];
+            }
+            acc += b.hb2[i * dim + ch] * w[ch * width + width - 1];
+            b.q[i * dim + ch] = acc;
+        }
+        state.copy_within(dim..6 * dim, 0);
+        state[5 * dim..].copy_from_slice(&b.hb2[i * dim..(i + 1) * dim]);
+        for ch in 0..dim {
+            b.xb2[i * dim + ch] = cc[ch] * b.q[i * dim + ch];
+        }
+    }
+    k::linear_batch_on(pool, &mut b.xb[..t * dim], &b.xb2[..t * dim], &cw.out_proj, t);
+    b.xb2[..t * dim].copy_from_slice(&b.xb[..t * dim]);
+}
+
+/// One token's Q or K row: `+= bias` (if any), then this layer's RoPE at
+/// `pos`.
+fn bias_rope(c: &Config, layer: usize, v: &mut [f32], bias: Option<&AlignedBuf>, pos: usize) {
     add_bias(v, bias);
-    match c.rope_layout {
-        RopeLayout::AdjacentPairs => k::rope_adjacent(v, pos, c.head_size(), c.rope_theta),
-        RopeLayout::Halves => k::rope_halves(v, pos, c.head_size(), c.rope_theta),
+    let rope = c.rope(layer);
+    match rope.layout {
+        RopeLayout::AdjacentPairs => k::rope_adjacent(v, pos, c.head_size(), rope.theta),
+        RopeLayout::Halves => k::rope_halves_pairs(v, pos, c.head_size(), rope.theta, rope.pairs),
     }
 }
 
@@ -319,12 +479,21 @@ struct State {
     xb2: AlignedBuf,    // projection output [dim]
     hb: AlignedBuf,     // MLP gate [hidden]
     hb2: AlignedBuf,    // MLP up [hidden]
+    conv: AlignedBuf,   // conv B,C,x [3·dim]
     q: AlignedBuf,      // [dim]
     att: AlignedBuf,    // attention scores, one row per head [n_heads, seq_len]
+    gate: AlignedBuf,   // one attention gate per head [n_heads]
     logits: AlignedBuf, // [vocab]
-    /// Keys of every position so far: `[layer, pos, kv_dim]`.
+    /// Keys of every attention layer, concatenated: layer `l` starts at
+    /// `cache_off[l]` and has `cache_rows[l]` positions.
     key_cache: AlignedBuf,
     value_cache: AlignedBuf,
+    cache_off: Vec<usize>,
+    #[allow(dead_code)] // used by the sliding-window ring in A4
+    cache_rows: Vec<usize>,
+    /// The last 6 `u` rows of every conv layer, concatenated.
+    conv_state: AlignedBuf,
+    conv_off: Vec<usize>,
 }
 
 /// Buffers for [`Transformer::forward_batch`]: the single-token buffers,
@@ -336,15 +505,28 @@ struct Batch {
     x: AlignedBuf,   // [cap, dim]
     xb: AlignedBuf,  // [cap, dim]
     xb2: AlignedBuf, // [cap, dim]
-    q: AlignedBuf,   // [cap, dim]
-    hb: AlignedBuf,  // [cap, hidden]
-    hb2: AlignedBuf, // [cap, hidden]
+    q: AlignedBuf,    // [cap, dim]
+    gate: AlignedBuf, // [cap, n_heads]
+    hb: AlignedBuf,   // [cap, hidden]
+    hb2: AlignedBuf,  // [cap, hidden]
+    conv: AlignedBuf, // [cap, 3·dim]
 }
 
 impl Batch {
     fn new(c: &Config, cap: usize) -> Batch {
         let z = |n: usize| AlignedBuf::zeros(cap * n);
-        Batch { cap, logits: Vec::new(), x: z(c.dim), xb: z(c.dim), xb2: z(c.dim), q: z(c.dim), hb: z(c.hidden_dim), hb2: z(c.hidden_dim) }
+        Batch {
+            cap,
+            logits: Vec::new(),
+            x: z(c.dim),
+            xb: z(c.dim),
+            xb2: z(c.dim),
+            q: z(c.dim),
+            gate: z(c.n_heads),
+            hb: z(c.hidden_dim),
+            hb2: z(c.hidden_dim),
+            conv: z(3 * c.dim),
+        }
     }
 }
 
@@ -363,18 +545,40 @@ impl Transformer {
     pub fn new(config: Config, weights: Weights) -> Transformer {
         let weights = if k::repack_weights() { weights.repack(&config) } else { weights };
         let c = &config;
-        let cache = c.n_layers * c.seq_len * c.kv_dim();
+        let mut cache_off = Vec::with_capacity(c.n_layers);
+        let mut cache_rows = Vec::with_capacity(c.n_layers);
+        let mut total = 0;
+        for l in 0..c.n_layers {
+            cache_off.push(total);
+            let rows = if c.is_attention(l) { c.seq_len } else { 0 };
+            cache_rows.push(rows);
+            total += rows;
+        }
+        let mut conv_off = Vec::with_capacity(c.n_layers);
+        let mut conv_total = 0;
+        for l in 0..c.n_layers {
+            conv_off.push(conv_total);
+            if let crate::model::config::LayerKind::Conv { .. } = c.kind(l) {
+                conv_total += 6 * c.dim;
+            }
+        }
         let state = State {
             x: AlignedBuf::zeros(c.dim),
             xb: AlignedBuf::zeros(c.dim),
             xb2: AlignedBuf::zeros(c.dim),
             hb: AlignedBuf::zeros(c.hidden_dim),
             hb2: AlignedBuf::zeros(c.hidden_dim),
+            conv: AlignedBuf::zeros(3 * c.dim),
             q: AlignedBuf::zeros(c.dim),
             att: AlignedBuf::zeros(c.n_heads * c.seq_len),
+            gate: AlignedBuf::zeros(c.n_heads),
             logits: AlignedBuf::zeros(c.vocab_size),
-            key_cache: AlignedBuf::zeros(cache),
-            value_cache: AlignedBuf::zeros(cache),
+            key_cache: AlignedBuf::zeros(total * c.kv_dim()),
+            value_cache: AlignedBuf::zeros(total * c.kv_dim()),
+            cache_off,
+            cache_rows,
+            conv_state: AlignedBuf::zeros(conv_total),
+            conv_off,
         };
         let batch = Batch::new(&config, 0);
         Transformer { config, weights, state, batch, pool: None }
@@ -421,38 +625,55 @@ impl Transformer {
         obs.tap("embed", None, pos, &s.x);
 
         for (l, lw) in w.layers.iter().enumerate() {
-            // --- attention ---
             k::rmsnorm(&mut s.xb, &s.x, &lw.attn_norm, c.norm_eps);
             obs.tap("attn_norm", Some(l), pos, &s.xb);
 
-            // This position's k and v go straight into the cache.
-            let layer_off = l * c.seq_len * kv_dim;
-            let at = layer_off + pos * kv_dim;
-            let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut s.key_cache[at..at + kv_dim], &mut s.value_cache[at..at + kv_dim]];
-            k::linear_many_on(pool, qkv, &s.xb, &[&lw.wq, &lw.wk, &lw.wv]);
-            add_bias(&mut s.q, lw.bq.as_ref());
-            add_bias(&mut s.key_cache[at..at + kv_dim], lw.bk.as_ref());
-            add_bias(&mut s.value_cache[at..at + kv_dim], lw.bv.as_ref());
+            match &lw.mixer {
+                Mixer::Attention(a) => {
+                    // This position's k and v go straight into the cache.
+                    let layer_off = s.cache_off[l] * kv_dim;
+                    let at = layer_off + pos * kv_dim;
+                    if let Some(g) = &a.gate {
+                        k::linear_on(pool, &mut s.gate, &s.xb, g);
+                    }
+                    let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut s.key_cache[at..at + kv_dim], &mut s.value_cache[at..at + kv_dim]];
+                    k::linear_many_on(pool, qkv, &s.xb, &[&a.wq, &a.wk, &a.wv]);
+                    add_bias(&mut s.q, a.bq.as_ref());
+                    add_bias(&mut s.key_cache[at..at + kv_dim], a.bk.as_ref());
+                    add_bias(&mut s.value_cache[at..at + kv_dim], a.bv.as_ref());
+                    if let Some(n) = &a.q_norm {
+                        k::rmsnorm_heads(&mut s.q, n, hs, c.norm_eps);
+                    }
+                    if let Some(n) = &a.k_norm {
+                        k::rmsnorm_heads(&mut s.key_cache[at..at + kv_dim], n, hs, c.norm_eps);
+                    }
 
-            match c.rope_layout {
-                RopeLayout::AdjacentPairs => {
-                    k::rope_adjacent(&mut s.q, pos, hs, c.rope_theta);
-                    k::rope_adjacent(&mut s.key_cache[at..at + kv_dim], pos, hs, c.rope_theta);
+                    bias_rope(c, l, &mut s.q, None, pos);
+                    bias_rope(c, l, &mut s.key_cache[at..at + kv_dim], None, pos);
+                    obs.tap("q", Some(l), pos, &s.q);
+                    obs.tap("k", Some(l), pos, &s.key_cache[at..at + kv_dim]);
+                    obs.tap("v", Some(l), pos, &s.value_cache[at..at + kv_dim]);
+
+                    let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
+                    attention(pool, c, &mut s.xb, &s.q, kc, vc, &mut s.att, pos);
+                    obs.tap("attn", Some(l), pos, &s.xb);
+                    if a.gate.is_some() {
+                        k::gate_heads(&mut s.xb, &s.gate, hs);
+                    }
+
+                    k::linear_on(pool, &mut s.xb2, &s.xb, &a.wo);
                 }
-                RopeLayout::Halves => {
-                    k::rope_halves(&mut s.q, pos, hs, c.rope_theta);
-                    k::rope_halves(&mut s.key_cache[at..at + kv_dim], pos, hs, c.rope_theta);
+                Mixer::Conv(cw) => {
+                    let width = match c.kind(l) {
+                        crate::model::config::LayerKind::Conv { width } => width,
+                        _ => unreachable!(),
+                    };
+                    conv_token(pool, c, s, l, cw, width, pos);
                 }
             }
-            obs.tap("q", Some(l), pos, &s.q);
-            obs.tap("k", Some(l), pos, &s.key_cache[at..at + kv_dim]);
-            obs.tap("v", Some(l), pos, &s.value_cache[at..at + kv_dim]);
-
-            let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
-            attention(pool, c, &mut s.xb, &s.q, kc, vc, &mut s.att, pos);
-            obs.tap("attn", Some(l), pos, &s.xb);
-
-            k::linear_on(pool, &mut s.xb2, &s.xb, &lw.wo);
+            if let Some(n) = &lw.post_attn_norm {
+                k::rmsnorm_inplace(&mut s.xb2, n, c.norm_eps);
+            }
             obs.tap("attn_out", Some(l), pos, &s.xb2);
             k::add_inplace(&mut s.x, &s.xb2);
             obs.tap("resid_attn", Some(l), pos, &s.x);
@@ -464,6 +685,9 @@ impl Transformer {
             k::swiglu(&mut s.hb, &s.hb2);
             obs.tap("swiglu", Some(l), pos, &s.hb);
             k::linear_on(pool, &mut s.xb, &s.hb, &lw.w_down);
+            if let Some(n) = &lw.post_ffn_norm {
+                k::rmsnorm_inplace(&mut s.xb, n, c.norm_eps);
+            }
             obs.tap("ffn_out", Some(l), pos, &s.xb);
             k::add_inplace(&mut s.x, &s.xb);
             obs.tap("resid_ffn", Some(l), pos, &s.x);
@@ -512,7 +736,7 @@ impl Transformer {
         let c = &self.config;
         let w = &self.weights;
         let (s, b, pool) = (&mut self.state, &mut self.batch, self.pool.as_ref());
-        let (dim, hidden, kv_dim) = (c.dim, c.hidden_dim, c.kv_dim());
+        let (dim, hidden, kv_dim, hs) = (c.dim, c.hidden_dim, c.kv_dim(), c.head_size());
 
         for (i, &tok) in tokens.iter().enumerate() {
             assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
@@ -530,32 +754,57 @@ impl Transformer {
             for i in 0..t {
                 obs.tap("attn_norm", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
-            // K and V for positions start..start+t are consecutive rows of
-            // this layer's cache, so the GEMM writes them in place.
-            let layer_off = l * c.seq_len * kv_dim;
-            let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
-            let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut s.key_cache[c0..c1], &mut s.value_cache[c0..c1]];
-            k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&lw.wq, &lw.wk, &lw.wv], t);
-            // Bias, then RoPE at the token's position (K and V rows are in
-            // the cache already).
-            par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, q, lw.bq.as_ref(), start + i));
-            par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|i, kr| bias_rope(c, kr, lw.bk.as_ref(), start + i));
-            par_chunks_mut(pool, &mut s.value_cache[c0..c1], kv_dim, &|_, v| add_bias(v, lw.bv.as_ref()));
-            for i in 0..t {
-                let pos = start + i;
-                obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
-                obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
-                obs.tap("v", Some(l), pos, &s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
-            }
+            match &lw.mixer {
+                Mixer::Attention(a) => {
+                    // K and V for positions start..start+t are consecutive
+                    // rows of this layer's cache, so the GEMM writes them in
+                    // place.
+                    let layer_off = s.cache_off[l] * kv_dim;
+                    let (c0, c1) = (layer_off + start * kv_dim, layer_off + (start + t) * kv_dim);
+                    let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut s.key_cache[c0..c1], &mut s.value_cache[c0..c1]];
+                    k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&a.wq, &a.wk, &a.wv], t);
+                    par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| add_bias(q, a.bq.as_ref()));
+                    par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|_, kr| add_bias(kr, a.bk.as_ref()));
+                    par_chunks_mut(pool, &mut s.value_cache[c0..c1], kv_dim, &|_, v| add_bias(v, a.bv.as_ref()));
+                    if let Some(n) = &a.q_norm {
+                        par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| k::rmsnorm_heads(q, n, hs, c.norm_eps));
+                    }
+                    if let Some(n) = &a.k_norm {
+                        par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|_, kr| k::rmsnorm_heads(kr, n, hs, c.norm_eps));
+                    }
+                    par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, l, q, None, start + i));
+                    par_chunks_mut(pool, &mut s.key_cache[c0..c1], kv_dim, &|i, kr| bias_rope(c, l, kr, None, start + i));
+                    if let Some(g) = &a.gate {
+                        k::linear_batch_on(pool, &mut b.gate[..t * c.n_heads], &b.xb[..t * dim], g, t);
+                    }
+                    for i in 0..t {
+                        let pos = start + i;
+                        obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
+                        obs.tap("k", Some(l), pos, &s.key_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                        obs.tap("v", Some(l), pos, &s.value_cache[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
+                    }
 
-            // Causal attention: token i (position start+i) sees 0..=start+i.
-            let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
-            attention_batch(pool, c, &mut b.xb[..t * dim], &b.q[..t * dim], kc, vc, &mut s.att, start, t);
-            for i in 0..t {
-                obs.tap("attn", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+                    let (kc, vc) = (&s.key_cache[layer_off..], &s.value_cache[layer_off..]);
+                    attention_batch(pool, c, &mut b.xb[..t * dim], &b.q[..t * dim], kc, vc, &mut s.att, start, t);
+                    for i in 0..t {
+                        obs.tap("attn", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+                        if a.gate.is_some() {
+                            k::gate_heads(&mut b.xb[i * dim..(i + 1) * dim], &b.gate[i * c.n_heads..(i + 1) * c.n_heads], hs);
+                        }
+                    }
+                    k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &a.wo, t);
+                }
+                Mixer::Conv(cw) => {
+                    let width = match c.kind(l) {
+                        crate::model::config::LayerKind::Conv { width } => width,
+                        _ => unreachable!(),
+                    };
+                    conv_batch(pool, c, s, b, l, cw, width, start, t);
+                }
             }
-
-            k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &lw.wo, t);
+            if let Some(n) = &lw.post_attn_norm {
+                par_chunks_mut(pool, &mut b.xb2[..t * dim], dim, &|_, o| k::rmsnorm_inplace(o, n, c.norm_eps));
+            }
             for i in 0..t {
                 obs.tap("attn_out", Some(l), start + i, &b.xb2[i * dim..(i + 1) * dim]);
             }
@@ -578,6 +827,9 @@ impl Transformer {
                 obs.tap("swiglu", Some(l), start + i, &b.hb[i * hidden..(i + 1) * hidden]);
             }
             k::linear_batch_on(pool, &mut b.xb[..t * dim], &b.hb[..t * hidden], &lw.w_down, t);
+            if let Some(n) = &lw.post_ffn_norm {
+                par_chunks_mut(pool, &mut b.xb[..t * dim], dim, &|_, o| k::rmsnorm_inplace(o, n, c.norm_eps));
+            }
             for i in 0..t {
                 obs.tap("ffn_out", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
             }
@@ -610,3 +862,4 @@ impl Transformer {
         &b.logits
     }
 }
+

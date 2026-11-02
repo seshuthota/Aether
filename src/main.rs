@@ -145,7 +145,7 @@ fn main() {
         return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
-    eprintln!("weights: {}, {:.1} MB", session.model.weights.layers[0].wq.format_name(), session.model.weights.bytes() as f64 / 1e6);
+    eprintln!("weights: {}, {:.1} MB", session.model.weights.format_name(), session.model.weights.bytes() as f64 / 1e6);
     session.lookup_fixed = fixed;
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
@@ -162,7 +162,7 @@ fn main() {
         let (stats, look) = if let Some(path) = &draft_path {
             // No cores of its own: it borrows the target's threads.
             let d = Session::open(path, None, steps, format, None).unwrap_or_else(|e| fail(path, e));
-            eprintln!("draft: {}, {:.1} MB", d.model.weights.layers[0].wq.format_name(), d.model.weights.bytes() as f64 / 1e6);
+            eprintln!("draft: {}, {:.1} MB", d.model.weights.format_name(), d.model.weights.bytes() as f64 / 1e6);
             let mut draft = aether::session::Drafter::new(d);
             session.generate_draft(&mut draft, &prompt, &mut sampler, steps, draft_k, write)
         } else {
@@ -205,7 +205,7 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
     let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
     let t0 = Instant::now();
     let tokens = text.encode(&raw);
-    eprintln!("{}: {} tokens (tokenized in {:.0} ms), weights {} {:.1} MB", file.display(), tokens.len(), t0.elapsed().as_secs_f64() * 1e3, model.weights.layers[0].wq.format_name(), model.weights.bytes() as f64 / 1e6);
+    eprintln!("{}: {} tokens (tokenized in {:.0} ms), weights {} {:.1} MB", file.display(), tokens.len(), t0.elapsed().as_secs_f64() * 1e3, model.weights.format_name(), model.weights.bytes() as f64 / 1e6);
     let t1 = Instant::now();
     let s = aether::eval::perplexity(&mut model, base.as_mut(), &tokens, text.chunk_bos(), ctx, chunks, |i, s| {
         eprint!("[{i}]{:.4},", s.ppl());

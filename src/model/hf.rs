@@ -19,7 +19,7 @@
 //! from bf16 to f32). transformers applies RoPE in the rotate-half layout.
 
 use super::config::{Config, RopeLayout};
-use super::transformer::{LayerWeights, Weights};
+use super::transformer::{AttentionWeights, LayerWeights, Mixer, Weights};
 use crate::aligned::AlignedBuf;
 use crate::format::json::Json;
 use crate::format::safetensors::SafeTensors;
@@ -44,18 +44,27 @@ pub fn load_config(dir: &Path, max_seq: usize) -> io::Result<Config> {
         return Err(bad(format!("model_type {model_type:?} is not supported (llama, qwen2)")));
     }
     let n_heads = num("num_attention_heads")?;
-    Ok(Config {
-        dim: num("hidden_size")?,
+    let dim = num("hidden_size")?;
+    let theta = float("rope_theta", 10000.0);
+    let mut config = Config {
+        dim,
         hidden_dim: num("intermediate_size")?,
         n_layers: num("num_hidden_layers")?,
         n_heads,
         n_kv_heads: j.get("num_key_value_heads").and_then(Json::as_usize).unwrap_or(n_heads),
+        head_dim: dim / n_heads,
         vocab_size: num("vocab_size")?,
         seq_len: num("max_position_embeddings")?.min(max_seq),
-        rope_theta: float("rope_theta", 10000.0),
+        rope_theta: theta,
         rope_layout: RopeLayout::Halves,
         norm_eps: float("rms_norm_eps", 1e-5),
-    })
+        layers: Vec::new(),
+        qk_norm: false,
+        output_gate: false,
+        sandwich_norm: false,
+    };
+    config.all_attention(theta, RopeLayout::Halves);
+    Ok(config)
 }
 
 /// Loads config and weights from a checkpoint directory.
@@ -85,14 +94,21 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
             let p = format!("model.layers.{l}");
             Ok(LayerWeights {
                 attn_norm: tensor(&format!("{p}.input_layernorm.weight"), &[dim])?,
-                wq: mat(&format!("{p}.self_attn.q_proj.weight"), &[dim, dim])?,
-                wk: mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
-                wv: mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
-                wo: mat(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
-                bq: bias(&format!("{p}.self_attn.q_proj.bias"), dim)?,
-                bk: bias(&format!("{p}.self_attn.k_proj.bias"), kv_dim)?,
-                bv: bias(&format!("{p}.self_attn.v_proj.bias"), kv_dim)?,
+                mixer: Mixer::Attention(AttentionWeights {
+                    wq: mat(&format!("{p}.self_attn.q_proj.weight"), &[dim, dim])?,
+                    wk: mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
+                    wv: mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
+                    wo: mat(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
+                    bq: bias(&format!("{p}.self_attn.q_proj.bias"), dim)?,
+                    bk: bias(&format!("{p}.self_attn.k_proj.bias"), kv_dim)?,
+                    bv: bias(&format!("{p}.self_attn.v_proj.bias"), kv_dim)?,
+                    q_norm: None,
+                    k_norm: None,
+                    gate: None,
+                }),
+                post_attn_norm: None,
                 ffn_norm: tensor(&format!("{p}.post_attention_layernorm.weight"), &[dim])?,
+                post_ffn_norm: None,
                 w_gate: mat(&format!("{p}.mlp.gate_proj.weight"), &[hidden, dim])?,
                 w_up: mat(&format!("{p}.mlp.up_proj.weight"), &[hidden, dim])?,
                 w_down: mat(&format!("{p}.mlp.down_proj.weight"), &[dim, hidden])?,
