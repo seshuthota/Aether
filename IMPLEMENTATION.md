@@ -182,18 +182,22 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
 6. **Learning track** (with the user): pages and films for what the implementation track built.
 
 **Flash attention for the GPU prompt pass (2026-11-02, `plans/flash-attention.md`)**:
-F0–F4 are built on branch `flash-attention` (`attention_flash.comp`, wired as the default
-prompt attention with `Options::attn_chunked` keeping the old two passes for A/B; `vk_pp`
-gained `depth`, `chunked` and `batch N`). On the phone (results/phase-l3.md, "Flash
-attention, the F4 checks"): 133/133 tests with `vulkan,hexagon`; accuracy at wikitext-2
-20 × 512 within llama.cpp's error bar and within noise of the tile path (Qwen Q4_0 flash
-0.180887 against llama.cpp's 0.181010 ± 0.002752), and at context 2048/4096 the same
-(0.170176 / 0.191220 against 0.169484 ± 0.005911 / 0.190900 ± 0.003943) — the first prompt
-check beyond 512 tokens. The timings (step 26 baseline and step 27 A/B) were interrupted
-when the phone was disconnected and are the next thing; the single-run speeds suggest flash
-is level at ≤ 512-token chunks and behind at depth, where a 128-token pass gives only
-`n_heads × 4` workgroups (56 for Qwen) — F6b (a span split with `parts`+merge sized by
-splits) is the expected next change, with F6c's 256-token batch as the cheap check.
+F0–F6c are built on branch `flash-attention` (`attention_flash.comp` is the default prompt
+attention, `Options::attn_chunked` keeps the old two passes for A/B, `Options::batch` the
+pass size; `vk_pp` gained `depth`, `chunked` and `batch N`). On the phone
+(results/phase-l3.md, "Flash attention, the F4 checks" and steps 26–28): 133/133 tests with
+`vulkan,hexagon`; accuracy at wikitext-2 20 × 512 within llama.cpp's error bar and within
+noise of the tile path (Qwen Q4_0 flash 0.180887 against llama.cpp's 0.181010 ± 0.002752),
+and at context 2048/4096 the same (0.170176 / 0.191220 against 0.169484 ± 0.005911 /
+0.190900 ± 0.003943) — the first prompt check beyond 512 tokens. On battery, flash's
+attention kernel is 1.35–1.4× slower than the chunked path at depth (the work partition: a
+128-token pass gives 56 workgroups) and 1.2–1.7× at short lengths; with **256 tokens a pass**
+(now the default) the attention is 1.26–1.29× faster than at 128 and the whole pass is ahead
+at pp256 at every depth and at pp512 through 2048, level at 4096 — and the batch no longer
+shrinks with the context (17 tokens at 32K before). Accuracy is unchanged to the digit by
+the batch (PPL 19.7443 / KLD 0.180887 at both sizes). Open: F6b (split a group's positions
+across workgroups when short of workgroups) would close the remaining attention gap at
+depth; F8 measures decode at long context. Merge into `main` is the last step.
 
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 

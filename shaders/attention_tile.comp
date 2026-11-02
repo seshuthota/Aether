@@ -1,4 +1,8 @@
 #version 450
+// The chunked option of the prompt pass (`Options::attn_chunked`; the
+// default is attention_flash.comp, one pass over the whole context). Kept
+// for A/B, and to compare against the parts it writes.
+//
 // attention.comp for a prompt, 32 tokens per workgroup: workgroup (h, c, g)
 // takes query head h, the 64 positions of chunk c and tokens 32g .. 32g + 31
 // of the batch. attention.comp gives each token its own workgroup, so each
