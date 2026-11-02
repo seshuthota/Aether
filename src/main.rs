@@ -20,7 +20,10 @@
 //!   --imatrix FILE  quantize -q q4_0 / q5_0 with llama.cpp's importance
 //!             matrix (a GGUF from llama-imatrix), as llama-quantize
 //!             --pure --imatrix does
-//!   --chat    wrap the prompt in the ChatML chat template (instruct models)
+//!   --chat    wrap the prompt in the chat template: Qwen/SmolLM2 ChatML,
+//!             or LFM3's ChatML with a starting <think> (reasoning on)
+//!   --no-think  LFM3: start the assistant turn with an empty think block
+//!   --hide-think  keep a <think>...</think> span out of the printed reply
 //!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
 //!             copied from the last earlier match of the last --ngram N
 //!             tokens (default 2), checked in one batched pass; with -t > 0
@@ -43,7 +46,12 @@
 //!             --pure Q4_0 GGUF, or Q4_K_M): the prompt in batches on HMX
 //!             (Q4_K_M: 8 tokens a call on HVX), then one DSP call per token. --lookup K works here too (up to 7
 //!             drafts, checked in one few-token pass)
-//!   --system TEXT   system message for --chat (default: Qwen's)
+//!   --system TEXT   system message for --chat (default: Qwen's; LFM3 adds
+//!             a system turn only when this is given)
+//!
+//! LFM3's sampling defaults (temperature 0.1, top-k 50) are used when -t/-k
+//! are not given. Our sampler has no repetition penalty yet; llama.cpp's
+//! LFM3 default is 1.1.
 //!
 //! Scoring mode (like llama.cpp's llama-perplexity), instead of generating:
 //!   --ppl FILE    perplexity of the model on the text in FILE
@@ -75,20 +83,27 @@ fn main() {
     let mut format = Format::F32;
     let mut imatrix_path: Option<PathBuf> = None;
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
-    let (mut chat, mut system) = (false, aether::chat::QWEN_DEFAULT_SYSTEM.to_string());
+    let mut chat = false;
+    let mut system: Option<String> = None;
+    let mut thinking = true;
+    let mut hide_think = false;
+    let (mut temp_set, mut top_p_set, mut top_k_set) = (false, false, false);
     let mut base_path: Option<PathBuf> = None;
     let (mut lookup, mut ngram, mut fixed) = (0usize, 2usize, false);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" || flag == "--no-think" || flag == "--think" || flag == "--hide-think" {
             match flag.as_str() {
                 "--lookup-fixed" => fixed = true,
                 "--kl" => kl = true,
                 "--chat" => chat = true,
                 "--times" => times = true,
                 "--dsp" => dsp = true,
+                "--no-think" => thinking = false,
+                "--think" => thinking = true,
+                "--hide-think" => hide_think = true,
                 _ => gpu = true,
             }
             continue;
@@ -96,9 +111,9 @@ fn main() {
         let val = args.next().unwrap_or_else(|| usage());
         match flag.as_str() {
             "-z" => tok_path = val.into(),
-            "-t" => temp = val.parse().unwrap_or_else(|_| usage()),
-            "-p" => top_p = val.parse().unwrap_or_else(|_| usage()),
-            "-k" => top_k = val.parse().unwrap_or_else(|_| usage()),
+            "-t" => { temp = val.parse().unwrap_or_else(|_| usage()); temp_set = true; }
+            "-p" => { top_p = val.parse().unwrap_or_else(|_| usage()); top_p_set = true; }
+            "-k" => { top_k = val.parse().unwrap_or_else(|_| usage()); top_k_set = true; }
             "-s" => seed = val.parse().unwrap_or_else(|_| usage()),
             "-n" => steps = val.parse().unwrap_or_else(|_| usage()),
             "-i" => prompt = val,
@@ -107,7 +122,7 @@ fn main() {
             "--draft" => draft_path = Some(val.into()),
             "--draft-k" => draft_k = val.parse().unwrap_or_else(|_| usage()),
             "--ngram" => ngram = val.parse().unwrap_or_else(|_| usage()),
-            "--system" => system = val,
+            "--system" => system = Some(val),
             "--base" => base_path = Some(val.into()),
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
@@ -134,25 +149,34 @@ fn main() {
     }
     if dsp {
         if chat {
-            prompt = aether::chat::chatml(&system, &prompt);
+            prompt = aether::chat::chatml(system.as_deref().unwrap_or(aether::chat::QWEN_DEFAULT_SYSTEM), &prompt);
         }
         return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram, fixed));
     }
     if gpu {
         if chat {
-            prompt = aether::chat::chatml(&system, &prompt);
+            prompt = aether::chat::chatml(system.as_deref().unwrap_or(aether::chat::QWEN_DEFAULT_SYSTEM), &prompt);
         }
         return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.format_name(), session.model.weights.bytes() as f64 / 1e6);
     session.lookup_fixed = fixed;
+    if session.text.is_lfm3() {
+        if !temp_set { temp = 0.1; }
+        if !top_p_set { top_p = 1.0; }
+        if !top_k_set { top_k = 50; }
+    }
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
-        prompt = aether::chat::chatml(&system, &prompt);
+        prompt = session.text.chat_prompt(system.as_deref(), &prompt, thinking);
     }
     let mut out = std::io::stdout().lock();
-    let mut write = |piece: &[u8]| out.write_all(piece).and_then(|_| out.flush()).is_ok();
+    let mut filter = aether::chat::ThinkFilter::new(hide_think);
+    let mut write = |piece: &[u8]| {
+        let shown = filter.feed(piece);
+        out.write_all(&shown).and_then(|_| out.flush()).is_ok()
+    };
     let stats = if lookup > 0 || draft_path.is_some() {
         let t = session.text.encode(&prompt);
         write(&session.text.first_piece(t[0]));
@@ -173,6 +197,8 @@ fn main() {
     } else {
         session.generate(&prompt, &mut sampler, steps, true, write)
     };
+    let tail = filter.finish();
+    let _ = out.write_all(&tail);
     writeln!(out).unwrap();
 
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
@@ -251,6 +277,8 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     } else {
         s.generate(prompt, &mut sampler, steps, emit)
     };
+    let tail = filter.finish();
+    let _ = out.write_all(&tail);
     writeln!(out).unwrap();
     if let Some(v) = stamps {
         let ms: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
@@ -284,6 +312,8 @@ fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (
     } else {
         s.generate(prompt, &mut sampler, steps, emit)
     };
+    let tail = filter.finish();
+    let _ = out.write_all(&tail);
     writeln!(out).unwrap();
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
     eprintln!("prefill (DSP): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
