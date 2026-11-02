@@ -224,7 +224,7 @@ impl Weights {
 #[allow(clippy::too_many_arguments)]
 fn attention(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
     #[cfg(target_arch = "aarch64")]
-    if (c.head_size() == 64 || c.head_size() == 48) && pos + 1 > ATTN_CHUNK {
+    if (c.head_size() == 64 || c.head_size() == 48 || c.head_size() == 128) && pos + 1 > ATTN_CHUNK {
         return attention_chunked(pool, c, out, q, kc, vc, pos);
     }
     attention_whole(pool, c, out, q, kc, vc, scores, pos)
@@ -381,18 +381,8 @@ fn conv_token(pool: Option<&ThreadPool>, c: &Config, s: &mut State, l: usize, cw
         Weight::F32(f) => &f[..],
         _ => panic!("the short-conv kernel must be f32"),
     };
-    assert_eq!(w.len(), dim * width);
     let state = &mut s.conv_state[s.conv_off[l]..s.conv_off[l] + 6 * dim];
-    for ch in 0..dim {
-        let mut acc = 0.0;
-        for k in 0..width - 1 {
-            acc += state[k * dim + ch] * w[ch * width + k];
-        }
-        acc += s.xb[ch] * w[ch * width + width - 1];
-        s.q[ch] = acc;
-    }
-    state.copy_within(dim..6 * dim, 0);
-    state[5 * dim..].copy_from_slice(&s.xb[..dim]);
+    k::short_conv_step(&s.xb[..dim], w, state, dim, width, &mut s.q[..dim]);
     for ch in 0..dim {
         s.xb2[ch] = cc[ch] * s.q[ch];
     }
@@ -410,25 +400,20 @@ fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batc
         Weight::F32(f) => &f[..],
         _ => panic!("the short-conv kernel must be f32"),
     };
-    assert_eq!(w.len(), dim * width);
     let state = &mut s.conv_state[s.conv_off[l]..s.conv_off[l] + 6 * dim];
     for i in 0..t {
         let bcx = &b.conv[i * 3 * dim..(i + 1) * 3 * dim];
         let (bb, rest) = bcx.split_at(dim);
-        let (cc, xx) = rest.split_at(dim);
+        let (_cc, xx) = rest.split_at(dim);
         for ch in 0..dim {
             b.hb2[i * dim + ch] = bb[ch] * xx[ch];
         }
-        for ch in 0..dim {
-            let mut acc = 0.0;
-            for k in 0..width - 1 {
-                acc += state[k * dim + ch] * w[ch * width + k];
-            }
-            acc += b.hb2[i * dim + ch] * w[ch * width + width - 1];
-            b.q[i * dim + ch] = acc;
-        }
-        state.copy_within(dim..6 * dim, 0);
-        state[5 * dim..].copy_from_slice(&b.hb2[i * dim..(i + 1) * dim]);
+    }
+    k::short_conv_rows(&b.hb2[..t * dim], w, state, dim, width, &mut b.q[..t * dim], t);
+    for i in 0..t {
+        let bcx = &b.conv[i * 3 * dim..(i + 1) * 3 * dim];
+        let (_, rest) = bcx.split_at(dim);
+        let (cc, _) = rest.split_at(dim);
         for ch in 0..dim {
             b.xb2[i * dim + ch] = cc[ch] * b.q[i * dim + ch];
         }
