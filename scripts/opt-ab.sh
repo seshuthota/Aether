@@ -11,10 +11,13 @@
 #           (--lookup-fixed) against plain decoding, on the CPU (cores 2-7),
 #           the GPU and the DSP, the phase-6 prompts (code copies the
 #           prompt; prose and story mostly do not)
+#   depth   the GPU prompt at depth: pp64-512 after 0/1024/2048/4096 cached
+#           tokens, plain and profiled (the baseline flash attention is
+#           measured against; results/phase-l3.md step 26)
 #
 # Each pair or triple runs back to back, its order reversed in round 2.
 #
-#   scripts/opt-ab.sh OUT [prompt decode lookup]
+#   scripts/opt-ab.sh OUT [prompt decode lookup depth]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?output dir}; shift
@@ -87,6 +90,12 @@ decode)
     a=; [ $v = f32 ] && a=f32
     run "decode-$q-$v-r$r" --example vk_decode -- $QWEN-$q.gguf plain $a
   done; done; done ;;
+depth)
+  # One baseline, not an A/B: no rounds, but the same cooling and conditions.
+  for q in q4_0 q4_k_m; do
+    run "depth-$q" --example vk_pp -- $QWEN-$q.gguf depth 0 depth 1024 depth 2048 depth 4096 3
+    run "depth-$q-profile" --example vk_pp -- $QWEN-$q.gguf profile depth 0 depth 1024 depth 2048 depth 4096 1
+  done ;;
 lookup)
   for r in $(seq 1 "$ROUNDS"); do for e in cpu gpu dsp; do for q in q4_0 q4_k_m; do for p in code prose story; do
     case $e in cpu) eng="-c 2-7";; gpu) eng="--gpu";; dsp) eng="--dsp";; esac
