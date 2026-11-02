@@ -1646,3 +1646,42 @@ correct path and the one long contexts need once the work partition is
 fixed. Next: F6c (a 256-token pass, `vk_pp batch 256`) for the cheapest
 extra parallelism, then F6b (split a token group's positions across
 workgroups when there are too few, with `parts` + merge sized by splits).
+
+## Step 28: a 256-token prompt pass (F6c) (2026-11-02; `raw/flash-batch/`)
+
+`scripts/opt-ab.sh … flash-batch`: `attention_flash.comp` at 128 against
+256 tokens a pass (Qwen2.5-0.5B Q4_0 and Q4_K_M, pp64-512 at depth
+0/1024/2048/4096, two rounds with the order reversed, cooled, 22:32–22:47,
+battery 60 → 58 %, clock caps 2.40 / 2.44 GHz — the phone was already
+throttling from the session before, so only the 128/256 pairs compare
+across, and the chunked column below is from step 27).
+
+Attention ms (profiled), 128 vs 256 tokens a pass:
+
+| | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| d0 | 3 / 3 | 7 / 7 | 23 / 19 | 83 / 67 |
+| d1024 | 44 / 44 | 82 / 82 | 173 / 134 | 387 / 305 |
+| d2048 | 86 / 86 | 157 / 157 | 322 / 251 | 686 / 530 |
+| d4096 | 169 / 169 | 308 / 308 | 628 / 489 | 1289 / 1007 |
+
+- Identical at 128 tokens and below (one pass either way); **1.26–1.29×
+  faster at pp256 and pp512**, which is the workgroup count: 256 tokens
+  double the token groups (8 instead of 4 per head) and halve the passes.
+- Whole pass, Qwen Q4_0 (GPU ms, 128 → 256): pp512 408 → 364 at depth 0,
+  728 → 612 at 1024, 1011 → 826 at 2048, 1615 → 1313 at 4096; pp256
+  186 → 167, 337 → 282, 485 → 400, 794 → 642.
+- Against the chunked path of step 26/27 (different session, same clock
+  caps): flash-256 is ahead at pp256 at every depth (167/282/400/642
+  against 209/317/430/665) and at pp512 through depth 2048 (364/612/826
+  against 417/643/846), level at depth 4096 (1313 against 1296). Its
+  attention kernel alone is still 1.10× chunked's at depth 4096 (1007
+  against 918); the halved dispatch count is what brings the pass level.
+- **Adopted as the default**: `BATCH = 256` in `prompt_batch` (capped by
+  the cache size), with `Options::batch` kept for A/B. Only the prompt
+  path changes; decode, the few-token pass and `parts` are untouched.
+- **Accuracy unchanged, to the digit**: 133/133 on the phone with the new
+  default, and the same KL run as step 26 (Qwen Q4_0, 20 × 512, against
+  the f32 file) gives PPL 19.7443, Mean KLD 0.180887, same top 77.255 % —
+  the batch-128 figures exactly. Each token's products and attention are
+  independent of how many tokens share its pass.

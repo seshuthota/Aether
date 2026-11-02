@@ -12,7 +12,7 @@
 //! `chunked`: the prompt's attention in two passes
 //! (`Options::attn_chunked`), as before flash attention.
 //! `batch N`: tokens per prompt pass with flash attention, instead of the
-//! model's 128 (`Options::batch`, F6c of plans/flash-attention.md).
+//! model's 256 (`Options::batch`, F6c of plans/flash-attention.md).
 //!
 //! `depth D`: fill the cache to position D through `forward_batch`
 //! (untimed), then time the prompt from there, as llama-bench's `-d` does.

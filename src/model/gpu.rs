@@ -168,21 +168,29 @@ fn push(v: &[u32]) -> Vec<u8> {
 /// most 128).
 const PARTS_BUDGET: usize = 32 << 20;
 
+/// Tokens per prompt pass with flash attention: 256. A 128-token pass
+/// gives only `n_heads × 4` workgroups; 256 doubles them (and halves the
+/// passes, so the norms, RoPE and every dispatch are half as many). On the
+/// Adreno that made the attention kernel 26-29 % faster at pp256/512 and
+/// the pass 8-10 % faster (results/phase-l3.md step 28); at pp128 and
+/// below nothing changes, since it is one pass either way.
+const BATCH: usize = 256;
+
 /// Tokens per prompt pass and floats `parts` must hold, for a cache of
 /// `seq_len` positions. Flash attention has no parts and no merge, so its
-/// batch is 128 whatever the context; `old` (the chunked and per-token
-/// prompt shaders) keeps today's sizing: the partial results of every
-/// token, head and 64-position chunk, as many tokens as [`PARTS_BUDGET`]
-/// holds. Decode and a few-token pass always write `parts`, for at most
-/// [`FEW`] tokens, with the full chunk count (decode's dispatch is
-/// recorded once for every chunk the cache can hold).
+/// batch is [`BATCH`] whatever the context (capped by the cache); `old`
+/// (the chunked and per-token prompt shaders) keeps today's sizing: the
+/// partial results of every token, head and 64-position chunk, as many
+/// tokens as [`PARTS_BUDGET`] holds. Decode and a few-token pass always
+/// write `parts`, for at most [`FEW`] tokens, with the full chunk count
+/// (decode's dispatch is recorded once for every chunk the cache can hold).
 fn prompt_batch(seq_len: usize, n_heads: usize, hs: usize, old: bool) -> (usize, usize) {
     let parts_per_token = n_heads * seq_len.div_ceil(64) * (hs + 2);
     if old {
         let batch = (PARTS_BUDGET / (4 * parts_per_token)).clamp(1, 128);
         (batch, batch * parts_per_token)
     } else {
-        (128, FEW.min(128) * parts_per_token)
+        (BATCH.min(seq_len), FEW * parts_per_token)
     }
 }
 
@@ -299,9 +307,9 @@ pub struct Options {
     /// (A/B timing only; the default is `attention_flash.comp`).
     pub attn_chunked: bool,
     /// Tokens per prompt pass, when flash attention runs: 0 keeps the
-    /// model's 128 (A/B only; F6c of plans/flash-attention.md). The two
-    /// older prompt shaders keep their `PARTS_BUDGET` batch whatever this
-    /// says, since 256 tokens' partial results do not fit.
+    /// model's [`BATCH`] (A/B only; F6c of plans/flash-attention.md). The
+    /// two older prompt shaders keep their `PARTS_BUDGET` batch whatever
+    /// this says, since 256 tokens' partial results do not fit.
     pub batch: usize,
 }
 
@@ -1106,19 +1114,20 @@ fn per_stage(stages: &[&'static str], t: &[f64]) -> Vec<(&'static str, f64)> {
 mod tests {
     use super::*;
 
-    /// Flash attention's batch is 128 whatever the context, and parts then
-    /// holds only decode's and the few-token pass's (the old prompt shaders
-    /// still size the batch by [`PARTS_BUDGET`]). Qwen2.5-0.5B's shapes:
-    /// 14 heads, head size 64; the old figures are plans/flash-attention.md
-    /// §1's table.
+    /// Flash attention's batch is 256 whatever the context (or the cache,
+    /// when it is smaller), and parts then holds only decode's and the
+    /// few-token pass's (the old prompt shaders still size the batch by
+    /// [`PARTS_BUDGET`]). Qwen2.5-0.5B's shapes: 14 heads, head size 64;
+    /// the old figures are plans/flash-attention.md §1's table.
     #[test]
     fn flash_batch_does_not_shrink_with_context() {
         let (nh, hs) = (14, 64);
         for seq in [512, 1024, 4096, 8192, 32768] {
             let (batch, parts) = prompt_batch(seq, nh, hs, false);
-            assert_eq!(batch, 128, "seq_len {seq}");
+            assert_eq!(batch, 256, "seq_len {seq}");
             assert_eq!(parts, FEW * nh * seq.div_ceil(64) * (hs + 2), "seq_len {seq}");
         }
+        assert_eq!(prompt_batch(128, nh, hs, false).0, 128, "a cache smaller than the batch");
         for (seq, want) in [(1024, 128), (4096, 128), (8192, 70), (32768, 17)] {
             let (batch, parts) = prompt_batch(seq, nh, hs, true);
             assert_eq!(batch, want, "seq_len {seq}");

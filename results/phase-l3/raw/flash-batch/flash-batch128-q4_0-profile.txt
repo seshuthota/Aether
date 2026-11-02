@@ -1,0 +1,44 @@
+# 2026-11-02T22:43:04+05:30, commit 8bd50eb
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 58
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | batches of 128, q4_0_gemm_q8 | attention flash | mean of 1 runs
+test,tok_per_s,ms
+pp64@d0,1131.1,56.6
+# pp64@d0 GPU ms: rmsnorm 1.16, q/k/v 3.72, bias + RoPE + cache 0.62, attention 3.32, wo + add 3.75, gate/up 19.89, swiglu + down + add 18.04, classifier 2.55, argmax 0.04
+pp128@d0,1396.8,91.6
+# pp128@d0 GPU ms: rmsnorm 1.27, q/k/v 6.42, bias + RoPE + cache 0.69, attention 6.82, wo + add 5.90, gate/up 36.65, swiglu + down + add 28.90, classifier 1.72, argmax 0.03
+pp256@d0,1352.8,189.2
+# pp256@d0 GPU ms: rmsnorm 2.54, q/k/v 12.82, bias + RoPE + cache 1.37, attention 22.95, wo + add 11.76, gate/up 73.41, swiglu + down + add 57.66, classifier 3.54, argmax 0.06
+pp512@d0,1223.5,418.5
+# pp512@d0 GPU ms: rmsnorm 4.99, q/k/v 25.61, bias + RoPE + cache 2.70, attention 82.82, wo + add 23.49, gate/up 146.43, swiglu + down + add 115.24, classifier 6.89, argmax 0.11
+pp64@d1024,685.8,93.3
+# pp64@d1024 GPU ms: rmsnorm 0.91, q/k/v 3.42, bias + RoPE + cache 0.44, attention 44.44, wo + add 3.55, gate/up 18.91, swiglu + down + add 17.15, classifier 1.71, argmax 0.03
+pp128@d1024,759.4,168.6
+# pp128@d1024 GPU ms: rmsnorm 1.25, q/k/v 6.40, bias + RoPE + cache 0.67, attention 81.78, wo + add 5.88, gate/up 36.60, swiglu + down + add 28.81, classifier 1.72, argmax 0.03
+pp256@d1024,748.1,342.2
+# pp256@d1024 GPU ms: rmsnorm 2.52, q/k/v 12.78, bias + RoPE + cache 1.33, attention 173.03, wo + add 11.71, gate/up 73.36, swiglu + down + add 57.48, classifier 3.42, argmax 1.17
+pp512@d1024,691.4,740.5
+# pp512@d1024 GPU ms: rmsnorm 5.27, q/k/v 25.72, bias + RoPE + cache 2.75, attention 386.71, wo + add 23.65, gate/up 147.55, swiglu + down + add 121.61, classifier 7.04, argmax 7.33
+pp64@d2048,474.1,135.0
+# pp64@d2048 GPU ms: rmsnorm 0.93, q/k/v 3.43, bias + RoPE + cache 0.44, attention 86.12, wo + add 3.56, gate/up 19.02, swiglu + down + add 17.16, classifier 1.71, argmax 0.03
+pp128@d2048,531.0,241.1
+# pp128@d2048 GPU ms: rmsnorm 1.28, q/k/v 6.41, bias + RoPE + cache 0.67, attention 156.77, wo + add 5.88, gate/up 36.69, swiglu + down + add 28.76, classifier 1.72, argmax 0.03
+pp256@d2048,522.0,490.4
+# pp256@d2048 GPU ms: rmsnorm 2.56, q/k/v 12.81, bias + RoPE + cache 1.34, attention 321.87, wo + add 11.76, gate/up 73.45, swiglu + down + add 57.50, classifier 3.43, argmax 0.06
+pp512@d2048,499.1,1025.8
+# pp512@d2048 GPU ms: rmsnorm 5.00, q/k/v 25.55, bias + RoPE + cache 2.64, attention 685.66, wo + add 23.46, gate/up 146.61, swiglu + down + add 114.95, classifier 6.95, argmax 0.11
+pp64@d4096,282.0,226.9
+# pp64@d4096 GPU ms: rmsnorm 1.06, q/k/v 3.55, bias + RoPE + cache 0.51, attention 169.42, wo + add 3.69, gate/up 19.60, swiglu + down + add 18.28, classifier 1.71, argmax 0.03
+pp128@d4096,326.4,392.2
+# pp128@d4096 GPU ms: rmsnorm 1.26, q/k/v 6.41, bias + RoPE + cache 0.67, attention 308.00, wo + add 5.89, gate/up 36.57, swiglu + down + add 28.84, classifier 1.71, argmax 0.03
+pp256@d4096,320.6,798.6
+# pp256@d4096 GPU ms: rmsnorm 2.58, q/k/v 12.85, bias + RoPE + cache 1.38, attention 627.72, wo + add 11.83, gate/up 74.17, swiglu + down + add 59.63, classifier 3.41, argmax 0.06
+pp512@d4096,274.1,1867.7
+# pp512@d4096 GPU ms: rmsnorm 5.01, q/k/v 25.62, bias + RoPE + cache 2.71, attention 1289.07, wo + add 23.56, gate/up 146.58, swiglu + down + add 115.40, classifier 6.84, argmax 0.11
