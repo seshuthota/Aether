@@ -1,0 +1,35 @@
+# llama.cpp (CUDA build) on the PC, Qwen2.5-0.5B Q4_0 against the f32 file, wikitext-2, 1 chunk
+## ctx 2048
+$ llama-perplexity -m hostdata/gguf/qwen2.5-0.5b-f32.gguf -c 2048 --chunks 1 --kl-divergence-base /tmp/qwen-f32-c2048.kld
+print_info: n_ctx_train           = 32768
+print_info: n_ctx_orig_yarn       = 32768
+llama_context: n_ctx         = 2048
+llama_context: n_ctx_seq     = 2048
+llama_context: n_ctx_seq (2048) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+perplexity: calculating perplexity over 1 chunks, n_ctx=2048, batch_size=2048, n_seq=1
+Final estimate: PPL = 11.2125 +/- 0.95533
+$ llama-perplexity -m testdata/gguf/qwen2.5-0.5b-q4_0.gguf -c 2048 --chunks 1 --kl-divergence
+chunk             PPL               ln(PPL(Q)/PPL(base))          KL Divergence              Δp RMS            Same top p
+Mean PPL(Q)                   :  13.370418 ±   1.179284
+Mean PPL(base)                :  11.212536 ±   0.955329
+Mean PPL(Q)/PPL(base)         :   1.192453 ±   0.025168
+Mean PPL(Q)-PPL(base)         :   2.157882 ±   0.339988
+Mean    KLD:   0.169484 ±   0.005911
+Same top p: 79.277 ± 1.268 %
+## ctx 4096
+$ llama-perplexity -m hostdata/gguf/qwen2.5-0.5b-f32.gguf -c 4096 --chunks 1 --kl-divergence-base /tmp/qwen-f32-c4096.kld
+print_info: n_ctx_train           = 32768
+print_info: n_ctx_orig_yarn       = 32768
+llama_context: n_ctx         = 4096
+llama_context: n_ctx_seq     = 4096
+llama_context: n_ctx_seq (4096) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+perplexity: calculating perplexity over 1 chunks, n_ctx=4096, batch_size=2048, n_seq=1
+Final estimate: PPL = 14.5182 +/- 0.87113
+$ llama-perplexity -m testdata/gguf/qwen2.5-0.5b-q4_0.gguf -c 4096 --chunks 1 --kl-divergence
+chunk             PPL               ln(PPL(Q)/PPL(base))          KL Divergence              Δp RMS            Same top p
+Mean PPL(Q)                   :  18.396342 ±   1.157189
+Mean PPL(base)                :  14.518217 ±   0.871131
+Mean PPL(Q)/PPL(base)         :   1.267121 ±   0.018883
+Mean PPL(Q)-PPL(base)         :   3.878125 ±   0.372687
+Mean    KLD:   0.190900 ±   0.003943
+Same top p: 74.206 ± 0.967 %

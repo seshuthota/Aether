@@ -11,10 +11,6 @@
 #           (--lookup-fixed) against plain decoding, on the CPU (cores 2-7),
 #           the GPU and the DSP, the phase-6 prompts (code copies the
 #           prompt; prose and story mostly do not)
-#   depth   the GPU prompt at depth, on the pre-flash path (vk_pp chunked):
-#           pp64-512 after 0/1024/2048/4096 cached tokens, plain and
-#           profiled (the baseline flash attention is measured against;
-#           results/phase-l3.md step 26)
 #   flash   GPU prompt attention: attention_flash.comp (the default) against
 #           the two passes it replaces (vk_pp chunked), Qwen2.5 Q4_0 and
 #           Q4_K_M, pp64-512 at depth 0/1024/2048/4096, plus one profiled
@@ -22,7 +18,7 @@
 #
 # Each pair or triple runs back to back, its order reversed in round 2.
 #
-#   scripts/opt-ab.sh OUT [prompt decode lookup depth flash]
+#   scripts/opt-ab.sh OUT [prompt decode lookup flash]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?output dir}; shift
@@ -95,14 +91,9 @@ decode)
     a=; [ $v = f32 ] && a=f32
     run "decode-$q-$v-r$r" --example vk_decode -- $QWEN-$q.gguf plain $a
   done; done; done ;;
-depth)
-  # The pre-flash prompt path (chunked) at depth: what flash attention is
-  # compared against (step 26). Flash itself is A/B'd in `flash`.
-  for q in q4_0 q4_k_m; do
-    run "depth-$q" --example vk_pp -- $QWEN-$q.gguf chunked depth 0 depth 1024 depth 2048 depth 4096 3
-    run "depth-$q-profile" --example vk_pp -- $QWEN-$q.gguf profile chunked depth 0 depth 1024 depth 2048 depth 4096 1
-  done ;;
 flash)
+  # Round 1's `chunked` arm at each depth is step 26's baseline (the prompt
+  # path before flash); the pair is step 27.
   for r in $(seq 1 "$ROUNDS"); do for q in q4_0 q4_k_m; do for v in $(order $r flash chunked); do
     a=; [ $v = chunked ] && a=chunked
     run "flash-$q-$v-r$r" --example vk_pp -- $QWEN-$q.gguf $a depth 0 depth 1024 depth 2048 depth 4096 3

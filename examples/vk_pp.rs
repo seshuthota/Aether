@@ -28,7 +28,7 @@ use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let path = args.first().expect("usage: vk_pp MODEL.gguf [f16] [profile] [attn1] [REPS] [depth D]...");
+    let path = args.first().expect("usage: vk_pp MODEL.gguf [f16] [profile] [attn1] [chunked] [REPS] [depth D]...");
     let (mut f16_gemm, mut profile, mut attn_per_token, mut attn_chunked, mut reps) = (false, false, false, false, 5);
     let mut depths: Vec<usize> = Vec::new();
     let mut it = args[1..].iter();

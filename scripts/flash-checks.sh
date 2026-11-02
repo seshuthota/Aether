@@ -8,25 +8,31 @@
 #   kld    the prompt pass at wikitext-2 20 x 512, flash (the default)
 #          against the two passes it replaces (batch-chunked), SmolLM2-135M
 #          Q4_0, Qwen2.5-0.5B Q4_0 and Q4_K_M, each against the same f32
-#          file's logits for KL. Compare with results/phase-l3.md step 20
-#          (the tile path) and llama.cpp's error bar there.
+#          file's logits for KL. Compare with results/phase-l3.md step 22's
+#          raw/vk-kld-*-batch-tile.txt (the path it replaces) and the step
+#          20 table's llama.cpp error bar.
 #   deep   Qwen2.5-0.5B Q4_0 at context 2048 and 4096, flash and chunked,
 #          against the f32 base: the first check of the GPU prompt path
 #          beyond 512 tokens.
+#   llamacpp  llama-bench (the OpenCL build on the phone, $OCL) at pp512
+#          after 0/1024/2048/4096 cached tokens, for the same-session
+#          comparison of step 26 — the chunked runs of `flash` are at the
+#          same depths.
 #
 # The f32 base files are pushed to the phone once (they are not testdata).
 #
-#   scripts/flash-checks.sh OUT [tests kld deep]
+#   scripts/flash-checks.sh OUT [tests kld deep llamacpp]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?output dir}; shift
-STAGES=("$@"); [ ${#STAGES[@]} -gt 0 ] || STAGES=(tests kld deep)
+STAGES=("$@"); [ ${#STAGES[@]} -gt 0 ] || STAGES=(tests kld deep llamacpp)
 mkdir -p "$OUT"
 COOL_C=${COOL_C:-45}
 QWEN=testdata/gguf/qwen2.5-0.5b
 SMOLLM=testdata/gguf/smollm2-135m
 REMOTE=/data/local/tmp/aether
 PHONE="--target aarch64-linux-android"
+OCL=${OCL:-/data/local/tmp/llama-ocl}
 
 wait_cool() {
   while :; do
@@ -87,5 +93,12 @@ deep)
   for ctx in 2048 4096; do for mode in batch batch-chunked; do
     run "vk-kld-qwen2.5-0.5b-q4_0-$mode-c$ctx" --example vk_ppl -- $QWEN-q4_0.gguf 1 $ctx $mode f32-qwen2.5-0.5b.gguf
   done; done ;;
+llamacpp)
+  adb push --sync testdata/. $REMOTE/testdata/ >/dev/null
+  for q in q4_0 q4_k_m; do
+    wait_cool; adb shell input keyevent KEYCODE_WAKEUP
+    { conditions; flock /tmp/aether-phone.lock adb shell "cd $REMOTE && LD_LIBRARY_PATH=$OCL/lib $OCL/bin/llama-bench -m testdata/gguf/qwen2.5-0.5b-$q.gguf -p 512 -n 0 -d 0,1024,2048,4096 -ngl 99 --mmap 0 -r 3" 2>&1 | tr -d '\r' || echo FAILED; } > "$OUT/llamacpp-qwen2.5-0.5b-$q-pp512.txt"
+    echo ">>> llamacpp-qwen2.5-0.5b-$q-pp512: $(grep -E '^\\| *pp512' "$OUT/llamacpp-qwen2.5-0.5b-$q-pp512.txt" | tr '\n' ' ' | cut -c1-240)"
+  done ;;
 esac; done
 echo "# done $(date -Iseconds)"
