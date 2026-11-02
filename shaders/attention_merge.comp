@@ -1,6 +1,8 @@
 #version 450
-// Attention part 2 of 2: for query head h (workgroup h), combines the
-// chunks of attention.comp: with M the largest chunk max,
+// Attention part 2 of 2 for decode, and for the chunked prompt option
+// (`Options::attn_chunked`; flash attention needs no merge): for query
+// head h (workgroup h), combines the chunks of attention.comp: with M the
+// largest chunk max,
 //   out[d] = Σ_c e^(m_c − M) out_c[d] / Σ_c e^(m_c − M) l_c.
 // Workgroup (h, t) does token t of a batch, at position pos + t.
 layout(local_size_x = 64) in;

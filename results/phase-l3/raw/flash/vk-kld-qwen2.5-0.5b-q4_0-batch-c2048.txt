@@ -1,0 +1,17 @@
+# 2026-11-02T20:43:56+05:30, commit 2cd4538
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 73
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 1897 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 769.9 ms: 83.1 tok/s
+[1]13.4075,kld 0.17018,
+Final estimate: PPL = 13.4075 +/- 1.18333  (1023 tokens scored, 118.4 s, 17.3 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+PPL(base f32) = 11.2120, PPL(Q)/PPL(base) = 1.195820
+Mean KLD: 0.170176   Same top p: 79.277 %   (time and tok/s include the base model on the CPU)

@@ -1,0 +1,28 @@
+# 2026-11-02T22:18:18+05:30, commit 5357ac2
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 62
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | batches of 126, qx_gemm_q8 | attention chunked | mean of 3 runs
+test,tok_per_s,ms
+pp64@d0,822.7,77.8
+pp128@d0,789.1,162.2
+pp256@d0,865.6,295.7
+pp512@d0,905.5,565.4
+pp64@d1024,634.9,100.8
+pp128@d1024,569.7,224.7
+pp256@d1024,508.6,503.4
+pp512@d1024,368.3,1390.0
+pp64@d2048,304.3,210.3
+pp128@d2048,245.4,521.6
+pp256@d2048,297.9,859.2
+pp512@d2048,286.2,1788.8
+pp64@d4096,350.8,182.5
+pp128@d4096,248.6,514.9
+pp256@d4096,341.9,748.7
+pp512@d4096,356.6,1435.9

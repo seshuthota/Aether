@@ -181,6 +181,29 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
    the plan is now ticked; open items below are optimizations.
 6. **Learning track** (with the user): pages and films for what the implementation track built.
 
+**Flash attention for the GPU prompt pass (2026-11-02, `plans/flash-attention.md`)**:
+F0–F6c are built on branch `flash-attention` (`attention_flash.comp` is the default prompt
+attention, `Options::attn_chunked` keeps the old two passes for A/B, `Options::batch` the
+pass size; `vk_pp` gained `depth`, `chunked` and `batch N`). On the phone
+(results/phase-l3.md, "Flash attention, the F4 checks" and steps 26–28): 133/133 tests with
+`vulkan,hexagon`; accuracy at wikitext-2 20 × 512 within llama.cpp's error bar and within
+noise of the tile path (Qwen Q4_0 flash 0.180887 against llama.cpp's 0.181010 ± 0.002752),
+and at context 2048/4096 the same (0.170176 / 0.191220 against 0.169484 ± 0.005911 /
+0.190900 ± 0.003943) — the first prompt check beyond 512 tokens. On battery, flash's
+attention kernel is 1.35–1.4× slower than the chunked path at depth (the work partition: a
+128-token pass gives 56 workgroups) and 1.2–1.7× at short lengths; with **256 tokens a pass**
+(now the default) the attention is 1.26–1.29× faster than at 128 and the whole pass is ahead
+at pp256 at every depth and at pp512 through 2048, level at 4096 — and the batch no longer
+shrinks with the context (17 tokens at 32K before). The gain is the batch (the weight
+products read each matrix half as often), not the flash kernel, which is still 1.10× the
+chunked path's attention at depth 4096; flash is what lets the batch stay at 256 at any
+context. Accuracy is unchanged to the digit by the batch (PPL 19.7443 / KLD 0.180887 at both
+sizes). Merged into `main` 2026-11-02. Open: F6b (split a group's positions across
+workgroups when short of workgroups) would close the remaining attention gap at depth;
+F7a (one rescale per sub-tile) and F7c (one load of K/V per GQA group) for the inner loop;
+F8 measures decode at long context; not measured, the chunked shaders at 256 tokens with a
+larger `PARTS_BUDGET` (possible below ~4K).
+
 ### Waiting for the phone (written 2026-10-30, committed untested on `gpu-pending`)
 
 Items 9–13 ran on the phone on 2026-10-30, 22:00–23:15 (results/phase-l5.md "Step 6"):

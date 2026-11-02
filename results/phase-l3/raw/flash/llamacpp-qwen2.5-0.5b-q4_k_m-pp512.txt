@@ -1,0 +1,36 @@
+# 2026-11-02T20:57:49+05:30, commit 2cd4538
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 71
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# screen: mWakefulness=Awake
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0800.78 Compiler E031.47.18.56
+ggml_opencl: vector subgroup broadcast support: true
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels........................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 830 (OpenCL 3.0 Adreno(TM) 830)'
+| model                          |       size |     params | backend    | ngl | mmap |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ---: | --------------: | -------------------: |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |           pp512 |       131.76 ± 68.72 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |   pp512 @ d1024 |        76.18 ± 19.51 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |   pp512 @ d2048 |        83.78 ± 20.71 |
+| qwen2 1B Q4_K - Medium         | 373.71 MiB |   494.03 M | OpenCL     |  99 |    0 |   pp512 @ d4096 |       123.85 ± 20.74 |
+
+build: d00685831 (8660)

@@ -14,6 +14,10 @@ computed in float64 from those exact float32 inputs, then stored as float32):
   rope_halves_<heads>x<hs>_p<pos>/  x, out (rotate_half layout, theta 1e4)
   attention_<n>x<hs>/    q [hs], k [n, hs], v [n, hs], out [hs]
                          out = softmax(k @ q / sqrt(hs)) @ v   (one head, n positions)
+  attention_causal_<nh>x<nkv>x<hs>_p<pos0>_t<nt>/
+                         q [nt, nh, hs], k [pos0 + nt, nkv, hs], v [same], out [nt, nh, hs]
+                         token i is at position pos0 + i and sees positions 0..=pos0 + i;
+                         query head h reads the key/value head h // (nh // nkv)
 
 Sizes include 1, values just around multiples of 4/8/16/32 (NEON width and
 unroll factors: tail bugs live there), and the real stories15M / SmolLM2 /
@@ -57,6 +61,23 @@ def rope_ref(x, pos, hs, theta, halves):
     return out.reshape(-1)
 
 
+def attention_causal_ref(q, k, v, pos0):
+    """Causal grouped-query attention over a batch, in float64 from the
+    float32 inputs: token i (at position pos0 + i) sees positions
+    0 ..= pos0 + i, and query head h reads key/value head h // (nh // nkv)."""
+    nt, nh, hs = q.shape
+    g = nh // k.shape[1]
+    q64, k64, v64 = (a.astype(np.float64) for a in (q, k, v))
+    out = np.empty((nt, nh, hs), np.float64)
+    for i in range(nt):
+        for h in range(nh):
+            kvh = h // g
+            s = k64[: pos0 + i + 1, kvh] @ q64[i, h] / np.sqrt(hs)
+            e = np.exp(s - s.max())
+            out[i, h] = (e / e.sum()) @ v64[: pos0 + i + 1, kvh]
+    return out
+
+
 def main():
     root = Path(sys.argv[1])
     odd = [1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 129]
@@ -95,6 +116,17 @@ def main():
             sc = k.astype(np.float64) @ q.astype(np.float64) / np.sqrt(hs)
             e = np.exp(sc - sc.max())
             save(root, f"attention_{n}x{hs}", q=q, k=k, v=v, out=(e / e.sum()) @ v.astype(np.float64))
+    # Causal, grouped-query attention over a batch (the GPU prompt shaders).
+    # pos0 crosses the 16-position sub-tiles, the 32-token workgroups and
+    # the 64-position chunks; the deep positions run one size each, since
+    # the loop is the same once its tiles are full.
+    for nh, nkv, hs in [(14, 2, 64), (9, 3, 64), (4, 4, 17)]:
+        for pos0, nts in [(0, (1, 31, 32, 33, 128)), (1, (1, 31, 32, 33, 128)),
+                          (63, (1, 31, 32, 33, 128)), (64, (1, 31, 32, 33, 128)),
+                          (1000, (33,)), (4000, (33,))]:
+            for nt in nts:
+                q, k, v = f32(nt, nh, hs), f32(pos0 + nt, nkv, hs), f32(pos0 + nt, nkv, hs)
+                save(root, f"attention_causal_{nh}x{nkv}x{hs}_p{pos0}_t{nt}", q=q, k=k, v=v, out=attention_causal_ref(q, k, v, pos0))
     print(f"wrote {len(list(root.iterdir()))} cases to {root}")
 
 

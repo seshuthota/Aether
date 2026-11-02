@@ -1,0 +1,17 @@
+# 2026-11-02T20:03:31+05:30, commit 2cd4538
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 78
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/smollm2-135m-q4_0.gguf on Adreno (TM) 830 | upload + record 1466 ms
+# greedy: The capital of France is the capital of the United States. The capital is the capital of the United States. The capital is the capital of the United States. The capital is the capital of the United States. The capital is the capital of the United States. The capital is the capital of the United States. The capital
+# 64 positions in 394.8 ms: 162.1 tok/s
+[1]14.0786,kld 0.31916,[2]21.1360,kld 0.31654,[3]20.3334,kld 0.31620,[4]20.9438,kld 0.33134,[5]21.2590,kld 0.33603,[6]21.4865,kld 0.34249,[7]22.3567,kld 0.33714,[8]23.2480,kld 0.34006,[9]25.0447,kld 0.33848,[10]25.4898,kld 0.33808,[11]25.5249,kld 0.33662,[12]25.9836,kld 0.34154,[13]26.2095,kld 0.34365,[14]27.3344,kld 0.34275,[15]28.0093,kld 0.34172,[16]28.5047,kld 0.34110,[17]26.8009,kld 0.33375,[18]27.1330,kld 0.33433,[19]27.5854,kld 0.33446,[20]27.7794,kld 0.33612,Final estimate: PPL = 27.7794 +/- 1.17857  (5100 tokens scored, 57.3 s, 178.5 tok/s through the GPU, batches of 128, q4_0_gemm_q8)
+PPL(base f32) = 19.6715, PPL(Q)/PPL(base) = 1.412164
+Mean KLD: 0.336116   Same top p: 64.882 %   (time and tok/s include the base model on the CPU)
+

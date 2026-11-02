@@ -1498,3 +1498,203 @@ other runs), so something else ran on the phone.
   would settle it, not tried.
 
 The rule stays as changed.
+
+
+## Flash attention, the F4 checks before the A/B (2026-11-02; `raw/flash/`)
+
+`plans/flash-attention.md` F4, on the phone (iQOO 13, Adreno 830), battery,
+cooled, conditions in each raw file, commit `32b18ff`. The timed A/B (F5,
+step 27) and the per-depth baseline (F0, step 26) had only started when the
+phone was disconnected, so their numbers are not here yet; they are
+`scripts/opt-ab.sh OUT flash` (both arms at depth 0/1024/2048/4096, plain
+and profiled) and, optionally, `scripts/opt-ab.sh OUT flash-batch` (F6c).
+This section is what F4 established before any timing claim.
+
+**The suite**: 133/133 with `--features vulkan,hexagon`
+(`vk-tests-flash-phone.txt`), including `attention_flash_matches_reference`
+and `attention_chunked_matches_reference` on the Adreno (66 numpy cases
+each, worst 1.6 · 2⁻¹¹ of max |v| against the bound 4 · 2⁻¹¹) and
+`c_abi_gpu_session`.
+
+**Accuracy at 20 × 512** (wikitext-2, against the f32 file's logits,
+`vk-kld-*-flash*.txt`). Step 20's int8 tile path and llama.cpp for
+comparison; flash and chunked score the same tokens:
+
+| model, path | PPL | Mean KLD | same top |
+| --- | --- | --- | --- |
+| SmolLM2-135M Q4_0, flash | 27.7418 | 0.335796 | 64.67 % |
+| SmolLM2-135M Q4_0, chunked | 27.7794 | 0.336116 | 64.88 % |
+| SmolLM2-135M Q4_0, step 20 tile / llama.cpp | 27.7581 / 27.7412 | 0.335616 / 0.335355 ± 0.004256 | 64.82 / 64.77 % |
+| Qwen2.5-0.5B Q4_0, flash | 19.7443 | 0.180887 | 77.26 % |
+| Qwen2.5-0.5B Q4_0, chunked | 19.7425 | 0.180747 | 77.08 % |
+| Qwen2.5-0.5B Q4_0, step 20 tile / llama.cpp | 19.7371 / 19.7283 | 0.181107 / 0.181010 ± 0.002752 | 77.08 / 76.98 % |
+| Qwen2.5-0.5B Q4_K_M, flash | 16.7539 | 0.031514 | 90.28 % |
+| Qwen2.5-0.5B Q4_K_M, chunked | 16.7581 | 0.031558 | 90.33 % |
+| Qwen2.5-0.5B Q4_K_M, step 20 tile / llama.cpp | 16.7356 / 16.7657 | 0.031790 / 0.033112 ± 0.000638 | 89.98 / 90.10 % |
+
+- Every flash figure is inside llama.cpp's error bar, and within 0.02 PPL
+  and 0.0005 KLD of the tile path it replaces.
+- The `chunked` arm is the old path: Qwen Q4_0 comes out at 19.7425 /
+  0.180747, the same digits as step 20's `vk-kld-*-batch-tile.txt`, so
+  `Options::attn_chunked` reproduces it (and the per-lane tail loads are a
+  no-op at head size 64). The greedy line is identical between the arms on
+  all three files.
+
+**Accuracy at depth** (Qwen2.5-0.5B Q4_0, one chunk against the f32 file,
+`vk-kld-*-batch*-c2048/c4096.txt`). This is the first check of the GPU
+prompt path beyond 512 tokens:
+
+| ctx | path | PPL | Mean KLD | same top |
+| --- | --- | --- | --- | --- |
+| 2048 | flash | 13.4075 | 0.170176 | 79.277 % |
+| 2048 | chunked | 13.4314 | 0.170230 | 78.886 % |
+| 2048 | llama.cpp (CUDA, one chunk) | 13.3704 | 0.169484 ± 0.005911 | 79.277 % |
+| 4096 | flash | 18.4284 | 0.191220 | 73.718 % |
+| 4096 | chunked | 18.4020 | 0.191446 | 74.206 % |
+| 4096 | llama.cpp | 18.3963 | 0.190900 ± 0.003943 | 74.206 % |
+
+Flash's KLD is 0.0007 from llama.cpp's at both depths and the same-top
+figures match at 2048. The llama.cpp rows were produced on the PC's CUDA
+build (`raw/llamacpp-kld-*.txt`); the same chunks went through `vk_ppl` on
+the Intel GPU first (`raw/vk-kld-*-deep-intel.txt`), which landed on the
+same KLD.
+
+**Same-session reference for the coming A/B**: llama-bench on the phone's
+OpenCL build at pp512 after 0/1024/2048/4096 cached tokens
+(`llamacpp-qwen2.5-0.5b-*-pp512.txt`): Q4_0 1123 / 775 / 599 / 367 tok/s,
+Q4_K_M 132 / 76 / 84 / 124.
+
+**What the runs suggest about speed (not the A/B)**: the `kld` and `deep`
+runs are single, unpairs, and their times include the shared f32 base on
+the CPU, so they are not a comparison. They hint at what F5 will test:
+level or slightly ahead at chunked lengths of ≤ 512, and behind at depth
+(c2048: 17.3 against 44.8 tok/s through the GPU including the base), which
+is the workgroup count — a 128-token pass gives Qwen 14 heads × 4
+token-groups = 56 workgroups, each walking every position in turn, against
+thousands of short workgroups in the chunked path.
+
+## Step 26: the GPU prompt at depth, on the path flash attention replaces (2026-11-02; `raw/flash-ab/flash-*-chunked-*.txt`)
+
+`scripts/opt-ab.sh … flash`'s chunked arm is the prompt path before flash
+attention (`attention_tile.comp` + `attention_merge.comp`), at depth for
+the first time: Qwen2.5-0.5B Q4_0 and Q4_K_M, pp64-512 after
+0/1024/2048/4096 cached tokens, two rounds with the order reversed,
+cooled below 45 °C before each run, screen on, battery 63 → 60 %,
+22:14–22:30, commit `5357ac2`. The clock caps fell during the session
+(cpu0 2.92 → 2.40 GHz, cpu6 3.07 → 2.44), so the rounds are compared
+within a pair, not across the hour. The model is loaded with room for
+4,608 positions, so this path's batch is **126**: pp512 is 5 passes,
+pp64 is 1.
+
+GPU time of attention + merge at pp512, and its share of the pass
+(profiled runs, one per variant at the end of the session):
+
+| depth | attention + merge | of the whole pass | tok/s, r1 / r2 |
+| --- | --- | --- | --- |
+| 0 | 67 ms | 417 ms (16 %) | 1347 / 1191 |
+| 1024 | 281 ms | 643 ms (44 %) | 905 / 800 |
+| 2048 | 483 ms | 846 ms (57 %) | 658 / 554 |
+| 4096 | 918 ms | 1296 ms (71 %) | 346 / 358 |
+
+- Attention grows with the context and is 71 % of the pass at depth
+  4096; at 918 ms for 128 tokens over ~4.3k positions it runs at
+  ~260 GFLOP/s of scores and value sums (the same measure step 22 used:
+  ~84 GFLOP/s at 512 tokens on the old shader).
+- `attention merge` is 109 ms of that 918 at depth 4096: it reads every
+  token's, head's and chunk's partial result (128 × 14 × 72 × 66 floats
+  = 34 MB a layer, written by the tile shader and read back), at about
+  7.5 GB/s.
+
+## Step 27: flash attention against it, same session (2026-11-02; `raw/flash-ab/flash-*-flash-*`)
+
+Same runs, the other arm. Attention time (flash writes `xb2` directly, so
+its figure is the kernel alone; the chunked figure is
+`attention_tile.comp` + `attention_merge.comp`), ms:
+
+| | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| d0 flash / chunked | 3 / 4 | **7 / 10** | 23 / 22 | 83 / 67 |
+| d1024 | 44 / 28 | 81 / 68 | 173 / 130 | 384 / 281 |
+| d2048 | 86 / 52 | 156 / 126 | 322 / 240 | 686 / 483 |
+| d4096 | 169 / 101 | 308 / 252 | 626 / 463 | 1292 / 918 |
+
+- **Flash's attention is 1.2–1.7× slower on the Adreno**, at every depth
+  and length except pp128 at depth 0 (where the chunked path's batch of
+  126 splits a 128-token prompt into passes of 126 and 2, so its 10 ms is
+  two small dispatch rounds against flash's one).
+- The ratio is the work partition, not extra work: both read the same
+  K/V bytes. A 128-token pass gives flash `n_heads × ceil(128/32)` = 56
+  workgroups (224 at pp512), each walking every position in turn; the
+  chunked path dispatches `n_heads × chunks × groups`, ~1,000–4,000 short
+  workgroups of at most 64 positions, and the GPU stays full. Step 22's
+  shader won on the same hardware for the same reason.
+- End to end the pass is level at depth 0 (408 against 417 ms at pp512 —
+  and flash does 4 passes to chunked's 5) and 25 % slower at depth 4096
+  (1621 against 1296 ms at pp512). Its other stages are cheaper for the
+  same batch reason: q/k/v 25.8 against 30.2 ms, wo 23.8 against 28.9,
+  swiglu + down 118.0 against 142.0, classifier 6.8 against 11.8.
+- **Not**: a correctness difference. The F4 checks above put flash within
+  llama.cpp's error bar at 20 × 512 and at context 2048/4096, and the
+  `chunked` arm reproduces step 20/22's numbers to the digit.
+- The tok/s columns have more spread than the profiles (e.g. Q4_K_M
+  pp512@d1024 309 in round 1 against 608 in round 2, with that whole run
+  slow: its pp64 was 540 against 636); the profiled figures above were
+  taken back-to-back at the end of the session and are the ones to read.
+
+Flash attention stays the default on the branch for now — it is the
+correct path and the one long contexts need once the work partition is
+fixed. Next: F6c (a 256-token pass, `vk_pp batch 256`) for the cheapest
+extra parallelism, then F6b (split a token group's positions across
+workgroups when there are too few, with `parts` + merge sized by splits).
+
+## Step 28: a 256-token prompt pass (F6c) (2026-11-02; `raw/flash-batch/`)
+
+`scripts/opt-ab.sh … flash-batch`: `attention_flash.comp` at 128 against
+256 tokens a pass (Qwen2.5-0.5B Q4_0 and Q4_K_M, pp64-512 at depth
+0/1024/2048/4096, two rounds with the order reversed, cooled, 22:32–22:47,
+battery 60 → 58 %, clock caps 2.40 / 2.44 GHz — the phone was already
+throttling from the session before, so only the 128/256 pairs compare
+across, and the chunked column below is from step 27).
+
+Attention ms (profiled), 128 vs 256 tokens a pass:
+
+| | pp64 | pp128 | pp256 | pp512 |
+| --- | --- | --- | --- | --- |
+| d0 | 3 / 3 | 7 / 7 | 23 / 19 | 83 / 67 |
+| d1024 | 44 / 44 | 82 / 82 | 173 / 134 | 387 / 305 |
+| d2048 | 86 / 86 | 157 / 157 | 322 / 251 | 686 / 530 |
+| d4096 | 169 / 169 | 308 / 308 | 628 / 489 | 1289 / 1007 |
+
+- Identical at 128 tokens and below (one pass either way); **1.26–1.29×
+  faster at pp256 and pp512**, which is the workgroup count: 256 tokens
+  double the token groups (8 instead of 4 per head) and halve the passes.
+- Whole pass, Qwen Q4_0 (GPU ms, 128 → 256): pp512 408 → 364 at depth 0,
+  728 → 612 at 1024, 1011 → 826 at 2048, 1615 → 1313 at 4096 (−11 to
+  −19 %); pp256 186 → 167, 337 → 282, 485 → 400, 794 → 642. Q4_K_M pp512:
+  538 → 495, 827 → 717, 1148 → 968, 1735 → 1468 (−8 to −16 %). The stages
+  other than attention drop 8–10 % (Q4_0 pp512 325 → 297 ms): each weight
+  matrix is read twice for 512 tokens instead of four times.
+- Against the chunked path of step 26/27 (different session, same clock
+  caps): flash-256 is ahead at pp256 at every depth (167/282/400/642
+  against 209/317/430/665) and at pp512 through depth 2048 (364/612/826
+  against 417/643/846), level at depth 4096 (1313 against 1296). Its
+  attention kernel alone is still 1.10× chunked's at depth 4096 (1007
+  against 918). What brings the pass level is everything else: the
+  chunked path reads each weight matrix five times for 512 tokens
+  (batches of 126) against flash-256's two (swiglu + down 107 against 142
+  ms, q/k/v 23 against 30, classifier 5 against 12), and has no merge
+  (108 ms at depth 4096).
+- **So the gain is the batch, not the flash kernel.** Flash's part is
+  that it makes the batch possible: it writes no `parts`, so 256 tokens a
+  pass costs nothing extra at any context, where the chunked path's
+  partial results would take ~68 MB at a 4.6K cache and ~480 MB at 32K.
+  Not measured: the chunked shaders at 256 tokens with `PARTS_BUDGET`
+  raised to fit (possible below ~4K); they might beat flash-256 there.
+- **Adopted as the default**: `BATCH = 256` in `prompt_batch` (capped by
+  the cache size), with `Options::batch` kept for A/B. Only the prompt
+  path changes; decode, the few-token pass and `parts` are untouched.
+- **Accuracy unchanged, to the digit**: 133/133 on the phone with the new
+  default, and the same KL run as step 26 (Qwen Q4_0, 20 × 512, against
+  the f32 file) gives PPL 19.7443, Mean KLD 0.180887, same top 77.255 % —
+  the batch-128 figures exactly. Each token's products and attention are
+  independent of how many tokens share its pass.

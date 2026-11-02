@@ -1,0 +1,9 @@
+target/aarch64-linux-android/release/examples/vk_ppl: 1 file pushed, 0 skipped. 416.6 MB/s (14355096 bytes in 0.033s)
+/home/curious/Documents/hermes-projects/Aether-impl/scripts/../testdata/./: 0 files pushed, 1510 skipped.
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | upload + record 1898 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the department of the same name. The capital of the department of the same name is also Paris. What is the capital of the department of the same name? The answer
+# 64 positions in 689.6 ms: 92.8 tok/s
+[1]10.6565,kld 0.16394,[2]14.7800,kld 0.16663,[3]15.5015,kld 0.17977,[4]15.8505,kld 0.17960,[5]16.2007,kld 0.18169,[6]16.8961,kld 0.18105,[7]17.1818,kld 0.18064,[8]18.5639,kld 0.18497,[9]19.8427,kld 0.18559,[10]20.5580,kld 0.18399,[11]21.0583,kld 0.18559,[12]21.0223,kld 0.18438,[13]21.9370,kld 0.18507,[14]21.3100,kld 0.18600,[15]21.1175,kld 0.18558,[16]21.7033,kld 0.18532,[17]20.0609,kld 0.18188,[18]20.0412,kld 0.18264,[19]19.8060,kld 0.18157,[20]19.7443,kld 0.18089,Final estimate: PPL = 19.7443 +/- 0.83645  (5100 tokens scored, 618.7 s, 16.5 tok/s through the GPU, batches of 256, q4_0_gemm_q8)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.213208
+Mean KLD: 0.180887   Same top p: 77.255 %   (time and tok/s include the base model on the CPU)
+

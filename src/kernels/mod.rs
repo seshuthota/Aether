@@ -531,6 +531,15 @@ mod tests {
         read_npy(&dir.join(format!("{name}.npy"))).1
     }
 
+    /// The one-head `attention_<n>x<hs>` cases (not the GPU prompt's
+    /// `attention_causal_*` ones, which share the prefix).
+    fn attention_cases() -> Vec<std::path::PathBuf> {
+        cases("attention_")
+            .into_iter()
+            .filter(|p| !p.file_name().unwrap().to_str().unwrap().starts_with("attention_causal_"))
+            .collect()
+    }
+
     /// Runs `f` on every matmul case and checks it against numpy (float64
     /// reference). Error grows with the row length n (n rounded additions),
     /// so the bound is relative to the output's scale and to sqrt(n).
@@ -767,7 +776,7 @@ mod tests {
     /// sum over n terms.
     #[test]
     fn attention_matches_numpy() {
-        let cs = cases("attention_");
+        let cs = attention_cases();
         let mut worst: f32 = 0.0;
         for dir in &cs {
             let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
@@ -798,7 +807,7 @@ mod tests {
     #[test]
     fn attention_parts_merge_to_numpy() {
         let mut checked = 0;
-        for dir in &cases("attention_") {
+        for dir in &attention_cases() {
             let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
             let hs = q.len();
             if hs != 64 && hs != 48 {
@@ -836,7 +845,7 @@ mod tests {
     /// scores.
     #[test]
     fn attention_group_matches_numpy() {
-        for dir in &cases("attention_") {
+        for dir in &attention_cases() {
             let (q, k, v, want) = (arr(dir, "q"), arr(dir, "k"), arr(dir, "v"), arr(dir, "out"));
             let hs = q.len();
             let n = k.len() / hs;

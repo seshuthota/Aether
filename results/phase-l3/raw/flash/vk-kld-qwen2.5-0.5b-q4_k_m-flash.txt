@@ -1,0 +1,17 @@
+# 2026-11-02T20:26:45+05:30, commit 2cd4538
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 75
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# screen: mWakefulness=Awake
+# testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf on Adreno (TM) 830 | upload + record 4439 ms
+# greedy: The capital of France is Paris. It is the largest city in Europe and the third largest city in the world. It is located in the south of France, on the western coast of the Mediterranean Sea. It is situated on the right bank of the Seine river. It is the capital of the department of the Se
+# 64 positions in 878.4 ms: 72.9 tok/s
+[1]9.8357,kld 0.02917,[2]13.4808,kld 0.03196,[3]13.5404,kld 0.03264,[4]13.4835,kld 0.03184,[5]13.5873,kld 0.03127,[6]14.1264,kld 0.03089,[7]14.4809,kld 0.02968,[8]15.5068,kld 0.03050,[9]16.4586,kld 0.03077,[10]17.0239,kld 0.03072,[11]17.3512,kld 0.03156,[12]17.4553,kld 0.03123,[13]18.2474,kld 0.03148,[14]17.7428,kld 0.03132,[15]17.5877,kld 0.03153,[16]18.0896,kld 0.03174,[17]16.8099,kld 0.03152,[18]16.9337,kld 0.03173,[19]16.7590,kld 0.03180,[20]16.7539,kld 0.03151,Final estimate: PPL = 16.7539 +/- 0.68766  (5100 tokens scored, 299.8 s, 34.1 tok/s through the GPU, batches of 128, qx_gemm_q8)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.029459
+Mean KLD: 0.031514   Same top p: 90.275 %   (time and tok/s include the base model on the CPU)
+
