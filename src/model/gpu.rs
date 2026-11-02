@@ -298,6 +298,11 @@ pub struct Options {
     /// positions, partial results in `parts`, a merge dispatch per layer
     /// (A/B timing only; the default is `attention_flash.comp`).
     pub attn_chunked: bool,
+    /// Tokens per prompt pass, when flash attention runs: 0 keeps the
+    /// model's 128 (A/B only; F6c of plans/flash-attention.md). The two
+    /// older prompt shaders keep their `PARTS_BUDGET` batch whatever this
+    /// says, since 256 tokens' partial results do not fit.
+    pub batch: usize,
 }
 
 /// The few-token pass with x quantized to 8 bits per 32 values and int8
@@ -485,7 +490,9 @@ impl GpuModel {
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Flash attention has no parts and no merge, so its batch does not
         // shrink with the context; the two older prompt shaders' still does.
-        let (batch, parts_len) = prompt_batch(c.seq_len, c.n_heads, hs, opt.attn_chunked || opt.attn_per_token);
+        let old_attn = opt.attn_chunked || opt.attn_per_token;
+        let (batch, parts_len) = prompt_batch(c.seq_len, c.n_heads, hs, old_attn);
+        let batch = if opt.batch > 0 && !old_attn { opt.batch } else { batch };
         let f32buf = |v: &[f32]| -> Result<Buffer> {
             let mut b = gpu.buffer(v.len().max(1) * 4)?;
             b.as_mut_slice::<f32>()[..v.len()].copy_from_slice(v);
