@@ -45,14 +45,6 @@ shared uvec2 vs[SUB * 16];
 
 uvec2 pack4(vec4 v) { return uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw)); }
 vec4 unpack4(uvec2 p) { return vec4(unpackHalf2x16(p.x), unpackHalf2x16(p.y)); }
-// The lanes of a vec4 at d that lie inside a head of `n` values: a head
-// whose size is not a multiple of four ends in the middle of one vec4, and
-// the lanes past it hold its neighbour's values. Zeroing them keeps the
-// scores and the parts exact for such heads (hs 64 and 48, the models',
-// are whole vec4s).
-vec4 in_head(vec4 v, uint d, uint n) {
-    return vec4(d < n ? v.x : 0.0, d + 1 < n ? v.y : 0.0, d + 2 < n ? v.z : 0.0, d + 3 < n ? v.w : 0.0);
-}
 
 void main() {
     uint h = gl_WorkGroupID.x, c = gl_WorkGroupID.y, id = gl_LocalInvocationID.x;
@@ -71,9 +63,20 @@ void main() {
     vec4 qv[U][4], acc[U][4];
     [[unroll]] for (uint u = 0; u < U; u++) {
         [[unroll]] for (uint i = 0; i < 4; i++) {
+            // Values past a head whose size is not a multiple of four (the
+            // test's 17; the models' 64 and 48 are whole vec4s) stay zero:
+            // they are the next head's, and the last head's would be past
+            // the buffer, so each lane loads only if it is inside the head.
             uint d = 16 * part + 4 * i;
             uint qo = (tok0 + t + 16 * u) * qstride + h * hs + d;
-            qv[u][i] = live[u] && d < hs ? in_head(vec4(q[qo], q[qo + 1], q[qo + 2], q[qo + 3]), d, hs) : vec4(0.0);
+            vec4 v = vec4(0.0);
+            if (live[u]) {
+                if (d + 0 < hs) v.x = q[qo + 0];
+                if (d + 1 < hs) v.y = q[qo + 1];
+                if (d + 2 < hs) v.z = q[qo + 2];
+                if (d + 3 < hs) v.w = q[qo + 3];
+            }
+            qv[u][i] = v;
             acc[u][i] = vec4(0.0);
         }
     }
@@ -88,9 +91,15 @@ void main() {
         // 64 threads load SUB × 16 vec4s of keys and of values.
         for (uint k = id; k < SUB * 16; k += 64) {
             uint j = k / 16, d = 4 * (k % 16), at_k = kvo + (t0 + j0 + j) * kv_dim + d;
-            bool ok = j0 + j < n && d < hs;
-            ks[k] = pack4(in_head(ok ? vec4(kc[at_k], kc[at_k + 1], kc[at_k + 2], kc[at_k + 3]) : vec4(0.0), d, hs));
-            vs[k] = pack4(in_head(ok ? vec4(vc[at_k], vc[at_k + 1], vc[at_k + 2], vc[at_k + 3]) : vec4(0.0), d, hs));
+            vec4 kv = vec4(0.0), vv = vec4(0.0);
+            if (j0 + j < n) {
+                if (d + 0 < hs) { kv.x = kc[at_k + 0]; vv.x = vc[at_k + 0]; }
+                if (d + 1 < hs) { kv.y = kc[at_k + 1]; vv.y = vc[at_k + 1]; }
+                if (d + 2 < hs) { kv.z = kc[at_k + 2]; vv.z = vc[at_k + 2]; }
+                if (d + 3 < hs) { kv.w = kc[at_k + 3]; vv.w = vc[at_k + 3]; }
+            }
+            ks[k] = pack4(kv);
+            vs[k] = pack4(vv);
         }
         barrier();
         uint nj = min(SUB, n - j0);
