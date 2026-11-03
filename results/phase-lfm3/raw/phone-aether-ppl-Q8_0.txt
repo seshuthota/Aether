@@ -1,0 +1,5 @@
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 348.8 MB/s (12143536 bytes in 0.033s)
+scripts/../testdata/./: 0 files pushed, 1795 skipped.
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 294644 tokens (tokenized in 340 ms), weights q8_0 1838.0 MB
+[1]10.1005,[2]13.6967,[3]14.3826,[4]14.7288,[5]15.4573,[6]16.6956,[7]17.1421,[8]17.3292,[9]18.1598,[10]18.7984,[11]19.8150,[12]19.9365,[13]21.3797,[14]20.3236,[15]21.5510,[16]24.0935,[17]23.5067,[18]24.3264,[19]24.0083,[20]23.5744,
+Final estimate: PPL = 23.5744 +/- 1.05532  (5100 tokens scored in 71.3 s)

@@ -145,6 +145,10 @@ At context 2048 (one chunk, 1023 scored) the engine's Q4_K_M PPL is
 13.7917 ± 1.29664 against llama.cpp's 13.9561 ± 1.31213: the first run where
 the sliding window and the full layers see different prefixes.
 
+The same 20-chunk engine PPL on the phone (cores 2-7) gives Q4_K_M
+24.8822 ± 1.11875, Q8_0 23.5744 ± 1.05532 and QAD-Q4_0 27.1489 ± 1.24542,
+within 0.05 of llama.cpp. The phone run takes 75-90 s per file.
+
 The engine KL against the BF16 file (one chunk, same tokens) is mean KLD
 0.058283, same-top 93.333 %. llama.cpp's 20-chunk Q4_K_M KL is 0.117968 /
 83.392 % (the A0 sanity run); KL is chunk-size dependent. A full 20-chunk
