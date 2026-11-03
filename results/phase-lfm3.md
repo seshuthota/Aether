@@ -151,11 +151,11 @@ The same 20-chunk engine PPL on the phone (cores 2-7) gives Q4_K_M
 24.8822 ± 1.11875, Q8_0 23.5744 ± 1.05532 and QAD-Q4_0 27.1489 ± 1.24542,
 within 0.05 of llama.cpp. The phone run takes 75-90 s per file.
 
-The engine KL against the BF16 file (one chunk, same tokens) is mean KLD
-0.058283, same-top 93.333 %. llama.cpp's 20-chunk Q4_K_M KL is 0.117968 /
-83.392 % (the A0 sanity run); KL is chunk-size dependent. A full 20-chunk
-engine KL would take hours on the scalar x86 path, so the one-chunk check
-is the PC cross-check; the phone session can run the full one.
+The engine KL against the BF16 file over all 20 chunks is mean KLD
+0.115041, same-top 83.392 % (llama.cpp: 0.117968 / 83.392 %); the engine's
+base PPL is 23.4865 against llama.cpp's 23.4796. A one-chunk cross-check
+gave 0.058283 / 93.333 %; KL is chunk-size dependent. The full PC KL took
+10,103 s on the scalar x86 path.
 
 ## A6. Chat, C ABI and the app
 
