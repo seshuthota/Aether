@@ -277,8 +277,6 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     } else {
         s.generate(prompt, &mut sampler, steps, emit)
     };
-    let tail = filter.finish();
-    let _ = out.write_all(&tail);
     writeln!(out).unwrap();
     if let Some(v) = stamps {
         let ms: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
@@ -312,8 +310,6 @@ fn generate_dsp(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, (
     } else {
         s.generate(prompt, &mut sampler, steps, emit)
     };
-    let tail = filter.finish();
-    let _ = out.write_all(&tail);
     writeln!(out).unwrap();
     let rate = |n: usize, t: Duration| n as f64 / t.as_secs_f64();
     eprintln!("prefill (DSP): {} tokens in {:.1} ms ({:.1} tok/s) | decode: {} tokens in {:.1} ms ({:.1} tok/s)", st.prefill_tokens, st.prefill.as_secs_f64() * 1e3, rate(st.prefill_tokens, st.prefill), st.decode_tokens, st.decode.as_secs_f64() * 1e3, rate(st.decode_tokens, st.decode));
