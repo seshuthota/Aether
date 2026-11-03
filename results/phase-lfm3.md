@@ -121,7 +121,9 @@ f32 eager, `tools/hf_dump_lfm3.py`): a 29-token prompt's full logits and
 every layer's residual, logits at positions 0/1/254/255/256/257/300/318/319
 of a 320-token prompt, and 16 greedy tokens all match (`< 1e-3` relative).
 A separate Q4_K_M check rejects two drafts, restores the conv state and
-gives the same next-token logits as plain decoding.
+gives the same next-token logits as plain decoding. The phone test binary
+passes all 122 tests, including the 128-wide NEON attention, the LFM3
+loader/tokenizer and the conv rollback (`raw/phone-tests.txt`).
 
 ## A5. Accuracy on the real files
 

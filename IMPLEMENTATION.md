@@ -74,7 +74,8 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
 A0 (references, official GGUFs, PC/phone baselines) and A1–A4 (mixed conv/attention stack,
 LFM3 tokenizer, kernels, sliding ring, conv rollback) are committed. A5's engine PPL on the PC matches llama.cpp: Q4_K_M 24.8542 vs 24.8278, Q8_0 23.5482 vs 23.5508, QAD-Q4_0
 27.1557 vs 27.1383, BF16 (4 chunks) 14.7419 vs 14.7313; context 2048 is 13.7917 vs 13.9561, and the
-one-chunk engine KL is 0.058283 (llama.cpp's 20-chunk reference 0.117968).
+one-chunk engine KL is 0.058283 (llama.cpp's 20-chunk reference 0.117968). The phone runs the
+same three files at 24.8822 / 23.5744 / 27.1489; 122 phone tests pass.
 A6's LFM3 chat template and thinking filter match the HF template, and the C ABI asks the
 model for its template; the app APK builds. A7 is **blocked on the phone**: it dropped off
 wireless adb after the A0 session, so the same-session A/B, energy/temperature and
