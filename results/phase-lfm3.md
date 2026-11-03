@@ -105,3 +105,70 @@ on battery (AC/USB/wireless all false), 53 %, ~34.4 C battery, max CPU
 thermal zone 41.9 C, `MemAvailable` 6,293,652 kB, `/data` 238 G free.
 The phone was left to cool before each timed run (`COOL_C=45` in
 `scripts/lfm3-a0.sh`).
+
+## A4. The forward pass
+
+The mixed stack runs on the CPU: 13 short-conv layers with a 6-row state,
+6 full-attention layers and 5 sliding layers. The sliding layers keep a
+`256 + 256`-position ring (the second 256 is the prefill chunk; longer
+prompts are cut into 256-token chunks), and each step materializes the
+window in a scratch buffer before attention. Conv states are snapshotted
+for the last 32 tokens and restored by `restore_conv` when speculative
+drafts are rejected.
+
+Checked against the pinned HF repository (`hostdata/lfm3/ref.safetensors`,
+f32 eager, `tools/hf_dump_lfm3.py`): a 29-token prompt's full logits and
+every layer's residual, logits at positions 0/1/254/255/256/257/300/318/319
+of a 320-token prompt, and 16 greedy tokens all match (`< 1e-3` relative).
+A separate Q4_K_M check rejects two drafts, restores the conv state and
+gives the same next-token logits as plain decoding.
+
+## A5. Accuracy on the real files
+
+llama.cpp reference PPL (wikitext-2, 20 x 512) is in the A0 table. The
+engine's PC path is scalar on x86 (the NEON kernels are the phone path), so
+a full 20-chunk PC run is slow but works:
+
+| File | engine PPL | llama.cpp PPL |
+| --- | ---: | ---: |
+| Q4_K_M | 24.8542 ± 1.11750 | 24.8278 ± 1.11523 |
+| Q8_0 | 23.5482 ± 1.05390 | 23.5508 ± 1.05490 |
+| QAD-Q4_0 | 27.1557 ± 1.24588 | 27.1383 ± 1.24457 |
+| BF16 (4 chunks) | 14.7419 ± 1.42442 | 14.7313 ± 1.42225 |
+
+The per-chunk values track llama.cpp within 0.1-0.2 (e.g. Q4_K_M 10.3666
+vs 10.3223, 21.1917 vs 21.1367, 25.6230 vs 25.5943). BF16 is the first four
+chunks (the f32 PC path is slower); its chunks are 10.0984/13.7166/14.3846/
+... against llama.cpp's 10.0955/13.6860/14.3638/... .
+
+At context 2048 (one chunk, 1023 scored) the engine's Q4_K_M PPL is
+13.7917 ± 1.29664 against llama.cpp's 13.9561 ± 1.31213: the first run where
+the sliding window and the full layers see different prefixes.
+
+The engine KL against the BF16 file (one chunk, same tokens) is mean KLD
+0.058283, same-top 93.333 %. llama.cpp's 20-chunk Q4_K_M KL is 0.117968 /
+83.392 % (the A0 sanity run); KL is chunk-size dependent. A full 20-chunk
+engine KL would take hours on the scalar x86 path, so the one-chunk check
+is the PC cross-check; the phone session can run the full one.
+
+## A6. Chat, C ABI and the app
+
+- `chat::lfm3` (BOS, optional system, `<think>` or an empty think block)
+  matches `apply_chat_template(..., add_generation_prompt=True)` on four
+  cases (`testdata/lfm3/chat.txt`).
+- `--no-think` turns reasoning off in the prompt; `--hide-think` removes a
+  `<think>...</think>` span from the printed reply, including when the tags
+  are split across streamed pieces.
+- LFM3 sampling defaults (temperature 0.1, top-k 50) are used when `-t/-k`
+  are not given. Our sampler has no repetition penalty (llama.cpp's LFM3
+  default is 1.1), documented in the CLI usage.
+- The C ABI's `chat` flag now asks the loaded model for its template, so
+  LFM3 gets BOS + `<think>` instead of Qwen's ChatML. The Android app
+  already has the model picker; it uses `MAX_SEQ = 2048`.
+
+## A7. Phone measurements
+
+Blocked: the phone dropped off wireless adb (`adb devices` empty) after the
+A0 session and did not come back. The scripts and the A0 phone numbers are
+in place; the same-session A/B, energy/temperature and simpleperf runs
+remain to be done when the device is reachable.

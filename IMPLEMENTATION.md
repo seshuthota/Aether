@@ -68,6 +68,17 @@ Since then (2026-10-30, all verified on the phone and merged): prefill on the DS
 778 tok/s at 128 tokens), the app's CPU / GPU / DSP selector (DSP sessions work from an app),
 prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llama.cpp).
 
+### LFM3-1.7B (branch `lfm3`, 2026-11-03)
+
+`plans/lfm3.md`, the first hybrid model and the first that is bandwidth-bound on the phone.
+A0 (references, official GGUFs, PC/phone baselines) and A1–A4 (mixed conv/attention stack,
+LFM3 tokenizer, kernels, sliding ring, conv rollback) are committed. A5's Q4_K_M PPL on the PC
+is 24.8542 against llama.cpp's 24.8278; Q8_0/QAD/BF16 and the engine KL are in progress.
+A6's LFM3 chat template and thinking filter match the HF template, and the C ABI asks the
+model for its template; the app APK builds. A7 is **blocked on the phone**: it dropped off
+wireless adb after the A0 session, so the same-session A/B, energy/temperature and
+simpleperf runs are still open. Do not merge into `main` until A7 passes.
+
 ### Next steps (2026-10-30)
 
 1. **Q4_K_M prompts on HMX.** Done (2026-10-31; results/phase-l5.md).

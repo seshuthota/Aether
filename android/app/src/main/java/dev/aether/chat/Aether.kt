@@ -18,7 +18,7 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
 
     class Stats(val prefillTokens: Int, val prefillMs: Double, val decodeTokens: Int, val decodeMs: Double)
 
-    /** Generates a reply to [prompt]; [chat] wraps it in the ChatML template. */
+    /** Generates a reply to [prompt]; [chat] uses the model's chat template. */
     fun generate(prompt: String, chat: Boolean, temperature: Float, topP: Float, maxTokens: Int, seed: Long, onText: OnText): Stats {
         check(handle != 0L) { "session is closed" }
         val s = nativeGenerate(handle, prompt.toByteArray(), chat, temperature, topP, maxTokens, seed, onText)
