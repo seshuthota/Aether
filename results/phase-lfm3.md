@@ -172,7 +172,16 @@ is the PC cross-check; the phone session can run the full one.
 
 ## A7. Phone measurements
 
-Blocked: the phone dropped off wireless adb (`adb devices` empty) after the
-A0 session and did not come back. The scripts and the A0 phone numbers are
-in place; the same-session A/B, energy/temperature and simpleperf runs
-remain to be done when the device is reachable.
+The phone came back for the evening session. The full A7 matrix is still
+open; one arm was stopped for time and is kept in
+`results/phase-lfm3/raw/a7/r1-ours-LFM3-1.7B-Q4_K_M.txt`:
+
+| arm | pp64 | pp128 | pp512 | tg64@0 | tg64@256 | tg64@512 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| aether Q4_K_M, cores 2-7 | 147.5 | 158.4 | 164.9 | 30.7 | 29.6 | 28.2 |
+
+Conditions: battery 48 %, caps 2.4/2.438 GHz, screen on, peak 88 °C,
+average power 1.14 W over the 51 s monitor. The matching llama.cpp arm,
+the reversed round, QAD-Q4_0 and the two sustained runs remain. The phone
+then dropped off wireless adb again, so the app UI/memory check (installed
+APK + 1.1 GB model pushed) is also still open.
