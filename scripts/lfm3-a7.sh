@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:-results/phase-lfm3/raw/a7}
 mkdir -p "$OUT"
-COOL_C=${COOL_C:-40}
+COOL_C=${COOL_C:-45}
 ROUNDS=${ROUNDS:-2}
 REMOTE=/data/local/tmp/aether
 LLAMA_BENCH=${LLAMA_BENCH:-$HOME/llama.cpp/build-android/bin/llama-bench}
