@@ -345,7 +345,7 @@ one name now.
 The phone was not available during implementation. Run these in one session
 when it is back, in this order. Each step is a commit; for a step's own
 before/after, check out its commit (`25bed76` K0, `5116346` K1, `79439bc`
-K2, `572f689` K3) and measure that tree.
+K2, `a1ac2a9` K3 with the review fixes) and measure that tree.
 
 - [ ] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
 - [ ] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
