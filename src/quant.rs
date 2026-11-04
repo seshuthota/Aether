@@ -276,9 +276,8 @@ const _: () = assert!(std::mem::size_of::<BlockQ8_K>() == 292);
 /// Four Q4_K rows at one super-block, interleaved four bytes at a time so
 /// one `sdot` result lane belongs to one row. `scales` and `mins` are the
 /// 6-bit values already decoded, transposed: `scales[j*4 + r]` is sub-block
-/// `j` of row `r`. `qs[64*c + 16*v + 4*r..+4]` is row `r`'s bytes
-/// `32*c + 4*v` (v < 4) or `32*c + 16 + 4*(v - 4)` (v ≥ 4), i.e. one 32-byte
-/// chunk of the row-major block.
+/// `j` of row `r`. `qs[128*c + 16*v + 4*r..+4]` is row `r`'s bytes
+/// `32*c + 4*v .. +4`, one 32-byte chunk of the row-major block.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlockQ4_Kx4 {
@@ -971,7 +970,7 @@ pub fn repack_q4_k(b: &[BlockQ4_K], rows: usize) -> Vec<BlockQ4_Kx4> {
                 }
                 for c in 0..4 {
                     for v in 0..8 {
-                        let at = 32 * c + if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                        let at = 32 * c + 4 * v;
                         let to = 128 * c + 16 * v + 4 * r;
                         o.qs[to..to + 4].copy_from_slice(&s.qs[at..at + 4]);
                     }
@@ -1021,7 +1020,7 @@ pub fn dequantize_q4_kx4(group: &[BlockQ4_Kx4], r: usize, out: &mut [f32]) {
         let (d, dmin) = (f16_to_f32(blk.d[r]), f16_to_f32(blk.dmin[r]));
         for c in 0..4 {
             for v in 0..8 {
-                let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                let at = 4 * v;
                 for t in 0..4 {
                     let byte = blk.qs[128 * c + 16 * v + 4 * r + t];
                     for (j, q) in [(2 * c, byte & 0x0F), (2 * c + 1, byte >> 4)] {
@@ -1216,7 +1215,7 @@ pub mod scalar {
                 for c in 0..4 {
                     let (j0, j1) = (2 * c, 2 * c + 1);
                     for vv in 0..8 {
-                        let at = if vv < 4 { 4 * vv } else { 16 + 4 * (vv - 4) };
+                        let at = 4 * vv;
                         for t in 0..4 {
                             let byte = blk.qs[128 * c + 16 * vv + 4 * r + t];
                             let lo = (byte & 0x0F) as i64;
@@ -1409,7 +1408,7 @@ mod tests {
             let got_bytes = unsafe { std::slice::from_raw_parts(got.as_ptr() as *const u8, got.len() * std::mem::size_of::<BlockQ8_K>()) };
             assert_eq!(got_bytes, want_q8k, "{} q8_k bytes", dir.display());
             let xk: Vec<BlockQ8_K> = blocks_from_bytes(&want_q8k);
-            let (nbk, nk) = (n / QK_K, n / QK_K);
+            let nk = n / QK_K;
             let bytes = |name: &str| std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
             let (q4, q6): (Vec<BlockQ4_K>, Vec<BlockQ6_K>) = (blocks_from_bytes(&bytes("q4_k")), blocks_from_bytes(&bytes("q6_k")));
             let d = q4.len() / nk;
@@ -1420,7 +1419,7 @@ mod tests {
             assert_eq!(ours, read_npy(&dir.join("deq_q6_k.npy")).1, "{} q6_k", dir.display());
             let check = |name: &str, f: &dyn Fn(usize, &[BlockQ8_K]) -> f32| {
                 let want = read_npy(&dir.join(format!("out_{name}_k.npy"))).1;
-                let ours: Vec<f32> = (0..t * d).map(|k| f(k % d, &xk[k / d * nbk..(k / d + 1) * nbk])).collect();
+                let ours: Vec<f32> = (0..t * d).map(|k| f(k % d, &xk[k / d * nk..(k / d + 1) * nk])).collect();
                 let (_, rel) = max_errors(&ours, &want);
                 assert!(rel < 1e-6 * (n as f32).sqrt(), "{} {name}: rel {rel:.2e}", dir.display());
             };
@@ -1433,7 +1432,7 @@ mod tests {
                     let ours: Vec<f32> = (0..t * d)
                         .map(|k| {
                             let i = k % d;
-                            f(i, &xk[k / d * nbk..(k / d + 1) * nbk])[i % 4]
+                            f(i, &xk[k / d * nk..(k / d + 1) * nk])[i % 4]
                         })
                         .collect();
                     let (_, rel) = max_errors(&ours, &want);

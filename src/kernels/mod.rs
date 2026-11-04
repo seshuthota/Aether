@@ -245,8 +245,7 @@ fn quantize_q8_k_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> 
 
 /// One row's dot product with one quantized activation (any CPU).
 #[inline]
-fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0], xk: Option<&[BlockQ8_K]>) -> f32 {
-    let nb = x.len();
+fn dot1(w: &Weight, i: usize, nb: usize, x: &[BlockQ8_0], xk: Option<&[BlockQ8_K]>) -> f32 {
     let k = || xk.expect("a K-quant row needs Q8_K activations");
     match w {
         #[cfg(target_arch = "aarch64")]
@@ -287,10 +286,9 @@ fn has_dot4() -> bool {
 /// are handed out in blocks of [`ROW_BLOCK`]).
 #[inline]
 #[allow(unused_variables)]
-fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>) -> [f32; 4] {
+fn dot4(w: &Weight, i: usize, nb: usize, x: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>) -> [f32; 4] {
     #[cfg(target_arch = "aarch64")]
     {
-        let nb = x.len();
         let rows = |k: usize| (i + k) * nb..(i + k + 1) * nb;
         let k = || xk.expect("a K-quant row needs Q8_K activations");
         // SAFETY: callers check has_dot4 (dotprod present); every row slice
@@ -415,7 +413,7 @@ fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4
                     let mut blk = BlockQ4_K { d: g.d[r], dmin: g.dmin[r], scales: [0; 12], qs: [0; 128] };
                     for c in 0..4 {
                         for v in 0..8 {
-                            let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                            let at = 4 * v;
                             blk.qs[32 * c + at..32 * c + at + 4].copy_from_slice(&g.qs[128 * c + 16 * v + 4 * r..][..4]);
                         }
                     }
@@ -525,23 +523,25 @@ unsafe fn tile<const P: usize>(out: SharedOut, d: usize, w: &Weight, kb: Option<
 /// # Safety
 /// `out` must be valid for `t·d` floats and no other thread may write
 /// rows `r` of it during the call.
-unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>, t: usize) {
-    let nb = xq.len() / t;
-    let nbk = nb / (QK_K / QK);
+unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, n: usize, xq: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>, t: usize) {
+    let nb = n / QK;
+    let nbk = n / QK_K;
     let fast = has_dot4();
     let mut i = r.start;
     while i < r.end {
         let step = if fast && i + 4 <= r.end { 4 } else { 1 };
         for tt in 0..t {
-            let (x, s) = (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]);
+            // A K-quant-only matmul has no Q8_0 activation; its kernels read
+            // `xk` and never touch these slices.
+            let (x, s) = if xq.is_empty() { (&[][..], &[][..]) } else { (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]) };
             let k = xk.map(|v| &v[tt * nbk..(tt + 1) * nbk]);
             if step == 4 {
-                let v = dot4(w, i, x, s, k);
+                let v = dot4(w, i, nb, x, s, k);
                 // SAFETY: elements (tt, i..i+4) lie in this call's rows.
                 (0..4).for_each(|k| unsafe { *out.ptr().add(tt * d + i + k) = v[k] });
             } else {
                 // SAFETY: element (tt, i) lies in this call's rows.
-                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, x, k) };
+                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, nb, x, k) };
             }
         }
         i += step;
@@ -555,12 +555,24 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
     let Weight::F32(f) = w else {
         assert_eq!((x.len(), out.len()), (t * n, t * d), "shapes");
-        let xq = quantize_activations(pool, x, t);
-        // The activation's scales as f32, converted once rather than per row.
-        let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+        #[cfg(target_arch = "aarch64")]
+        let mmla = t > 1 && has_mmla();
+        #[cfg(not(target_arch = "aarch64"))]
+        let mmla = false;
+        // A K-quant-only product needs Q8_K, not Q8_0; the `smmla` prefill
+        // path is the exception (it still uses Q8_0 activation pairs).
+        let need_q8_0 = mmla || !needs_q8_k(w);
+        let (xq, xd) = if need_q8_0 {
+            let xq = quantize_activations(pool, x, t);
+            // The activation's scales as f32, converted once rather than per row.
+            let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+            (xq, xd)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let o = SharedOut(out.as_mut_ptr());
         #[cfg(target_arch = "aarch64")]
-        if t > 1 && has_mmla() {
+        if mmla {
             let xp = neon_quant::interleave_pairs(pool, &xq, &xd, t);
             match pool.filter(|p| p.threads() > 1) {
                 // SAFETY: each thread writes only its own rows of `out`.
@@ -573,9 +585,9 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
         let xk = needs_q8_k(w).then(|| quantize_q8_k_activations(pool, x, t));
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
-            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, xk.as_deref(), t) }),
+            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, n, &xq, &xd, xk.as_deref(), t) }),
             // SAFETY: single thread, all rows.
-            None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, xk.as_deref(), t) },
+            None => unsafe { quant_rows(o, d, 0..d, w, n, &xq, &xd, xk.as_deref(), t) },
         }
         return;
     };
@@ -598,12 +610,25 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
         return;
     }
     let p = p.unwrap();
-    let xq = quantize_activations(pool, x, t);
-    let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+    let n = x.len() / t;
     #[cfg(target_arch = "aarch64")]
-    let xp = (t > 1 && has_mmla()).then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
+    let mmla = t > 1 && has_mmla();
+    #[cfg(not(target_arch = "aarch64"))]
+    let mmla = false;
+    // Q8_0 is needed only for a non-K-quant matrix or the `smmla` prefill
+    // path; an all-K decode group quantizes Q8_K alone.
+    let need_q8_0 = mmla || ws.iter().any(|w| !needs_q8_k(w));
+    let (xq, xd) = if need_q8_0 {
+        let xq = quantize_activations(pool, x, t);
+        let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+        (xq, xd)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     #[cfg(target_arch = "aarch64")]
-    let xk = (xp.is_none() && ws.iter().any(|w| needs_q8_k(w))).then(|| quantize_q8_k_activations(pool, x, t));
+    let xp = mmla.then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
+    #[cfg(target_arch = "aarch64")]
+    let xk = (!mmla && ws.iter().any(|w| needs_q8_k(w))).then(|| quantize_q8_k_activations(pool, x, t));
     #[cfg(not(target_arch = "aarch64"))]
     let xk = ws.iter().any(|w| needs_q8_k(w)).then(|| quantize_q8_k_activations(pool, x, t));
     let total: usize = outs.iter().map(|o| o.len() / t).sum();
@@ -630,7 +655,7 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
                 continue;
             }
             // SAFETY: as above.
-            unsafe { quant_rows(o, d, rows, ws[k], &xq, &xd, xk.as_deref(), t) }
+            unsafe { quant_rows(o, d, rows, ws[k], n, &xq, &xd, xk.as_deref(), t) }
         }
     });
 }
