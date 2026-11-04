@@ -305,18 +305,22 @@ wait for those numbers.
 ## Phone checks pending
 
 The phone was not available during implementation. Run these in one session
-when it is back, in this order:
+when it is back, in this order. Each step is a commit; for a step's own
+before/after, check out its commit (`25bed76` K0, `5116346` K1, `79439bc`
+K2, `572f689` K3) and measure that tree.
 
 - [ ] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
 - [ ] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
 - [ ] K0: `bench_suite --tg 64`, cooled, battery, caps recorded.
 - [ ] K0: `simpleperf` symbol report + annotated listing of both kernels.
-- [ ] K1: `cargo test --release --target aarch64-linux-android --lib k_quant`.
-- [ ] K1: LFM3 Q4_K_M PPL 20 × 512 unchanged to the digit (24.8822 on the phone).
-- [ ] K1: Qwen2.5-0.5B Q4_K_M PPL unchanged.
-- [ ] K1: `kquant_bench` and `tg64` after, against K0.
-- [ ] K1: annotated listing: did the 16 `vaddlvq` per group disappear, and is
-      `q4_k_scales_mins` / `u8x8_to_f32` visible?
+- [ ] K1 (only at `5116346`; K2 replaced these kernels):
+      `cargo test --release --target aarch64-linux-android --lib k_quant`.
+- [ ] K1 (only at `5116346`): LFM3 Q4_K_M PPL 20 × 512 unchanged to the
+      digit (24.8822 on the phone).
+- [ ] K1 (only at `5116346`): Qwen2.5-0.5B Q4_K_M PPL unchanged.
+- [ ] K1 (only at `5116346`): `kquant_bench` and `tg64` after, against K0.
+- [ ] K1 (only at `5116346`): annotated listing: did the 16 `vaddlvq` per
+      group disappear, and is `q4_k_scales_mins` / `u8x8_to_f32` visible?
 - [ ] K2: `cargo test --release --target aarch64-linux-android --lib k_quant`
       (quantizer bytes, scalar and NEON dots, model path).
 - [ ] K2: LFM3 Q4_K_M PPL 20 × 512: today 24.8822 (phone); llama.cpp
@@ -334,8 +338,8 @@ when it is back, in this order:
       decode and prefill).
 - [ ] K3: LFM3 Q4_K_M PPL against K2 (same integers, different f32
       grouping; record the digits).
-- [ ] K3: `kquant_bench` with and without `--repack` (once the flag exists),
-      and `tg64`; if the x4 kernels are short of the ceiling, try N = 8.
+- [ ] K3: `kquant_bench --repack` against the row-major lines, and `tg64`;
+      if the x4 kernels are short of the ceiling, try N = 8.
 - [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released).
 - [ ] K3: prefill (`unpack_k4` from the repacked rows) gives the same
       batched results as K2 within the tests' bounds.
