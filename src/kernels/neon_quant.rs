@@ -578,6 +578,11 @@ pub unsafe fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32;
 /// the same nibble/`sri` construction as [`q6_k_block_q8_k`], including the
 /// 0xAA flip of each `qh` pair's upper bit.
 ///
+/// Each `ql` and `qh` vector is loaded once per super-block: per half `n`
+/// and `qh` block `h`, four `qh` vectors and the `ql` vectors `h..h+4` (`a`)
+/// and `h+8..h+12` (`b`) give four sub-blocks, `t` = `h/4` + 0 / 2 / 4 / 6 =
+/// low `a` / low `b` / high `a` / high `b`, with `qh`'s 2-bit field k = 0..3.
+///
 /// # Safety
 /// The CPU must have `dotprod`; `group` and `x` must have the same length.
 #[target_feature(enable = "dotprod")]
@@ -587,31 +592,37 @@ pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32;
     for (g, xb) in group.iter().zip(x) {
         // SAFETY: group and x have the same length; register-only ops.
         unsafe {
-            let flip = vdupq_n_u8(0xAA);
+            let (flip, hi4) = (vdupq_n_u8(0xAA), vdupq_n_u8(0xF0));
             let mut sumi = vdupq_n_s32(0);
-            for s in 0..16 {
-                let (n, t) = (s / 8, s % 8);
-                let v0 = 4 * (t % 2) + 8 * ((t / 2) % 2);
-                let (high, k) = (t >= 4, t / 2);
-                let sc = i8x4_to_s32(&g.scales[s * 4..]);
-                let mut s16 = vdupq_n_s32(0);
-                // One 16-byte activation load holds the sub-block's four
+            for n in 0..2 {
+                // One 16-byte activation load holds a sub-block's four
                 // 4-value chunks; lane j of `vdotq_laneq_s32` is chunk j.
-                let xa = vld1q_s8(xb.qs.as_ptr().add(16 * s));
-                macro_rules! dot {
-                    ($lane:literal, $j:literal) => {{
-                        let ql = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (v0 + $j)));
-                        let qh = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + $j))), flip);
-                        let lo = if high { vandq_u8(ql, vdupq_n_u8(0xF0)) } else { vshlq_n_u8::<4>(ql) };
-                        let q = sri2(vshlq_u8(qh, vdupq_n_s8(6 - 2 * k as i8)), lo);
-                        s16 = vdotq_laneq_s32::<$lane>(s16, vreinterpretq_s8_u8(q), xa);
+                macro_rules! sub {
+                    ($t:expr, $j:ident => $q:expr) => {{
+                        let s = 8 * n + $t;
+                        let xa = vld1q_s8(xb.qs.as_ptr().add(16 * s));
+                        let mut s16 = vdupq_n_s32(0);
+                        { let $j = 0; s16 = vdotq_laneq_s32::<0>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 1; s16 = vdotq_laneq_s32::<1>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 2; s16 = vdotq_laneq_s32::<2>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 3; s16 = vdotq_laneq_s32::<3>(s16, vreinterpretq_s8_u8($q), xa); }
+                        sumi = vmlaq_s32(sumi, s16, i8x4_to_s32(&g.scales[s * 4..]));
                     }};
                 }
-                dot!(0, 0);
-                dot!(1, 1);
-                dot!(2, 2);
-                dot!(3, 3);
-                sumi = vmlaq_s32(sumi, s16, sc);
+                for h in [0, 4] {
+                    let z = vdupq_n_u8(0);
+                    let (mut qh, mut a, mut b) = ([z; 4], [z; 4], [z; 4]);
+                    for j in 0..4 {
+                        qh[j] = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * (h + j))), flip);
+                        a[j] = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (h + j)));
+                        b[j] = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (h + 8 + j)));
+                    }
+                    let t = h / 4;
+                    sub!(t, j => sri2(vshlq_n_u8::<6>(qh[j]), vshlq_n_u8::<4>(a[j])));
+                    sub!(t + 2, j => sri2(vshlq_n_u8::<4>(qh[j]), vshlq_n_u8::<4>(b[j])));
+                    sub!(t + 4, j => sri2(vshlq_n_u8::<2>(qh[j]), vandq_u8(a[j], hi4)));
+                    sub!(t + 6, j => sri2(qh[j], vandq_u8(b[j], hi4)));
+                }
             }
             let d = vmulq_n_f32(f16x4_to_f32(g.d), 0.25);
             let d = vmulq_n_f32(d, xb.d);
