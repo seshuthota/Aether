@@ -497,14 +497,6 @@ pub unsafe fn dot4_q6_k_q8_k(rows: [&[BlockQ6_K]; 4], x: &[BlockQ8_K]) -> [f32; 
     acc.map(|a| vaddvq_f32(a))
 }
 
-/// Four activation bytes, broadcast to all four lanes: one `sdot` then
-/// multiplies each of four rows by the same four values.
-#[inline(always)]
-unsafe fn dup4(p: *const i8) -> int8x16_t {
-    // SAFETY: p points at four readable bytes; the offsets are 4-aligned.
-    unsafe { vreinterpretq_s8_s32(vld1q_dup_s32(p as *const i32)) }
-}
-
 /// Four `u8` values → int32x4 (the repacked K scales and mins).
 #[inline(always)]
 unsafe fn u8x4_to_s32(p: &[u8]) -> int32x4_t {
@@ -538,14 +530,29 @@ pub unsafe fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32;
                 let (j0, j1) = (2 * c, 2 * c + 1);
                 let (sc0, sc1) = (u8x4_to_s32(&g.scales[j0 * 4..]), u8x4_to_s32(&g.scales[j1 * 4..]));
                 let (mut s0, mut s1) = (z, z);
-                for v in 0..8 {
-                    let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
-                    let q = vld1q_u8(g.qs.as_ptr().add(128 * c + 16 * v));
-                    let a0 = dup4(xb.qs.as_ptr().add(32 * j0 + at));
-                    let a1 = dup4(xb.qs.as_ptr().add(32 * j1 + at));
-                    s0 = vdotq_s32(s0, vreinterpretq_s8_u8(vandq_u8(q, m4)), a0);
-                    s1 = vdotq_s32(s1, vreinterpretq_s8_u8(vshrq_n_u8(q, 4)), a1);
+                // 16 activation bytes hold four 4-value chunks; lane v of
+                // `vdotq_laneq_s32` is chunk v, so one load serves four
+                // `sdot`s.
+                macro_rules! dot {
+                    ($lane:literal, $q:expr, $x:expr, $y:expr) => {{
+                        let q = $q;
+                        s0 = vdotq_laneq_s32::<$lane>(s0, vreinterpretq_s8_u8(vandq_u8(q, m4)), $x);
+                        s1 = vdotq_laneq_s32::<$lane>(s1, vreinterpretq_s8_u8(vshrq_n_u8(q, 4)), $y);
+                    }};
                 }
+                let x0 = vld1q_s8(xb.qs.as_ptr().add(32 * j0));
+                let x1 = vld1q_s8(xb.qs.as_ptr().add(32 * j0 + 16));
+                let y0 = vld1q_s8(xb.qs.as_ptr().add(32 * j1));
+                let y1 = vld1q_s8(xb.qs.as_ptr().add(32 * j1 + 16));
+                let qp = g.qs.as_ptr().add(128 * c);
+                dot!(0, vld1q_u8(qp), x0, y0);
+                dot!(1, vld1q_u8(qp.add(16)), x0, y0);
+                dot!(2, vld1q_u8(qp.add(32)), x0, y0);
+                dot!(3, vld1q_u8(qp.add(48)), x0, y0);
+                dot!(0, vld1q_u8(qp.add(64)), x1, y1);
+                dot!(1, vld1q_u8(qp.add(80)), x1, y1);
+                dot!(2, vld1q_u8(qp.add(96)), x1, y1);
+                dot!(3, vld1q_u8(qp.add(112)), x1, y1);
                 sumi = vmlaq_s32(sumi, s0, sc0);
                 sumi = vmlaq_s32(sumi, s1, sc1);
             }
@@ -588,14 +595,22 @@ pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32;
                 let (high, k) = (t >= 4, t / 2);
                 let sc = i8x4_to_s32(&g.scales[s * 4..]);
                 let mut s16 = vdupq_n_s32(0);
-                for j in 0..4 {
-                    let ql = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (v0 + j)));
-                    let qh = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + j))), flip);
-                    let lo = if high { vandq_u8(ql, vdupq_n_u8(0xF0)) } else { vshlq_n_u8::<4>(ql) };
-                    let q = sri2(vshlq_u8(qh, vdupq_n_s8(6 - 2 * k as i8)), lo);
-                    let a = dup4(xb.qs.as_ptr().add(16 * s + 4 * j));
-                    s16 = vdotq_s32(s16, vreinterpretq_s8_u8(q), a);
+                // One 16-byte activation load holds the sub-block's four
+                // 4-value chunks; lane j of `vdotq_laneq_s32` is chunk j.
+                let xa = vld1q_s8(xb.qs.as_ptr().add(16 * s));
+                macro_rules! dot {
+                    ($lane:literal, $j:literal) => {{
+                        let ql = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (v0 + $j)));
+                        let qh = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + $j))), flip);
+                        let lo = if high { vandq_u8(ql, vdupq_n_u8(0xF0)) } else { vshlq_n_u8::<4>(ql) };
+                        let q = sri2(vshlq_u8(qh, vdupq_n_s8(6 - 2 * k as i8)), lo);
+                        s16 = vdotq_laneq_s32::<$lane>(s16, vreinterpretq_s8_u8(q), xa);
+                    }};
                 }
+                dot!(0, 0);
+                dot!(1, 1);
+                dot!(2, 2);
+                dot!(3, 3);
                 sumi = vmlaq_s32(sumi, s16, sc);
             }
             let d = vmulq_n_f32(f16x4_to_f32(g.d), 0.25);
