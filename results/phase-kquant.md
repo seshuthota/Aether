@@ -270,6 +270,38 @@ phone, not promised identical.
 - `cargo check --target aarch64-linux-android --all-targets` passes. The
   NEON x4 kernels and the `unpack_k4` de-interleave only run on the phone.
 
+## K4. Prefill on the new layout (measurement-gated)
+
+The plan's decision is "by measurement": read the repacked K layout directly
+(no `unpack_k4`) and use Q8_K activations, llama.cpp's
+`gemm_q4_K_8x8_q8_K`; or keep Q8_0 + `smmla`.
+
+Current state: prefill keeps `smmla` with Q8_0 and **de-interleaves** the
+repacked rows in `unpack_k4` (the same per-matmul unpack prefill paid
+before, now from the repacked buffer). Results are unchanged; the cost is
+the copy. The direct path needs a batched kernel, and the N=4 layout's four
+bytes per row does not fit `smmla`'s 2×8 matrix without extra shuffles, so
+the choice is a real one and needs the phone's pp numbers. It is not
+implemented blind.
+
+On the phone: compare pp64/128/512 with K3's bridge. If the de-interleave
+costs more than a few percent, the direct path is the next step; if not,
+K3's bridge is enough and the batched kernel is not worth its risk.
+
+## K5. Measure and close (pending)
+
+Not run: the phone was not available. The order is:
+
+```
+scripts/lfm3-a7.sh results/phase-kquant/raw/k5
+```
+
+(two rounds, reversed, Q4_K_M and QAD-Q4_0, with a two-minute sustained
+decode), then K0's `bw_sweep` / `bw_sustained` at the same working set, the
+profile with the annotated listing, and the Qwen Q4_K_M decode before/after. The target is Q4_K_M decode near the QAD-Q4_0 file's
+44.7 GB/s, roughly 40+ tok/s. `IMPLEMENTATION.md` and the merge into `main`
+wait for those numbers.
+
 ## Phone checks pending
 
 The phone was not available during implementation. Run these in one session
