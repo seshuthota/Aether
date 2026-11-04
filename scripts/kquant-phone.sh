@@ -175,8 +175,8 @@ if has k2; then
 fi
 if has lane; then                               # alternate, so heat is shared
   for r in $(seq "$ROUNDS"); do
-    kbench "lane-before-r$r" 9a7b59d --repack
-    kbench "lane-after-r$r" 3febb3a --repack
+    kbench "lane-before-r$r" "${LANE_BEFORE:-9a7b59d}" --repack
+    kbench "lane-after-r$r" "${LANE_AFTER:-3febb3a}" --repack
   done
 fi
 if has tip; then
