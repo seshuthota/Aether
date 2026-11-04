@@ -74,6 +74,7 @@ tree() { # rev -> prints the path
     git -C "$IMPL" worktree add --detach "$dir" "$1" >/dev/null 2>&1
     mkdir -p "$dir/.cargo"
     cp "$IMPL/.cargo/config.toml" "$dir/.cargo/"
+    rm -rf "$dir/testdata"   # only .gitkeep is tracked
     ln -s "$IMPL/testdata" "$dir/testdata"
   fi
   echo "$dir"
@@ -118,7 +119,7 @@ profile() { # name rev
   wait_cool; wake
   { conditions "$rev"
     flock /tmp/aether-phone.lock adb shell "cd $REMOTE && simpleperf record -e cpu-cycles:u -o perf.data -- ./aether $LFM -i 'The history of the printing press' -t 0 -n 300 -c $CORES" 2>&1 | tr -d '\r'
-    adb shell "cd $REMOTE && simpleperf report -i perf.data --sort symbol" 2>&1 | tr -d '\r' | head -60
+    adb shell "cd $REMOTE && simpleperf report -i perf.data --sort symbol" 2>&1 | tr -d '\r' | sed -n '1,60p'
   } > "$OUT/$name.txt"
   mkdir -p "$OUT/$name"
   adb pull "$REMOTE/perf.data" "$OUT/$name/perf.data" >/dev/null
@@ -153,6 +154,8 @@ if has k0; then
   run k0-sustained 25bed76 run --example bw_sustained -- \
     --cores 2-7 --parallel --seconds 30 --size-mb 1024
   suite k0-tg64 25bed76
+fi
+if has k0 || has k0p; then                     # k0p: the profile alone
   profile k0-profile 25bed76
 fi
 if has k1; then
