@@ -230,10 +230,16 @@ target/release/aether MODEL --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw
 
 | # | run | before (Q8_0) | after (Q8_K) | llama.cpp |
 | --- | --- | --- | --- | --- |
-| 1 | LFM3 Q4_K_M, ctx 2048, 1 chunk, PPL + KL | 13.7917, KL 0.052408, 88.759 % | pending | 13.9561, 0.055758, 88.172 % |
+| 1 | LFM3 Q4_K_M, ctx 2048, 1 chunk, PPL + KL | 13.7917, KL 0.052408, 88.759 % | **14.0234, KL 0.054800, 89.345 %** | 13.9561, 0.055758, 88.172 % |
 | 2 | Qwen2.5-0.5B Q4_K_M, 20 × 512, PPL + KL | 16.7088, KL 0.031828, 90.43 % | pending | 16.7657 |
 | 3 | LFM3 Q4_K_M, 20 × 512, PPL + KL | 24.8542, KL 0.115041, 83.392 % | pending | 24.8278, 0.117968, 83.392 % |
 | 4 | control: Qwen2.5-0.5B Q4_0, 20 × 512, PPL | 19.7470 | pending | — |
+
+Run 1: PPL and KL moved **toward** llama.cpp — the PPL gap shrank from
+0.164 to 0.067 and KL from 0.052408 to 0.054800 (llama.cpp 0.055758) —
+while same-top moved from 88.759 % to 89.345 % (llama.cpp 88.172 %). Against
+BF16 the KL rose from 0.052408 to 0.054800: the cost side A5 predicted for
+adopting llama.cpp's Q8_K rounding.
 
 Run 4 has no K-quant matrix and must stay 19.7470 to the digit; if it moves,
 something outside the K-quant path changed.
