@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What changes when not every layer is attention? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="conv window">
+<p class="kicker">LFM3 · overview</p>
+<div class="callout ok"><span class="lbl">Built and checked on the CPU</span><p>LFM3-1.7B loads from its GGUF files and runs on the phone’s CPU. Its logits match Hugging Face <code>transformers</code>. Its perplexity on the Q4_K_M file is 24.8542 here and 24.8278 in llama.cpp. Decode is still behind llama.cpp for that file, and the pages say why.</p></div>
+
+<h1>What changes when not every layer is attention?</h1>
+<p class="lede">Every model before this one repeats one kind of layer: attention over all earlier tokens, then an MLP. LFM3-1.7B mixes in a cheaper kind. Thirteen of its 24 layers are short convolutions, which keep a small fixed state. The engine reads from the file which layer is which.</p>
+<nav class="toc">
+  <a href="#stack">What is inside LFM3-1.7B?</a>
+  <a href="#metadata">How does the engine know which layer is which?</a>
+  <a href="#qwen">What else differs from Qwen2.5?</a>
+  <a href="#bandwidth">Why is this the first model here limited by memory bandwidth?</a>
+  <a href="#pages">Which pages cover this section?</a>
+  <a href="#open">What is still open?</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="stack">What is inside LFM3-1.7B?</h2>
+<p>Until now, every layer was attention followed by an MLP (the feed-forward block that mixes each position’s own numbers). Attention stores a key and a value for every token it has seen, in the KV cache, so its memory grows with the context. LFM3 uses two cheaper kinds of mixer as well.</p>
+<ul>
+  <li><strong>Short convolution.</strong> Each position is mixed with the few positions just before it, using a fixed set of weights. The state is the last six vectors, whatever the context length.</li>
+  <li><strong>Sliding-window attention.</strong> Attention over only the last 256 positions. Its cache is a fixed size too.</li>
+</ul>
+<p>The model has 1.73 billion parameters (<code>plans/lfm3.md</code>, section 2). Of its 24 layers, 13 are short convolutions, 6 are full attention and 5 are sliding-window attention. The order below is the model’s own:</p>
+
+<svg viewBox="0 0 560 640" role="img" aria-labelledby="stack-title" style="max-width:36rem;width:100%;height:auto">
+<title id="stack-title">The 24 layers of LFM3-1.7B in order, each marked short convolution, full attention or sliding attention</title>
+<g style="font-family:var(--sans);font-size:13px">
+  <rect x="8" y="8" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="23" style="fill:var(--ink)">layer 0 · short convolution</text>
+  <rect x="8" y="34" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="49" style="fill:var(--ink)">layer 1 · short convolution</text>
+  <rect x="8" y="60" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="75" style="fill:var(--ink)">layer 2 · full attention</text>
+  <rect x="8" y="86" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="101" style="fill:var(--ink)">layer 3 · short convolution</text>
+  <rect x="8" y="112" width="250" height="22" rx="4" style="fill:var(--copper-soft);stroke:var(--copper)"/><text x="18" y="127" style="fill:var(--ink)">layer 4 · sliding attention</text>
+  <rect x="8" y="138" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="153" style="fill:var(--ink)">layer 5 · short convolution</text>
+  <rect x="8" y="164" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="179" style="fill:var(--ink)">layer 6 · full attention</text>
+  <rect x="8" y="190" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="205" style="fill:var(--ink)">layer 7 · short convolution</text>
+  <rect x="8" y="216" width="250" height="22" rx="4" style="fill:var(--copper-soft);stroke:var(--copper)"/><text x="18" y="231" style="fill:var(--ink)">layer 8 · sliding attention</text>
+  <rect x="8" y="242" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="257" style="fill:var(--ink)">layer 9 · short convolution</text>
+  <rect x="8" y="268" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="283" style="fill:var(--ink)">layer 10 · full attention</text>
+  <rect x="8" y="294" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="309" style="fill:var(--ink)">layer 11 · short convolution</text>
+  <rect x="8" y="320" width="250" height="22" rx="4" style="fill:var(--copper-soft);stroke:var(--copper)"/><text x="18" y="335" style="fill:var(--ink)">layer 12 · sliding attention</text>
+  <rect x="8" y="346" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="361" style="fill:var(--ink)">layer 13 · short convolution</text>
+  <rect x="8" y="372" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="387" style="fill:var(--ink)">layer 14 · full attention</text>
+  <rect x="8" y="398" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="413" style="fill:var(--ink)">layer 15 · short convolution</text>
+  <rect x="8" y="424" width="250" height="22" rx="4" style="fill:var(--copper-soft);stroke:var(--copper)"/><text x="18" y="439" style="fill:var(--ink)">layer 16 · sliding attention</text>
+  <rect x="8" y="450" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="465" style="fill:var(--ink)">layer 17 · short convolution</text>
+  <rect x="8" y="476" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="491" style="fill:var(--ink)">layer 18 · full attention</text>
+  <rect x="8" y="502" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="517" style="fill:var(--ink)">layer 19 · short convolution</text>
+  <rect x="8" y="528" width="250" height="22" rx="4" style="fill:var(--copper-soft);stroke:var(--copper)"/><text x="18" y="543" style="fill:var(--ink)">layer 20 · sliding attention</text>
+  <rect x="8" y="554" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="569" style="fill:var(--ink)">layer 21 · short convolution</text>
+  <rect x="8" y="580" width="250" height="22" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/><text x="18" y="595" style="fill:var(--ink)">layer 22 · full attention</text>
+  <rect x="8" y="606" width="250" height="22" rx="4" style="fill:var(--blue-soft);stroke:var(--blue)"/><text x="18" y="621" style="fill:var(--ink)">layer 23 · short convolution</text>
+
+  <rect x="290" y="8" width="22" height="16" rx="3" style="fill:var(--blue-soft);stroke:var(--blue)"/>
+  <text x="322" y="21" style="fill:var(--ink)">short convolution: 13 layers</text>
+  <text x="322" y="37" style="fill:var(--muted);font-size:12px">keeps the last six vectors, not a growing cache</text>
+  <rect x="290" y="56" width="22" height="16" rx="3" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+  <text x="322" y="69" style="fill:var(--ink)">full attention: 6 layers</text>
+  <text x="322" y="85" style="fill:var(--muted);font-size:12px">sees the whole prefix; the KV cache grows</text>
+  <rect x="290" y="104" width="22" height="16" rx="3" style="fill:var(--copper-soft);stroke:var(--copper)"/>
+  <text x="322" y="117" style="fill:var(--ink)">sliding attention: 5 layers</text>
+  <text x="322" y="133" style="fill:var(--muted);font-size:12px">sees the last 256 positions</text>
+  <text x="290" y="172" style="fill:var(--muted);font-size:12px">Every layer also has an MLP after its mixer.</text>
+  <text x="290" y="188" style="fill:var(--muted);font-size:12px">The MLP is not drawn. Illustration of the order.</text>
+</g>
+</svg>
+<p class="note">Illustration of the real layer order, from <code>plans/lfm3.md</code> section 2 and the layer test in <code>src/model/gguf.rs</code>. Layer 0 is at the top, and the layer indices match the code.</p>
+<p><strong>Takeaway: 18 of the 24 layers do not attend over the whole prefix. Only 6 do.</strong></p>
+
+<h2 id="metadata">How does the engine know which layer is which?</h2>
+<p>The weights alone do not say what a layer is. A convolution layer and an attention layer store different tensors, so the loader needs a rule. The GGUF file carries the rule as metadata: a few arrays with one entry per layer. The loader reads them in <code>src/model/gguf.rs</code>.</p>
+<ul>
+  <li><strong><code>attention.head_count_kv</code></strong> is an array of 24 numbers. A 0 means a convolution layer; any other number means attention. For layer 0 the value is 0, so layer 0 is a convolution.</li>
+  <li><strong><code>attention.sliding_window_pattern</code></strong> is an array of true and false. True marks a sliding layer, and <code>attention.sliding_window</code> (256) gives its window.</li>
+  <li><strong>RoPE.</strong> Full layers use <code>rope.freq_base</code>, and sliding layers use <code>rope.freq_base_swa</code>. The conv and sliding decisions are made only for the <code>lfm3</code> architecture, so the Qwen and llama files load as before.</li>
+  <li><strong>Conv width.</strong> <code>shortconv.l_cache</code> gives the number of taps, with 7 as the fallback.</li>
+</ul>
+<p>Each layer then holds one <code>Mixer</code>: attention weights or convolution weights (<code>src/model/transformer.rs</code>). <code>Config::kind(layer)</code> in <code>src/model/config.rs</code> returns the kind for any layer index.</p>
+<p><strong>Takeaway: two metadata arrays set the kind of every layer, so one loader handles both kinds.</strong></p>
+
+<h2 id="qwen">What else differs from Qwen2.5?</h2>
+<p>Qwen2.5-0.5B is the model the earlier phases were built around. Its 24 layers are all full attention, with one RoPE rule and one tokenizer rule. LFM3 changes four more things. Each one is a line here, with the page that explains it.</p>
+<ul>
+  <li><strong>Per-head norm and gate.</strong> Query and key each get an RMSNorm per head before RoPE, and each head’s attention output is scaled by a sigmoid gate. Our Qwen loader has neither. See <a href="attention.html">Sliding windows, partial RoPE and per-head norms</a>.</li>
+  <li><strong>Partial RoPE.</strong> A full layer rotates 32 of the 64 pairs in each head. The other 32 pairs are left unrotated. Qwen rotates every pair. See <a href="attention.html">the attention page</a>.</li>
+  <li><strong>Sliding-window layers.</strong> Five layers see only the last 256 positions. In Qwen, every layer sees the whole prefix. See <a href="attention.html">the attention page</a>.</li>
+  <li><strong>Tokenizer.</strong> The same byte-level BPE as Qwen, with three changes: digit groups of up to three, no NFC step, and <code>ignore_merges</code>. See <a href="../phase-5/bytelevel.html">byte-level BPE</a> and <a href="../phase-7/nfc.html">NFC</a>.</li>
+</ul>
+<p><strong>Takeaway: the decoder keeps Qwen’s shape. The mixer, the RoPE rule and the tokenizer rule are what changed.</strong></p>
+
+<h2 id="bandwidth">Why is this the first model here limited by memory bandwidth?</h2>
+<p>Memory bandwidth is how many bytes per second the phone can read from its main memory (DRAM). Decode reads every weight once for each token, so the weight file’s size sets a limit on speed. The limit is bandwidth divided by bytes read per token, as <a href="../phase-0/decode-ceiling.html">the decode-ceiling page</a> works out.</p>
+<p>For LFM3 the file is 1,099,627,808 bytes, about 1.1 GB, for the Q4_K_M version. The plan’s rule of thumb is that 1.1 GB per token at about 60 GB/s allows at most about 55 tokens per second <span class="tag c">calculated</span>.</p>
+<div class="statrow">
+  <div class="stat"><b>1.1 GB</b><span>Q4_K_M file, read once per token <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>~67 GB/s</b><span>DRAM read with all 8 cores (<code>results/phase-1.md</code>) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>26.1 tok/s</b><span>our decode, Q4_K_M, against 44.3 for llama.cpp <span class="tag m">measured</span></span></div>
+</div>
+<p>Against that ceiling, the results file works out 48.3 GB/s of file reads for llama.cpp and 28.5 GB/s for ours <span class="tag c">calculated</span>. Our profile puts 87 % of decode time in the two K-quant matrix kernels, which are limited by compute, not by memory.</p>
+<p><strong>Takeaway: LFM3 is the first model here where the bandwidth ceiling is the number to beat, and our kernels are well below it.</strong></p>
+
+<h2 id="pages">Which pages cover this section?</h2>
+<p>Four pages go deeper. Read them in this order.</p>
+<ol>
+  <li><a href="conv.html">What is a short convolution layer, and what does it remember?</a> The fixed state, against a cache that grows.</li>
+  <li><a href="rollback.html">How do you undo a convolution?</a> Rejected drafts must roll the conv state back too.</li>
+  <li><a href="attention.html">Sliding windows, partial RoPE and per-head norms</a>: the window edge, the rotated pairs, and the norm and gate on each head.</li>
+  <li><a href="accuracy-speed.html">Is it right, and why is it slower than llama.cpp?</a> The perplexity and KL checks, and the decode profile.</li>
+</ol>
+<p><strong>Takeaway: the first two pages are about the convolution state; the last two are about the attention details and the measurements.</strong></p>
+
+<h2 id="open">What is still open?</h2>
+<ul>
+  <li><strong>Decode speed.</strong> Decode for Q4_K_M is behind llama.cpp, and our K-quant kernels set the speed. The work that closes the gap is a separate plan, and its page is not written yet.</li>
+  <li><strong>The GPU.</strong> The GPU path for LFM3 is a later plan (A8 in <code>plans/lfm3.md</code>). This page covers the CPU only.</li>
+</ul>
+
+<h2 id="takeaway">What you should take away</h2>
+<p>Eighteen of LFM3’s 24 layers do not attend over the whole prefix: 13 are short convolutions and 5 are sliding windows.</p>
+<p>Two metadata arrays in the GGUF file tell the loader the kind of each layer.</p>
+<p>A 1.1 GB file puts the bandwidth ceiling in reach on the phone, and our kernels are still well below it.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October and November 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<!-- sources: plans/lfm3.md sections 1-2 (layer order, 13/6/5 counts, 1.73B parameters, sliding window 256, the ~1.1 GB at ~60 GB/s ceiling of ~55 tok/s); results/phase-lfm3.md A0 (Q4_K_M file bytes 1,099,627,808; head_count_kv array with 0 on conv layers; rope_freqs factors apply to full layers only; PPL 24.8542 engine and 24.8278 llama.cpp at A5), A4 (conv state, sliding ring), A7 (decode 26.1 vs 44.3 tok/s; 28.5 vs 48.3 GB/s calculated; 87 % of decode in the K-quant GEMVs; kernels compute-bound); results/phase-1.md (DRAM read all 8 cores ~67 GB/s); commit b173e6b (src/model/gguf.rs keys, src/model/config.rs Config::kind, src/model/transformer.rs Mixer, the lfm3_q4km_loads test) -->
+</body>
+</html>

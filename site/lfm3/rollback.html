@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How do you undo a convolution? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">LFM3 · 02</p>
+
+<h1>How do you undo a convolution?</h1>
+<p class="lede">Speculative decoding checks guessed tokens in one pass and throws away the wrong ones. For attention, throwing away is free. For a short-convolution layer, the rejected tokens have already changed its state, so the engine has to put that state back.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../beyond/speculative.html">speculative decoding</a> and <a href="conv.html">the short convolution layer</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#attention">Can attention forget rejected tokens by moving back?</a>
+  <a href="#conv">Why can’t the conv state simply move back?</a>
+  <a href="#restore">How does the engine put the conv state back?</a>
+  <a href="#test">How do we know the restore is exact?</a>
+  <a href="#drafts">Does a draft model need the same restore?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Speculative decoding checks guesses in one pass, and a rollback undoes the rejected ones in each kind of memory.">What are we trying to do here?</h2>
+<p>Speculative decoding guesses a few tokens ahead and checks all of them in one batched pass (see <a href="../beyond/speculative.html">Several tokens per weight read</a>). The guesses are <strong>draft tokens</strong>. They come from copying earlier text or from a small <strong>draft model</strong>. The model that decides the output is the <strong>target</strong>. Each draft is kept while it matches the target’s own choice. The first draft that does not match is thrown away, with every draft after it.</p>
+<p>The pass writes into two kinds of memory. The <strong>KV cache</strong> of an attention layer holds one key and one value per position. The <strong>conv state</strong> of a short-convolution layer holds six rows, one per recent token, and it is the same size whatever the length of the text. A <strong>rollback</strong> makes each memory match the last token that was kept.</p>
+
+<h2 id="attention" data-short="Attention: move back" data-step="For attention, a rollback is moving the position counter back; stale entries are never read.">Can attention forget rejected tokens by moving back?</h2>
+<p>An attention layer keeps a KV cache, one key and one value for every position. A position counter says how many entries are in use. Rejected drafts have already written their keys and values past the point where the kept text ends.</p>
+<div class="quiz" data-quiz="predict" data-for="attention" id="rb-g-attention">
+  <p>Four drafts were rejected. Their keys and values sit at positions 19 and 20. What happens to them before the next pass?</p>
+  <ul>
+    <li data-right>Nothing: they are ignored, and the next pass overwrites them as it reaches those positions. <div class="why">Attention reads only up to the position counter, so entries past it are never read.</div></li>
+    <li>They are zeroed, so no stale value leaks into the next token. <div class="why">Nothing in the code clears them; the counter already hides them.</div></li>
+    <li>They are restored from a saved copy, as the conv state is. <div class="why">The conv state needs that because its rows change in place. A KV row is written once, at its own position.</div></li>
+  </ul>
+</div>
+<p>For a full attention layer, a token at position <code>pos</code> writes its key and value into row <code>pos</code>. Its attention reads rows 0 through <code>pos</code>:</p>
+<pre><code>} else {
+    att_pos = pos;
+    at = pos * kv_dim;
+}</code></pre>
+<ul>
+  <li><code>att_pos</code> is the last row that attention reads. Moving <code>pos</code> back moves it back too.</li>
+  <li>The rows above it stay in memory. The next token that reaches each position writes over them.</li>
+  <li>The comment on <code>restore_conv</code> says the same: “the KV entries of rejected drafts are simply overwritten later.”</li>
+  <li>A sliding-window layer keeps a ring of <code>window + 256</code> rows and writes row <code>pos % ring</code>. The spare rows leave room for the drafts, so a rollback still finds the rows it needs.</li>
+</ul>
+<p><strong>Takeaway: for attention, a rollback is only moving the position counter back. The stale entries are never read, and the next pass overwrites them.</strong></p>
+<div class="quiz" data-quiz="check" data-for="attention" id="rb-c-attention">
+  <p>The position counter is at 19. Can the token at position 19 read the key stored at position 20?</p>
+  <ul>
+    <li data-right>No: attention reads positions 0 through 19 only. <div class="why">The counter bounds the read, so the stale key at 20 is never loaded.</div></li>
+    <li>Yes, the same prefix gives the same key. <div class="why">Position 20 holds a key from a rejected draft, not from this prefix. It is not read anyway.</div></li>
+    <li>Yes, but its score is masked to zero. <div class="why">A masked key is still loaded. The code never loads row 20.</div></li>
+  </ul>
+</div>
+
+<h2 id="conv" data-short="Conv: already mixed" data-step="A conv state shifts its rows in place, so the rejected tokens are already inside it.">Why can’t the conv state simply move back?</h2>
+<p>A short-convolution layer mixes each token with the few tokens before it. It keeps a <strong>conv state</strong> of six rows. Row n holds the layer’s gated input for one recent token (called <code>u</code> in the code). LFM3 has 13 such layers, and each row is 2048 values wide (<a href="../beyond/speculative.html">results/phase-lfm3.md</a>, A0 and A4). Every new token adds its row and drops the oldest.</p>
+<div class="quiz" data-quiz="predict" data-for="conv" id="rb-g-conv">
+  <p>Four drafts have been fed through a conv layer. What does its state hold now?</p>
+  <ul>
+    <li data-right>The six most recent rows, drafts included. The older rows were shifted out. <div class="why">The state is one window that moves with every token; no index brings old rows back.</div></li>
+    <li>One row per position, so setting the position back selects the old row. <div class="why">That is how the KV cache works. The conv state is one window, not a row per position.</div></li>
+    <li>Only the rows of the kept tokens, since the layer drops rejected ones. <div class="why">The layer cannot tell a rejected draft from an accepted one when it runs.</div></li>
+  </ul>
+</div>
+<p>The update is two lines in <code>short_conv_step</code> (<code>src/kernels/mod.rs</code>):</p>
+<pre><code>state.copy_within(dim..6 * dim, 0);
+state[5 * dim..].copy_from_slice(u);</code></pre>
+<ul>
+  <li><code>copy_within</code> moves rows 1 to 5 down to 0 to 4. The oldest row is overwritten.</li>
+  <li><code>u</code> becomes row 5, the newest.</li>
+  <li>No copy of the old rows is kept, so there is no index to set back.</li>
+  <li>Once a rejected draft is in the state, the layer reads it. Without a restore, the rejected draft changes the layer’s output until six newer tokens have pushed it out.</li>
+</ul>
+<p><strong>Takeaway: the conv state has no row per position, so a rollback needs a saved copy of the state.</strong></p>
+
+<h2 id="restore" data-short="The snapshot ring" data-step="The engine saves the conv state after every token and copies the kept one back.">How does the engine put the conv state back?</h2>
+<p>The pass has already run through every conv layer, so each state holds the rejected rows. A rollback has to return each conv layer to the state after the last kept token.</p>
+<div class="quiz" data-quiz="predict" data-for="restore" id="rb-g-restore">
+  <p>A conv layer must go back to the state after the last kept token. Which of these does the engine do?</p>
+  <ul>
+    <li data-right>Copy a saved state back: one copy per conv layer, and no token is run again. <div class="why">The engine keeps a copy of each conv state for the last 33 positions.</div></li>
+    <li>Run the kept tokens through the conv layers again, from the start. <div class="why">That also works, but it runs every layer again. A saved copy costs a single memory copy.</div></li>
+    <li>Subtract the rejected rows from the state. <div class="why">The state is a window of rows, not a sum, so there is nothing to subtract.</div></li>
+  </ul>
+</div>
+<p>After each conv token, <code>conv_token</code> copies the new state into a slot chosen by position:</p>
+<pre><code>let slot = base + (pos % (MAX_DRAFT + 1)) * 6 * dim;
+s.conv_snap[slot..slot + 6 * dim]
+    .copy_from_slice(state);</code></pre>
+<p><code>restore_conv</code> copies the slot for one position back into the live state (<code>src/model/transformer.rs</code>):</p>
+<pre><code>let slot = off * (MAX_DRAFT + 1)
+    + (pos % (MAX_DRAFT + 1)) * 6 * c.dim;
+s.conv_state[off..off + 6 * c.dim]
+    .copy_from_slice(&s.conv_snap[slot..slot + 6 * c.dim]);</code></pre>
+<ul>
+  <li><code>MAX_DRAFT</code> is 32, so there are 33 slots. The slots are reused by position, so the last 33 positions are kept.</li>
+  <li><code>generate_draft</code> clamps the draft length to <code>MAX_DRAFT - 1</code>, that is 31, so one batch always fits in the slots.</li>
+  <li>Batches longer than 32 tokens, such as prompt chunks, skip the snapshots (the other branch of <code>conv_batch</code>). A rollback only ever goes back over a draft.</li>
+  <li>The rollback in <code>generate_speculative</code> is <code>self.model.restore_conv(pos - 1)</code>. The counter has moved past the kept tokens, so <code>pos - 1</code> is the last token kept.</li>
+</ul>
+<p>Here is one pass, with the token <code>c</code> at position 16 and drafts d1 to d4 at 17 to 20. d1 and d2 are kept, and d3 is rejected. Rows are named by the token that wrote them.</p>
+<pre><code>stage                conv state (6 rows)     KV rows
+-------------------  ----------------------  ---------------
+before the pass      after 15: rows 10-15    0-15
+after the pass       after 20: rows 15-20    0-20
+rolled back to 18    after 18: rows 13-18    0-18 kept,
+                                             19-20 stale
+next pass starts at 19</code></pre>
+<ul>
+  <li>After the pass, rows 10 to 14 have left the state. Row 15 is the oldest row still in it.</li>
+  <li>The restore brings back the snapshot after 18, the last kept token. Rows 19 and 20 are not in the state any more.</li>
+  <li>The KV rows 19 and 20 are stale. The next pass writes over them.</li>
+</ul>
+<p><strong>Takeaway: each conv layer keeps a copy of its state for the last 33 positions, and a rollback copies the one for the last kept token back.</strong></p>
+<div class="quiz" data-quiz="check" data-for="restore" id="rb-c-restore">
+  <p>Drafts d1 to d5 sit at positions 17 to 21, after the certain token at 16. d1, d2 and d3 are kept; d4 is rejected. Which snapshot is restored?</p>
+  <ul>
+    <li data-right>Position 19, the state after d3 <div class="why">The last kept token is at 19, so its snapshot is the one copied back.</div></li>
+    <li>Position 21, the last one written <div class="why">That state has absorbed the rejected drafts; it is the one to undo.</div></li>
+    <li>Position 16, the certain token <div class="why">That throws away d1 to d3, which were kept.</div></li>
+  </ul>
+</div>
+
+<h2 id="test" data-short="The test" data-step="The restored logits match a run that never saw the drafts; without the restore they are far off.">How do we know the restore is exact?</h2>
+<p>The test is <code>lfm3_conv_state_rolls_back</code> in <code>src/model/gguf.rs</code>. It uses the real Q4_K_M file. One model decodes the kept tokens. A second model also runs two rejected drafts, 1234 and 5678, at positions 17 and 18, and then rolls back:</p>
+<pre><code>let want = plain.forward_batch_logits(
+    &amp;[next, 777, 4321], 16, 0)[vocab..3 * vocab].to_vec();
+spec.forward_batch_logits(&amp;[next, 1234, 5678], 16, 0);
+if restore {
+    spec.restore_conv(16);
+}
+let got = &amp;spec.forward_batch_logits(
+    &amp;[777, 4321, 99], 17, 0)[..2 * vocab];</code></pre>
+<ul>
+  <li>The logits at 17 and 18 must match <code>want</code>. The test asserts a relative error below 1e-5.</li>
+  <li>The same check without <code>restore_conv</code> must fail, with an error above 1e-2. The test would catch a missing rollback.</li>
+  <li>Both models run in 3-token batches. On the phone a single token takes another code path, with different rounding, so one token at a time would not match bit for bit.</li>
+  <li>On the phone, the log reads <span class="tag m">measured</span> <code>conv rollback: logits rel 0.00e0; without the restore 6.42e-1</code> (<code>results/phase-lfm3/raw/phone-tests.txt</code>).</li>
+</ul>
+<p>Lookup and draft decoding use the same rollback. On the phone, the draft-decoding test ran 13 passes over 46 drafted tokens, and 30 were kept. The 16 tokens not kept are <span class="tag c">calculated</span> from those counts. Its greedy text forked from plain decoding once, at token 22 (“ the” against “ brown”), where the two logits differ by a gap of 2.25e-3 of the largest logit. The test allows a fork only at a near tie.</p>
+<p><strong>Takeaway: with the restore, the logits match a run that never saw the drafts. Without it, they are far off.</strong></p>
+<div class="quiz" data-quiz="check" data-for="test" id="rb-c-test">
+  <p>Why does the test run both models in 3-token batches, not one token at a time?</p>
+  <ul>
+    <li data-right>On the phone a single token takes another code path with different rounding, so only equal batch sizes match bit for bit. <div class="why">Both runs must round alike; the rollback itself is the same either way.</div></li>
+    <li>A 3-token batch is faster to run in the test. <div class="why">Speed is not the reason; the test is about equal numbers.</div></li>
+    <li>The restore only works for batches of three. <div class="why">The restore copies a saved state; it does not depend on the batch size.</div></li>
+  </ul>
+</div>
+
+<h2 id="drafts" data-short="Draft models" data-step="A draft model keeps its own conv state, and it rolls back to the last token it shares with the target.">Does a draft model need the same restore?</h2>
+<p>A <strong>draft model</strong> is a second, smaller model with the same vocabulary. It keeps its own KV cache and conv state, and it makes the drafts that the target checks. Its history can differ from the real text after a rejection, because it ran the rejected drafts itself.</p>
+<div class="quiz" data-quiz="predict" data-for="drafts" id="rb-g-drafts">
+  <p>The target rejected some of the draft model’s tokens. The draft model has already run them. What should happen to its conv state?</p>
+  <ul>
+    <li data-right>It goes back to the last token the two models share, then the rest is fed again. <div class="why">The draft’s cache and conv state must match the text the target kept.</div></li>
+    <li>Nothing: the target decides the text, so a stale draft state cannot change the output. <div class="why">True for the text, but the stale state makes every later draft wrong, so the speed is lost.</div></li>
+    <li>It is rebuilt from scratch by re-reading the whole prompt. <div class="why">That would work, but the code restores a saved state instead.</div></li>
+  </ul>
+</div>
+<p><code>Drafter::propose</code> (<code>src/session.rs</code>) finds the shared prefix and restores the draft to its last token:</p>
+<pre><code>let keep = self.fed.iter().zip(hist)
+    .take_while(|(a, b)| a == b).count()
+    .min(hist.len() - 1);
+// A hybrid draft model's conv state goes back with the cache (a
+// no-op for all-attention models).
+if keep > 0 &amp;&amp; keep &lt; self.fed.len() {
+    self.model.restore_conv(keep - 1);
+}
+self.fed.truncate(keep);</code></pre>
+<ul>
+  <li><code>fed</code> is the draft’s history: the tokens its cache and conv state have absorbed. <code>hist</code> is the real text.</li>
+  <li><code>keep</code> counts the shared tokens, so the last shared one is at index <code>keep - 1</code>.</li>
+  <li><code>truncate</code> drops the draft’s KV rows past <code>keep</code>. The conv restore does the same job for the conv state.</li>
+  <li>An all-attention draft has no conv state, so the restore does nothing for it.</li>
+</ul>
+<p><strong>Takeaway: a draft model rolls back its conv state to the last shared token, just as the target does.</strong></p>
+<div class="quiz" data-quiz="check" data-for="drafts" id="rb-c-drafts">
+  <p>The draft has fed 20 tokens. The shared prefix with the real text is 19 tokens long, at positions 0 to 18. Which snapshot does the draft restore?</p>
+  <ul>
+    <li data-right>Position 18, the last shared token <div class="why"><code>keep</code> is 19, so <code>keep - 1</code> is the last shared token’s index, 18.</div></li>
+    <li>Position 19, the first token that differs <div class="why">That state has already absorbed the wrong token, so restoring it keeps the error.</div></li>
+    <li>Position 0, the start of the prompt <div class="why">That throws away every shared token, which the draft need not re-read.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A rejected draft leaves attention rows that are never read and then overwritten. It leaves conv rows that have already changed the state, so the engine saves a copy of each conv state for the last 33 positions and copies one back.</p>
+<p>Draft models roll back their own conv state to the last shared token. The test shows that with the restore the logits are exact, and without it they are far off.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) in 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+<!-- sources: results/phase-lfm3/raw/phone-tests.txt (conv rollback: logits rel 0.00e0, without the restore 6.42e-1; lfm3_draft_decoding_keeps_the_greedy_text: Lookup { passes: 13, drafted: 46, accepted: 30 }, fork at token 22, gap 2.25e-3); results/phase-lfm3.md A0 (conv weight [7, 2048]) and A4 (13 short-conv layers, 6-row state, snapshots, two drafts rejected); IMPLEMENTATION.md section 0 (its 0.31 is not used; the phone log is newer); plans/lfm3.md (ring sizing); commits b4fceba and 8f0e56b; src/model/transformer.rs, src/model/gguf.rs, src/session.rs, src/kernels/mod.rs. -->
+</body>
+</html>
