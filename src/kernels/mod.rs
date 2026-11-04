@@ -224,6 +224,12 @@ fn quantize_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<B
     q
 }
 
+/// True for the formats whose dot products take Q8_K activations: all
+/// K-quants, row-major or repacked.
+fn needs_q8_k(w: &Weight) -> bool {
+    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_))
+}
+
 /// Quantizes `t` activation vectors to Q8_K (256 values per block), one
 /// token per piece across `pool`. K-quant matrices use these: one f32 scale
 /// per super-block lets their sub-block scales stay in int32.
@@ -360,7 +366,7 @@ fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neo
 /// at a time ([`unpack_k4`]) instead of calling [`mmla4`].
 #[cfg(target_arch = "aarch64")]
 fn is_k_quant(w: &Weight) -> bool {
-    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_))
+    needs_q8_k(w)
 }
 
 /// Rows `rows` of a K-quant matrix (rows of `nb` 32-value blocks), unpacked
@@ -564,7 +570,7 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
             }
             return;
         }
-        let xk = matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_)).then(|| quantize_q8_k_activations(pool, x, t));
+        let xk = needs_q8_k(w).then(|| quantize_q8_k_activations(pool, x, t));
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
             Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, xk.as_deref(), t) }),
@@ -597,9 +603,9 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
     #[cfg(target_arch = "aarch64")]
     let xp = (t > 1 && has_mmla()).then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
     #[cfg(target_arch = "aarch64")]
-    let xk = (xp.is_none() && ws.iter().any(|w| matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_)))).then(|| quantize_q8_k_activations(pool, x, t));
+    let xk = (xp.is_none() && ws.iter().any(|w| needs_q8_k(w))).then(|| quantize_q8_k_activations(pool, x, t));
     #[cfg(not(target_arch = "aarch64"))]
-    let xk = ws.iter().any(|w| matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))).then(|| quantize_q8_k_activations(pool, x, t));
+    let xk = ws.iter().any(|w| needs_q8_k(w)).then(|| quantize_q8_k_activations(pool, x, t));
     let total: usize = outs.iter().map(|o| o.len() / t).sum();
     let block = crate::pool::block_size(total, p.threads(), ROW_BLOCK);
     // (matrix, rows) pieces, each at most `block` rows, aligned within its
