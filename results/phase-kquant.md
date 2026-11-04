@@ -215,6 +215,29 @@ changes results (the rounding is llama.cpp's).
 - Pending: the full 20-chunk PPL/KL on the phone (and the Qwen file); see
   the list below.
 
+## K2 accuracy (PC)
+
+The host runs the scalar kernels without repacking, which is exactly K2's
+arithmetic; K3 only regroups the same integers (checked under QEMU). These
+runs use the same text, chunking and base as the earlier numbers, so only
+K2 differs. One at a time, `nice`, with the command at the top of each
+`raw/pc-k2-*.txt`.
+
+```
+target/release/aether MODEL --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw \
+    --chunks N [--ctx 2048] --kl --base BASE
+```
+
+| # | run | before (Q8_0) | after (Q8_K) | llama.cpp |
+| --- | --- | --- | --- | --- |
+| 1 | LFM3 Q4_K_M, ctx 2048, 1 chunk, PPL + KL | 13.7917, KL 0.052408, 88.759 % | pending | 13.9561, 0.055758, 88.172 % |
+| 2 | Qwen2.5-0.5B Q4_K_M, 20 × 512, PPL + KL | 16.7088, KL 0.031828, 90.43 % | pending | 16.7657 |
+| 3 | LFM3 Q4_K_M, 20 × 512, PPL + KL | 24.8542, KL 0.115041, 83.392 % | pending | 24.8278, 0.117968, 83.392 % |
+| 4 | control: Qwen2.5-0.5B Q4_0, 20 × 512, PPL | 19.7470 | pending | — |
+
+Run 4 has no K-quant matrix and must stay 19.7470 to the digit; if it moves,
+something outside the K-quant path changed.
+
 ## K3. Repacked K-quant rows for decode
 
 Q4_K and Q6_K are repacked four rows at a time at load, with the four rows
@@ -302,6 +325,84 @@ profile with the annotated listing, and the Qwen Q4_K_M decode before/after. The
 44.7 GB/s, roughly 40+ tok/s. `IMPLEMENTATION.md` and the merge into `main`
 wait for those numbers.
 
+## QEMU harness (correctness without the phone)
+
+The two K3 bugs lived in code only the phone runs: `repack_weights()` is
+false on x86 and the NEON kernels are `#[cfg(target_arch = "aarch64")]`.
+QEMU user mode runs the aarch64 Linux build on the PC, with `-cpu max,sve=off`
+so it has dotprod (`sdot`, including the indexed form) and i8mm (`smmla`),
+and no SVE like the Oryon. It proves **correctness**, not speed: no timing
+from QEMU is recorded.
+
+- Toolchain: `rustup target add aarch64-unknown-linux-musl`; linker
+  `rust-lld` with `-C link-self-contained=yes` (the target's
+  `lib/self-contained` CRT objects), runner `scripts/qemu-run.sh`.
+- QEMU: `qemu-user-static` 8.2.2, downloaded with `apt-get download` and
+  extracted under `~/.local/opt/qemu` (no root).
+- The engine detects `dotprod=true i8mm=true repack_weights=true` under it,
+  so the x4 and `smmla` paths really run.
+
+Negative controls (`raw/qemu-negative-controls.txt`): `572f689` panics with
+`a K-quant row needs Q8_K activations`; `ad57c09` fails the Q6_K x4 case
+with `rel 1.58e0`; the tip passes. That is the harness seeing both fixed
+bugs, not a vacuous pass.
+
+One test change: `session::tests::lfm3_draft_decoding_keeps_the_greedy_text`
+judged a fork by its index (`d >= 8`). K2's Q8_K rounding moved a 4.6e-4
+near tie from token 8 to token 7, so the test now checks the gap only —
+the gap is the invariant; the index was incidental.
+
+Under QEMU (`raw/qemu-tests.txt`):
+
+| run | result | wall |
+| --- | --- | ---: |
+| `--lib quant::` | 7 passed | 0:30 |
+| `--lib kernels::` | 17 passed | 0:33 |
+| `--lib session::` | 5 passed after the gap-only test change | 6:06 |
+| `--lib model::gguf::` (skip `lfm3_matches_transformers`) | 6 passed | 9:50 |
+| full `--lib` (skip `lfm3_matches_transformers`) | 121 passed, 1 failed | 37:18 |
+
+`model::gguf::` with all seven tests was SIGKILLed (signal 9) while the
+LFM3 f32/BF16 match test ran beside the Part 2 accuracy run; the six other
+tests pass with `--test-threads=1`. That one test is a host-only memory
+case and is not skipped on the phone.
+
+The full suite's one failure is QEMU-only:
+`sys::cpu::tests::cache_line_matches_aligned_buf` reads CTR_EL0 as 32 bytes
+under `-cpu max`, while the Oryon reports 64; the engine's 64-byte
+`AlignedBuf` is a multiple of both. It is a host-CPU property test, not
+engine logic, and the phone run passes. No engine change.
+
+Host and QEMU runs are separate; the phone still confirms the same bits
+once.
+
+## K4 design: the layout question
+
+K3 interleaves four rows **4 bytes** at a time, which makes each `sdot`
+result lane one row. `smmla` wants row pairs **8 bytes** at a time
+(`[row a 8 bytes | row b 8 bytes]`, see `zip8` / `interleave4`), so a
+batched kernel cannot read the K3 layout without shuffles. Three options:
+
+- **A. Keep K3's 4-byte layout for decode, de-interleave in prefill**
+  (today's `unpack_k4`). No new code; prefill pays the per-matmul copy it
+  already paid before K3.
+- **B. An 8-byte layout for both paths**, llama.cpp's `block_q4_Kx8` /
+  `block_q6_Kx8` with blocklen 8 (`ggml/src/ggml-cpu/repack.cpp`, used by
+  `ggml_gemv_q4_K_8x8_q8_K` and `ggml_gemm_q4_K_8x8_q8_K` in
+  `arch/arm/repack.cpp`). Decode then needs one `vpaddq` per row pair (as
+  llama.cpp does) and prefill uses `smmla` directly with Q8_K activation
+  pairs. One layout, no de-interleave.
+- **C. Store both layouts.** A second copy of the weights (~1.1 GB on
+  LFM3), rejected unless the measurements force it.
+
+Recommendation: **A stays the default until the phone's pp and tg numbers
+say otherwise.** If the prefill de-interleave costs more than a few percent
+of pp64/128/512, B is the next step: new repacked variants, a Q8_K
+activation-pair type for `smmla` (two tokens interleaved 8 bytes at a time
+per 256-value block, both `d`s, and `bsums` for Q4_K's min term), and the
+`_k` batched goldens (t = 3, 5, 7, 11, 13) as its checks. B is not merged
+as the default before the phone comparison.
+
 ## Review fixes (2026-11-04)
 
 Two bugs in the phone-only path, found before the phone checklist:
@@ -342,10 +443,12 @@ one name now.
 
 ## Phone checks pending
 
-The phone was not available during implementation. Run these in one session
-when it is back, in this order. Each step is a commit; for a step's own
-before/after, check out its commit (`25bed76` K0, `5116346` K1, `79439bc`
-K2, `a1ac2a9` K3 with the review fixes) and measure that tree.
+The phone was not available during implementation. Correctness-only items
+are now covered under QEMU (`raw/qemu-tests.txt`); what remains needs the
+real CPU. Run these in one session when it is back, in this order. Each
+step is a commit; for a step's own before/after, check out its commit
+(`25bed76` K0, `5116346` K1, `79439bc` K2, `a1ac2a9` K3 with the review
+fixes) and measure that tree.
 
 - [ ] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
 - [ ] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
@@ -359,33 +462,36 @@ K2, `a1ac2a9` K3 with the review fixes) and measure that tree.
 - [ ] K1 (only at `5116346`): `kquant_bench` and `tg64` after, against K0.
 - [ ] K1 (only at `5116346`): annotated listing: did the 16 `vaddlvq` per
       group disappear, and is `q4_k_scales_mins` / `u8x8_to_f32` visible?
-- [ ] K2: `cargo test --release --target aarch64-linux-android --lib k_quant`
-      (quantizer bytes, scalar and NEON dots, model path).
+- [x] K2: quantizer bytes, scalar and NEON dots, model path — done under
+      QEMU (`raw/qemu-tests.txt`: `quant::` 7, `kernels::` 17).
 - [ ] K2: LFM3 Q4_K_M PPL 20 × 512: today 24.8822 (phone); llama.cpp
-      24.8278. Expect closer to llama.cpp, not necessarily equal.
+      24.8278. PC run pending; phone spot check only.
 - [ ] K2: LFM3 Q4_K_M context 2048: today 13.7811 (phone) / 13.7917 (PC),
-      KL 0.052408; llama.cpp 13.9561 / 0.055758. Record the KL either way;
-      A5 found our Q8_0 rounding slightly closer to BF16, which is the cost
-      side of this step.
-- [ ] K2: Qwen2.5-0.5B Q4_K_M PPL against llama.cpp's (phase 6).
-- [ ] K2: `kquant_bench` and `tg64` after, against K0/K1.
-- [ ] K2: the speculative and batched-vs-decode tests still pass with their
-      stated tolerances (prefill is still Q8_0 on i8mm).
-- [ ] K3: `cargo test --release --target aarch64-linux-android --lib
-      k_quant_linear_matches_reference` (row-major and the x4 kernels,
-      decode and prefill).
+      KL 0.052408; llama.cpp 13.9561 / 0.055758. PC run pending; phone spot
+      check only. Record the KL either way; A5 found our Q8_0 rounding
+      slightly closer to BF16, which is the cost side of this step.
+- [ ] K2: Qwen2.5-0.5B Q4_K_M PPL against llama.cpp's (phase 6). PC run
+      pending; phone spot check only.
+- [ ] K2: `kquant_bench` and `tg64` after, against K0/K1 (phone only).
+- [x] K2: the speculative and batched-vs-decode tests pass — done under QEMU
+      (`session::` 5, `model::gguf::` 6).
+- [x] K3: row-major and x4 kernels, decode and prefill — done under QEMU
+      (`kernels::` 17, including `k_quant_linear_matches_reference`).
 - [ ] K3: LFM3 Q4_K_M PPL against K2 (same integers, different f32
-      grouping; record the digits).
+      grouping; record the digits). Phone only: the PC is K2 arithmetic.
 - [ ] K3: `kquant_bench --repack` against the row-major lines, and `tg64`;
-      if the x4 kernels are short of the ceiling, try N = 8.
-- [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released).
-- [ ] K3: prefill (`unpack_k4` from the repacked rows) gives the same
-      batched results as K2 within the tests' bounds.
-- [ ] K3 fix: an LFM3 Q4_K_M greedy run does not panic (repacked K-quants
-      get Q8_K), and `kquant_bench --repack` runs.
-- [ ] K3 fix: the Q6_K x4 goldens pass (the 0xAA flip); one-chunk LFM3 PPL
-      is close to K2's, not hundreds.
-- [ ] K3: `kquant_bench --repack` before/after the lane-`sdot` rewrite.
+      if the x4 kernels are short of the ceiling, try N = 8 (phone only).
+- [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released; phone).
+- [x] K3: prefill (`unpack_k4` from the repacked rows) gives the same
+      batched results — done under QEMU (`kernels::`, `model::gguf::`).
+- [x] K3 fix: an LFM3 Q4_K_M greedy run does not panic (repacked K-quants
+      get Q8_K) — done under QEMU (`model::gguf::`, `session::`); the bench
+      still runs on the phone.
+- [x] K3 fix: the Q6_K x4 goldens pass (the 0xAA flip) — done under QEMU;
+      the phone spot-checks the PPL.
+- [ ] K3: `kquant_bench --repack` before/after the lane-`sdot` rewrite
+      (phone only).
 - [ ] K3: annotated listing of `dot4_q6_k_q8_k_x4`: are the `ql`/`qh`
       loads merged across the 16 sub-blocks? If not, restructure by
-      `(n, j)`.
+      `(n, j)` (phone only).
+- [ ] Phone: one confirming `--lib k_quant` run at the final tip.

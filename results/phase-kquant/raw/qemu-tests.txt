@@ -1,0 +1,118 @@
+# QEMU correctness tests, 2026-11-04T12:25:45+05:30, commit 1d48657, qemu qemu-aarch64 version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+# target aarch64-unknown-linux-musl, rustc rustc 1.99.0 (b940084d7 2026-09-28)
+
+== cargo test --lib quant::
+running 7 tests
+test quant::tests::f16_rounding_is_round_to_nearest_even ... ok
+test quant::tests::repacked_k_rows_dequantize_like_row_major ... ok
+test quant::tests::k_quants_match_gguf ... ok
+test quant::tests::imatrix_quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::scalar_dots_match_reference ... ok
+test quant::tests::quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::repacked_rows_dequantize_like_row_major ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 1.08s
+
+# wall 0:30.11
+
+== cargo test --lib kernels::
+test kernels::tests::rmsnorm_softmax_swiglu_match_numpy ... ok
+test kernels::tests::attention_matches_numpy ... ok
+test kernels::tests::attention_group_matches_numpy ... ok
+test kernels::tests::attention_parts_merge_to_numpy ... ok
+test kernels::tests::k_quant_linear_matches_reference ... ok
+test kernels::tests::matmul_matches_numpy ... ok
+test kernels::tests::neon_gemv_steps_match_numpy ... ok
+test kernels::tests::matmul_batch_matches_numpy ... ok
+test kernels::tests::quantized_linear_batch_matches_reference ... ok
+test kernels::tests::quantized_linear_matches_reference ... ok
+test kernels::tests::threaded_matmuls_are_bit_identical ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 107 filtered out; finished in 4.81s
+
+# wall 0:33.45
+
+== cargo test --lib session::
+test session::tests::lfm3_draft_decoding_keeps_the_greedy_text ... FAILED
+
+failures:
+
+---- session::tests::lfm3_draft_decoding_keeps_the_greedy_text stdout ----
+Lookup { passes: 13, drafted: 46, accepted: 30 }: fork at token 7 (" secondary" vs " three"), gap 4.62e-4 of max |logit|
+
+thread 'session::tests::lfm3_draft_decoding_keeps_the_greedy_text' (2150168) panicked at src/session.rs:928:9:
+fork at token 7, gap 4.62e-4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::tests::lfm3_draft_decoding_keeps_the_greedy_text
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 119 filtered out; finished in 336.67s
+
+error: test failed, to rerun pass `--lib`
+Command exited with non-zero status 101
+# wall 6:06.49
+
+== cargo test --lib model::gguf::
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 29.93s
+     Running unittests src/lib.rs (target/aarch64-unknown-linux-musl/release/deps/aether-d926bf889c31ed80)
+
+running 7 tests
+test model::gguf::tests::lfm3_q4km_loads ... ok
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/home/curious/Documents/hermes-projects/Aether-impl/scripts/qemu-run.sh /home/curious/Documents/hermes-projects/Aether-impl/target/aarch64-unknown-linux-musl/release/deps/aether-d926bf889c31ed80 'model::gguf::'` (signal: 9, SIGKILL: kill)
+Command exited with non-zero status 101
+# wall 1:24.11
+
+== cargo test --lib model::gguf:: (skip lfm3_matches_transformers, --test-threads=1)
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 29.18s
+     Running unittests src/lib.rs (target/aarch64-unknown-linux-musl/release/deps/aether-d926bf889c31ed80)
+
+running 6 tests
+test model::gguf::tests::lfm3_conv_state_rolls_back ... ok
+test model::gguf::tests::lfm3_q4km_loads ... ok
+test model::gguf::tests::qwen2_bf16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_f16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_gguf_matches_transformers ... ok
+test model::gguf::tests::smollm2_gguf_matches_transformers ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 118 filtered out; finished in 560.68s
+
+# wall 9:49.89
+
+== cargo test --lib (full, --test-threads=1, skip lfm3_matches_transformers)
+test tokenizer::bytelevel::tests::lfm2_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::lfm2_regex_cases ... ok
+test tokenizer::bytelevel::tests::lfm3_gguf_tokenizer_matches_hf_tokenizers ... ok
+test tokenizer::bytelevel::tests::matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_regex_cases ... ok
+test tokenizer::llama2c::tests::decode_inverts_encode ... ok
+test tokenizer::llama2c::tests::encode_matches_llama2c_on_corpus ... ok
+test tokenizer::nfc::tests::known_cases ... ok
+test tokenizer::nfc::tests::matches_python_unicodedata ... ok
+
+failures:
+
+---- sys::cpu::tests::cache_line_matches_aligned_buf stdout ----
+CTR_EL0 data cache line: 32 bytes
+
+thread 'sys::cpu::tests::cache_line_matches_aligned_buf' (2262723) panicked at src/sys/cpu.rs:30:9:
+assertion `left == right` failed
+  left: 32
+ right: 64
+
+
+failures:
+    sys::cpu::tests::cache_line_matches_aligned_buf
+
+test result: FAILED. 121 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2208.07s
+
+error: test failed, to rerun pass `--lib`
+Command exited with non-zero status 101
+# wall 37:17.59
