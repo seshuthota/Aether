@@ -120,14 +120,6 @@ pub fn quantize_q8_0(x: &[f32], out: &mut [BlockQ8_0]) {
     }
 }
 
-/// Σ q · d for each Q8_0 block, as f32: the activation sum that Q4_K's min
-/// term multiplies. The integer sum is exact; the multiply is the same one
-/// the kernels do.
-pub fn sum_qd(x: &[BlockQ8_0], xd: &[f32]) -> Vec<f32> {
-    assert_eq!(x.len(), xd.len(), "one scale per block");
-    x.iter().zip(xd).map(|(b, &d)| b.qs.iter().map(|&q| q as i32).sum::<i32>() as f32 * d).collect()
-}
-
 /// Quantizes `x` (a multiple of 32 long) into Q4_0 blocks.
 pub fn quantize_q4_0(x: &[f32], out: &mut [BlockQ4_0]) {
     assert_eq!(x.len(), out.len() * QK, "length must be blocks × 32");
@@ -229,13 +221,26 @@ pub fn dequantize_q5_0(blocks: &[BlockQ5_0], out: &mut [f32]) {
 //   with an int8 scale; value `= d·sc·(q − 32)` with q in 0..=63.
 //
 // Rows must be a multiple of 256 long. The dot products quantize the
-// activation to Q8_0 (as for the other formats); a 32-weight Q8_0 block
-// lines up with one Q4_K sub-block or two Q6_K ones. llama.cpp uses its
-// own Q8_K (one f32 scale per 256) instead, so results differ from it by
-// that rounding, not by any difference in the weights.
+// activation to Q8_K ([`BlockQ8_K`]): one f32 scale per 256 values, so a
+// whole super-block's integer sums can be scaled in int32 and converted
+// once. (Before K2 they used Q8_0, one f16 scale per 32, which forced a
+// convert and FMA per sub-block; the `_b` goldens still record that path.)
 
 /// Weights per K-quant super-block.
 pub const QK_K: usize = 256;
+
+/// 256 activations as int8, one f32 scale and the sum of each 16 values:
+/// ggml's `block_q8_K` (292 bytes). The scale is signed (`-127 / max`), so
+/// `d` is negative when the largest-magnitude value is positive. `bsums`
+/// let Q4_K's min term stay in integers.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(non_camel_case_types)] // ggml's name
+pub struct BlockQ8_K {
+    pub d: f32,
+    pub qs: [i8; QK_K],
+    pub bsums: [i16; QK_K / 16],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -266,6 +271,7 @@ pub struct BlockQ6_K {
 
 const _: () = assert!(std::mem::size_of::<BlockQ4_K>() == 144);
 const _: () = assert!(std::mem::size_of::<BlockQ6_K>() == 210);
+const _: () = assert!(std::mem::size_of::<BlockQ8_K>() == 292);
 
 /// Scale and min of Q4_K sub-block `j` (ggml's `get_scale_min_k4`): the
 /// first four are the low 6 bits of bytes j and j+4; the last four take 4
@@ -346,6 +352,39 @@ pub fn dequantize_q6_k(blocks: &[BlockQ6_K], out: &mut [f32]) {
         for (e, v) in o.iter_mut().enumerate() {
             *v = d * blk.scales[e / 16] as f32 * q[e] as f32;
         }
+    }
+}
+
+/// Quantizes `x` (a multiple of 256 long) into Q8_K blocks, byte for byte
+/// as llama.cpp's `quantize_row_q8_K_ref`: `max` is the signed value of
+/// largest magnitude (the first on ties), `iscale = -127 / max` (so the
+/// largest value becomes ∓127), and `d = 1 / iscale`. An all-zero block
+/// gets `d = 0` and zero quants; its `bsums` are written as zero (ggml's
+/// reference leaves them untouched).
+pub fn quantize_q8_k(x: &[f32], out: &mut [BlockQ8_K]) {
+    assert_eq!(x.len(), out.len() * QK_K, "length must be blocks × 256");
+    for (blk, v) in out.iter_mut().zip(x.as_chunks::<QK_K>().0) {
+        let (mut amax, mut max) = (0.0f32, 0.0f32);
+        for &a in v {
+            if a.abs() > amax {
+                amax = a.abs();
+                max = a;
+            }
+        }
+        if amax == 0.0 {
+            blk.d = 0.0;
+            blk.qs = [0; QK_K];
+            blk.bsums = [0; QK_K / 16];
+            continue;
+        }
+        let iscale = -127.0 / max;
+        for (q, &a) in blk.qs.iter_mut().zip(v) {
+            *q = nearest_int(iscale * a).min(127) as i8;
+        }
+        for (b, q) in blk.bsums.iter_mut().zip(blk.qs.chunks_exact(16)) {
+            *b = q.iter().map(|&q| q as i16).sum();
+        }
+        blk.d = 1.0 / iscale;
     }
 }
 
@@ -987,34 +1026,37 @@ pub mod scalar {
         acc
     }
 
-    /// (b) Q4_K row · Q8_0 `x` (8 activation blocks per super-block): per
-    /// sub-block `d_x · (d·sc·Σ q·x − dmin·m·Σ x)`, both sums exact
-    /// integers.
-    pub fn dot_q4_k_q8_0(row: &[BlockQ4_K], x: &[BlockQ8_0]) -> f32 {
+    /// (b) Q4_K row · Q8_K `x`: one scale per 256 values, so both integer
+    /// sums (weights·activations, and the min term's activation sums from
+    /// `bsums`) stay in int32 for the whole super-block.
+    pub fn dot_q4_k_q8_k(row: &[BlockQ4_K], x: &[BlockQ8_K]) -> f32 {
         let mut acc = 0.0f32;
-        for (w, xs) in row.iter().zip(x.as_chunks::<{ QK_K / QK }>().0) {
+        for (w, v) in row.iter().zip(x) {
             let (d, dmin, q) = (f16_to_f32(w.d), f16_to_f32(w.dmin), q4_k_values(w));
-            for (j, v) in xs.iter().enumerate() {
+            let (mut sumi, mut sumi_mins) = (0i32, 0i32);
+            for j in 0..QK_K / 32 {
                 let (sc, m) = q4_k_scale_min(&w.scales, j);
-                let qx: i32 = v.qs.iter().zip(&q[32 * j..]).map(|(&a, &b)| a as i32 * b as i32).sum();
-                let sx: i32 = v.qs.iter().map(|&a| a as i32).sum();
-                acc += f16_to_f32(v.d) * (d * sc as f32 * qx as f32 - dmin * m as f32 * sx as f32);
+                let qx: i32 = (32 * j..32 * j + 32).map(|l| q[l] as i32 * v.qs[l] as i32).sum();
+                sumi += sc as i32 * qx;
+                sumi_mins += m as i32 * (v.bsums[2 * j] as i32 + v.bsums[2 * j + 1] as i32);
             }
+            acc += v.d * (d * sumi as f32 - dmin * sumi_mins as f32);
         }
         acc
     }
 
-    /// (b) Q6_K row · Q8_0 `x`: per activation block, two 16-weight
-    /// sub-blocks' integer sums weighted by their scales.
-    pub fn dot_q6_k_q8_0(row: &[BlockQ6_K], x: &[BlockQ8_0]) -> f32 {
+    /// (b) Q6_K row · Q8_K `x`: each 16-weight sub-block's integer sum
+    /// weighted by its int8 scale, all in int32 for the super-block.
+    pub fn dot_q6_k_q8_k(row: &[BlockQ6_K], x: &[BlockQ8_K]) -> f32 {
         let mut acc = 0.0f32;
-        for (w, xs) in row.iter().zip(x.as_chunks::<{ QK_K / QK }>().0) {
+        for (w, v) in row.iter().zip(x) {
             let (d, q) = (f16_to_f32(w.d), q6_k_values(w));
-            for (j, v) in xs.iter().enumerate() {
-                let sub = |h: usize| -> i32 { (16 * h..16 * h + 16).map(|l| q[32 * j + l] as i32 * v.qs[l] as i32).sum() };
-                let s = w.scales[2 * j] as i32 * sub(0) + w.scales[2 * j + 1] as i32 * sub(1);
-                acc += f16_to_f32(v.d) * d * s as f32;
+            let mut sumi = 0i32;
+            for j in 0..QK_K / 16 {
+                let s: i32 = (16 * j..16 * j + 16).map(|l| q[l] as i32 * v.qs[l] as i32).sum();
+                sumi += w.scales[j] as i32 * s;
             }
+            acc += v.d * d * sumi as f32;
         }
         acc
     }
@@ -1148,16 +1190,23 @@ mod tests {
         v
     }
 
-    /// Q4_K / Q6_K: random blocks decode to exactly gguf's values, and the
-    /// scalar dot products with a Q8_0 activation match the float64 "b"
-    /// reference.
+    /// Q4_K / Q6_K: random blocks decode to exactly gguf's values, the
+    /// Q8_K quantizer is byte-identical to llama.cpp's
+    /// `quantize_row_q8_K_ref`, and the scalar dot products match the
+    /// float64 "k" reference.
     #[test]
     fn k_quants_match_gguf() {
         for dir in k_cases() {
             let (xs, x) = read_npy(&dir.join("x.npy"));
             let (t, n) = (xs[0], xs[1]);
-            let xq: Vec<BlockQ8_0> = blocks_from_bytes(&std::fs::read(dir.join("x_q8_0.bin")).unwrap());
-            let (nb, nk) = (n / QK, n / QK_K);
+            let want_q8k = std::fs::read(dir.join("x_q8_k.bin")).unwrap();
+            let mut got = vec![BlockQ8_K { d: 0.0, qs: [0; QK_K], bsums: [0; QK_K / 16] }; x.len() / QK_K];
+            quantize_q8_k(&x, &mut got);
+            // SAFETY: BlockQ8_K is plain #[repr(C)] data with no padding.
+            let got_bytes = unsafe { std::slice::from_raw_parts(got.as_ptr() as *const u8, got.len() * std::mem::size_of::<BlockQ8_K>()) };
+            assert_eq!(got_bytes, want_q8k, "{} q8_k bytes", dir.display());
+            let xk: Vec<BlockQ8_K> = blocks_from_bytes(&want_q8k);
+            let (nbk, nk) = (n / QK_K, n / QK_K);
             let bytes = |name: &str| std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
             let (q4, q6): (Vec<BlockQ4_K>, Vec<BlockQ6_K>) = (blocks_from_bytes(&bytes("q4_k")), blocks_from_bytes(&bytes("q6_k")));
             let d = q4.len() / nk;
@@ -1166,15 +1215,14 @@ mod tests {
             assert_eq!(ours, read_npy(&dir.join("deq_q4_k.npy")).1, "{} q4_k", dir.display());
             dequantize_q6_k(&q6, &mut ours);
             assert_eq!(ours, read_npy(&dir.join("deq_q6_k.npy")).1, "{} q6_k", dir.display());
-            let check = |name: &str, f: &dyn Fn(usize, &[BlockQ8_0]) -> f32| {
-                let want = read_npy(&dir.join(format!("out_{name}_b.npy"))).1;
-                let ours: Vec<f32> = (0..t * d).map(|k| f(k % d, &xq[k / d * nb..(k / d + 1) * nb])).collect();
+            let check = |name: &str, f: &dyn Fn(usize, &[BlockQ8_K]) -> f32| {
+                let want = read_npy(&dir.join(format!("out_{name}_k.npy"))).1;
+                let ours: Vec<f32> = (0..t * d).map(|k| f(k % d, &xk[k / d * nbk..(k / d + 1) * nbk])).collect();
                 let (_, rel) = max_errors(&ours, &want);
                 assert!(rel < 1e-6 * (n as f32).sqrt(), "{} {name}: rel {rel:.2e}", dir.display());
             };
-            check("q4_k", &|i, x| scalar::dot_q4_k_q8_0(&q4[i * nk..(i + 1) * nk], x));
-            check("q6_k", &|i, x| scalar::dot_q6_k_q8_0(&q6[i * nk..(i + 1) * nk], x));
-            let _ = x;
+            check("q4_k", &|i, x| scalar::dot_q4_k_q8_k(&q4[i * nk..(i + 1) * nk], x));
+            check("q6_k", &|i, x| scalar::dot_q6_k_q8_k(&q6[i * nk..(i + 1) * nk], x));
         }
     }
 

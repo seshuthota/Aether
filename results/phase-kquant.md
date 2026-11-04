@@ -151,6 +151,67 @@ changes.
 - Phone: the K-quant tests, PPL unchanged to the digit (LFM3 and Qwen), and
   `kquant_bench` / `tg64` before and after. See the pending list below.
 
+## K2. Q8_K activations for K-quant matmuls
+
+The K-quant matmuls now use llama.cpp's activation format: one f32 scale
+per 256 values and `bsums[16]`. The sub-block scales apply in int32, so a
+whole super-block converts once instead of once per 32 values. This step
+changes results (the rounding is llama.cpp's).
+
+### Format and quantizer
+
+- `quant::BlockQ8_K`: `d: f32`, `qs: [i8; 256]`, `bsums: [i16; 16]`, 292
+  bytes, ggml's layout.
+- `quant::quantize_q8_k` follows `quantize_row_q8_K_ref` operation for
+  operation: `max` is the signed value of largest magnitude (first on ties),
+  `iscale = -127 / max`, `d = 1 / iscale`, and rounding is ggml's
+  `nearest_int` (ties to even), not `roundf` — the two differ on exact
+  halves.
+- Reference: `tools/gen_q8k.py` calls llama.cpp's own
+  `quantize_row_q8_K_ref` through ctypes from `libggml-base.so` (the same
+  approach as `gen_quant_imatrix.py`; no C shim needed) and writes
+  `x_q8_k.bin` plus `out_q4_k_k.npy` / `out_q6_k_k.npy` (float64
+  `dequant(X_q8_K) @ dequant(W)ᵀ`) next to the `_b` files.
+  `cargo test k_quant` compares our quantizer byte for byte.
+
+### Kernels
+
+- `dot4_q4_k_q8_k`: per super-block, the eight sub-blocks' `sdot` sums are
+  multiplied by their 6-bit scales in int32 (`vmlaq_n_s32`); the min term is
+  `bsums · mins` with `vmlal_s16`; then two converts and two FMAs per
+  super-block per row. Before: one convert and one FMA per sub-block, plus
+  16 `vaddlvq` for the min term's activation sums.
+- `dot4_q6_k_q8_k`: the 16 sub-blocks' `sdot` sums are multiplied by their
+  int8 scales in int32 and converted once per super-block per row. The
+  dependent 8-FMA chain is gone with the format.
+- Single-row `dot_q4_k_q8_k` / `dot_q6_k_q8_k` for tails; scalar versions
+  in `quant::scalar` for the host.
+- Removed: the Q8_0 K-quant kernels and K1's `sums_qd` hoist (the Q8_K
+  path has `bsums`, so the hoist has nothing to feed). The K1 code remains
+  only at commit `5116346`; its phone measurement would have to be taken
+  from that commit.
+
+### Dispatch
+
+- Decode (`t = 1`) and batched products on CPUs without i8mm quantize `x`
+  to Q8_K once per matmul when a K-quant matrix is present, and to Q8_0
+  once for the other formats.
+- Prefill with i8mm still uses Q8_0 + `unpack_k4`; K4 decides whether to
+  move it to the new layout/format. Until then batched and single-token
+  K-quant results differ by the activation rounding, and the tests use the
+  matching reference (`_b` for the `smmla` path, `_k` otherwise).
+
+### Checks
+
+- Host: `cargo test --release --lib k_quant` passes — quantizer bytes equal
+  llama.cpp's, scalar Q8_K dots match the float64 `_k` reference, and the
+  model path (`linear_batch_on` / `linear_on`, one and three threads) is
+  within the bound.
+- `cargo check --target aarch64-linux-android --all-targets` passes; the
+  NEON kernels are not run on the host.
+- Pending: host 1-chunk LFM3 Q4_K_M PPL (running) and the phone PPL/KL
+  before and after; see the list below.
+
 ## Phone checks pending
 
 The phone was not available during implementation. Run these in one session
@@ -166,3 +227,15 @@ when it is back, in this order:
 - [ ] K1: `kquant_bench` and `tg64` after, against K0.
 - [ ] K1: annotated listing: did the 16 `vaddlvq` per group disappear, and is
       `q4_k_scales_mins` / `u8x8_to_f32` visible?
+- [ ] K2: `cargo test --release --target aarch64-linux-android --lib k_quant`
+      (quantizer bytes, scalar and NEON dots, model path).
+- [ ] K2: LFM3 Q4_K_M PPL 20 × 512: today 24.8822 (phone); llama.cpp
+      24.8278. Expect closer to llama.cpp, not necessarily equal.
+- [ ] K2: LFM3 Q4_K_M context 2048: today 13.7811 (phone) / 13.7917 (PC),
+      KL 0.052408; llama.cpp 13.9561 / 0.055758. Record the KL either way;
+      A5 found our Q8_0 rounding slightly closer to BF16, which is the cost
+      side of this step.
+- [ ] K2: Qwen2.5-0.5B Q4_K_M PPL against llama.cpp's (phase 6).
+- [ ] K2: `kquant_bench` and `tg64` after, against K0/K1.
+- [ ] K2: the speculative and batched-vs-decode tests still pass with their
+      stated tolerances (prefill is still Q8_0 on i8mm).

@@ -16,7 +16,7 @@ pub mod hexagon;
 pub mod vulkan;
 
 use crate::pool::{SharedOut, ThreadPool};
-use crate::quant::{BlockQ8_0, QK};
+use crate::quant::{BlockQ8_0, BlockQ8_K, QK, QK_K};
 use crate::weight::Weight;
 pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, rope_halves_pairs, softmax};
 
@@ -224,19 +224,24 @@ fn quantize_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<B
     q
 }
 
-/// Σ q · d_x for every activation block, once per matmul (Q4_K's min term
-/// needs it; see [`neon_quant::sums_qd`]).
-fn activation_sums(xq: &[BlockQ8_0], xd: &[f32]) -> Vec<f32> {
-    #[cfg(target_arch = "aarch64")]
-    return neon_quant::sums_qd(xq, xd);
-    #[cfg(not(target_arch = "aarch64"))]
-    return crate::quant::sum_qd(xq, xd);
+/// Quantizes `t` activation vectors to Q8_K (256 values per block), one
+/// token per piece across `pool`. K-quant matrices use these: one f32 scale
+/// per super-block lets their sub-block scales stay in int32.
+fn quantize_q8_k_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<BlockQ8_K> {
+    let n = x.len() / t;
+    assert!(n.is_multiple_of(QK_K), "a K-quant activation is whole super-blocks");
+    let mut q = vec![BlockQ8_K { d: 0.0, qs: [0; QK_K], bsums: [0; QK_K / 16] }; x.len() / QK_K];
+    crate::pool::par_chunks_mut(pool, &mut q, n / QK_K, &|i, q| {
+        crate::quant::quantize_q8_k(&x[i * n..(i + 1) * n], q);
+    });
+    q
 }
 
 /// One row's dot product with one quantized activation (any CPU).
 #[inline]
-fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
+fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0], xk: Option<&[BlockQ8_K]>) -> f32 {
     let nb = x.len();
+    let k = || xk.expect("a K-quant row needs Q8_K activations");
     match w {
         #[cfg(target_arch = "aarch64")]
         Weight::Q8_0(b) => neon_quant::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
@@ -245,9 +250,9 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         #[cfg(target_arch = "aarch64")]
         Weight::Q5_0(b) => neon_quant::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(target_arch = "aarch64")]
-        Weight::Q4_K(b) => neon_quant::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q4_K(b) => neon_quant::dot_q4_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(target_arch = "aarch64")]
-        Weight::Q6_K(b) => neon_quant::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q6_K(b) => neon_quant::dot_q6_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q8_0(b) => crate::quant::scalar::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(not(target_arch = "aarch64"))]
@@ -255,9 +260,9 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q5_0(b) => crate::quant::scalar::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(not(target_arch = "aarch64"))]
-        Weight::Q4_K(b) => crate::quant::scalar::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q4_K(b) => crate::quant::scalar::dot_q4_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(not(target_arch = "aarch64"))]
-        Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         Weight::F32(_) => unreachable!(),
         Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => unreachable!("repacked rows go four at a time"),
     }
@@ -276,11 +281,12 @@ fn has_dot4() -> bool {
 /// are handed out in blocks of [`ROW_BLOCK`]).
 #[inline]
 #[allow(unused_variables)]
-fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32], xs: Option<&[f32]>) -> [f32; 4] {
+fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>) -> [f32; 4] {
     #[cfg(target_arch = "aarch64")]
     {
         let nb = x.len();
         let rows = |k: usize| (i + k) * nb..(i + k + 1) * nb;
+        let k = || xk.expect("a K-quant row needs Q8_K activations");
         // SAFETY: callers check has_dot4 (dotprod present); every row slice
         // has nb blocks.
         unsafe {
@@ -288,8 +294,8 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32], xs: Option<&[f32]>) -
                 Weight::Q8_0(b) => neon_quant::dot4_q8_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q4_0(b) => neon_quant::dot4_q4_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q5_0(b) => neon_quant::dot4_q5_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
-                Weight::Q4_K(b) => neon_quant::dot4_q4_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd, xs.expect("Q4_K needs the activation sums")),
-                Weight::Q6_K(b) => neon_quant::dot4_q6_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd),
+                Weight::Q4_K(b) => neon_quant::dot4_q4_k_q8_k([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), k()),
+                Weight::Q6_K(b) => neon_quant::dot4_q6_k_q8_k([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), k()),
                 Weight::Q8_0x4(b) => neon_quant::gemv4_q8_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q4_0x4(b) => neon_quant::gemv4_q4_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q5_0x4(b) => neon_quant::gemv4_q5_0x4(&b[group(i, nb)], x, xd),
@@ -482,21 +488,23 @@ unsafe fn tile<const P: usize>(out: SharedOut, d: usize, w: &Weight, kb: Option<
 /// # Safety
 /// `out` must be valid for `t·d` floats and no other thread may write
 /// rows `r` of it during the call.
-unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], xs: Option<&[f32]>, t: usize) {
+unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>, t: usize) {
     let nb = xq.len() / t;
+    let nbk = nb / (QK_K / QK);
     let fast = has_dot4();
     let mut i = r.start;
     while i < r.end {
         let step = if fast && i + 4 <= r.end { 4 } else { 1 };
         for tt in 0..t {
             let (x, s) = (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]);
+            let k = xk.map(|v| &v[tt * nbk..(tt + 1) * nbk]);
             if step == 4 {
-                let v = dot4(w, i, x, s, xs.map(|v| &v[tt * nb..(tt + 1) * nb]));
+                let v = dot4(w, i, x, s, k);
                 // SAFETY: elements (tt, i..i+4) lie in this call's rows.
                 (0..4).for_each(|k| unsafe { *out.ptr().add(tt * d + i + k) = v[k] });
             } else {
                 // SAFETY: element (tt, i) lies in this call's rows.
-                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, x) };
+                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, x, k) };
             }
         }
         i += step;
@@ -525,12 +533,12 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
             }
             return;
         }
-        let xs = matches!(w, Weight::Q4_K(_)).then(|| activation_sums(&xq, &xd));
+        let xk = matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_)).then(|| quantize_q8_k_activations(pool, x, t));
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
-            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, xs.as_deref(), t) }),
+            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, xk.as_deref(), t) }),
             // SAFETY: single thread, all rows.
-            None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, xs.as_deref(), t) },
+            None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, xk.as_deref(), t) },
         }
         return;
     };
@@ -558,9 +566,9 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
     #[cfg(target_arch = "aarch64")]
     let xp = (t > 1 && has_mmla()).then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
     #[cfg(target_arch = "aarch64")]
-    let xs = (xp.is_none() && ws.iter().any(|w| matches!(w, Weight::Q4_K(_)))).then(|| activation_sums(&xq, &xd));
+    let xk = (xp.is_none() && ws.iter().any(|w| matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_)))).then(|| quantize_q8_k_activations(pool, x, t));
     #[cfg(not(target_arch = "aarch64"))]
-    let xs = ws.iter().any(|w| matches!(w, Weight::Q4_K(_))).then(|| activation_sums(&xq, &xd));
+    let xk = ws.iter().any(|w| matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))).then(|| quantize_q8_k_activations(pool, x, t));
     let total: usize = outs.iter().map(|o| o.len() / t).sum();
     let block = crate::pool::block_size(total, p.threads(), ROW_BLOCK);
     // (matrix, rows) pieces, each at most `block` rows, aligned within its
@@ -585,7 +593,7 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
                 continue;
             }
             // SAFETY: as above.
-            unsafe { quant_rows(o, d, rows, ws[k], &xq, &xd, xs.as_deref(), t) }
+            unsafe { quant_rows(o, d, rows, ws[k], &xq, &xd, xk.as_deref(), t) }
         }
     });
 }
@@ -791,9 +799,11 @@ mod tests {
     }
 
     /// K-quant matrices (random blocks, decoded by gguf) through the
-    /// model's path: one token at a time (`sdot`) and all `t` at once
-    /// (`smmla` on rows unpacked per group, where i8mm exists), on one and
-    /// three threads, against the float64 "b" reference.
+    /// model's path: one token at a time (Q8_K, `sdot`) and all `t` at once
+    /// (Q8_0 with `smmla` on rows unpacked per group, where i8mm exists;
+    /// Q8_K otherwise), on one and three threads. The decode reference is
+    /// always the float64 "k" one; the batched reference is "b" only on the
+    /// `smmla` path.
     #[test]
     fn k_quant_linear_matches_reference() {
         use crate::quant::blocks_from_bytes;
@@ -805,9 +815,14 @@ mod tests {
             for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
                 let (xs, x) = read_npy(&dir.join("x.npy"));
                 let (t, n) = (xs[0], xs[1]);
+                #[cfg(target_arch = "aarch64")]
+                let prefill_q8_0 = t > 1 && has_mmla();
+                #[cfg(not(target_arch = "aarch64"))]
+                let prefill_q8_0 = false;
                 let bytes = |name: &str| std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
                 for (name, w) in [("q4_k", Weight::Q4_K(Store::Owned(blocks_from_bytes(&bytes("q4_k"))))), ("q6_k", Weight::Q6_K(Store::Owned(blocks_from_bytes(&bytes("q6_k")))))] {
-                    let want = arr(&dir, &format!("out_{name}_b"));
+                    let want = arr(&dir, &format!("out_{name}_{}", if prefill_q8_0 { "b" } else { "k" }));
+                    let want_one = arr(&dir, &format!("out_{name}_k"));
                     let d = want.len() / t;
                     let bound = 1e-6 * (n as f32).sqrt();
                     let mut first = None;
@@ -822,7 +837,7 @@ mod tests {
                         for tt in 0..t {
                             let mut one = vec![f32::NAN; d];
                             linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);
-                            let (_, rel) = max_errors(&one, &want[tt * d..(tt + 1) * d]);
+                            let (_, rel) = max_errors(&one, &want_one[tt * d..(tt + 1) * d]);
                             assert!(rel < bound, "{} {name} token {tt}: rel {rel:.2e}", dir.display());
                         }
                     }
