@@ -302,6 +302,44 @@ profile with the annotated listing, and the Qwen Q4_K_M decode before/after. The
 44.7 GB/s, roughly 40+ tok/s. `IMPLEMENTATION.md` and the merge into `main`
 wait for those numbers.
 
+## Review fixes (2026-11-04)
+
+Two bugs in the phone-only path, found before the phone checklist:
+
+- **Repacked K-quants did not ask for Q8_K.** `linear_batch_on` /
+  `linear_many_batch_on` tested only the row-major `Q4_K` / `Q6_K`, so on the
+  phone (where `Weights::repack` turns them into `Q4_Kx4` / `Q6_Kx4`) `xk`
+  stayed `None` and `dot4` panicked on the first decode matmul. Fixed with
+  `needs_q8_k(w)`, which lists all four variants; `is_k_quant` uses it too
+  (`ad57c09`).
+- **Q6_K x4 dropped the 0xAA flip.** The lane kernel built `4·q` read as
+  int8 instead of `4·(q − 32)`, so every Q6_K value was off by 32 in q units.
+  The flip is back, hoisted out of the loops, with the doc comment updated
+  (`9a7b59d`). The host scalar x4 kernel was already correct, which is why
+  the host tests passed.
+
+Performance items from the same review:
+
+- **Lane `sdot`s.** Both x4 kernels now load 16 activation bytes once and
+  use `vdotq_laneq_s32` (stable on Rust 1.99) for four `sdot`s, instead of a
+  `vld1q_dup_s32` before every one. Bit-identical; the before/after is for
+  `kquant_bench --repack` on the phone.
+- **No Q8_0 for K-only matmuls.** `quant_rows` now takes the column count;
+  `linear_batch_on` / `linear_many_batch_on` build `xq`/`xd` only when a
+  non-K-quant matrix is present (or `smmla` prefill needs the pairs). An
+  LFM3 q/k/v or gate/up decode group quantizes Q8_K alone. Bit-identical.
+- **Q6_K x4 `ql`/`qh` reloads.** The 16 sub-blocks re-load `ql` twice and
+  `qh` four times per super-block; whether LLVM merges them is for the
+  annotated listing. If not, restructure by `(n, j)` as
+  `q6_k_block_q8_k` does. Added to the phone list.
+- **N = 8** was not tried; the K3 section says why (4 fits the existing
+  group and lane form). It remains the first experiment if the 4-row kernel
+  is short of the ceiling.
+
+Cleanups: `at` is `4 * v` for every `v` in 0..8 (the `if` was redundant) in
+all five places and the layout comment; `(nbk, nk)` in the golden test is
+one name now.
+
 ## Phone checks pending
 
 The phone was not available during implementation. Run these in one session
@@ -343,3 +381,11 @@ K2, `572f689` K3) and measure that tree.
 - [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released).
 - [ ] K3: prefill (`unpack_k4` from the repacked rows) gives the same
       batched results as K2 within the tests' bounds.
+- [ ] K3 fix: an LFM3 Q4_K_M greedy run does not panic (repacked K-quants
+      get Q8_K), and `kquant_bench --repack` runs.
+- [ ] K3 fix: the Q6_K x4 goldens pass (the 0xAA flip); one-chunk LFM3 PPL
+      is close to K2's, not hundreds.
+- [ ] K3: `kquant_bench --repack` before/after the lane-`sdot` rewrite.
+- [ ] K3: annotated listing of `dot4_q6_k_q8_k_x4`: are the `ql`/`qh`
+      loads merged across the 16 sub-blocks? If not, restructure by
+      `(n, j)`.
