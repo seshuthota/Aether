@@ -9,7 +9,7 @@ use crate::kernels::argmax;
 use crate::model::sampler::Sampler;
 use crate::model::{Transformer, gguf, hf, llama2c};
 use crate::pool::ThreadPool;
-use crate::tokenizer::{bytelevel, llama2c as l2c_tok};
+use crate::tokenizer::{bytelevel, llama2c as l2c_tok, spm_bpe};
 use crate::weight::Format;
 use std::io;
 use std::path::Path;
@@ -23,13 +23,23 @@ pub enum Text {
     /// Hugging Face byte-level BPE (SmolLM2, Qwen2, LFM3): no BOS added;
     /// stops at end-of-text or the chat end-of-turn token.
     Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize>, lfm3: bool },
+    /// Gemma 4's SentencePiece-style BPE: BOS always first (llama.cpp
+    /// forces it); stops at EOS or the end-of-turn `<turn|>`.
+    Gemma4 { tok: Box<spm_bpe::Tokenizer>, bos: usize, stops: Vec<usize> },
 }
 
 impl Text {
     /// The tokenizer and stop tokens a GGUF file's metadata describes.
     pub fn from_gguf(g: &crate::format::gguf::Gguf) -> io::Result<Text> {
-        let tok = bytelevel::Tokenizer::from_gguf(g)?;
         let id = |k: &str| g.get(k).and_then(Value::as_u64).map(|v| v as usize);
+        if g.get("tokenizer.ggml.model").and_then(Value::as_str) == Some("gemma4") {
+            let tok = spm_bpe::Tokenizer::from_gguf(g)?;
+            let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
+            stops.extend(tok.token_id("<turn|>"));
+            let bos = id("tokenizer.ggml.bos_token_id").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no BOS token"))?;
+            return Ok(Text::Gemma4 { tok: Box::new(tok), bos, stops });
+        }
+        let tok = bytelevel::Tokenizer::from_gguf(g)?;
         let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
         stops.extend(tok.token_id("<|im_end|>"));
         stops.extend(tok.token_id("<|endoftext|>"));
@@ -45,6 +55,7 @@ impl Text {
                 let ids = tok.encode(prompt);
                 if ids.is_empty() { vec![*start] } else { ids }
             }
+            Text::Gemma4 { tok, bos, .. } => std::iter::once(*bos).chain(tok.encode(prompt)).collect(),
         }
     }
 
@@ -58,6 +69,7 @@ impl Text {
                 if p.len() == 1 && !(p[0].is_ascii_graphic() || p[0].is_ascii_whitespace()) { Vec::new() } else { p }
             }
             Text::Hf { tok, .. } => tok.token_bytes(next),
+            Text::Gemma4 { tok, .. } => tok.token_bytes(next),
         }
     }
 
@@ -67,22 +79,25 @@ impl Text {
         match self {
             Text::Llama2c(_) => Vec::new(),
             Text::Hf { tok, .. } => tok.token_bytes(id),
+            Text::Gemma4 { tok, bos, .. } => if id == *bos { Vec::new() } else { tok.token_bytes(id) },
         }
     }
 
     /// The token llama.cpp puts at the start of each perplexity chunk, if
-    /// the tokenizer adds one: BOS for llama2.c, none for SmolLM2 / Qwen2.
+    /// the tokenizer adds one: BOS for llama2.c and Gemma 4, none for
+    /// SmolLM2 / Qwen2.
     pub fn chunk_bos(&self) -> Option<usize> {
         match self {
             Text::Llama2c(_) => Some(l2c_tok::BOS),
             Text::Hf { .. } => None,
+            Text::Gemma4 { bos, .. } => Some(*bos),
         }
     }
 
     pub fn is_stop(&self, id: usize) -> bool {
         match self {
             Text::Llama2c(_) => id == l2c_tok::BOS,
-            Text::Hf { stops, .. } => stops.contains(&id),
+            Text::Hf { stops, .. } | Text::Gemma4 { stops, .. } => stops.contains(&id),
         }
     }
 
@@ -90,11 +105,26 @@ impl Text {
         matches!(self, Text::Hf { lfm3: true, .. })
     }
 
+    /// Whether this family's chat template reasons by default (LFM3 does;
+    /// Gemma 4's `enable_thinking` is off unless asked).
+    pub fn thinks_by_default(&self) -> bool {
+        !matches!(self, Text::Gemma4 { .. })
+    }
+
+    /// The tags around a reasoning span in a reply.
+    pub fn think_tags(&self) -> (&'static [u8], &'static [u8]) {
+        match self {
+            Text::Gemma4 { .. } => (b"<|channel>", b"<channel|>"),
+            _ => (b"<think>", b"</think>"),
+        }
+    }
+
     /// The prompt for a one-turn chat, in this model family's template.
     pub fn chat_prompt(&self, system: Option<&str>, user: &str, thinking: bool) -> String {
         match self {
             Text::Llama2c(_) => user.to_string(),
             Text::Hf { lfm3: true, .. } => crate::chat::lfm3(system, user, thinking),
+            Text::Gemma4 { .. } => crate::chat::gemma4(system, user, thinking),
             Text::Hf { .. } => crate::chat::chatml(system.unwrap_or(crate::chat::QWEN_DEFAULT_SYSTEM), user),
         }
     }

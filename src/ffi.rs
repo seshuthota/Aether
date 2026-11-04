@@ -206,7 +206,7 @@ pub unsafe extern "C" fn aether_generate(
             #[cfg(feature = "hexagon")]
             Engine::Dsp(d) => (&d.text, d.model.config.seq_len),
         };
-        let text = if chat != 0 { tok.chat_prompt(None, prompt, true) } else { prompt.to_string() };
+        let text = if chat != 0 { tok.chat_prompt(None, prompt, tok.thinks_by_default()) } else { prompt.to_string() };
         let prompt_len = tok.encode(&text).len();
         let steps = prompt_len + max_tokens as usize;
         if steps > seq_len {

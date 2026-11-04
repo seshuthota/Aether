@@ -21,9 +21,12 @@
 //!             matrix (a GGUF from llama-imatrix), as llama-quantize
 //!             --pure --imatrix does
 //!   --chat    wrap the prompt in the chat template: Qwen/SmolLM2 ChatML,
-//!             or LFM3's ChatML with a starting <think> (reasoning on)
+//!             LFM3's ChatML with a starting <think> (reasoning on), or
+//!             Gemma 4's turns (reasoning off)
 //!   --no-think  LFM3: start the assistant turn with an empty think block
-//!   --hide-think  keep a <think>...</think> span out of the printed reply
+//!   --think   Gemma 4: put <|think|> in the system turn (reasoning on)
+//!   --hide-think  keep a <think>...</think> span (Gemma 4:
+//!             <|channel>...<channel|>) out of the printed reply
 //!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
 //!             copied from the last earlier match of the last --ngram N
 //!             tokens (default 2), checked in one batched pass; with -t > 0
@@ -85,7 +88,7 @@ fn main() {
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let mut chat = false;
     let mut system: Option<String> = None;
-    let mut thinking = true;
+    let mut thinking = None::<bool>;
     let mut hide_think = false;
     let (mut temp_set, mut top_p_set, mut top_k_set) = (false, false, false);
     let mut base_path: Option<PathBuf> = None;
@@ -101,8 +104,8 @@ fn main() {
                 "--chat" => chat = true,
                 "--times" => times = true,
                 "--dsp" => dsp = true,
-                "--no-think" => thinking = false,
-                "--think" => thinking = true,
+                "--no-think" => thinking = Some(false),
+                "--think" => thinking = Some(true),
                 "--hide-think" => hide_think = true,
                 _ => gpu = true,
             }
@@ -169,10 +172,12 @@ fn main() {
     }
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
+        let thinking = thinking.unwrap_or(session.text.thinks_by_default());
         prompt = session.text.chat_prompt(system.as_deref(), &prompt, thinking);
     }
     let mut out = std::io::stdout().lock();
-    let mut filter = aether::chat::ThinkFilter::new(hide_think);
+    let (open, close) = session.text.think_tags();
+    let mut filter = aether::chat::ThinkFilter::tags(hide_think, open, close);
     let mut write = |piece: &[u8]| {
         let shown = filter.feed(piece);
         out.write_all(&shown).and_then(|_| out.flush()).is_ok()
