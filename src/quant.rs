@@ -273,6 +273,42 @@ const _: () = assert!(std::mem::size_of::<BlockQ4_K>() == 144);
 const _: () = assert!(std::mem::size_of::<BlockQ6_K>() == 210);
 const _: () = assert!(std::mem::size_of::<BlockQ8_K>() == 292);
 
+/// Four Q4_K rows at one super-block, interleaved four bytes at a time so
+/// one `sdot` result lane belongs to one row. `scales` and `mins` are the
+/// 6-bit values already decoded, transposed: `scales[j*4 + r]` is sub-block
+/// `j` of row `r`. `qs[64*c + 16*v + 4*r..+4]` is row `r`'s bytes
+/// `32*c + 4*v` (v < 4) or `32*c + 16 + 4*(v - 4)` (v ≥ 4), i.e. one 32-byte
+/// chunk of the row-major block.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockQ4_Kx4 {
+    pub d: [u16; 4],
+    pub dmin: [u16; 4],
+    pub scales: [u8; 4 * 8],
+    pub mins: [u8; 4 * 8],
+    pub qs: [u8; 4 * 128],
+}
+
+/// Four Q6_K rows at one super-block, interleaved four bytes at a time.
+/// `scales[s*4 + r]` is 16-value sub-block `s` of row `r`. `ql` and `qh`
+/// keep the row-major bytes, split by the block's two 128-value halves:
+/// `ql[n*256 + 16*v + 4*r..+4]` is row `r`'s `ql[64*n + 4*v..+4]`, and
+/// `qh[n*128 + 16*v + 4*r..+4]` is `qh[32*n + 4*v..+4]`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockQ6_Kx4 {
+    pub d: [u16; 4],
+    pub scales: [i8; 4 * 16],
+    pub ql: [u8; 4 * 128],
+    pub qh: [u8; 4 * 64],
+}
+
+// 16 bytes more than four row-major blocks: the 6-bit scales and mins are
+// pre-decoded (4 × 16 bytes instead of 4 × 12), so the kernel applies them
+// without unpacking.
+const _: () = assert!(std::mem::size_of::<BlockQ4_Kx4>() == 4 * 144 + 16);
+const _: () = assert!(std::mem::size_of::<BlockQ6_Kx4>() == 4 * 210);
+
 /// Scale and min of Q4_K sub-block `j` (ggml's `get_scale_min_k4`): the
 /// first four are the low 6 bits of bytes j and j+4; the last four take 4
 /// bits from byte j+4 and their top 2 bits from the top of bytes j−4 and j.
@@ -916,6 +952,114 @@ pub fn repack_q5_0(b: &[BlockQ5_0], rows: usize) -> Vec<BlockQ5_0x4> {
     out
 }
 
+/// Row-major Q4_K blocks (`rows` rows, a multiple of 4) → groups of four.
+pub fn repack_q4_k(b: &[BlockQ4_K], rows: usize) -> Vec<BlockQ4_Kx4> {
+    assert!(rows.is_multiple_of(4) && b.len().is_multiple_of(rows), "rows must be a multiple of 4");
+    let nb = b.len() / rows;
+    let mut out = Vec::with_capacity(b.len() / 4);
+    for g in 0..rows / 4 {
+        for k in 0..nb {
+            let src = [0, 1, 2, 3].map(|r| &b[(4 * g + r) * nb + k]);
+            let mut o = BlockQ4_Kx4 { d: [0; 4], dmin: [0; 4], scales: [0; 32], mins: [0; 32], qs: [0; 512] };
+            for (r, s) in src.iter().enumerate() {
+                o.d[r] = s.d;
+                o.dmin[r] = s.dmin;
+                let (sc, m) = q4_k_scales_mins(&s.scales);
+                for j in 0..8 {
+                    o.scales[j * 4 + r] = sc[j];
+                    o.mins[j * 4 + r] = m[j];
+                }
+                for c in 0..4 {
+                    for v in 0..8 {
+                        let at = 32 * c + if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                        let to = 128 * c + 16 * v + 4 * r;
+                        o.qs[to..to + 4].copy_from_slice(&s.qs[at..at + 4]);
+                    }
+                }
+            }
+            out.push(o);
+        }
+    }
+    out
+}
+
+/// Row-major Q6_K blocks (`rows` rows, a multiple of 4) → groups of four.
+pub fn repack_q6_k(b: &[BlockQ6_K], rows: usize) -> Vec<BlockQ6_Kx4> {
+    assert!(rows.is_multiple_of(4) && b.len().is_multiple_of(rows), "rows must be a multiple of 4");
+    let nb = b.len() / rows;
+    let mut out = Vec::with_capacity(b.len() / 4);
+    for g in 0..rows / 4 {
+        for k in 0..nb {
+            let src = [0, 1, 2, 3].map(|r| &b[(4 * g + r) * nb + k]);
+            let mut o = BlockQ6_Kx4 { d: [0; 4], scales: [0; 64], ql: [0; 512], qh: [0; 256] };
+            for (r, s) in src.iter().enumerate() {
+                o.d[r] = s.d;
+                for (t, &sc) in s.scales.iter().enumerate() {
+                    o.scales[t * 4 + r] = sc;
+                }
+                for n in 0..2 {
+                    for v in 0..16 {
+                        let to = n * 256 + 16 * v + 4 * r;
+                        o.ql[to..to + 4].copy_from_slice(&s.ql[64 * n + 4 * v..64 * n + 4 * v + 4]);
+                    }
+                    for v in 0..8 {
+                        let to = n * 128 + 16 * v + 4 * r;
+                        o.qh[to..to + 4].copy_from_slice(&s.qh[32 * n + 4 * v..32 * n + 4 * v + 4]);
+                    }
+                }
+            }
+            out.push(o);
+        }
+    }
+    out
+}
+
+/// Row `r` (0..4) of a group of repacked Q4_K blocks, as f32.
+pub fn dequantize_q4_kx4(group: &[BlockQ4_Kx4], r: usize, out: &mut [f32]) {
+    assert_eq!(out.len(), group.len() * QK_K);
+    for (blk, o) in group.iter().zip(out.as_chunks_mut::<QK_K>().0) {
+        let (d, dmin) = (f16_to_f32(blk.d[r]), f16_to_f32(blk.dmin[r]));
+        for c in 0..4 {
+            for v in 0..8 {
+                let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                for t in 0..4 {
+                    let byte = blk.qs[128 * c + 16 * v + 4 * r + t];
+                    for (j, q) in [(2 * c, byte & 0x0F), (2 * c + 1, byte >> 4)] {
+                        let sc = blk.scales[j * 4 + r] as f32;
+                        let m = blk.mins[j * 4 + r] as f32;
+                        o[32 * j + at + t] = d * sc * q as f32 - dmin * m;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Row `r` (0..4) of a group of repacked Q6_K blocks, as f32.
+pub fn dequantize_q6_kx4(group: &[BlockQ6_Kx4], r: usize, out: &mut [f32]) {
+    assert_eq!(out.len(), group.len() * QK_K);
+    for (blk, o) in group.iter().zip(out.as_chunks_mut::<QK_K>().0) {
+        let d = f16_to_f32(blk.d[r]);
+        for s in 0..16 {
+            let (n, t) = (s / 8, s % 8);
+            let v0 = 4 * (t % 2) + 8 * ((t / 2) % 2);
+            let (high, k) = (t >= 4, t / 2);
+            let sc = blk.scales[s * 4 + r] as f32;
+            for j in 0..4 {
+                let v = v0 + j;
+                let ql = &blk.ql[n * 256 + 16 * v + 4 * r..][..4];
+                let qh = &blk.qh[n * 128 + 16 * ((v0 % 8) + j) + 4 * r..][..4];
+                for t2 in 0..4 {
+                    let lo = if high { ql[t2] >> 4 } else { ql[t2] & 0x0F };
+                    let hi = (qh[t2] >> (2 * k)) & 3;
+                    let q = (lo | (hi << 4)) as i8 - 32;
+                    o[16 * s + 4 * j + t2] = d * sc * q as f32;
+                }
+            }
+        }
+    }
+}
+
 /// Row `r` (0..4) of a group of repacked Q8_0 blocks, as f32.
 pub fn dequantize_q8_0x4(group: &[BlockQ8_0x4], r: usize, out: &mut [f32]) {
     assert_eq!(out.len(), group.len() * QK);
@@ -1059,6 +1203,65 @@ pub mod scalar {
             acc += v.d * d * sumi as f32;
         }
         acc
+    }
+
+    /// Four repacked Q4_K rows · one Q8_K activation: the portable version
+    /// of the lane-per-row kernel, one lane per row.
+    pub fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+        let mut out = [0.0f32; 4];
+        for (blk, v) in group.iter().zip(x) {
+            for (r, o) in out.iter_mut().enumerate() {
+                let (d, dmin) = (f16_to_f32(blk.d[r]), f16_to_f32(blk.dmin[r]));
+                let (mut sumi, mut minsum) = (0i64, 0i64);
+                for c in 0..4 {
+                    let (j0, j1) = (2 * c, 2 * c + 1);
+                    for vv in 0..8 {
+                        let at = if vv < 4 { 4 * vv } else { 16 + 4 * (vv - 4) };
+                        for t in 0..4 {
+                            let byte = blk.qs[128 * c + 16 * vv + 4 * r + t];
+                            let lo = (byte & 0x0F) as i64;
+                            let hi = (byte >> 4) as i64;
+                            sumi += blk.scales[j0 * 4 + r] as i64 * lo * v.qs[32 * j0 + at + t] as i64;
+                            sumi += blk.scales[j1 * 4 + r] as i64 * hi * v.qs[32 * j1 + at + t] as i64;
+                        }
+                    }
+                }
+                for j in 0..8 {
+                    minsum += blk.mins[j * 4 + r] as i64 * (v.bsums[2 * j] as i64 + v.bsums[2 * j + 1] as i64);
+                }
+                *o += v.d * (d * sumi as f32 - dmin * minsum as f32);
+            }
+        }
+        out
+    }
+
+    /// Four repacked Q6_K rows · one Q8_K activation.
+    pub fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+        let mut out = [0.0f32; 4];
+        for (blk, v) in group.iter().zip(x) {
+            for (r, o) in out.iter_mut().enumerate() {
+                let d = f16_to_f32(blk.d[r]);
+                let mut sumi = 0i64;
+                for s in 0..16 {
+                    let (n, t) = (s / 8, s % 8);
+                    let v0 = 4 * (t % 2) + 8 * ((t / 2) % 2);
+                    let (high, k) = (t >= 4, t / 2);
+                    let sc = blk.scales[s * 4 + r] as i64;
+                    for j in 0..4 {
+                        let ql = &blk.ql[n * 256 + 16 * (v0 + j) + 4 * r..][..4];
+                        let qh = &blk.qh[n * 128 + 16 * ((v0 % 8) + j) + 4 * r..][..4];
+                        for t2 in 0..4 {
+                            let lo = if high { ql[t2] >> 4 } else { ql[t2] & 0x0F };
+                            let hi = (qh[t2] >> (2 * k)) & 3;
+                            let q = (lo | (hi << 4)) as i64 - 32;
+                            sumi += sc * q * v.qs[16 * s + 4 * j + t2] as i64;
+                        }
+                    }
+                }
+                *o += v.d * d * sumi as f32;
+            }
+        }
+        out
     }
 
     /// (b) Q5_0 row · Q8_0 `x`.
@@ -1223,6 +1426,22 @@ mod tests {
             };
             check("q4_k", &|i, x| scalar::dot_q4_k_q8_k(&q4[i * nk..(i + 1) * nk], x));
             check("q6_k", &|i, x| scalar::dot_q6_k_q8_k(&q6[i * nk..(i + 1) * nk], x));
+            if d.is_multiple_of(4) {
+                let (p4, p6) = (repack_q4_k(&q4, d), repack_q6_k(&q6, d));
+                let check4 = |name: &str, f: &dyn Fn(usize, &[BlockQ8_K]) -> [f32; 4]| {
+                    let want = read_npy(&dir.join(format!("out_{name}_k.npy"))).1;
+                    let ours: Vec<f32> = (0..t * d)
+                        .map(|k| {
+                            let i = k % d;
+                            f(i, &xk[k / d * nbk..(k / d + 1) * nbk])[i % 4]
+                        })
+                        .collect();
+                    let (_, rel) = max_errors(&ours, &want);
+                    assert!(rel < 1e-6 * (n as f32).sqrt(), "{} {name} x4: rel {rel:.2e}", dir.display());
+                };
+                check4("q4_k", &|i, x| scalar::dot4_q4_k_q8_k_x4(&p4[i / 4 * nk..(i / 4 + 1) * nk], x));
+                check4("q6_k", &|i, x| scalar::dot4_q6_k_q8_k_x4(&p6[i / 4 * nk..(i / 4 + 1) * nk], x));
+            }
         }
     }
 
@@ -1252,6 +1471,34 @@ mod tests {
                 dequantize_q5_0(&q5[i * nb..(i + 1) * nb], &mut want);
                 dequantize_q5_0x4(&p5[g], i % 4, &mut got);
                 assert_eq!(want, got, "{} q5_0 row {i}", dir.display());
+            }
+        }
+    }
+
+    /// Repacking only moves bytes: every row of a repacked K-quant matrix
+    /// dequantizes to exactly the values of the row-major one.
+    #[test]
+    fn repacked_k_rows_dequantize_like_row_major() {
+        for dir in k_cases() {
+            let (xs, _) = read_npy(&dir.join("x.npy"));
+            let n = xs[1];
+            let nk = n / QK_K;
+            let q4: Vec<BlockQ4_K> = blocks_from_bytes(&std::fs::read(dir.join("w_q4_k.bin")).unwrap());
+            let q6: Vec<BlockQ6_K> = blocks_from_bytes(&std::fs::read(dir.join("w_q6_k.bin")).unwrap());
+            let d = q4.len() / nk;
+            if !d.is_multiple_of(4) {
+                continue;
+            }
+            let (p4, p6) = (repack_q4_k(&q4, d), repack_q6_k(&q6, d));
+            let (mut want, mut got) = (vec![0.0; n], vec![0.0; n]);
+            for i in 0..d {
+                let g = i / 4 * nk..(i / 4 + 1) * nk;
+                dequantize_q4_k(&q4[i * nk..(i + 1) * nk], &mut want);
+                dequantize_q4_kx4(&p4[g.clone()], i % 4, &mut got);
+                assert_eq!(want, got, "{} q4_k row {i}", dir.display());
+                dequantize_q6_k(&q6[i * nk..(i + 1) * nk], &mut want);
+                dequantize_q6_kx4(&p6[g], i % 4, &mut got);
+                assert_eq!(want, got, "{} q6_k row {i}", dir.display());
             }
         }
     }

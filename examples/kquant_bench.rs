@@ -12,6 +12,7 @@
 //!   --only NAME   keep cases whose tensor name contains NAME
 //!   --iters N     timed runs per case (default: ~4 GB of weights per case)
 //!   --max-seq N   config only; the weights are what is measured (default 2048)
+//!   --repack      also time the 4-row interleaved K-quant layout (phone only)
 //!
 //! GB/s = weight bytes / median time. ns/256 = median time divided by the
 //! number of 256-weight super-blocks (rows × cols / 256), so shapes of
@@ -52,6 +53,10 @@ fn per_row_bytes(w: &Weight, cols: usize) -> usize {
         Weight::Q5_0(_) | Weight::Q5_0x4(_) => cols / 32 * 22,
         Weight::Q4_K(_) => cols / 256 * 144,
         Weight::Q6_K(_) => cols / 256 * 210,
+        // A repacked group is 592 bytes for four rows (148 per row); Q6_K
+        // keeps its size (840 for four rows).
+        Weight::Q4_Kx4(_) => cols / 256 * 148,
+        Weight::Q6_Kx4(_) => cols / 256 * 210,
     }
 }
 
@@ -111,6 +116,7 @@ fn main() {
     let mut only = String::new();
     let mut iters = None;
     let mut max_seq = 2048;
+    let mut repack = false;
     let mut positional = true;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -121,6 +127,7 @@ fn main() {
             "--only" => only = it.next().expect("--only NAME"),
             "--iters" => iters = Some(it.next().expect("--iters N").parse().expect("number")),
             "--max-seq" => max_seq = it.next().expect("--max-seq N").parse().expect("number"),
+            "--repack" => repack = true,
             other if positional && !other.starts_with('-') => {
                 model = PathBuf::from(other);
                 positional = false;
@@ -136,6 +143,16 @@ fn main() {
     let k: Vec<Case> = cases(&kw, &kc, &k_quants).into_iter().filter(|c| c.name.contains(&only)).collect();
     let q: Vec<Case> = cases(&qw, &qc, &q4_0).into_iter().filter(|c| c.name.contains(&only)).collect();
     let q_by_shape: HashMap<(usize, usize), &Case> = q.iter().map(|c| ((c.rows, c.cols), c)).collect();
+    // The 4-row interleaved K layout, when the CPU's kernels use it.
+    let repacked = (repack && aether::kernels::repack_weights()).then(|| {
+        let (rc, rw) = load_any(&model, max_seq).expect("reload for --repack");
+        let rw = rw.repack(&rc);
+        (rc, rw)
+    });
+    let kr: Vec<Case> = repacked.as_ref().map(|(rc, rw)| cases(rw, rc, &k_quants).into_iter().filter(|c| c.name.contains(&only)).collect()).unwrap_or_default();
+    if repack && kr.is_empty() {
+        eprintln!("# --repack: this CPU does not run the 4-row K kernels; skipped");
+    }
 
     println!("# kquant_bench: model {}, q4_0 {}, cores {cores:?}, pool {pool_cores:?}", model.display(), q4.display());
     println!("# file,tensor,format,rows,cols,weight_bytes,threads,median_us,median_gbps,best_gbps,ns_per_256");
@@ -163,6 +180,15 @@ fn main() {
             }
         }
     }
+    for c in &kr {
+        x.resize(c.cols, 0.0);
+        for (j, v) in x.iter_mut().enumerate() {
+            *v = ((j % 13) as f32 - 6.0) * 0.01;
+        }
+        out.resize(c.rows, 0.0);
+        let m = measure(c, &x, &mut out, None, iters);
+        print("kquant_x4", c, 1, m);
+    }
 
     // The pool arm: the caller plus one worker per listed core, as a model
     // runs it (`ThreadPool::new` pins the caller to the first core).
@@ -182,5 +208,14 @@ fn main() {
                 print("q4_0", q, pool_cores.len(), m);
             }
         }
+    }
+    for c in &kr {
+        x.resize(c.cols, 0.0);
+        for (j, v) in x.iter_mut().enumerate() {
+            *v = ((j % 13) as f32 - 6.0) * 0.01;
+        }
+        out.resize(c.rows, 0.0);
+        let m = measure(c, &x, &mut out, Some(&pool), iters);
+        print("kquant_x4", c, pool_cores.len(), m);
     }
 }

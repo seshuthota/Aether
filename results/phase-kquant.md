@@ -215,6 +215,61 @@ changes results (the rounding is llama.cpp's).
 - Pending: the full 20-chunk PPL/KL on the phone (and the Qwen file); see
   the list below.
 
+## K3. Repacked K-quant rows for decode
+
+Q4_K and Q6_K are repacked four rows at a time at load, with the four rows
+interleaved **four bytes at a time**, so one `sdot` result lane is one row.
+N = 4 (the existing group size) rather than llama.cpp's 8: it fits the
+current `group` / `ROW_BLOCK` machinery, and with a Q8_K activation the
+lane-per-row form needs no pairwise adds. N = 8 remains a phone experiment
+(the plan asks to try both; without the phone the simpler one is in).
+
+### Layouts
+
+- `BlockQ4_Kx4` (592 bytes for four rows, +16 over four row-major blocks):
+  the 6-bit scales and mins are pre-decoded and transposed
+  (`scales[j*4 + r]`), so the kernel applies them without unpacking;
+  `qs[128*c + 16*v + 4*r..+4]` is row `r`'s four bytes of chunk `c`.
+- `BlockQ6_Kx4` (840 bytes, exactly four row-major blocks): `ql`/`qh` keep
+  the row-major bytes, interleaved four at a time per 128-value half;
+  `scales[s*4 + r]` is 16-value sub-block `s` of row `r`.
+- `Weight::Q4_Kx4` / `Q6_Kx4`, `Weight::repack` arms (mapped pages released,
+  so the file is not held twice), `dequantize_q4_kx4` / `q6_kx4`.
+
+### Kernels
+
+- `dot4_q4_k_q8_k_x4`: eight `sdot`s per sub-block pair, each lane one row;
+  scales per row in int32, mins from `bsums`; two converts and two FMAs per
+  super-block. No horizontal reduction at all (the four lanes of `acc` are
+  the four rows).
+- `dot4_q6_k_q8_k_x4`: 16 sub-blocks, each four `sdot`s; int8 scales per
+  row in int32; one convert and one FMA per super-block.
+
+### Prefill
+
+`quant_rows_mmla` still uses `smmla` with Q8_0 activations. `unpack_k4` now
+de-interleaves the repacked rows into `KBlock4` (the same per-matmul unpack
+as before, now from the repacked buffer), so prefill is unchanged in
+results. K4's direct prefill path remains measurement-gated.
+
+### Bit-identity
+
+**Not bit-identical to K2 in the last bits.** The integer sums are the same,
+but K2's row-major kernel converts four partial int32 lanes per row and sums
+them in f32 at the end, while the lane-per-row kernel converts one total
+integer per row. The plan's K3 check says "bit-identical"; that is only true
+for the integers, not for the f32 grouping. PPL/KL must be compared on the
+phone, not promised identical.
+
+### Checks
+
+- Host: `repacked_k_rows_dequantize_like_row_major` passes (Q4_K and Q6_K
+  rows dequantize exactly like row-major); the scalar
+  `dot4_*_q8_k_x4` kernels match the float64 `_k` goldens; the full suite
+  passes.
+- `cargo check --target aarch64-linux-android --all-targets` passes. The
+  NEON x4 kernels and the `unpack_k4` de-interleave only run on the phone.
+
 ## Phone checks pending
 
 The phone was not available during implementation. Run these in one session
@@ -242,3 +297,13 @@ when it is back, in this order:
 - [ ] K2: `kquant_bench` and `tg64` after, against K0/K1.
 - [ ] K2: the speculative and batched-vs-decode tests still pass with their
       stated tolerances (prefill is still Q8_0 on i8mm).
+- [ ] K3: `cargo test --release --target aarch64-linux-android --lib
+      k_quant_linear_matches_reference` (row-major and the x4 kernels,
+      decode and prefill).
+- [ ] K3: LFM3 Q4_K_M PPL against K2 (same integers, different f32
+      grouping; record the digits).
+- [ ] K3: `kquant_bench` with and without `--repack` (once the flag exists),
+      and `tg64`; if the x4 kernels are short of the ceiling, try N = 8.
+- [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released).
+- [ ] K3: prefill (`unpack_k4` from the repacked rows) gives the same
+      batched results as K2 within the tests' bounds.

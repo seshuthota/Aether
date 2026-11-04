@@ -15,7 +15,7 @@
 //! two rows × two tokens per instruction, in tiles of four rows × four
 //! tokens.
 
-use crate::quant::{BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ8_0, BlockQ8_0x4, BlockQ8_K, QK, f16_to_f32, q4_k_scales_mins};
+use crate::quant::{BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ4_Kx4, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ6_Kx4, BlockQ8_0, BlockQ8_0x4, BlockQ8_K, QK, f16_to_f32, q4_k_scales_mins};
 use std::arch::aarch64::*;
 
 /// 8 int8 → two float32x4.
@@ -495,6 +495,115 @@ pub unsafe fn dot4_q6_k_q8_k(rows: [&[BlockQ6_K]; 4], x: &[BlockQ8_K]) -> [f32; 
         }
     }
     acc.map(|a| vaddvq_f32(a))
+}
+
+/// Four activation bytes, broadcast to all four lanes: one `sdot` then
+/// multiplies each of four rows by the same four values.
+#[inline(always)]
+unsafe fn dup4(p: *const i8) -> int8x16_t {
+    // SAFETY: p points at four readable bytes; the offsets are 4-aligned.
+    unsafe { vreinterpretq_s8_s32(vld1q_dup_s32(p as *const i32)) }
+}
+
+/// Four `u8` values → int32x4 (the repacked K scales and mins).
+#[inline(always)]
+unsafe fn u8x4_to_s32(p: &[u8]) -> int32x4_t {
+    // SAFETY: p holds four bytes.
+    unsafe { vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vld1_u8(p.as_ptr()))))) }
+}
+
+/// Four `i8` values → int32x4 (Q6_K's sub-block scales).
+#[inline(always)]
+unsafe fn i8x4_to_s32(p: &[i8]) -> int32x4_t {
+    // SAFETY: p holds four bytes.
+    unsafe { vmovl_s16(vget_low_s16(vmovl_s8(vld1_s8(p.as_ptr())))) }
+}
+
+/// Four repacked Q4_K rows · one Q8_K activation. Each `sdot` lane is one
+/// row, so the result needs no horizontal reduction: the four lanes of `acc`
+/// are the four rows.
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group` and `x` must have the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+    assert_eq!(group.len(), x.len());
+    let mut acc = vdupq_n_f32(0.0);
+    for (g, xb) in group.iter().zip(x) {
+        // SAFETY: group and x have the same length; register-only ops.
+        unsafe {
+            let (m4, z) = (vdupq_n_u8(0x0F), vdupq_n_s32(0));
+            let mut sumi = z;
+            for c in 0..4 {
+                let (j0, j1) = (2 * c, 2 * c + 1);
+                let (sc0, sc1) = (u8x4_to_s32(&g.scales[j0 * 4..]), u8x4_to_s32(&g.scales[j1 * 4..]));
+                let (mut s0, mut s1) = (z, z);
+                for v in 0..8 {
+                    let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                    let q = vld1q_u8(g.qs.as_ptr().add(128 * c + 16 * v));
+                    let a0 = dup4(xb.qs.as_ptr().add(32 * j0 + at));
+                    let a1 = dup4(xb.qs.as_ptr().add(32 * j1 + at));
+                    s0 = vdotq_s32(s0, vreinterpretq_s8_u8(vandq_u8(q, m4)), a0);
+                    s1 = vdotq_s32(s1, vreinterpretq_s8_u8(vshrq_n_u8(q, 4)), a1);
+                }
+                sumi = vmlaq_s32(sumi, s0, sc0);
+                sumi = vmlaq_s32(sumi, s1, sc1);
+            }
+            let mut minsum = z;
+            for j in 0..8 {
+                let b = xb.bsums[2 * j] as i32 + xb.bsums[2 * j + 1] as i32;
+                minsum = vmlaq_n_s32(minsum, u8x4_to_s32(&g.mins[j * 4..]), b);
+            }
+            let d = vmulq_n_f32(f16x4_to_f32(g.d), xb.d);
+            let dmin = vmulq_n_f32(f16x4_to_f32(g.dmin), xb.d);
+            acc = vfmaq_f32(acc, vcvtq_f32_s32(sumi), d);
+            acc = vfmsq_f32(acc, vcvtq_f32_s32(minsum), dmin);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: out holds four floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), acc) };
+    out
+}
+
+/// Four repacked Q6_K rows · one Q8_K activation. As the Q4_K version, each
+/// `sdot` lane is one row.
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group` and `x` must have the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+    assert_eq!(group.len(), x.len());
+    let mut acc = vdupq_n_f32(0.0);
+    for (g, xb) in group.iter().zip(x) {
+        // SAFETY: group and x have the same length; register-only ops.
+        unsafe {
+            let mut sumi = vdupq_n_s32(0);
+            for s in 0..16 {
+                let (n, t) = (s / 8, s % 8);
+                let v0 = 4 * (t % 2) + 8 * ((t / 2) % 2);
+                let (high, k) = (t >= 4, t / 2);
+                let sc = i8x4_to_s32(&g.scales[s * 4..]);
+                let mut s16 = vdupq_n_s32(0);
+                for j in 0..4 {
+                    let ql = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (v0 + j)));
+                    let qh = vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + j)));
+                    let lo = if high { vandq_u8(ql, vdupq_n_u8(0xF0)) } else { vshlq_n_u8::<4>(ql) };
+                    let q = sri2(vshlq_u8(qh, vdupq_n_s8(6 - 2 * k as i8)), lo);
+                    let a = dup4(xb.qs.as_ptr().add(16 * s + 4 * j));
+                    s16 = vdotq_s32(s16, vreinterpretq_s8_u8(q), a);
+                }
+                sumi = vmlaq_s32(sumi, s16, sc);
+            }
+            let d = vmulq_n_f32(f16x4_to_f32(g.d), 0.25);
+            let d = vmulq_n_f32(d, xb.d);
+            acc = vfmaq_f32(acc, vcvtq_f32_s32(sumi), d);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: out holds four floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), acc) };
+    out
 }
 
 // --- i8mm: `smmla`, two rows × two tokens per instruction ---------------

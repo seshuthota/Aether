@@ -264,7 +264,7 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0], xk: Option<&[BlockQ8_K]>) -> f32 
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         Weight::F32(_) => unreachable!(),
-        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => unreachable!("repacked rows go four at a time"),
+        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => unreachable!("repacked rows go four at a time"),
     }
 }
 
@@ -299,6 +299,8 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_
                 Weight::Q8_0x4(b) => neon_quant::gemv4_q8_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q4_0x4(b) => neon_quant::gemv4_q4_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q5_0x4(b) => neon_quant::gemv4_q5_0x4(&b[group(i, nb)], x, xd),
+                Weight::Q4_Kx4(b) => neon_quant::dot4_q4_k_q8_k_x4(&b[group(i, nb / 8)], k()),
+                Weight::Q6_Kx4(b) => neon_quant::dot4_q6_k_q8_k_x4(&b[group(i, nb / 8)], k()),
                 Weight::F32(_) => unreachable!(),
             }
         }
@@ -345,7 +347,7 @@ fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neo
             Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q5_0(b) => neon_quant::mmla4_q5_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
-            Weight::Q4_K(_) | Weight::Q6_K(_) => unreachable!("K-quants are unpacked first (see unpack_k4)"),
+            Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => unreachable!("K-quants are unpacked first (see unpack_k4)"),
             Weight::Q8_0x4(b) => neon_quant::mmla4_q8_0x4(&b[group4(rows, nb)], x),
             Weight::Q4_0x4(b) => neon_quant::mmla4_q4_0x4(&b[group4(rows, nb)], x),
             Weight::Q5_0x4(b) => neon_quant::mmla4_q5_0x4(&b[group4(rows, nb)], x),
@@ -358,7 +360,7 @@ fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neo
 /// at a time ([`unpack_k4`]) instead of calling [`mmla4`].
 #[cfg(target_arch = "aarch64")]
 fn is_k_quant(w: &Weight) -> bool {
-    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))
+    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_))
 }
 
 /// Rows `rows` of a K-quant matrix (rows of `nb` 32-value blocks), unpacked
@@ -366,7 +368,7 @@ fn is_k_quant(w: &Weight) -> bool {
 /// rows, then used for every token.
 #[cfg(target_arch = "aarch64")]
 fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4> {
-    use crate::quant::{QK_K, f16_to_f32, q4_k_scales_mins};
+    use crate::quant::{BlockQ4_K, BlockQ6_K, QK_K, f16_to_f32, q4_k_scales_mins};
     use std::arch::aarch64::{int8x16_t, vget_high_s8, vget_low_s8, vst1_s8};
     // One super-block of row r into its 8 blocks: `sub(j)` gives block j's
     // values and its two half scales and bias.
@@ -401,6 +403,35 @@ fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4
                     let blk = &b[row * nk + k];
                     let d = f16_to_f32(blk.d);
                     fill(o, r, |j| (neon_quant::q6_k_sub(blk, j), (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)));
+                }
+                Weight::Q4_Kx4(b) => {
+                    let g = &b[rows[0] / 4 * nk + k];
+                    let mut blk = BlockQ4_K { d: g.d[r], dmin: g.dmin[r], scales: [0; 12], qs: [0; 128] };
+                    for c in 0..4 {
+                        for v in 0..8 {
+                            let at = if v < 4 { 4 * v } else { 16 + 4 * (v - 4) };
+                            blk.qs[32 * c + at..32 * c + at + 4].copy_from_slice(&g.qs[128 * c + 16 * v + 4 * r..][..4]);
+                        }
+                    }
+                    let (d, dmin) = (f16_to_f32(g.d[r]), f16_to_f32(g.dmin[r]));
+                    fill(o, r, |j| (neon_quant::q4_k_sub(&blk, j), (d * g.scales[j * 4 + r] as f32, d * g.scales[j * 4 + r] as f32, -(dmin * g.mins[j * 4 + r] as f32))));
+                }
+                Weight::Q6_Kx4(b) => {
+                    let g = &b[rows[0] / 4 * nk + k];
+                    let mut blk = BlockQ6_K { ql: [0; 128], qh: [0; 64], scales: [0; 16], d: g.d[r] };
+                    for n in 0..2 {
+                        for v in 0..16 {
+                            blk.ql[64 * n + 4 * v..64 * n + 4 * v + 4].copy_from_slice(&g.ql[n * 256 + 16 * v + 4 * r..][..4]);
+                        }
+                        for v in 0..8 {
+                            blk.qh[32 * n + 4 * v..32 * n + 4 * v + 4].copy_from_slice(&g.qh[n * 128 + 16 * v + 4 * r..][..4]);
+                        }
+                    }
+                    for s in 0..16 {
+                        blk.scales[s] = g.scales[s * 4 + r];
+                    }
+                    let d = f16_to_f32(g.d[r]);
+                    fill(o, r, |j| (neon_quant::q6_k_sub(&blk, j), (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)));
                 }
                 _ => unreachable!("unpack_k4 is for K-quants"),
             }
@@ -839,6 +870,26 @@ mod tests {
                             linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);
                             let (_, rel) = max_errors(&one, &want_one[tt * d..(tt + 1) * d]);
                             assert!(rel < bound, "{} {name} token {tt}: rel {rel:.2e}", dir.display());
+                        }
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    if d.is_multiple_of(4) {
+                        let r = match &w {
+                            Weight::Q4_K(b) => Weight::Q4_Kx4(crate::quant::repack_q4_k(b, d)),
+                            Weight::Q6_K(b) => Weight::Q6_Kx4(crate::quant::repack_q6_k(b, d)),
+                            _ => unreachable!(),
+                        };
+                        for p in [None, Some(&pool)] {
+                            let mut all = vec![f32::NAN; t * d];
+                            linear_batch_on(p, &mut all, &x, &r, t);
+                            let (_, rel) = max_errors(&all, &want);
+                            assert!(rel < bound, "{} {name} x4 batch: rel {rel:.2e}", dir.display());
+                            for tt in 0..t {
+                                let mut one = vec![f32::NAN; d];
+                                linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &r);
+                                let (_, rel) = max_errors(&one, &want_one[tt * d..(tt + 1) * d]);
+                                assert!(rel < bound, "{} {name} x4 token {tt}: rel {rel:.2e}", dir.display());
+                            }
                         }
                     }
                 }
