@@ -107,3 +107,62 @@ instruction-level annotation of `dot4_q4_k_q8_0` and `dot4_q6_k_q8_0`
 K0's "done when" is satisfied by this section once it has: per-shape GB/s
 (1 and 6 threads), the ceiling at the same working set, the profile with the
 annotated listing, and the end-to-end `tg64` baseline with conditions.
+
+## K1. Cheap fixes inside the Q8_0 activation format
+
+The activation format is unchanged, so every result is bit-identical: the
+integer sums are the same, only where and how often they are computed
+changes.
+
+### What changed
+
+- **Q4_K's activation sums are computed once per matmul.** `load_xk` used
+  to compute Σ q · d_x for the eight activation blocks of every super-block
+  for every group of four weight rows (16 `vaddlvq` per super-block per
+  group). `neon_quant::sums_qd` now computes the whole vector once, next to
+  `xd`, in `linear_batch_on` / `linear_many_batch_on`, and `dot4_q4_k_q8_0`
+  loads the eight values per super-block. For a 7680-row matrix this removes
+  1919 of every 1920 repetitions of that work.
+- **Q6_K no longer computes the sums at all.** `q6_k_block` never used
+  `XK::sv` (Q6_K has no min term); `load_xk` was still computing it. The
+  field is gone and Q6_K pays nothing.
+- The host path uses `quant::sum_qd` (scalar); the phone path uses
+  `neon_quant::sums_qd` (`vaddlvq_s8`). Both produce the same f32 values.
+
+### Deferred, with reasons
+
+- **Q6_K's FMA chain.** Splitting the eight sub-block FMAs into separate
+  accumulators changes the f32 addition order, so it cannot be bit-identical.
+  `dot4_q6_k_q8_0` already interleaves the block loop over four rows (four
+  independent chains), so the annotated listing has to show whether the
+  remaining 8-deep chain costs anything before it is changed. If it does, it
+  belongs with K2/K3, where results are allowed to move.
+- **Q4_K scale/min decode.** `q4_k_scales_mins` + `u8x8_to_f32` are per row
+  and per super-block; there is no value shared across the four rows. Grouping
+  the four rows' decodes before the row loop is possible but is guesswork
+  without the annotated listing. Deferred to the phone profile.
+
+### Checks
+
+- Host: `cargo check --all-targets` and the three K-quant tests pass
+  (`k_quants_match_gguf`, `k_quant_linear_matches_reference`,
+  `k_quant_mix_with_imatrix_matches_llama_quantize`). The host runs the scalar
+  kernels, so these do not exercise the changed NEON code.
+- Phone: the K-quant tests, PPL unchanged to the digit (LFM3 and Qwen), and
+  `kquant_bench` / `tg64` before and after. See the pending list below.
+
+## Phone checks pending
+
+The phone was not available during implementation. Run these in one session
+when it is back, in this order:
+
+- [ ] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
+- [ ] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
+- [ ] K0: `bench_suite --tg 64`, cooled, battery, caps recorded.
+- [ ] K0: `simpleperf` symbol report + annotated listing of both kernels.
+- [ ] K1: `cargo test --release --target aarch64-linux-android --lib k_quant`.
+- [ ] K1: LFM3 Q4_K_M PPL 20 × 512 unchanged to the digit (24.8822 on the phone).
+- [ ] K1: Qwen2.5-0.5B Q4_K_M PPL unchanged.
+- [ ] K1: `kquant_bench` and `tg64` after, against K0.
+- [ ] K1: annotated listing: did the 16 `vaddlvq` per group disappear, and is
+      `q4_k_scales_mins` / `u8x8_to_f32` visible?

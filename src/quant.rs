@@ -120,6 +120,14 @@ pub fn quantize_q8_0(x: &[f32], out: &mut [BlockQ8_0]) {
     }
 }
 
+/// Σ q · d for each Q8_0 block, as f32: the activation sum that Q4_K's min
+/// term multiplies. The integer sum is exact; the multiply is the same one
+/// the kernels do.
+pub fn sum_qd(x: &[BlockQ8_0], xd: &[f32]) -> Vec<f32> {
+    assert_eq!(x.len(), xd.len(), "one scale per block");
+    x.iter().zip(xd).map(|(b, &d)| b.qs.iter().map(|&q| q as i32).sum::<i32>() as f32 * d).collect()
+}
+
 /// Quantizes `x` (a multiple of 32 long) into Q4_0 blocks.
 pub fn quantize_q4_0(x: &[f32], out: &mut [BlockQ4_0]) {
     assert_eq!(x.len(), out.len() * QK, "length must be blocks × 32");

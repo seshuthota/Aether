@@ -347,13 +347,11 @@ pub unsafe fn dot4_q5_0_q8_0(rows: [&[BlockQ5_0]; 4], x: &[BlockQ8_0], xd: &[f32
 // `dot4`; each sub-block's integer dot is scaled in f32 by `d·sc·d_x`.
 
 /// One activation super-block: 8 Q8_0 blocks as int8 vectors (values 0..16,
-/// 16..32 of each), their scales, and each block's Σ q · d_x (Q4_K's mins
-/// multiply it), the last two also as vectors (blocks 0..4, 4..8).
+/// 16..32 of each) and their scales (blocks 0..4, 4..8).
 struct XK {
     v: [[int8x16_t; 2]; 8],
     d: [f32; 8],
     dv: [float32x4_t; 2],
-    sv: [float32x4_t; 2],
 }
 
 #[inline(always)]
@@ -365,10 +363,24 @@ fn load_xk(x: &[BlockQ8_0; 8], xd: &[f32; 8]) -> XK {
             [vld1q_s8(q), vld1q_s8(q.add(16))]
         });
         let d = *xd;
-        let s: [f32; 8] = std::array::from_fn(|j| (vaddlvq_s8(v[j][0]) as i32 + vaddlvq_s8(v[j][1]) as i32) as f32 * d[j]);
-        let (dv, sv) = ([vld1q_f32(d.as_ptr()), vld1q_f32(d.as_ptr().add(4))], [vld1q_f32(s.as_ptr()), vld1q_f32(s.as_ptr().add(4))]);
-        XK { v, d, dv, sv }
+        let dv = [vld1q_f32(d.as_ptr()), vld1q_f32(d.as_ptr().add(4))];
+        XK { v, d, dv }
     }
+}
+
+/// Σ q · d_x for every Q8_0 block, once per matmul: Q4_K's min term
+/// multiplies it, and computing it here instead of in [`load_xk`] removes
+/// 16 `vaddlvq` per super-block from every group of four rows.
+pub fn sums_qd(x: &[BlockQ8_0], xd: &[f32]) -> Vec<f32> {
+    assert_eq!(x.len(), xd.len(), "one scale per block");
+    x.iter()
+        .zip(xd)
+        .map(|(b, &d)| {
+            // SAFETY: each block holds 32 int8s.
+            let s = unsafe { vaddlvq_s8(vld1q_s8(b.qs.as_ptr())) as i32 + vaddlvq_s8(vld1q_s8(b.qs.as_ptr().add(16))) as i32 };
+            s as f32 * d
+        })
+        .collect()
 }
 
 /// 8 bytes → two float32x4 (bytes 0..4, 4..8).
@@ -385,10 +397,12 @@ fn u8x8_to_f32(b: [u8; 8]) -> [float32x4_t; 2] {
 /// 4..8), with the min term dmin · m · Σx·d_x subtracted. The scales and
 /// mins are decoded all at once ([`q4_k_scales_mins`]); each sub-block's
 /// two `sdot` results are reduced to one lane by pairwise adds, so the
-/// scales apply as two vector FMAs per super-block.
+/// scales apply as two vector FMAs per super-block. `sv` is the activation's
+/// Σ q · d_x for the eight blocks (blocks 0..4, 4..8), computed once per
+/// matmul by [`sums_qd`].
 #[target_feature(enable = "dotprod")]
 #[inline]
-unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, acc: &mut [float32x4_t; 2]) {
+unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, sv: [float32x4_t; 2], acc: &mut [float32x4_t; 2]) {
     let (sc, m) = q4_k_scales_mins(&w.scales);
     let (scf, mf) = (u8x8_to_f32(sc), u8x8_to_f32(m));
     // SAFETY: 128 bytes of nibbles (offsets below 128); register-only ops.
@@ -407,7 +421,7 @@ unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, acc: &mut [float32x4_t; 2]) {
             let r = vpaddq_s32(vpaddq_s32(s[4 * h], s[4 * h + 1]), vpaddq_s32(s[4 * h + 2], s[4 * h + 3]));
             // d·sc·d_x per sub-block, then −dmin·m·Σx·d_x.
             acc[h] = vfmaq_f32(acc[h], vcvtq_f32_s32(r), vmulq_f32(vmulq_f32(d, scf[h]), x.dv[h]));
-            acc[h] = vfmsq_f32(acc[h], vmulq_n_f32(mf[h], dmin), x.sv[h]);
+            acc[h] = vfmsq_f32(acc[h], vmulq_n_f32(mf[h], dmin), sv[h]);
         }
     }
 }
@@ -460,9 +474,10 @@ pub fn dot_q4_k_q8_0(row: &[BlockQ4_K], x: &[BlockQ8_0]) -> f32 {
         return crate::quant::scalar::dot_q4_k_q8_0(row, x);
     }
     let xd = scales_f32(x);
+    let xs = sums_qd(x, &xd);
     // SAFETY: dotprod is present (checked above); 8 activation blocks per
     // super-block (checked above).
-    unsafe { dot4_q4_k_q8_0([row; 4], x, &xd)[0] }
+    unsafe { dot4_q4_k_q8_0([row; 4], x, &xd, &xs)[0] }
 }
 
 /// (b) Q6_K row · Q8_0 x with `sdot`.
@@ -476,20 +491,30 @@ pub fn dot_q6_k_q8_0(row: &[BlockQ6_K], x: &[BlockQ8_0]) -> f32 {
     unsafe { dot4_q6_k_q8_0([row; 4], x, &xd)[0] }
 }
 
-/// Four Q4_K rows · one Q8_0 activation.
+/// Four Q4_K rows · one Q8_0 activation. `xs` is [`sums_qd`] for the whole
+/// activation, computed once per matmul.
 ///
 /// # Safety
 /// The CPU must have `dotprod`; every row must have `x.len() / 8` blocks,
-/// `xd` as many entries as `x`.
+/// `xd` and `xs` as many entries as `x`.
 #[target_feature(enable = "dotprod")]
-pub unsafe fn dot4_q4_k_q8_0(rows: [&[BlockQ4_K]; 4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+pub unsafe fn dot4_q4_k_q8_0(rows: [&[BlockQ4_K]; 4], x: &[BlockQ8_0], xd: &[f32], xs: &[f32]) -> [f32; 4] {
+    assert_eq!(xs.len(), x.len(), "one sum per activation block");
     let mut acc = [[vdupq_n_f32(0.0); 2]; 4];
-    for (b, (xs, ds)) in x.as_chunks::<{ QK_K / QK }>().0.iter().zip(xd.as_chunks::<{ QK_K / QK }>().0).enumerate() {
+    for (b, ((xb, db), sb)) in x
+        .as_chunks::<{ QK_K / QK }>()
+        .0
+        .iter()
+        .zip(xd.as_chunks::<{ QK_K / QK }>().0)
+        .zip(xs.as_chunks::<{ QK_K / QK }>().0)
+        .enumerate()
+    {
         // SAFETY: 8 blocks per chunk; every row has x.len() / 8 blocks.
         unsafe {
-            let xk = load_xk(xs, ds);
+            let xk = load_xk(xb, db);
+            let sv = [vld1q_f32(sb.as_ptr()), vld1q_f32(sb.as_ptr().add(4))];
             for r in 0..4 {
-                q4_k_block(rows[r].get_unchecked(b), &xk, &mut acc[r]);
+                q4_k_block(rows[r].get_unchecked(b), &xk, sv, &mut acc[r]);
             }
         }
     }
