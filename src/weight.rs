@@ -6,7 +6,7 @@
 
 use crate::aligned::AlignedBuf;
 use crate::format::mmap::Mmap;
-use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ8_0, BlockQ8_0x4, QK, QK_K};
+use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ4_Kx4, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ6_Kx4, BlockQ8_0, BlockQ8_0x4, QK, QK_K};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -121,6 +121,12 @@ pub enum Weight {
     Q4_0x4(Vec<BlockQ4_0x4>),
     /// Q5_0 rows repacked four at a time ([`BlockQ5_0x4`]).
     Q5_0x4(Vec<BlockQ5_0x4>),
+    /// Q4_K / Q6_K rows repacked four at a time ([`BlockQ4_Kx4`] /
+    /// [`BlockQ6_Kx4`]) for the lane-per-row `sdot` kernels.
+    #[allow(non_camel_case_types)]
+    Q4_Kx4(Vec<BlockQ4_Kx4>),
+    #[allow(non_camel_case_types)]
+    Q6_Kx4(Vec<BlockQ6_Kx4>),
 }
 
 impl From<AlignedBuf> for Weight {
@@ -178,14 +184,14 @@ impl Weight {
             Weight::Q8_0(_) | Weight::Q8_0x4(_) => Format::Q8_0,
             Weight::Q4_0(_) | Weight::Q4_0x4(_) => Format::Q4_0,
             Weight::Q5_0(_) | Weight::Q5_0x4(_) => Format::Q5_0,
-            Weight::Q4_K(_) | Weight::Q6_K(_) => return None,
+            Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => return None,
         })
     }
 
     /// "row-major", or "4 rows interleaved" for the repacked variants.
     pub fn layout(&self) -> &'static str {
         match self {
-            Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => "4 rows interleaved",
+            Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => "4 rows interleaved",
             _ => "row-major",
         }
     }
@@ -197,8 +203,8 @@ impl Weight {
             Weight::Q8_0(_) | Weight::Q8_0x4(_) => "q8_0",
             Weight::Q4_0(_) | Weight::Q4_0x4(_) => "q4_0",
             Weight::Q5_0(_) | Weight::Q5_0x4(_) => "q5_0",
-            Weight::Q4_K(_) => "q4_k",
-            Weight::Q6_K(_) => "q6_k",
+            Weight::Q4_K(_) | Weight::Q4_Kx4(_) => "q4_k",
+            Weight::Q6_K(_) | Weight::Q6_Kx4(_) => "q6_k",
         }
     }
 
@@ -214,6 +220,8 @@ impl Weight {
             Weight::Q8_0x4(b) => std::mem::size_of_val::<[BlockQ8_0x4]>(b),
             Weight::Q4_0x4(b) => std::mem::size_of_val::<[BlockQ4_0x4]>(b),
             Weight::Q5_0x4(b) => std::mem::size_of_val::<[BlockQ5_0x4]>(b),
+            Weight::Q4_Kx4(b) => std::mem::size_of_val::<[BlockQ4_Kx4]>(b),
+            Weight::Q6_Kx4(b) => std::mem::size_of_val::<[BlockQ6_Kx4]>(b),
         }
     }
 
@@ -256,13 +264,25 @@ impl Weight {
         }
     }
 
-    /// Repacks Q8_0 / Q4_0 / Q5_0 rows of `cols` columns four at a time, for the
-    /// `smmla` kernels, when the row count is a multiple of 4. Anything else
-    /// comes back unchanged. The repacked copy lives on the heap; a mapped
-    /// original's pages are released, so the process does not hold both.
+    /// Repacks quantized rows of `cols` columns four at a time, for the
+    /// lane-per-row `sdot` / `smmla` kernels, when the row count is a
+    /// multiple of 4. Anything else comes back unchanged. The repacked copy
+    /// lives on the heap; a mapped original's pages are released, so the
+    /// process does not hold both.
     pub fn repack(self, cols: usize) -> Weight {
         let rows = |blocks: usize| blocks / (cols / QK);
+        let krows = |blocks: usize| blocks / (cols / QK_K);
         match self {
+            Weight::Q4_K(b) if cols.is_multiple_of(QK_K) && krows(b.len()).is_multiple_of(4) => {
+                let w = Weight::Q4_Kx4(quant::repack_q4_k(&b, krows(b.len())));
+                b.release();
+                w
+            }
+            Weight::Q6_K(b) if cols.is_multiple_of(QK_K) && krows(b.len()).is_multiple_of(4) => {
+                let w = Weight::Q6_Kx4(quant::repack_q6_k(&b, krows(b.len())));
+                b.release();
+                w
+            }
             Weight::Q8_0(b) if rows(b.len()).is_multiple_of(4) => {
                 let w = Weight::Q8_0x4(quant::repack_q8_0(&b, rows(b.len())));
                 b.release();
@@ -295,6 +315,8 @@ impl Weight {
             Weight::Q8_0x4(b) => quant::dequantize_q8_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
             Weight::Q4_0x4(b) => quant::dequantize_q4_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
             Weight::Q5_0x4(b) => quant::dequantize_q5_0x4(&b[i / 4 * cols / QK..(i / 4 + 1) * cols / QK], i % 4, out),
+            Weight::Q4_Kx4(b) => quant::dequantize_q4_kx4(&b[i / 4 * cols / QK_K..(i / 4 + 1) * cols / QK_K], i % 4, out),
+            Weight::Q6_Kx4(b) => quant::dequantize_q6_kx4(&b[i / 4 * cols / QK_K..(i / 4 + 1) * cols / QK_K], i % 4, out),
         }
     }
 }

@@ -1,0 +1,27 @@
+# 2026-11-04T23:31:39+05:30, commit llama.cpp d02b4c0d6
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 80
+# temperature: 369
+# Capacity level: -1
+# cpu0 cap 2400000 kHz
+# cpu6 cap 2438400 kHz
+# max cpu zone (mC) 44900
+# mScreenState=ON
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |            pp64 |        117.91 ± 4.49 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           pp512 |        106.11 ± 9.22 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |            tg64 |         30.54 ± 0.27 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           tg256 |         28.57 ± 0.65 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |     pp64 @ d512 |         48.42 ± 0.51 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |    pp512 @ d512 |         71.09 ± 0.92 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |     tg64 @ d512 |         24.34 ± 0.38 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |    tg256 @ d512 |         21.73 ± 0.61 |
+
+build: d02b4c0d6 (12061)

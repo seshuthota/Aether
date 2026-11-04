@@ -925,7 +925,9 @@ mod tests {
         let scale = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let gap = (l[ours] - l[theirs]) / scale;
         println!("{look:?}: fork at token {d} ({:?} vs {:?}), gap {gap:.2e} of max |logit|", String::from_utf8_lossy(&plain[d]), String::from_utf8_lossy(&spec[d]));
-        assert!(d >= 8 && gap < 2e-2, "fork at token {d}, gap {gap:.2e}");
+        // The index is incidental (K2's Q8_K rounding moved it from 8 to 7
+        // with a 4.6e-4 gap); the gap is what says the fork is a near tie.
+        assert!(gap < 2e-2, "fork at token {d}, gap {gap:.2e}");
     }
 
     /// The GPU's argmax (greedy decoding) is the index the CPU's argmax

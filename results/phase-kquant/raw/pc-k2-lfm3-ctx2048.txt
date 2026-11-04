@@ -1,0 +1,7 @@
+# 2026-11-04T12:18:43+05:30, commit 1d48657
+# target/release/aether testdata/gguf/LFM3-1.7B-Q4_K_M.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --ctx 2048 --chunks 1 --kl --base hostdata/gguf/LFM3-1.7B-BF16.gguf
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 294644 tokens (tokenized in 92 ms), weights q4_k 1091.4 MB
+[1]14.0234,
+Final estimate: PPL = 14.0234 +/- 1.32078  (1023 tokens scored in 4544.2 s)
+PPL(base f32) = 13.5848, PPL(Q)/PPL(base) = 1.032285
+Mean KLD: 0.054800   Same top p: 89.345 %

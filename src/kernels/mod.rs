@@ -16,7 +16,7 @@ pub mod hexagon;
 pub mod vulkan;
 
 use crate::pool::{SharedOut, ThreadPool};
-use crate::quant::{BlockQ8_0, QK};
+use crate::quant::{BlockQ8_0, BlockQ8_K, QK, QK_K};
 use crate::weight::Weight;
 pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, rope_halves_pairs, softmax};
 
@@ -224,10 +224,29 @@ fn quantize_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<B
     q
 }
 
+/// True for the formats whose dot products take Q8_K activations: all
+/// K-quants, row-major or repacked.
+fn needs_q8_k(w: &Weight) -> bool {
+    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_))
+}
+
+/// Quantizes `t` activation vectors to Q8_K (256 values per block), one
+/// token per piece across `pool`. K-quant matrices use these: one f32 scale
+/// per super-block lets their sub-block scales stay in int32.
+fn quantize_q8_k_activations(pool: Option<&ThreadPool>, x: &[f32], t: usize) -> Vec<BlockQ8_K> {
+    let n = x.len() / t;
+    assert!(n.is_multiple_of(QK_K), "a K-quant activation is whole super-blocks");
+    let mut q = vec![BlockQ8_K { d: 0.0, qs: [0; QK_K], bsums: [0; QK_K / 16] }; x.len() / QK_K];
+    crate::pool::par_chunks_mut(pool, &mut q, n / QK_K, &|i, q| {
+        crate::quant::quantize_q8_k(&x[i * n..(i + 1) * n], q);
+    });
+    q
+}
+
 /// One row's dot product with one quantized activation (any CPU).
 #[inline]
-fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
-    let nb = x.len();
+fn dot1(w: &Weight, i: usize, nb: usize, x: &[BlockQ8_0], xk: Option<&[BlockQ8_K]>) -> f32 {
+    let k = || xk.expect("a K-quant row needs Q8_K activations");
     match w {
         #[cfg(target_arch = "aarch64")]
         Weight::Q8_0(b) => neon_quant::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
@@ -236,9 +255,9 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         #[cfg(target_arch = "aarch64")]
         Weight::Q5_0(b) => neon_quant::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(target_arch = "aarch64")]
-        Weight::Q4_K(b) => neon_quant::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q4_K(b) => neon_quant::dot_q4_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(target_arch = "aarch64")]
-        Weight::Q6_K(b) => neon_quant::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q6_K(b) => neon_quant::dot_q6_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q8_0(b) => crate::quant::scalar::dot_q8_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(not(target_arch = "aarch64"))]
@@ -246,11 +265,11 @@ fn dot1(w: &Weight, i: usize, x: &[BlockQ8_0]) -> f32 {
         #[cfg(not(target_arch = "aarch64"))]
         Weight::Q5_0(b) => crate::quant::scalar::dot_q5_0_q8_0(&b[i * nb..(i + 1) * nb], x),
         #[cfg(not(target_arch = "aarch64"))]
-        Weight::Q4_K(b) => crate::quant::scalar::dot_q4_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q4_K(b) => crate::quant::scalar::dot_q4_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         #[cfg(not(target_arch = "aarch64"))]
-        Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_0(&b[i * nb / 8..(i + 1) * nb / 8], x),
+        Weight::Q6_K(b) => crate::quant::scalar::dot_q6_k_q8_k(&b[i * nb / 8..(i + 1) * nb / 8], k()),
         Weight::F32(_) => unreachable!(),
-        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) => unreachable!("repacked rows go four at a time"),
+        Weight::Q8_0x4(_) | Weight::Q4_0x4(_) | Weight::Q5_0x4(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => unreachable!("repacked rows go four at a time"),
     }
 }
 
@@ -267,11 +286,11 @@ fn has_dot4() -> bool {
 /// are handed out in blocks of [`ROW_BLOCK`]).
 #[inline]
 #[allow(unused_variables)]
-fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+fn dot4(w: &Weight, i: usize, nb: usize, x: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>) -> [f32; 4] {
     #[cfg(target_arch = "aarch64")]
     {
-        let nb = x.len();
         let rows = |k: usize| (i + k) * nb..(i + k + 1) * nb;
+        let k = || xk.expect("a K-quant row needs Q8_K activations");
         // SAFETY: callers check has_dot4 (dotprod present); every row slice
         // has nb blocks.
         unsafe {
@@ -279,11 +298,13 @@ fn dot4(w: &Weight, i: usize, x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
                 Weight::Q8_0(b) => neon_quant::dot4_q8_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q4_0(b) => neon_quant::dot4_q4_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
                 Weight::Q5_0(b) => neon_quant::dot4_q5_0_q8_0([0, 1, 2, 3].map(|k| &b[rows(k)]), x, xd),
-                Weight::Q4_K(b) => neon_quant::dot4_q4_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd),
-                Weight::Q6_K(b) => neon_quant::dot4_q6_k_q8_0([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), x, xd),
+                Weight::Q4_K(b) => neon_quant::dot4_q4_k_q8_k([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), k()),
+                Weight::Q6_K(b) => neon_quant::dot4_q6_k_q8_k([0, 1, 2, 3].map(|k| &b[(i + k) * nb / 8..(i + k + 1) * nb / 8]), k()),
                 Weight::Q8_0x4(b) => neon_quant::gemv4_q8_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q4_0x4(b) => neon_quant::gemv4_q4_0x4(&b[group(i, nb)], x, xd),
                 Weight::Q5_0x4(b) => neon_quant::gemv4_q5_0x4(&b[group(i, nb)], x, xd),
+                Weight::Q4_Kx4(b) => neon_quant::dot4_q4_k_q8_k_x4(&b[group(i, nb / 8)], k()),
+                Weight::Q6_Kx4(b) => neon_quant::dot4_q6_k_q8_k_x4(&b[group(i, nb / 8)], k()),
                 Weight::F32(_) => unreachable!(),
             }
         }
@@ -330,7 +351,7 @@ fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neo
             Weight::Q8_0(b) => neon_quant::mmla4_q8_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q4_0(b) => neon_quant::mmla4_q4_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
             Weight::Q5_0(b) => neon_quant::mmla4_q5_0(rows.map(|i| &b[i * nb..(i + 1) * nb]), x),
-            Weight::Q4_K(_) | Weight::Q6_K(_) => unreachable!("K-quants are unpacked first (see unpack_k4)"),
+            Weight::Q4_K(_) | Weight::Q6_K(_) | Weight::Q4_Kx4(_) | Weight::Q6_Kx4(_) => unreachable!("K-quants are unpacked first (see unpack_k4)"),
             Weight::Q8_0x4(b) => neon_quant::mmla4_q8_0x4(&b[group4(rows, nb)], x),
             Weight::Q4_0x4(b) => neon_quant::mmla4_q4_0x4(&b[group4(rows, nb)], x),
             Weight::Q5_0x4(b) => neon_quant::mmla4_q5_0x4(&b[group4(rows, nb)], x),
@@ -343,7 +364,7 @@ fn mmla4<const P: usize>(w: &Weight, rows: [usize; 4], ps: [usize; P], xp: &[neo
 /// at a time ([`unpack_k4`]) instead of calling [`mmla4`].
 #[cfg(target_arch = "aarch64")]
 fn is_k_quant(w: &Weight) -> bool {
-    matches!(w, Weight::Q4_K(_) | Weight::Q6_K(_))
+    needs_q8_k(w)
 }
 
 /// Rows `rows` of a K-quant matrix (rows of `nb` 32-value blocks), unpacked
@@ -351,7 +372,7 @@ fn is_k_quant(w: &Weight) -> bool {
 /// rows, then used for every token.
 #[cfg(target_arch = "aarch64")]
 fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4> {
-    use crate::quant::{QK_K, f16_to_f32, q4_k_scales_mins};
+    use crate::quant::{BlockQ4_K, BlockQ6_K, QK_K, f16_to_f32, q4_k_scales_mins};
     use std::arch::aarch64::{int8x16_t, vget_high_s8, vget_low_s8, vst1_s8};
     // One super-block of row r into its 8 blocks: `sub(j)` gives block j's
     // values and its two half scales and bias.
@@ -386,6 +407,35 @@ fn unpack_k4(w: &Weight, rows: [usize; 4], nb: usize) -> Vec<neon_quant::KBlock4
                     let blk = &b[row * nk + k];
                     let d = f16_to_f32(blk.d);
                     fill(o, r, |j| (neon_quant::q6_k_sub(blk, j), (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)));
+                }
+                Weight::Q4_Kx4(b) => {
+                    let g = &b[rows[0] / 4 * nk + k];
+                    let mut blk = BlockQ4_K { d: g.d[r], dmin: g.dmin[r], scales: [0; 12], qs: [0; 128] };
+                    for c in 0..4 {
+                        for v in 0..8 {
+                            let at = 4 * v;
+                            blk.qs[32 * c + at..32 * c + at + 4].copy_from_slice(&g.qs[128 * c + 16 * v + 4 * r..][..4]);
+                        }
+                    }
+                    let (d, dmin) = (f16_to_f32(g.d[r]), f16_to_f32(g.dmin[r]));
+                    fill(o, r, |j| (neon_quant::q4_k_sub(&blk, j), (d * g.scales[j * 4 + r] as f32, d * g.scales[j * 4 + r] as f32, -(dmin * g.mins[j * 4 + r] as f32))));
+                }
+                Weight::Q6_Kx4(b) => {
+                    let g = &b[rows[0] / 4 * nk + k];
+                    let mut blk = BlockQ6_K { ql: [0; 128], qh: [0; 64], scales: [0; 16], d: g.d[r] };
+                    for n in 0..2 {
+                        for v in 0..16 {
+                            blk.ql[64 * n + 4 * v..64 * n + 4 * v + 4].copy_from_slice(&g.ql[n * 256 + 16 * v + 4 * r..][..4]);
+                        }
+                        for v in 0..8 {
+                            blk.qh[32 * n + 4 * v..32 * n + 4 * v + 4].copy_from_slice(&g.qh[n * 128 + 16 * v + 4 * r..][..4]);
+                        }
+                    }
+                    for s in 0..16 {
+                        blk.scales[s] = g.scales[s * 4 + r];
+                    }
+                    let d = f16_to_f32(g.d[r]);
+                    fill(o, r, |j| (neon_quant::q6_k_sub(&blk, j), (d * blk.scales[2 * j] as f32, d * blk.scales[2 * j + 1] as f32, 0.0)));
                 }
                 _ => unreachable!("unpack_k4 is for K-quants"),
             }
@@ -473,21 +523,25 @@ unsafe fn tile<const P: usize>(out: SharedOut, d: usize, w: &Weight, kb: Option<
 /// # Safety
 /// `out` must be valid for `t·d` floats and no other thread may write
 /// rows `r` of it during the call.
-unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, xq: &[BlockQ8_0], xd: &[f32], t: usize) {
-    let nb = xq.len() / t;
+unsafe fn quant_rows(out: SharedOut, d: usize, r: std::ops::Range<usize>, w: &Weight, n: usize, xq: &[BlockQ8_0], xd: &[f32], xk: Option<&[BlockQ8_K]>, t: usize) {
+    let nb = n / QK;
+    let nbk = n / QK_K;
     let fast = has_dot4();
     let mut i = r.start;
     while i < r.end {
         let step = if fast && i + 4 <= r.end { 4 } else { 1 };
         for tt in 0..t {
-            let (x, s) = (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]);
+            // A K-quant-only matmul has no Q8_0 activation; its kernels read
+            // `xk` and never touch these slices.
+            let (x, s) = if xq.is_empty() { (&[][..], &[][..]) } else { (&xq[tt * nb..(tt + 1) * nb], &xd[tt * nb..(tt + 1) * nb]) };
+            let k = xk.map(|v| &v[tt * nbk..(tt + 1) * nbk]);
             if step == 4 {
-                let v = dot4(w, i, x, s);
+                let v = dot4(w, i, nb, x, s, k);
                 // SAFETY: elements (tt, i..i+4) lie in this call's rows.
                 (0..4).for_each(|k| unsafe { *out.ptr().add(tt * d + i + k) = v[k] });
             } else {
                 // SAFETY: element (tt, i) lies in this call's rows.
-                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, x) };
+                unsafe { *out.ptr().add(tt * d + i) = dot1(w, i, nb, x, k) };
             }
         }
         i += step;
@@ -501,12 +555,24 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
     let (n, d) = (x.len() / t.max(1), out.len() / t.max(1));
     let Weight::F32(f) = w else {
         assert_eq!((x.len(), out.len()), (t * n, t * d), "shapes");
-        let xq = quantize_activations(pool, x, t);
-        // The activation's scales as f32, converted once rather than per row.
-        let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+        #[cfg(target_arch = "aarch64")]
+        let mmla = t > 1 && has_mmla();
+        #[cfg(not(target_arch = "aarch64"))]
+        let mmla = false;
+        // A K-quant-only product needs Q8_K, not Q8_0; the `smmla` prefill
+        // path is the exception (it still uses Q8_0 activation pairs).
+        let need_q8_0 = mmla || !needs_q8_k(w);
+        let (xq, xd) = if need_q8_0 {
+            let xq = quantize_activations(pool, x, t);
+            // The activation's scales as f32, converted once rather than per row.
+            let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+            (xq, xd)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let o = SharedOut(out.as_mut_ptr());
         #[cfg(target_arch = "aarch64")]
-        if t > 1 && has_mmla() {
+        if mmla {
             let xp = neon_quant::interleave_pairs(pool, &xq, &xd, t);
             match pool.filter(|p| p.threads() > 1) {
                 // SAFETY: each thread writes only its own rows of `out`.
@@ -516,11 +582,12 @@ pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w:
             }
             return;
         }
+        let xk = needs_q8_k(w).then(|| quantize_q8_k_activations(pool, x, t));
         match pool.filter(|p| p.threads() > 1) {
             // SAFETY: each thread writes only its own rows of `out`.
-            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, &xq, &xd, t) }),
+            Some(p) => p.for_blocks(d, crate::pool::block_size(d, p.threads(), ROW_BLOCK), &|r| unsafe { quant_rows(o, d, r, w, n, &xq, &xd, xk.as_deref(), t) }),
             // SAFETY: single thread, all rows.
-            None => unsafe { quant_rows(o, d, 0..d, w, &xq, &xd, t) },
+            None => unsafe { quant_rows(o, d, 0..d, w, n, &xq, &xd, xk.as_deref(), t) },
         }
         return;
     };
@@ -543,10 +610,27 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
         return;
     }
     let p = p.unwrap();
-    let xq = quantize_activations(pool, x, t);
-    let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+    let n = x.len() / t;
     #[cfg(target_arch = "aarch64")]
-    let xp = (t > 1 && has_mmla()).then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
+    let mmla = t > 1 && has_mmla();
+    #[cfg(not(target_arch = "aarch64"))]
+    let mmla = false;
+    // Q8_0 is needed only for a non-K-quant matrix or the `smmla` prefill
+    // path; an all-K decode group quantizes Q8_K alone.
+    let need_q8_0 = mmla || ws.iter().any(|w| !needs_q8_k(w));
+    let (xq, xd) = if need_q8_0 {
+        let xq = quantize_activations(pool, x, t);
+        let xd: Vec<f32> = xq.iter().map(|b| crate::quant::f16_to_f32(b.d)).collect();
+        (xq, xd)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    #[cfg(target_arch = "aarch64")]
+    let xp = mmla.then(|| neon_quant::interleave_pairs(pool, &xq, &xd, t));
+    #[cfg(target_arch = "aarch64")]
+    let xk = (!mmla && ws.iter().any(|w| needs_q8_k(w))).then(|| quantize_q8_k_activations(pool, x, t));
+    #[cfg(not(target_arch = "aarch64"))]
+    let xk = ws.iter().any(|w| needs_q8_k(w)).then(|| quantize_q8_k_activations(pool, x, t));
     let total: usize = outs.iter().map(|o| o.len() / t).sum();
     let block = crate::pool::block_size(total, p.threads(), ROW_BLOCK);
     // (matrix, rows) pieces, each at most `block` rows, aligned within its
@@ -571,7 +655,7 @@ pub fn linear_many_batch_on(pool: Option<&ThreadPool>, outs: &mut [&mut [f32]], 
                 continue;
             }
             // SAFETY: as above.
-            unsafe { quant_rows(o, d, rows, ws[k], &xq, &xd, t) }
+            unsafe { quant_rows(o, d, rows, ws[k], n, &xq, &xd, xk.as_deref(), t) }
         }
     });
 }
@@ -777,9 +861,11 @@ mod tests {
     }
 
     /// K-quant matrices (random blocks, decoded by gguf) through the
-    /// model's path: one token at a time (`sdot`) and all `t` at once
-    /// (`smmla` on rows unpacked per group, where i8mm exists), on one and
-    /// three threads, against the float64 "b" reference.
+    /// model's path: one token at a time (Q8_K, `sdot`) and all `t` at once
+    /// (Q8_0 with `smmla` on rows unpacked per group, where i8mm exists;
+    /// Q8_K otherwise), on one and three threads. The decode reference is
+    /// always the float64 "k" one; the batched reference is "b" only on the
+    /// `smmla` path.
     #[test]
     fn k_quant_linear_matches_reference() {
         use crate::quant::blocks_from_bytes;
@@ -791,9 +877,14 @@ mod tests {
             for dir in std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()) {
                 let (xs, x) = read_npy(&dir.join("x.npy"));
                 let (t, n) = (xs[0], xs[1]);
+                #[cfg(target_arch = "aarch64")]
+                let prefill_q8_0 = t > 1 && has_mmla();
+                #[cfg(not(target_arch = "aarch64"))]
+                let prefill_q8_0 = false;
                 let bytes = |name: &str| std::fs::read(dir.join(format!("w_{name}.bin"))).unwrap();
                 for (name, w) in [("q4_k", Weight::Q4_K(Store::Owned(blocks_from_bytes(&bytes("q4_k"))))), ("q6_k", Weight::Q6_K(Store::Owned(blocks_from_bytes(&bytes("q6_k")))))] {
-                    let want = arr(&dir, &format!("out_{name}_b"));
+                    let want = arr(&dir, &format!("out_{name}_{}", if prefill_q8_0 { "b" } else { "k" }));
+                    let want_one = arr(&dir, &format!("out_{name}_k"));
                     let d = want.len() / t;
                     let bound = 1e-6 * (n as f32).sqrt();
                     let mut first = None;
@@ -808,8 +899,28 @@ mod tests {
                         for tt in 0..t {
                             let mut one = vec![f32::NAN; d];
                             linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);
-                            let (_, rel) = max_errors(&one, &want[tt * d..(tt + 1) * d]);
+                            let (_, rel) = max_errors(&one, &want_one[tt * d..(tt + 1) * d]);
                             assert!(rel < bound, "{} {name} token {tt}: rel {rel:.2e}", dir.display());
+                        }
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    if d.is_multiple_of(4) {
+                        let r = match &w {
+                            Weight::Q4_K(b) => Weight::Q4_Kx4(crate::quant::repack_q4_k(b, d)),
+                            Weight::Q6_K(b) => Weight::Q6_Kx4(crate::quant::repack_q6_k(b, d)),
+                            _ => unreachable!(),
+                        };
+                        for p in [None, Some(&pool)] {
+                            let mut all = vec![f32::NAN; t * d];
+                            linear_batch_on(p, &mut all, &x, &r, t);
+                            let (_, rel) = max_errors(&all, &want);
+                            assert!(rel < bound, "{} {name} x4 batch: rel {rel:.2e}", dir.display());
+                            for tt in 0..t {
+                                let mut one = vec![f32::NAN; d];
+                                linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &r);
+                                let (_, rel) = max_errors(&one, &want_one[tt * d..(tt + 1) * d]);
+                                assert!(rel < bound, "{} {name} x4 token {tt}: rel {rel:.2e}", dir.display());
+                            }
                         }
                     }
                 }

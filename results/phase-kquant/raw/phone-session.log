@@ -1,0 +1,43 @@
+/home/curious/.cache/aether-kquant-phone/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 460.2 MB/s (12141632 bytes in 0.025s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.
+/data/local/tmp/aether/perf.data: 1 file pulled, 0 skipped. 4.4 MB/s (15370474 bytes in 3.331s)
+>>> k0-profile
+>>> k1-tests
+>>> k1-ppl-lfm3
+>>> k1-ppl-qwen
+>>> k1-bench
+>>> k1-tg64
+/home/curious/.cache/aether-kquant-phone/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 241.6 MB/s (12172072 bytes in 0.048s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.
+/data/local/tmp/aether/perf.data: 1 file pulled, 0 skipped. 0.3 MB/s (15128114 bytes in 43.176s)
+>>> k1-profile
+>>> k2-ppl-lfm3
+>>> k2-ppl-lfm3-ctx2048
+>>> k2-ppl-qwen
+>>> k2-bench
+>>> k2-tg64
+>>> lane-before-r1
+>>> lane-after-r1
+>>> lane-before-r2
+>>> lane-after-r2
+>>> tip-tests
+>>> tip-ppl-lfm3
+>>> tip-ppl-qwen
+>>> tip-bench
+>>> tip-tg64
+/home/curious/.cache/aether-kquant-phone/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 462.3 MB/s (12348328 bytes in 0.025s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.
+/data/local/tmp/aether/perf.data: 1 file pulled, 0 skipped. 2.2 MB/s (11133906 bytes in 4.811s)
+>>> tip-profile
+/home/curious/llama.cpp/build-android/bin/llama-bench: 1 file pushed, 0 skipped. 12.1 MB/s (136383736 bytes in 10.759s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.
+>>> k5-ours-r1
+>>> k5-llama-r1
+>>> k5-llama-r2
+>>> k5-ours-r2
+/home/curious/llama.cpp/build-android/bin/llama-bench: 1 file pushed, 0 skipped. 12.8 MB/s (136383736 bytes in 10.167s)
+/home/curious/Documents/hermes-projects/Aether-next/testdata/gguf/gemma-4-E2B-it-Q4_0.gguf: 1 file pushed, 0 skipped. 3.5 MB/s (2841481184 bytes in 781.717s)
+>>> gemma-gemma-4-E2B-it-Q4_0
+/home/curious/Documents/hermes-projects/Aether-next/testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf: 1 file pushed, 0 skipped. 3.3 MB/s (3106738272 bytes in 900.025s)
+>>> gemma-gemma-4-E2B-it-Q4_K_M
+done: /home/curious/Documents/hermes-projects/Aether-impl/results/phase-kquant/raw/phone

@@ -15,7 +15,7 @@
 //! two rows × two tokens per instruction, in tiles of four rows × four
 //! tokens.
 
-use crate::quant::{BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ8_0, BlockQ8_0x4, QK, QK_K, f16_to_f32, q4_k_scales_mins};
+use crate::quant::{BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ4_Kx4, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ6_Kx4, BlockQ8_0, BlockQ8_0x4, BlockQ8_K, QK, f16_to_f32, q4_k_scales_mins};
 use std::arch::aarch64::*;
 
 /// 8 int8 → two float32x4.
@@ -340,75 +340,63 @@ pub unsafe fn dot4_q5_0_q8_0(rows: [&[BlockQ5_0]; 4], x: &[BlockQ8_0], xd: &[f32
     acc.map(|a| vaddvq_f32(a))
 }
 
-// --- K-quants (`sdot`) ---------------------------------------------------
+// --- K-quants with Q8_K (`sdot`) ---------------------------------------
 //
-// A 256-weight super-block meets 8 Q8_0 activation blocks. The activation
-// side ([`XK`]) is loaded once per super-block and shared by the rows of a
-// `dot4`; each sub-block's integer dot is scaled in f32 by `d·sc·d_x`.
+// One Q8_K activation block covers a whole 256-weight super-block: a single
+// f32 scale and the sums of each 16 values. A Q4_K sub-block's scale and min
+// therefore apply in int32, and the float work is one convert and two FMAs
+// per super-block per row instead of one per 32 values.
 
-/// One activation super-block: 8 Q8_0 blocks as int8 vectors (values 0..16,
-/// 16..32 of each), their scales, and each block's Σ q · d_x (Q4_K's mins
-/// multiply it), the last two also as vectors (blocks 0..4, 4..8).
-struct XK {
+/// One Q8_K activation block: 256 int8 values as 16 vectors, the f32 scale,
+/// and the sums of each 16 values.
+struct XKK {
     v: [[int8x16_t; 2]; 8],
-    d: [f32; 8],
-    dv: [float32x4_t; 2],
-    sv: [float32x4_t; 2],
+    d: f32,
+    bsums: [i16; 16],
 }
 
 #[inline(always)]
-fn load_xk(x: &[BlockQ8_0; 8], xd: &[f32; 8]) -> XK {
-    // SAFETY: each block holds 32 int8s.
+fn load_xkk(x: &BlockQ8_K) -> XKK {
+    // SAFETY: the block holds 256 int8s.
     unsafe {
         let v: [[int8x16_t; 2]; 8] = std::array::from_fn(|j| {
-            let q = x[j].qs.as_ptr();
+            let q = x.qs.as_ptr().add(32 * j);
             [vld1q_s8(q), vld1q_s8(q.add(16))]
         });
-        let d = *xd;
-        let s: [f32; 8] = std::array::from_fn(|j| (vaddlvq_s8(v[j][0]) as i32 + vaddlvq_s8(v[j][1]) as i32) as f32 * d[j]);
-        let (dv, sv) = ([vld1q_f32(d.as_ptr()), vld1q_f32(d.as_ptr().add(4))], [vld1q_f32(s.as_ptr()), vld1q_f32(s.as_ptr().add(4))]);
-        XK { v, d, dv, sv }
+        XKK { v, d: x.d, bsums: x.bsums }
     }
 }
 
-/// 8 bytes → two float32x4 (bytes 0..4, 4..8).
-#[inline(always)]
-fn u8x8_to_f32(b: [u8; 8]) -> [float32x4_t; 2] {
-    // SAFETY: register-only NEON ops after loading 8 bytes.
-    unsafe {
-        let w = vmovl_u8(vld1_u8(b.as_ptr()));
-        [vcvtq_f32_u32(vmovl_u16(vget_low_u16(w))), vcvtq_f32_u32(vmovl_u16(vget_high_u16(w)))]
-    }
-}
-
-/// One Q4_K super-block · `x`, added into `acc` (lanes: sub-blocks 0..4 and
-/// 4..8), with the min term dmin · m · Σx·d_x subtracted. The scales and
-/// mins are decoded all at once ([`q4_k_scales_mins`]); each sub-block's
-/// two `sdot` results are reduced to one lane by pairwise adds, so the
-/// scales apply as two vector FMAs per super-block.
+/// One Q4_K super-block · `x`, added into `acc`. The eight sub-blocks'
+/// `sdot` sums are scaled by their 6-bit scales in int32; the min term is
+/// `bsums · mins` with `vmlal_s16`; the result converts once. The scales
+/// and mins are decoded all at once ([`q4_k_scales_mins`]).
 #[target_feature(enable = "dotprod")]
 #[inline]
-unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, acc: &mut [float32x4_t; 2]) {
+unsafe fn q4_k_block_q8_k(w: &BlockQ4_K, x: &XKK, acc: &mut float32x4_t) {
     let (sc, m) = q4_k_scales_mins(&w.scales);
-    let (scf, mf) = (u8x8_to_f32(sc), u8x8_to_f32(m));
     // SAFETY: 128 bytes of nibbles (offsets below 128); register-only ops.
     unsafe {
-        let (d, dmin) = (vdupq_n_f32(f16_to_f32(w.d)), f16_to_f32(w.dmin));
+        let m16 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(m.as_ptr())));
         let (m4, z) = (vdupq_n_u8(0x0F), vdupq_n_s32(0));
-        // s[j]: sub-block j's integer dot, as four partial sums.
-        let mut s = [z; 8];
+        // Each sub-block's two `sdot`s stay in int32; `sc[j]` scales them.
+        let mut sumi = z;
         for c in 0..4 {
             let (a, b) = (vld1q_u8(w.qs.as_ptr().add(32 * c)), vld1q_u8(w.qs.as_ptr().add(32 * c + 16)));
             let (j0, j1) = (2 * c, 2 * c + 1);
-            s[j0] = vdotq_s32(vdotq_s32(z, vreinterpretq_s8_u8(vandq_u8(a, m4)), x.v[j0][0]), vreinterpretq_s8_u8(vandq_u8(b, m4)), x.v[j0][1]);
-            s[j1] = vdotq_s32(vdotq_s32(z, vreinterpretq_s8_u8(vshrq_n_u8(a, 4)), x.v[j1][0]), vreinterpretq_s8_u8(vshrq_n_u8(b, 4)), x.v[j1][1]);
+            let s0 = vdotq_s32(vdotq_s32(z, vreinterpretq_s8_u8(vandq_u8(a, m4)), x.v[j0][0]), vreinterpretq_s8_u8(vandq_u8(b, m4)), x.v[j0][1]);
+            let s1 = vdotq_s32(vdotq_s32(z, vreinterpretq_s8_u8(vshrq_n_u8(a, 4)), x.v[j1][0]), vreinterpretq_s8_u8(vshrq_n_u8(b, 4)), x.v[j1][1]);
+            sumi = vmlaq_n_s32(sumi, s0, sc[j0] as i32);
+            sumi = vmlaq_n_s32(sumi, s1, sc[j1] as i32);
         }
-        for h in 0..2 {
-            let r = vpaddq_s32(vpaddq_s32(s[4 * h], s[4 * h + 1]), vpaddq_s32(s[4 * h + 2], s[4 * h + 3]));
-            // d·sc·d_x per sub-block, then −dmin·m·Σx·d_x.
-            acc[h] = vfmaq_f32(acc[h], vcvtq_f32_s32(r), vmulq_f32(vmulq_f32(d, scf[h]), x.dv[h]));
-            acc[h] = vfmsq_f32(acc[h], vmulq_n_f32(mf[h], dmin), x.sv[h]);
-        }
+        // bsums[2j] + bsums[2j + 1] is the sum of sub-block j's 32 values.
+        let b32 = vpaddq_s16(vld1q_s16(x.bsums.as_ptr()), vld1q_s16(x.bsums.as_ptr().add(8)));
+        let mut sumi_mins = z;
+        sumi_mins = vmlal_s16(sumi_mins, vget_low_s16(b32), vget_low_s16(m16));
+        sumi_mins = vmlal_s16(sumi_mins, vget_high_s16(b32), vget_high_s16(m16));
+        let (d, dmin) = (vdupq_n_f32(f16_to_f32(w.d) * x.d), vdupq_n_f32(f16_to_f32(w.dmin) * x.d));
+        *acc = vfmaq_f32(*acc, vcvtq_f32_s32(sumi), d);
+        *acc = vfmsq_f32(*acc, vcvtq_f32_s32(sumi_mins), dmin);
     }
 }
 
@@ -418,11 +406,14 @@ unsafe fn q4_k_block(w: &BlockQ4_K, x: &XK, acc: &mut [float32x4_t; 2]) {
 /// complement is `q` with bit 5 flipped, so the two high bits (from `qh`,
 /// with every pair's upper bit flipped once by XOR 0xAA) go to bits 6..7 and
 /// `sri #2` inserts the nibble, held at bits 4..7, below them. Three
-/// instructions per vector; the 4 comes out in the float scale.
+/// instructions per vector; the 4 comes out in the float scale. The 16
+/// sub-block sums are scaled by their int8 scales in int32 and converted
+/// once per super-block.
 #[target_feature(enable = "dotprod")]
 #[inline]
-unsafe fn q6_k_block(w: &BlockQ6_K, x: &XK, acc: &mut float32x4_t) {
-    let d = f16_to_f32(w.d) * 0.25;
+unsafe fn q6_k_block_q8_k(w: &BlockQ6_K, x: &XKK, acc: &mut float32x4_t) {
+    let d = f16_to_f32(w.d) * 0.25 * x.d;
+    let mut sumi = vdupq_n_s32(0);
     for n in 0..2 {
         // SAFETY: ql holds 128 bytes and qh 64; n < 2 keeps every 16-byte
         // load inside them (64n + 48 + 16 <= 128, 32n + 16 + 16 <= 64).
@@ -441,78 +432,207 @@ unsafe fn q6_k_block(w: &BlockQ6_K, x: &XK, acc: &mut float32x4_t) {
                 let z = vdupq_n_s32(0);
                 let s = vmulq_n_s32(vdotq_s32(z, q(0), x.v[j][0]), w.scales[2 * j] as i32);
                 let s = vmlaq_n_s32(s, vdotq_s32(z, q(1), x.v[j][1]), w.scales[2 * j + 1] as i32);
-                *acc = vfmaq_n_f32(*acc, vcvtq_f32_s32(s), d * x.d[j]);
+                sumi = vaddq_s32(sumi, s);
             }
         }
     }
+    *acc = vfmaq_n_f32(*acc, vcvtq_f32_s32(sumi), d);
 }
 
-/// The activation's block scales as f32 (the single-row dots get only the
-/// blocks).
-fn scales_f32(x: &[BlockQ8_0]) -> Vec<f32> {
-    x.iter().map(|b| f16_to_f32(b.d)).collect()
-}
-
-/// (b) Q4_K row · Q8_0 x with `sdot`.
-pub fn dot_q4_k_q8_0(row: &[BlockQ4_K], x: &[BlockQ8_0]) -> f32 {
-    assert_eq!(row.len() * (QK_K / QK), x.len());
+/// (b) Q4_K row · Q8_K x with `sdot`.
+pub fn dot_q4_k_q8_k(row: &[BlockQ4_K], x: &[BlockQ8_K]) -> f32 {
+    assert_eq!(row.len(), x.len());
     if !has_dotprod() {
-        return crate::quant::scalar::dot_q4_k_q8_0(row, x);
+        return crate::quant::scalar::dot_q4_k_q8_k(row, x);
     }
-    let xd = scales_f32(x);
-    // SAFETY: dotprod is present (checked above); 8 activation blocks per
-    // super-block (checked above).
-    unsafe { dot4_q4_k_q8_0([row; 4], x, &xd)[0] }
+    // SAFETY: dotprod is present (checked above); one block per super-block.
+    unsafe { dot4_q4_k_q8_k([row; 4], x)[0] }
 }
 
-/// (b) Q6_K row · Q8_0 x with `sdot`.
-pub fn dot_q6_k_q8_0(row: &[BlockQ6_K], x: &[BlockQ8_0]) -> f32 {
-    assert_eq!(row.len() * (QK_K / QK), x.len());
+/// (b) Q6_K row · Q8_K x with `sdot`.
+pub fn dot_q6_k_q8_k(row: &[BlockQ6_K], x: &[BlockQ8_K]) -> f32 {
+    assert_eq!(row.len(), x.len());
     if !has_dotprod() {
-        return crate::quant::scalar::dot_q6_k_q8_0(row, x);
+        return crate::quant::scalar::dot_q6_k_q8_k(row, x);
     }
-    let xd = scales_f32(x);
-    // SAFETY: as in dot_q4_k_q8_0.
-    unsafe { dot4_q6_k_q8_0([row; 4], x, &xd)[0] }
+    // SAFETY: as in dot_q4_k_q8_k.
+    unsafe { dot4_q6_k_q8_k([row; 4], x)[0] }
 }
 
-/// Four Q4_K rows · one Q8_0 activation.
+/// Four Q4_K rows · one Q8_K activation.
 ///
 /// # Safety
-/// The CPU must have `dotprod`; every row must have `x.len() / 8` blocks,
-/// `xd` as many entries as `x`.
+/// The CPU must have `dotprod`; every row must have `x.len()` blocks.
 #[target_feature(enable = "dotprod")]
-pub unsafe fn dot4_q4_k_q8_0(rows: [&[BlockQ4_K]; 4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
-    let mut acc = [[vdupq_n_f32(0.0); 2]; 4];
-    for (b, (xs, ds)) in x.as_chunks::<{ QK_K / QK }>().0.iter().zip(xd.as_chunks::<{ QK_K / QK }>().0).enumerate() {
-        // SAFETY: 8 blocks per chunk; every row has x.len() / 8 blocks.
-        unsafe {
-            let xk = load_xk(xs, ds);
-            for r in 0..4 {
-                q4_k_block(rows[r].get_unchecked(b), &xk, &mut acc[r]);
-            }
-        }
-    }
-    acc.map(|a| vaddvq_f32(vaddq_f32(a[0], a[1])))
-}
-
-/// Four Q6_K rows · one Q8_0 activation.
-///
-/// # Safety
-/// As for [`dot4_q4_k_q8_0`].
-#[target_feature(enable = "dotprod")]
-pub unsafe fn dot4_q6_k_q8_0(rows: [&[BlockQ6_K]; 4], x: &[BlockQ8_0], xd: &[f32]) -> [f32; 4] {
+pub unsafe fn dot4_q4_k_q8_k(rows: [&[BlockQ4_K]; 4], x: &[BlockQ8_K]) -> [f32; 4] {
     let mut acc = [vdupq_n_f32(0.0); 4];
-    for (b, (xs, ds)) in x.as_chunks::<{ QK_K / QK }>().0.iter().zip(xd.as_chunks::<{ QK_K / QK }>().0).enumerate() {
-        // SAFETY: 8 blocks per chunk; every row has x.len() / 8 blocks.
+    for (b, xb) in x.iter().enumerate() {
+        // SAFETY: every row has x.len() blocks; dotprod checked by the caller.
         unsafe {
-            let xk = load_xk(xs, ds);
+            let xk = load_xkk(xb);
             for r in 0..4 {
-                q6_k_block(rows[r].get_unchecked(b), &xk, &mut acc[r]);
+                q4_k_block_q8_k(rows[r].get_unchecked(b), &xk, &mut acc[r]);
             }
         }
     }
     acc.map(|a| vaddvq_f32(a))
+}
+
+/// Four Q6_K rows · one Q8_K activation.
+///
+/// # Safety
+/// As for [`dot4_q4_k_q8_k`].
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q6_k_q8_k(rows: [&[BlockQ6_K]; 4], x: &[BlockQ8_K]) -> [f32; 4] {
+    let mut acc = [vdupq_n_f32(0.0); 4];
+    for (b, xb) in x.iter().enumerate() {
+        // SAFETY: every row has x.len() blocks; dotprod checked by the caller.
+        unsafe {
+            let xk = load_xkk(xb);
+            for r in 0..4 {
+                q6_k_block_q8_k(rows[r].get_unchecked(b), &xk, &mut acc[r]);
+            }
+        }
+    }
+    acc.map(|a| vaddvq_f32(a))
+}
+
+/// Four `u8` values → int32x4 (the repacked K scales and mins).
+#[inline(always)]
+unsafe fn u8x4_to_s32(p: &[u8]) -> int32x4_t {
+    // SAFETY: p holds four bytes.
+    unsafe { vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vld1_u8(p.as_ptr()))))) }
+}
+
+/// Four `i8` values → int32x4 (Q6_K's sub-block scales).
+#[inline(always)]
+unsafe fn i8x4_to_s32(p: &[i8]) -> int32x4_t {
+    // SAFETY: p holds four bytes.
+    unsafe { vmovl_s16(vget_low_s16(vmovl_s8(vld1_s8(p.as_ptr())))) }
+}
+
+/// Four repacked Q4_K rows · one Q8_K activation. Each `sdot` lane is one
+/// row, so the result needs no horizontal reduction: the four lanes of `acc`
+/// are the four rows.
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group` and `x` must have the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+    assert_eq!(group.len(), x.len());
+    let mut acc = vdupq_n_f32(0.0);
+    for (g, xb) in group.iter().zip(x) {
+        // SAFETY: group and x have the same length; register-only ops.
+        unsafe {
+            let (m4, z) = (vdupq_n_u8(0x0F), vdupq_n_s32(0));
+            let mut sumi = z;
+            for c in 0..4 {
+                let (j0, j1) = (2 * c, 2 * c + 1);
+                let (sc0, sc1) = (u8x4_to_s32(&g.scales[j0 * 4..]), u8x4_to_s32(&g.scales[j1 * 4..]));
+                let (mut s0, mut s1) = (z, z);
+                // 16 activation bytes hold four 4-value chunks; lane v of
+                // `vdotq_laneq_s32` is chunk v, so one load serves four
+                // `sdot`s.
+                macro_rules! dot {
+                    ($lane:literal, $q:expr, $x:expr, $y:expr) => {{
+                        let q = $q;
+                        s0 = vdotq_laneq_s32::<$lane>(s0, vreinterpretq_s8_u8(vandq_u8(q, m4)), $x);
+                        s1 = vdotq_laneq_s32::<$lane>(s1, vreinterpretq_s8_u8(vshrq_n_u8(q, 4)), $y);
+                    }};
+                }
+                let x0 = vld1q_s8(xb.qs.as_ptr().add(32 * j0));
+                let x1 = vld1q_s8(xb.qs.as_ptr().add(32 * j0 + 16));
+                let y0 = vld1q_s8(xb.qs.as_ptr().add(32 * j1));
+                let y1 = vld1q_s8(xb.qs.as_ptr().add(32 * j1 + 16));
+                let qp = g.qs.as_ptr().add(128 * c);
+                dot!(0, vld1q_u8(qp), x0, y0);
+                dot!(1, vld1q_u8(qp.add(16)), x0, y0);
+                dot!(2, vld1q_u8(qp.add(32)), x0, y0);
+                dot!(3, vld1q_u8(qp.add(48)), x0, y0);
+                dot!(0, vld1q_u8(qp.add(64)), x1, y1);
+                dot!(1, vld1q_u8(qp.add(80)), x1, y1);
+                dot!(2, vld1q_u8(qp.add(96)), x1, y1);
+                dot!(3, vld1q_u8(qp.add(112)), x1, y1);
+                sumi = vmlaq_s32(sumi, s0, sc0);
+                sumi = vmlaq_s32(sumi, s1, sc1);
+            }
+            let mut minsum = z;
+            for j in 0..8 {
+                let b = xb.bsums[2 * j] as i32 + xb.bsums[2 * j + 1] as i32;
+                minsum = vmlaq_n_s32(minsum, u8x4_to_s32(&g.mins[j * 4..]), b);
+            }
+            let d = vmulq_n_f32(f16x4_to_f32(g.d), xb.d);
+            let dmin = vmulq_n_f32(f16x4_to_f32(g.dmin), xb.d);
+            acc = vfmaq_f32(acc, vcvtq_f32_s32(sumi), d);
+            acc = vfmsq_f32(acc, vcvtq_f32_s32(minsum), dmin);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: out holds four floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), acc) };
+    out
+}
+
+/// Four repacked Q6_K rows · one Q8_K activation. As the Q4_K version, each
+/// `sdot` lane is one row. The values are built as the int8 4·(q − 32) with
+/// the same nibble/`sri` construction as [`q6_k_block_q8_k`], including the
+/// 0xAA flip of each `qh` pair's upper bit.
+///
+/// Each `ql` and `qh` vector is loaded once per super-block: per half `n`
+/// and `qh` block `h`, four `qh` vectors and the `ql` vectors `h..h+4` (`a`)
+/// and `h+8..h+12` (`b`) give four sub-blocks, `t` = `h/4` + 0 / 2 / 4 / 6 =
+/// low `a` / low `b` / high `a` / high `b`, with `qh`'s 2-bit field k = 0..3.
+///
+/// # Safety
+/// The CPU must have `dotprod`; `group` and `x` must have the same length.
+#[target_feature(enable = "dotprod")]
+pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32; 4] {
+    assert_eq!(group.len(), x.len());
+    let mut acc = vdupq_n_f32(0.0);
+    for (g, xb) in group.iter().zip(x) {
+        // SAFETY: group and x have the same length; register-only ops.
+        unsafe {
+            let (flip, hi4) = (vdupq_n_u8(0xAA), vdupq_n_u8(0xF0));
+            let mut sumi = vdupq_n_s32(0);
+            for n in 0..2 {
+                // One 16-byte activation load holds a sub-block's four
+                // 4-value chunks; lane j of `vdotq_laneq_s32` is chunk j.
+                macro_rules! sub {
+                    ($t:expr, $j:ident => $q:expr) => {{
+                        let s = 8 * n + $t;
+                        let xa = vld1q_s8(xb.qs.as_ptr().add(16 * s));
+                        let mut s16 = vdupq_n_s32(0);
+                        { let $j = 0; s16 = vdotq_laneq_s32::<0>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 1; s16 = vdotq_laneq_s32::<1>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 2; s16 = vdotq_laneq_s32::<2>(s16, vreinterpretq_s8_u8($q), xa); }
+                        { let $j = 3; s16 = vdotq_laneq_s32::<3>(s16, vreinterpretq_s8_u8($q), xa); }
+                        sumi = vmlaq_s32(sumi, s16, i8x4_to_s32(&g.scales[s * 4..]));
+                    }};
+                }
+                for h in [0, 4] {
+                    let z = vdupq_n_u8(0);
+                    let (mut qh, mut a, mut b) = ([z; 4], [z; 4], [z; 4]);
+                    for j in 0..4 {
+                        qh[j] = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * (h + j))), flip);
+                        a[j] = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (h + j)));
+                        b[j] = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (h + 8 + j)));
+                    }
+                    let t = h / 4;
+                    sub!(t, j => sri2(vshlq_n_u8::<6>(qh[j]), vshlq_n_u8::<4>(a[j])));
+                    sub!(t + 2, j => sri2(vshlq_n_u8::<4>(qh[j]), vshlq_n_u8::<4>(b[j])));
+                    sub!(t + 4, j => sri2(vshlq_n_u8::<2>(qh[j]), vandq_u8(a[j], hi4)));
+                    sub!(t + 6, j => sri2(qh[j], vandq_u8(b[j], hi4)));
+                }
+            }
+            let d = vmulq_n_f32(f16x4_to_f32(g.d), 0.25);
+            let d = vmulq_n_f32(d, xb.d);
+            acc = vfmaq_f32(acc, vcvtq_f32_s32(sumi), d);
+        }
+    }
+    let mut out = [0.0; 4];
+    // SAFETY: out holds four floats.
+    unsafe { vst1q_f32(out.as_mut_ptr(), acc) };
+    out
 }
 
 // --- i8mm: `smmla`, two rows × two tokens per instruction ---------------

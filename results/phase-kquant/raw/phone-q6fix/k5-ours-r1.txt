@@ -1,0 +1,30 @@
+# 2026-11-05T00:18:04+05:30, commit 55bb393 
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 72
+# temperature: 394
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 45300
+# mScreenState=ON
+# bench_suite testdata/gguf/LFM3-1.7B-Q4_K_M.gguf | q4_k+q6_k+f32 | weights 1091.4 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 959 ms
+test,tok_per_s,ms
+pp64,117.5,544.6
+pp128,125.7,1018.1
+pp512,124.1,4125.3
+tg64@d0,47.4,1350.5
+# tg64@d0 per token: median 20.96 ms, p95 22.19 ms (192 samples)
+tg64@d256,45.5,1407.8
+# tg64@d256 per token: median 21.85 ms, p95 23.07 ms (192 samples)
+tg64@d512,41.3,1551.1
+# tg64@d512 per token: median 22.32 ms, p95 28.40 ms (192 samples)
+ttft_pp64,1.9,530.9
+# peak RSS 1211616 kB
+# monitor: 98 samples over 48.47 s, max temp 86.9 °C, energy 48.93 J, avg power 1.01 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/LFM3-1.7B-Q4_K_M.gguf","quantization":"q4_k+q6_k+f32","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":959,"prefill":[{"prompt_tokens":64,"median_ms":544.6,"p95_ms":722.1,"tokens_per_second":117.5},{"prompt_tokens":128,"median_ms":1018.1,"p95_ms":1029.0,"tokens_per_second":125.7},{"prompt_tokens":512,"median_ms":4125.3,"p95_ms":4178.3,"tokens_per_second":124.1}],"decode":[{"context_depth":0,"median_ms_per_token":20.96,"p95_ms_per_token":22.19,"tokens_per_second":47.4},{"context_depth":256,"median_ms_per_token":21.85,"p95_ms_per_token":23.07,"tokens_per_second":45.5},{"context_depth":512,"median_ms_per_token":22.32,"p95_ms_per_token":28.40,"tokens_per_second":41.3}],"ttft_pp64_ms":530.9,"peak_memory_mb":1183},"system_state":{"battery_status":"Discharging","max_temp_c":86.9,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1958400,"cpu7":1958400},"avg_power_w":1.01}}
