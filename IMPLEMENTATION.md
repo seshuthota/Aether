@@ -88,6 +88,12 @@ LFM3 (29.8 tok/s, 1.30 GB PSS). At context 2048 the engine's BF16 PPL equals HF'
 (13.5848) and its Q4_K_M KL is 0.0524 against llama.cpp's 0.0558. 123 phone tests pass.
 All A0–A7 checks are done; ready to merge.
 
+**K-quant decode (2026-11-05, `results/phase-kquant.md`).** Q8_K activations for Q4_K / Q6_K
+matmuls (K2) and rows repacked four at a time for decode (K3), with Q6_K's loads merged: LFM3
+Q4_K_M decode 28.8 → 48.6 tok/s on the phone, against llama.cpp's 45.7–46.1 at the same caps
+(2.00/2.25 GHz); prompts at 89–98 % of llama.cpp's. Q6_K `token_embd` reads at the DRAM
+ceiling. PC PPL / KL match llama.cpp's (Q4_K_M 24.9094 vs 24.8278). K4 kept the 4-byte layout.
+
 ### Next steps (2026-10-30)
 
 1. **Q4_K_M prompts on HMX.** Done (2026-10-31; results/phase-l5.md).

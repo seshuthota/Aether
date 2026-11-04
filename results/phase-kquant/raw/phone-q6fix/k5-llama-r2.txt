@@ -1,0 +1,23 @@
+# 2026-11-05T00:22:19+05:30, commit llama.cpp d02b4c0d6
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 72
+# temperature: 382
+# Capacity level: -1
+# cpu0 cap 1996800 kHz
+# cpu6 cap 2246400 kHz
+# max cpu zone (mC) 45300
+# mScreenState=ON
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |            pp64 |        149.70 ± 3.96 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |           pp128 |        143.37 ± 4.34 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |           pp512 |        145.41 ± 0.90 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |            tg64 |         45.67 ± 0.75 |
+
+build: d02b4c0d6 (12061)

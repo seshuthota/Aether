@@ -1,0 +1,16 @@
+# kquant-phone.sh, 2026-11-04T22:25:22+05:30, tip c2469c3, stages: k0p k1 k2 lane tip k5 gemma
+# 2026-11-04T22:25:22+05:30, commit start
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 89
+# temperature: 382
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 49400
+# mScreenState=ON

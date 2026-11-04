@@ -1,0 +1,16 @@
+>>> lane-before-r1
+>>> lane-after-r1
+>>> lane-before-r2
+>>> lane-after-r2
+>>> k4-a-r1
+>>> k4-b-r1
+>>> k4-a-r2
+>>> k4-b-r2
+done: /home/curious/Documents/hermes-projects/Aether-impl/results/phase-kquant/raw/phone-q6fix
+/home/curious/llama.cpp/build-android/bin/llama-bench: 1 file pushed, 0 skipped. 37.3 MB/s (136383736 bytes in 3.490s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.
+>>> k5-ours-r1
+>>> k5-llama-r1
+>>> k5-llama-r2
+>>> k5-ours-r2
+done: /home/curious/Documents/hermes-projects/Aether-impl/results/phase-kquant/raw/phone-q6fix

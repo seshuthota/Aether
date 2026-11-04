@@ -76,37 +76,28 @@ Phase 1 measured 61 GB/s on one prime core and 67 GB/s on all cores; A7 put
 the Q4_0 decode at 44.7 GB/s, so the file read is not the limit the kernels
 are hitting.
 
-### Phone baseline (pending)
+### Phone baseline (2026-11-04)
 
-The phone was not attached when this was written. To fill this section:
+Measured at `25bed76` in the K5 session (conditions there; raw files
+`raw/phone/k0-*`). `kquant_bench`, caps 2.75/2.65 GHz, GB/s (median):
 
-```
-cargo run --release --target aarch64-linux-android --example kquant_bench -- \
-    testdata/gguf/LFM3-1.7B-Q4_K_M.gguf > results/phase-kquant/raw/k0-phone.txt
+| | 1 thread | 6 threads | Q4_0, 6 threads |
+| --- | --- | --- | --- |
+| Q6_K `token_embd` (215 MB) | 8.33 | 30.71 | — |
+| Q4_K `ffn_gate` | 15.75 | 61.97 | 68.48 |
+| Q6_K `ffn_down` | 14.01 | 50.55 | 64.22 |
+| Q4_K `shortconv.in_proj` | 15.33 | 61.13 | 67.91 |
 
-cargo run --release --target aarch64-linux-android --example bench_suite -- \
-    testdata/gguf/LFM3-1.7B-Q4_K_M.gguf -c 2-7 --pp 64,128,512 --tg 64 \
-    --reps 3 --json --monitor
-```
+Ceiling, `bw_sweep` read: 6 threads 65–66 GB/s from 450 MB to 1 GB (above
+300 GB/s while the set fits in cache), 1 thread 63–65 GB/s;
+`bw_sustained` 66.77 GB/s over 30 s. So the 215 MB `token_embd` read at
+under half the ceiling, and the ~9 MB lines are partly cache-resident.
 
-Record with each run: battery, screen state, `cpu0`/`cpu6` caps, temperature
-before the run (A7's `wait_cool` in `scripts/lfm3-a7.sh` is the model).
-Profile as in A7 (`raw/a7/simpleperf.txt`), then the annotated listing:
-
-```
-adb shell simpleperf record -e cpu-cycles:u -o /data/local/tmp/aether/perf.data -- \
-    /data/local/tmp/aether/aether testdata/gguf/LFM3-1.7B-Q4_K_M.gguf \
-    -i 'The history of the printing press' -t 0 -n 300 -c 2-7
-adb shell simpleperf report -i /data/local/tmp/aether/perf.data --sort symbol
-```
-
-and `report_html.py` on a pulled `perf.data` + binary cache for the
-instruction-level annotation of `dot4_q4_k_q8_0` and `dot4_q6_k_q8_0`
-(simpleperf documents annotated source/disassembly through `report_html.py`).
-
-K0's "done when" is satisfied by this section once it has: per-shape GB/s
-(1 and 6 threads), the ceiling at the same working set, the profile with the
-annotated listing, and the end-to-end `tg64` baseline with conditions.
+`bench_suite` at 2.00/2.25 GHz: tg64 28.8 / 28.4 / 25.8 tok/s at depth
+0 / 256 / 512, pp64 / 128 / 512 134.2 / 140.1 / 146.2, peak RSS
+1,188,804 kB. Profile (300-token greedy, cores 2–7): `dot4_q4_k_q8_0`
+53.32 %, `dot4_q6_k_q8_0` 33.81 %, pool worker 6.73 %; the listings are in
+K5.
 
 ## K1. Cheap fixes inside the Q8_0 activation format
 
@@ -149,7 +140,7 @@ changes.
   `k_quant_mix_with_imatrix_matches_llama_quantize`). The host runs the scalar
   kernels, so these do not exercise the changed NEON code.
 - Phone: the K-quant tests, PPL unchanged to the digit (LFM3 and Qwen), and
-  `kquant_bench` / `tg64` before and after. See the pending list below.
+  `kquant_bench` / `tg64` before and after: measured on the phone, see K5.
 
 ## K2. Q8_K activations for K-quant matmuls
 
@@ -327,19 +318,134 @@ On the phone: compare pp64/128/512 with K3's bridge. If the de-interleave
 costs more than a few percent, the direct path is the next step; if not,
 K3's bridge is enough and the batched kernel is not worth its risk.
 
-## K5. Measure and close (pending)
+**Decided (phone, 2026-11-04): A.** At equal caps (2.00/2.25 GHz) the tip's
+prefill with the de-interleave is pp128 138.6 / pp512 142.5 tok/s against
+K2's 141.9 / 146.6: 2.3 % and 2.8 %, under the "few percent" bar. The 4-byte
+layout stays; B is not built.
 
-Not run: the phone was not available. The order is:
+## K5. Measure and close (phone, 2026-11-04/05)
 
-```
-scripts/lfm3-a7.sh results/phase-kquant/raw/k5
-```
+`scripts/kquant-phone.sh` (branch `phone-prep`) ran every phone item in one
+session: each step on its own commit in a temporary worktree, cooled to
+45 °C before every timed run, on battery (90 → 71 %), adb over Wi-Fi,
+screen on. Raw: `raw/phone/` (22:16–23:52) and `raw/phone-q6fix/`
+(00:00–00:25), each file with its caps, temperature and battery; the
+`perf.data` and binaries of the three profiles are kept next to them but not
+committed (75 MB).
 
-(two rounds, reversed, Q4_K_M and QAD-Q4_0, with a two-minute sustained
-decode), then K0's `bw_sweep` / `bw_sustained` at the same working set, the
-profile with the annotated listing, and the Qwen Q4_K_M decode before/after. The target is Q4_K_M decode near the QAD-Q4_0 file's
-44.7 GB/s, roughly 40+ tok/s. `IMPLEMENTATION.md` and the merge into `main`
-wait for those numbers.
+**Caps moved during the session** (1.79/1.96, 2.00/2.25, 2.40/2.44 and
+2.75/2.65 GHz). Kernels are compared as a ratio to the Q4_0 line of the same
+`kquant_bench` run; decode runs only at equal caps, or alternated.
+
+### Decode and prompt through the steps
+
+LFM3 Q4_K_M, `bench_suite`, cores 2–7, equal caps 2.00/2.25 GHz (K1 ran at
+1.79/1.96: tg64 27.6 / 26.8 / 26.7, pp 114.1 / 126.0 / 130.3):
+
+| | tg64 d0 / d256 / d512 | pp64 / pp128 / pp512 | peak RSS |
+| --- | --- | --- | --- |
+| K0 `25bed76` | 28.8 / 28.4 / 25.8 | 134.2 / 140.1 / 146.2 | 1,188,804 kB |
+| K2 `79439bc` | 28.7 / 26.4 / 25.8 | 133.8 / 141.9 / 146.6 | 1,188,428 kB |
+| K3 `c2469c3` | 40.6 / 39.1 / 34.9 | 133.4 / 138.6 / 142.5 | 1,211,464 kB |
+
+The repacked rows (K3) are the step that moves decode; Q8_K activations alone
+(K2) speed the kernels (below) but not the whole decode.
+
+### Kernels against Q4_0, 6 threads (`raw/phone/k*-bench.txt`)
+
+| | K0 | K1 | K2 |
+| --- | --- | --- | --- |
+| Q4_K `ffn_gate` | 0.90 | 0.94 | 0.96 |
+| Q6_K `ffn_down` | 0.79 | 0.79 | 0.91 |
+| Q6_K `token_embd` (215 MB) | 0.45 | 0.58 | 0.66 |
+
+`token_embd` is divided by the `ffn_gate` Q4_0 line (no Q4_0 line at that
+shape). The ~9 MB matrices are partly served from cache: repacked Q4_K
+`ffn_gate` reads up to 90 GB/s, above the DRAM ceiling (`k0-ceiling-6`
+65–66 GB/s up to 1 GB, `k0-sustained` 66.77 GB/s over 30 s). `token_embd`
+is the row that measures DRAM.
+
+### The lane-`sdot` rewrite, and the Q6_K regression it caused
+
+Alternated, both arms at equal caps (`raw/phone/lane-*`, round 2 at
+2.00/2.25 GHz; `raw/phone-q6fix/lane-*`, both rounds at 2.40/2.44 GHz),
+repacked kernels, 6 threads, GB/s:
+
+| | `9a7b59d` (before) | `3febb3a` (lane) | `55bb393` (Q6_K fix) |
+| --- | --- | --- | --- |
+| Q4_K `ffn_gate` | 59.6 | 75.3 | — |
+| Q4_K `ffn_down` | 53.2 | 70.0 | — |
+| Q6_K `ffn_down` | 44.9 | **36.1** | — |
+| Q6_K `token_embd` | 44.0 | **35.1** | — |
+| at 2.40/2.44: Q6_K `ffn_down` | 47.8 / 47.8 | | **64.6 / 64.9** |
+| at 2.40/2.44: Q6_K `token_embd` | 50.4 / 52.2 | | **66.0 / 67.4** |
+
+The lane rewrite sped Q4_K by 26–32 % and slowed Q6_K by 20 %; the tip's
+profile had Q6_K at 40.46 % of cycles for 34 % of the weight bytes (374 of
+1,090 MB) against Q4_K's 39.81 % for 66 %. `dot4_q6_k_q8_k_x4` looped over
+the 16 sub-blocks, loading `ql` twice and `qh` four times per super-block
+and shifting `qh` by a runtime `6 − 2k` (`ushl`). `55bb393` loads each
+vector once per (half, `qh` block) and builds four sub-blocks with constant
+shifts: the listing went from a 16-iteration loop of 4 `sdot` + 4 `ushl` to
+4 iterations of 16 `sdot` and no `ushl`. `token_embd` now reads at the DRAM
+ceiling. Same integers and float steps: the phone's 300-token greedy text is
+identical to `c2469c3`'s (1,452 characters); QEMU `kernels::` 17/17.
+
+Decode, `c2469c3` against `55bb393` alternated (`raw/phone-q6fix/k4-*`;
+round 2, both at 1.79/1.96 GHz):
+
+| | tg64 d0 / d256 / d512 |
+| --- | --- |
+| `c2469c3` | 40.7 / 38.9 / 34.6 |
+| `55bb393` | **46.6 / 45.2 / 41.3** |
+
+(Round 1 is not comparable: the second arm started at 48.6 °C on lower caps,
+and its d0 reads 35.3 against 44.6 at d256.)
+
+### Against llama.cpp, same session
+
+`k5-*`, two rounds in reversed order, `llama-bench -t 6` on cores 2–7
+(`d02b4c0d6`):
+
+| | caps | ours tg64 | llama tg64 | ours pp512 | llama pp512 |
+| --- | --- | --- | --- | --- | --- |
+| K3 `c2469c3`, r1 / r2 | 1.79/1.96 both | 38.8 / 38.6 | 44.24 / 44.03 | 125.8 / 125.0 | 130.13 / 130.62 |
+| `55bb393` r2 | 2.00/2.25 both | **48.6** | 46.11 / 45.67 | 142.9 | 145.30 / 145.41 |
+
+With the Q6_K fix, LFM3 Q4_K_M decode is **ahead of llama.cpp** at equal caps
+(48.6 against 45.7–46.1, about 1.1 GB per token: ~53 GB/s), from 59 % of it
+in A7. Prompts are at 98 % at 512 tokens and 89 % at 64 (134.2 against
+149.7–150.6). (`55bb393` r1 ran at 1.79/1.96 while llama.cpp's r1 ran at
+2.00/2.25: 47.4 against 46.11.)
+
+### Profiles (`raw/phone/*-profile.txt`)
+
+| | K0 | K3 `c2469c3` |
+| --- | --- | --- |
+| Q4_K kernel | 53.32 % (`dot4_q4_k_q8_0`) | 39.81 % (`dot4_q4_k_q8_k_x4`) |
+| Q6_K kernel | 33.81 % (`dot4_q6_k_q8_0`) | 40.46 % (`dot4_q6_k_q8_k_x4`) |
+| pool worker | 6.73 % | 10.07 % |
+
+K1's listing answers its question: `dot4_q4_k_q8_0` had 16 `uaddlv` at K0 and
+none at K1 (293 → 265 instructions).
+
+### Accuracy on the phone
+
+`--lib k_quant` 3/3 at K1 and at the tip. LFM3 Q4_K_M 20 × 512: 24.8822 at
+K1, K2 and K3; context 2048: 13.7811 at K2; Qwen Q4_K_M: 16.7599 at K1, K2
+and K3 (phase 6's later runs). On the phone `--ppl` runs through the batched
+`smmla` path (its own Q8_0 pairs, `unpack_k4` for repacked rows), so these
+show the prompt path unchanged; they do not exercise K2's Q8_K decode
+arithmetic, which the QEMU goldens and the PC PPL cover (the CLI has no
+decode-path PPL). A direct KL against llama.cpp's own Q4_K_M logits needs a
+reader for `--kl-divergence-base` files and is not done.
+
+### Gemma 4 E2B in llama.cpp (for `plans/gemma4.md` G0; caps 2.40/2.44)
+
+| | pp64 | pp512 | tg64 | tg256 | tg64 @ d512 | tg256 @ d512 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Q4_0 | 117.91 | 106.11 | 30.54 | 28.57 | 24.34 | 21.73 |
+| Q4_K_M | 88.09 | 75.76 | 29.42 | 27.18 | 21.93 | 21.48 |
 
 ## QEMU harness (correctness without the phone)
 
@@ -459,7 +565,7 @@ Cleanups: `at` is `4 * v` for every `v` in 0..8 (the `if` was redundant) in
 all five places and the layout comment; `(nbk, nk)` in the golden test is
 one name now.
 
-## Phone checks pending
+## Phone checks (done 2026-11-04/05, see K5)
 
 The phone was not available during implementation. Correctness-only items
 are now covered under QEMU (`raw/qemu-tests.txt`); what remains needs the
@@ -468,17 +574,17 @@ step is a commit; for a step's own before/after, check out its commit
 (`25bed76` K0, `5116346` K1, `79439bc` K2, `a1ac2a9` K3 with the review
 fixes) and measure that tree.
 
-- [ ] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
-- [ ] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
-- [ ] K0: `bench_suite --tg 64`, cooled, battery, caps recorded.
-- [ ] K0: `simpleperf` symbol report + annotated listing of both kernels.
-- [ ] K1 (only at `5116346`; K2 replaced these kernels):
+- [x] K0: `kquant_bench` on the phone, 1 and 6 threads (`raw/k0-phone.txt`).
+- [x] K0: `bw_sweep` / `bw_sustained` ceiling at the same working set.
+- [x] K0: `bench_suite --tg 64`, cooled, battery, caps recorded.
+- [x] K0: `simpleperf` symbol report + annotated listing of both kernels.
+- [x] K1 (only at `5116346`; K2 replaced these kernels):
       `cargo test --release --target aarch64-linux-android --lib k_quant`.
-- [ ] K1 (only at `5116346`): LFM3 Q4_K_M PPL 20 × 512 unchanged to the
+- [x] K1 (only at `5116346`): LFM3 Q4_K_M PPL 20 × 512 unchanged to the
       digit (24.8822 on the phone).
-- [ ] K1 (only at `5116346`): Qwen2.5-0.5B Q4_K_M PPL unchanged.
-- [ ] K1 (only at `5116346`): `kquant_bench` and `tg64` after, against K0.
-- [ ] K1 (only at `5116346`): annotated listing: did the 16 `vaddlvq` per
+- [x] K1 (only at `5116346`): Qwen2.5-0.5B Q4_K_M PPL unchanged.
+- [x] K1 (only at `5116346`): `kquant_bench` and `tg64` after, against K0.
+- [x] K1 (only at `5116346`): annotated listing: did the 16 `vaddlvq` per
       group disappear, and is `q4_k_scales_mins` / `u8x8_to_f32` visible?
 - [x] K2: quantizer bytes, scalar and NEON dots, model path — done under
       QEMU (`raw/qemu-tests.txt`: `quant::` 7, `kernels::` 17).
@@ -492,16 +598,18 @@ fixes) and measure that tree.
 - [x] K2: Qwen2.5-0.5B Q4_K_M — PC done: **16.7186**, KL 0.032851,
       90.137 % (llama.cpp 16.7657 / 0.033112 / 90.10 %); phone spot check
       only.
-- [ ] K2: `kquant_bench` and `tg64` after, against K0/K1 (phone only).
+- [x] K2: `kquant_bench` and `tg64` after, against K0/K1 (phone only).
 - [x] K2: the speculative and batched-vs-decode tests pass — done under QEMU
       (`session::` 5, `model::gguf::` 6).
 - [x] K3: row-major and x4 kernels, decode and prefill — done under QEMU
       (`kernels::` 17, including `k_quant_linear_matches_reference`).
-- [ ] K3: LFM3 Q4_K_M PPL against K2 (same integers, different f32
+- [x] K3: LFM3 Q4_K_M PPL against K2 (same integers, different f32
       grouping; record the digits). Phone only: the PC is K2 arithmetic.
-- [ ] K3: `kquant_bench --repack` against the row-major lines, and `tg64`;
+- [x] K3: `kquant_bench --repack` against the row-major lines, and `tg64`;
       if the x4 kernels are short of the ceiling, try N = 8 (phone only).
-- [ ] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released; phone).
+      Measured; after the Q6_K fix `token_embd` is at the ceiling, and
+      N = 8 is not tried.
+- [x] K3: peak RSS stays ~1.1-1.2 GB (the mapped file is released; phone).
 - [x] K3: prefill (`unpack_k4` from the repacked rows) gives the same
       batched results — done under QEMU (`kernels::`, `model::gguf::`).
 - [x] K3 fix: an LFM3 Q4_K_M greedy run does not panic (repacked K-quants
@@ -509,9 +617,10 @@ fixes) and measure that tree.
       still runs on the phone.
 - [x] K3 fix: the Q6_K x4 goldens pass (the 0xAA flip) — done under QEMU;
       the phone spot-checks the PPL.
-- [ ] K3: `kquant_bench --repack` before/after the lane-`sdot` rewrite
+- [x] K3: `kquant_bench --repack` before/after the lane-`sdot` rewrite
       (phone only).
-- [ ] K3: annotated listing of `dot4_q6_k_q8_k_x4`: are the `ql`/`qh`
+- [x] K3: annotated listing of `dot4_q6_k_q8_k_x4`: are the `ql`/`qh`
       loads merged across the 16 sub-blocks? If not, restructure by
-      `(n, j)` (phone only).
-- [ ] Phone: one confirming `--lib k_quant` run at the final tip.
+      `(n, j)` (phone only). They were not: fixed in `55bb393` (K5).
+- [x] Phone: one confirming `--lib k_quant` run at the final tip
+      (`c2469c3`, 3/3; `55bb393` changes one kernel, QEMU `kernels::` 17/17).

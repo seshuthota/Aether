@@ -1,0 +1,18 @@
+# 2026-11-04T22:31:27+05:30, commit 5116346 
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 88
+# temperature: 392
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 46900
+# mScreenState=ON
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 299078 tokens (tokenized in 554 ms), weights q5_0 391.7 MB
+[1]9.8811,[2]13.5353,[3]13.5717,[4]13.5246,[5]13.6153,[6]14.1565,[7]14.4929,[8]15.5163,[9]16.4674,[10]17.0418,[11]17.3688,[12]17.4694,[13]18.2608,[14]17.7489,[15]17.5909,[16]18.0949,[17]16.8175,[18]16.9390,[19]16.7635,[20]16.7599,
+Final estimate: PPL = 16.7599 +/- 0.68794  (5100 tokens scored in 26.6 s)

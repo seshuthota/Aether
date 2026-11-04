@@ -1,0 +1,80 @@
+# 2026-11-04T23:09:18+05:30, commit c2469c3
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 83
+# temperature: 373
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 45300
+# mScreenState=ON
+weights: q4_kThe, 1111.3 MB
+ history of the printing press is a story of the invention of the printing press. The printing press was invented by Johannes Gutenberg in the mid-15th century. He was a German goldsmith and a master printer. He invented the printing press in the 1440s. The printing press was a significant invention because it allowed for the mass production of books and other written materials. Before the printing press, books were copied by hand, which was a slow and expensive process. The printing press revolutionized the way information was shared and made it more accessible to the general public. The printing press also led to the spread of ideas and the growth of knowledge. It is a story of innovation and the impact of one invention on society. The printing press is a key part of the history of the world, and it continues to be used today. It is a story of the invention of the printing press and its far-reaching consequences. The printing press is a testament to human ingenuity and the power of technology. It is a story that continues to inspire and inform us about the past and the present. The history of the printing press is a story of the invention of the printing press, and it is a story that is still being written today. The printing press is a key part of the history of the world, and it is a story of the invention of a tool that changed the course of history. The printing press is a story of the past and the future, and it is a story
+prefill: 6 tokens in 146.6 ms (40.9 tok/s) | decode: 294 tokens in 7997.4 ms (36.8 tok/s) | peak RSS 1217176 kB
+simpleperf I cmd_record.cpp:840] Recorded for 9.47197 seconds. Start post processing.
+simpleperf I cmd_record.cpp:941] Samples recorded: 198,223. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data -- ./aether testdata/gguf/LFM3-1.7B-Q4_K_M.gguf -i The history of the printing press -t 0 -n 300 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 198223
+Event count: 88458598896
+
+Overhead  Symbol
+40.46%    aether::kernels::neon_quant::dot4_q6_k_q8_k_x4
+39.81%    aether::kernels::neon_quant::dot4_q4_k_q8_k_x4
+10.07%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+2.56%     aether::kernels::quant_rows
+1.40%     <aether::pool::ThreadPool>::run
+0.79%     aether::kernels::quant_rows_mmla
+0.62%     aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#1}>
+0.61%     aether::model::transformer::attention_chunked::{closure#0}
+0.51%     aether::quant::quantize_q8_k
+0.47%     <aether::weight::Weight>::repack
+0.46%     aether::kernels::neon_quant::mmla4_k::<3>
+0.31%     __memcpy_aarch64_nt
+0.18%     scudo::HybridMutex::tryLock()
+0.17%     <aether::model::transformer::Transformer>::forward
+0.17%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.14%     __memset_aarch64_nt
+0.12%     aether::kernels::neon::swiglu
+0.11%     aether::kernels::scalar::rmsnorm
+0.10%     aether::kernels::short_conv_step
+0.09%     <aether::model::sampler::Sampler>::sample
+0.08%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::allocate(unsigned long, scudo::Chunk::Origin, unsigned long, bool)
+0.07%     scudo::HybridMutex::unlock()
+0.06%     <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+0.06%     __aarch64_cas4_acq
+0.05%     __aarch64_ldadd4_rel
+0.05%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::quarantineOrDeallocateChunk(scudo::Options const&, void*, scudo::Chunk::UnpackedHeader*, unsigned long)
+0.03%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::deallocate(void*, scudo::Chunk::Origin, unsigned long, unsigned long)
+0.03%     malloc
+0.03%     aether::kernels::quantize_q8_k_activations
+0.02%     <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&(usize, usize)>
+0.02%     aether::tokenizer::bytelevel::merge_ranks
+0.02%     <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&str>
+0.02%     aether::kernels::linear_many_batch_on::{closure#10}
+0.02%     aether::tokenizer::bytelevel::merge_ranks::{closure#0}
+0.02%     @plt
+0.02%     <hashbrown::raw::RawTable<((usize, usize), (usize, usize))>>::reserve_rehash::<hashbrown::map::make_hasher<(usize, usize), (usize, usize), std::hash::random::RandomState>::{closure#0}>
+0.02%     core::str::converts::from_utf8
+0.02%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::populateFreeListAndPopBlocks(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::RegionInfo*, unsigned int*, unsigned short)
+0.01%     __memcmp_aarch64
+0.01%     __aarch64_ldadd2_relax
+0.01%     scudo_malloc
+0.01%     aether::kernels::linear_batch_on::{closure#5}
+0.01%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::pushBlocksImpl(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::RegionInfo*, unsigned int*, unsigned int, bool)
+0.01%     <core::iter::adapters::GenericShunt<core::iter::adapters::map::Map<core::slice::iter::Iter<aether::format::gguf::Value>, <aether::tokenizer::bytelevel::Tokenizer>::from_gguf::{closure#7}>, core::result::Result<core::convert::Infallible, core::io::error::Error>> as core::iter::traits::iterator::Iterator>::next
+0.01%     alloc::fmt::format::format_inner
+0.01%     <alloc::string::String as core::fmt::Write>::write_str
+0.01%     aether::kernels::scalar::rope_halves_pairs
+0.01%     core::iter::adapters::try_process::<core::iter::adapters::map::Map<core::ops::range::Range<usize>, <aether::format::gguf::Reader>::value::{closure#1}>, aether::format::gguf::Value, core::result::Result<core::convert::Infallible, core::io::error::Error>, <core::result::Result<alloc::vec::Vec<aether::format::gguf::Value>, core::io::error::Error> as core::iter::traits::collect::FromIterator<core::result::Result<aether::format::gguf::Value, core::io::error::Error>>>::from_iter<core::iter::adapters::map::Map<core::ops::range::Range<usize>, <aether::format::gguf::Reader>::value::{closure#1}>>::{closure#0}, alloc::vec::Vec<aether::format::gguf::Value>>
+0.01%     sincosf
+0.01%     powf
+0.01%     aether::kernels::linear_many_batch_on
+0.01%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::pushBlocks(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, unsigned int*, unsigned int)
+0.01%     <core::fmt::Formatter>::pad

@@ -1,0 +1,7 @@
+>>> k0-bench
+>>> k0-ceiling-1
+>>> k0-ceiling-6
+>>> k0-sustained
+>>> k0-tg64
+/home/curious/.cache/aether-kquant-phone/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 501.8 MB/s (12141632 bytes in 0.023s)
+/home/curious/Documents/hermes-projects/Aether-impl/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf: 0 files pushed, 1 skipped.

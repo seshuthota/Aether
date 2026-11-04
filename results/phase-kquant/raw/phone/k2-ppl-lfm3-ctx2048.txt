@@ -1,0 +1,18 @@
+# 2026-11-04T22:43:29+05:30, commit 79439bc 
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 86
+# temperature: 398
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 46100
+# mScreenState=ON
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 294644 tokens (tokenized in 241 ms), weights q4_k 1091.4 MB
+[1]13.7811,
+Final estimate: PPL = 13.7811 +/- 1.29604  (1023 tokens scored in 19.6 s)
