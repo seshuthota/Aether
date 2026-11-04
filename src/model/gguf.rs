@@ -416,6 +416,14 @@ mod tests {
             assert_eq!((c.attn_scale, c.logit_softcap, c.v_norm), (Some(1.0), Some(30.0), true));
             assert_eq!(c.embed_scale, (1536f32).sqrt());
             assert_eq!(w.ple.as_ref().unwrap().table.format_name(), table);
+            // The table is only looked up: repacking leaves it mapped as it was.
+            let n = c.n_layers * c.ple_dim;
+            let (mut before, mut after) = (vec![0f32; n], vec![0f32; n]);
+            w.ple.as_ref().unwrap().table.row_f32(12345, &mut before);
+            let w = w.repack(&c);
+            let t = &w.ple.as_ref().unwrap().table;
+            t.row_f32(12345, &mut after);
+            assert_eq!((t.format_name(), before), (table, after));
         }
     }
 
