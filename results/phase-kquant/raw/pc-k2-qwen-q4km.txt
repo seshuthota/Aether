@@ -1,0 +1,7 @@
+# 2026-11-04T13:34:44+05:30, commit d6cce81
+# target/release/aether testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --chunks 20 --kl --base testdata/models/Qwen2.5-0.5B-Instruct
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 299078 tokens (tokenized in 169 ms), weights q5_0 391.7 MB
+[1]9.8225,[2]13.4568,[3]13.5360,[4]13.4590,[5]13.5493,[6]14.0703,[7]14.4306,[8]15.4334,[9]16.3792,[10]16.9604,[11]17.2824,[12]17.3978,[13]18.2025,[14]17.6942,[15]17.5430,[16]18.0473,[17]16.7742,[18]16.9015,[19]16.7211,[20]16.7186,
+Final estimate: PPL = 16.7186 +/- 0.68573  (5100 tokens scored in 5360.3 s)
+PPL(base f32) = 16.2745, PPL(Q)/PPL(base) = 1.027287
+Mean KLD: 0.032851   Same top p: 90.137 %
