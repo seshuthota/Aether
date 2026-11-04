@@ -1,0 +1,23 @@
+# QEMU negative controls, 2026-11-04T12:24:49+05:30, qemu qemu-aarch64 version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+# target aarch64-unknown-linux-musl, rustc rustc 1.99.0 (b940084d7 2026-09-28)
+
+== detected features under QEMU
+dotprod=true i8mm=true repack_weights=true
+
+== 1. 572f689 (bug 1: repacked K-quants had no Q8_K)
+thread '<unnamed>' (2147040) panicked at src/kernels/mod.rs:289:23:
+a K-quant row needs Q8_K activations
+thread 'kernels::tests::k_quant_linear_matches_reference' (2147039) panicked at src/kernels/mod.rs:899:10:
+test kernels::tests::k_quant_linear_matches_reference ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 123 filtered out; finished in 0.05s
+
+== 2. ad57c09 (bug 2: Q6_K x4 missing the 0xAA flip)
+thread '<unnamed>' (2147059) panicked at src/kernels/mod.rs:897:33:
+/tmp/kq-ad57c09/testdata/quant_k/quant_k_64x1536_t7 q6_k x4 token 0: rel 1.58e0
+thread 'kernels::tests::k_quant_linear_matches_reference' (2147058) panicked at src/kernels/mod.rs:905:10:
+test kernels::tests::k_quant_linear_matches_reference ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 123 filtered out; finished in 0.06s
+
+== 3. tip 1d48657 (both fixes)
+test kernels::tests::k_quant_linear_matches_reference ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 123 filtered out; finished in 0.07s
