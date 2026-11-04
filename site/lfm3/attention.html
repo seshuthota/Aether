@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sliding windows, partial RoPE and per-head norms · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">LFM3 · 03</p>
+
+<h1>Sliding windows, partial RoPE and per-head norms</h1>
+<p class="lede">LFM3 changes four things about attention. Five of its eleven attention layers read only the last 256 positions, and they keep a ring buffer that holds just those rows. Full-attention layers rotate only half of each head. Every attention layer normalizes q and k per head and scales each head by a gate. This page covers each change and why the 2048-token check needed its own reference.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="index.html">the hybrid layout</a>, <a href="../phase-2/attention.html">attention</a>, <a href="../phase-2/kv-cache.html">the KV cache</a> and <a href="../phase-2/rope.html">RoPE</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#window">What does a sliding-window layer look at?</a>
+  <a href="#ring">How does a sliding layer keep only its window?</a>
+  <a href="#prefix">Why do sliding and full layers differ past 256?</a>
+  <a href="#rope">Which part of each head does RoPE rotate?</a>
+  <a href="#norm">What do the per-head norm and gate change?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Know what each attention change does to memory and to the numbers the engine must match.">What are we trying to do here?</h2>
+<p>Attention lets a token read the keys and values of the tokens before it. A <strong>head</strong> is one slice of 128 values of a query, key or value vector. A <strong>position</strong> is a token’s place in the sequence, counting from 0. The <strong>KV cache</strong> keeps every earlier key and value, so a new token reads them without computing them again (<a href="../phase-2/kv-cache.html">the KV cache</a>).</p>
+<p>LFM3 has 24 layers. Thirteen are short convolutions, which keep a 6-row state instead (<a href="index.html">the hybrid layout</a>). The other eleven attend. Six read every earlier position. Five are sliding-window layers, which read only a fixed number of recent positions. Full-attention layers also rotate only part of their heads. Every attention layer normalizes and gates its heads. By the end you can say what each of these changes, what it costs in memory, and what a wrong version would get wrong.</p>
+
+<h2 id="window" data-short="The window" data-step="A sliding layer reads only the last 256 positions, counting the current one; a full layer reads all of them.">What does a sliding-window layer look at?</h2>
+<p>Attention scores the current token’s query against the key at each position it may see, then averages the values at those positions. A <strong>full</strong> layer may see every position from 0 up to the current one, so its work grows with the prompt. A <strong>sliding-window</strong> layer sees only the last <strong>W</strong> positions, where W is its window. For LFM3, W is 256 (<a href="../phase-2/attention.html">attention</a> covers the full case).</p>
+<div class="quiz" data-quiz="predict" data-for="window" id="g-attn-window">
+  <p>A sliding layer is at position 1000 and its window is 256. Which positions does it read for this token?</p>
+  <ul>
+    <li data-right>Positions 745 to 1000, which is 256 positions with the current one <div class="why">The window counts the current token: 1000 minus 255 is 745.</div></li>
+    <li>Positions 0 to 1000, all 1001 of them <div class="why">That is a full layer. Only the sliding layers are cut to the window.</div></li>
+    <li>Positions 744 to 999, the 256 before it <div class="why">A plausible off-by-one. The code counts the current position as one of the 256.</div></li>
+  </ul>
+</div>
+<p>The window is set per layer when the model is loaded. The code computes the first position in the window, then attends from there to the current position:</p>
+<pre><code>// src/kernels/mod.rs
+let start = (pos + 1).saturating_sub(window);
+let n = pos + 1 - start;
+</code></pre>
+<ul>
+  <li><code>pos + 1</code> counts the current token, so the window includes it.</li>
+  <li><code>saturating_sub</code> stops at 0. Early tokens have fewer than W earlier positions, so they read all of them.</li>
+  <li>A full layer passes <code>usize::MAX</code> as its window, so the same code reads everything.</li>
+  <li>The loader in <code>src/model/gguf.rs</code> gives the five sliding layers <code>Some(256)</code> and the six full layers <code>None</code>.</li>
+</ul>
+<p>The layers run in this order, where C is a conv layer, F a full attention layer and S a sliding one:</p>
+<pre><code>C C F C S C F C S C F C S C F C S C F C S C F C
+</code></pre>
+<p>Six F and five S: eleven attention layers, as the plan lists them. If a sliding layer read all positions, it would be a full layer, and the model would compute different numbers from the reference from position 256 on.</p>
+<p><strong>Takeaway: a sliding layer reads the last 256 positions, counting the current one; a full layer reads all of them.</strong></p>
+<div class="quiz" data-quiz="check" data-for="window" id="c-attn-window">
+  <p>A window of 4 is set on a layer, and the current token is at position 3. How many earlier positions does the layer read, and is the current one among them?</p>
+  <ul>
+    <li data-right>Four positions in all, 0 to 3, the current one included <div class="why">The window is the last 4 positions, and the current position counts as one of them.</div></li>
+    <li>Three earlier positions, and the current one is not counted <div class="why">That is the off-by-one: the window counts the current position too.</div></li>
+    <li>All four earlier positions, 0 to 4 <div class="why">Position 4 is in the future for this token, so no layer can read it.</div></li>
+  </ul>
+</div>
+
+<h2 id="ring" data-short="The ring" data-step="A sliding layer's cache is a ring of 512 rows (256 window plus 256 prefill chunk), not one row per position.">How does a sliding layer keep only its window?</h2>
+<p>A full layer’s cache has one row per position: 2048 rows at context 2048. A sliding layer needs only the last 256 rows at each step, so keeping all 2048 wastes memory. A <strong>ring buffer</strong> is a fixed array of rows with a <strong>write index</strong>. Each new token writes to the next row, and after the last row the index wraps back to row 0. The oldest row is overwritten.</p>
+<div class="quiz" data-quiz="predict" data-for="ring" id="g-attn-ring">
+  <p>A ring has 8 rows. Position 19 went into row 3. The write index moves one row per token and wraps after row 7. Which row does position 26 go into?</p>
+  <ul>
+    <li data-right>Row 2 <div class="why">Rows 4 to 7 take positions 20 to 23, then 24 and 25 take rows 0 and 1, so 26 takes row 2.</div></li>
+    <li>Row 3, the row position 19 used <div class="why">Rows are reused after a wrap, but position 26 comes seven steps later, not in the same place.</div></li>
+    <li>Row 8, the next row past the end <div class="why">The ring does not grow; the index wraps back to row 0.</div></li>
+  </ul>
+</div>
+<p>The engine sizes a sliding layer’s cache as the window plus one prefill chunk. In <code>src/model/transformer.rs</code>:</p>
+<pre><code>Some(w) => (w + PREFILL_CHUNK).min(c.seq_len),
+</code></pre>
+<p>With W = 256 and <code>PREFILL_CHUNK = 256</code>, that is 512 rows (or fewer, if the context is shorter). Each token writes its row with <code>pos % ring</code>:</p>
+<pre><code>let slot = layer_off + (pos % ring) * kv_dim;
+</code></pre>
+<ul>
+  <li>The ring is 512 rows, not 256, because prefill runs in 256-token chunks. The code’s comment says the ring only has to keep the window plus one chunk.</li>
+  <li>Decode copies the 255 earlier positions in the window out of the ring into a straight buffer, then adds the current token. Attention runs on that straight copy.</li>
+  <li>Attention is over the window only. A row older than the window is never read again, so overwriting it is safe.</li>
+</ul>
+<figure>
+<svg class="fig" viewBox="0 0 720 240" role="img" aria-label="An eight-row ring buffer. The window of four rows wraps from the last row back to row 0. The write index points at row 2.">
+  <text class="muted" x="360" y="20" text-anchor="middle" font-size="13">Ring of 8 rows, window of 4 (illustration)</text>
+  <rect x="40" y="54" width="72" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="120" y="54" width="72" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="200" y="54" width="72" height="56" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <rect x="280" y="54" width="72" height="56" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <rect x="360" y="54" width="72" height="56" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <rect x="440" y="54" width="72" height="56" rx="6" fill="var(--surface)" stroke="var(--line)"/>
+  <rect x="520" y="54" width="72" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="600" y="54" width="72" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text class="muted" x="76" y="46" text-anchor="middle" font-size="11">row 0</text>
+  <text class="muted" x="156" y="46" text-anchor="middle" font-size="11">row 1</text>
+  <text class="muted" x="236" y="46" text-anchor="middle" font-size="11">row 2</text>
+  <text class="muted" x="316" y="46" text-anchor="middle" font-size="11">row 3</text>
+  <text class="muted" x="396" y="46" text-anchor="middle" font-size="11">row 4</text>
+  <text class="muted" x="476" y="46" text-anchor="middle" font-size="11">row 5</text>
+  <text class="muted" x="556" y="46" text-anchor="middle" font-size="11">row 6</text>
+  <text class="muted" x="636" y="46" text-anchor="middle" font-size="11">row 7</text>
+  <text x="76" y="88" text-anchor="middle" font-size="15">pos 24</text>
+  <text x="156" y="88" text-anchor="middle" font-size="15">pos 25</text>
+  <text x="236" y="88" text-anchor="middle" font-size="15">pos 18</text>
+  <text x="316" y="88" text-anchor="middle" font-size="15">pos 19</text>
+  <text x="396" y="88" text-anchor="middle" font-size="15">pos 20</text>
+  <text x="476" y="88" text-anchor="middle" font-size="15">pos 21</text>
+  <text x="556" y="88" text-anchor="middle" font-size="15">pos 22</text>
+  <text x="636" y="88" text-anchor="middle" font-size="15">pos 23</text>
+  <text class="muted" x="156" y="130" text-anchor="middle" font-size="11">now</text>
+  <polyline points="236,190 236,118" fill="none" stroke="var(--copper)" stroke-width="2"/>
+  <polygon points="230,124 242,124 236,114" fill="var(--copper)"/>
+  <text class="muted" x="236" y="208" text-anchor="middle" font-size="12">next write: pos 26 replaces pos 18</text>
+</svg>
+<figcaption>Illustration, not a measurement. The current token is position 25, so its window is positions 22 to 25. That window wraps: it uses rows 6, 7, 0 and 1. The engine’s ring has 512 rows and a window of 256.</figcaption>
+</figure>
+<p>The memory sizes follow from the code, not from a measured process size. Each position stores 512 values for K and 512 for V, since LFM3 has 4 KV heads of 128 values, and the cache holds f32 values. <span class="tag c">calculated</span></p>
+<ul>
+  <li>One position, one layer, K and V: 512 × 2 × 4 bytes = 4 KiB. <span class="tag c">calculated</span></li>
+  <li>A full layer at context 2048: 2048 rows × 4 KiB = 8 MiB. <span class="tag c">calculated</span></li>
+  <li>A sliding layer’s 512-row ring: 2 MiB, so 6 MiB less per sliding layer. <span class="tag c">calculated</span></li>
+  <li>The 11 attention layers take 6 × 8 + 5 × 2 = 58 MiB, against 88 MiB if all 11 were full. <span class="tag c">calculated</span></li>
+</ul>
+<p>A ring of only 256 rows would hold a decode step’s window, because a decode step reads 255 earlier rows and the current one. The extra 256 rows are for prefill chunks. <span class="tag c">calculated</span></p>
+<p><strong>Takeaway: a sliding layer’s ring keeps the window plus one prefill chunk, 512 rows here, and wraps its write index.</strong></p>
+<div class="quiz" data-quiz="check" data-for="ring" id="c-attn-ring">
+  <p>Prefill writes a 256-token chunk at a time. Why must the ring hold 256 rows beyond the window, not just the 256-row window?</p>
+  <ul>
+    <li data-right>So a chunk can read the 255 earlier positions and write its own 256 rows without overwriting either <div class="why">The window plus one chunk is 511 positions, so 512 rows hold them all.</div></li>
+    <li>Because the ring length is rounded up to a power of two <div class="why">The code uses the sum of the window and the chunk; there is no rounding step.</div></li>
+    <li>For the conv layers’ state, which shares the ring <div class="why">Conv layers keep their own 6-row state; they have no ring.</div></li>
+  </ul>
+</div>
+
+<h2 id="prefix" data-short="Different prefixes" data-step="Past position 255 the sliding and full layers see different earlier tokens, so long-context checks need a reference that does the same.">Why do sliding and full layers differ past 256?</h2>
+<p>The <strong>prefix</strong> of a token is the set of earlier positions a layer can read. For position <em>i</em>, a full layer’s prefix is 0 to <em>i</em>. A sliding layer’s prefix is <em>i</em> minus 255 to <em>i</em>. For the first 256 tokens the two prefixes are the same.</p>
+<div class="quiz" data-quiz="predict" data-for="prefix" id="g-attn-prefix">
+  <p>At position 300, does a sliding layer see the same earlier tokens as a full layer?</p>
+  <ul>
+    <li data-right>No. The sliding layer sees positions 45 to 300, and the full layer sees 0 to 300 <div class="why">300 minus 255 is 45, so positions 0 to 44 are outside the window.</div></li>
+    <li>Yes, both see the last 256 tokens <div class="why">The full layer sees every earlier token, not only the last 256.</div></li>
+    <li>Yes, the windows only matter past 2048 positions <div class="why">The window is 256, so it cuts earlier than the context length.</div></li>
+  </ul>
+</div>
+<p>From position 256 on, the sliding layer has dropped its oldest tokens and the full layer has not. So the model is not the same function as one with all layers full. Positions past 255 already differ at context 512, so the 20 × 512 perplexity runs cover this too.</p>
+<p>Context 2048 is the longest check the engine has against an outside reference. The two runs disagree, so neither settles it alone. The team ran the same chunk through Hugging Face transformers in f32. That is the pinned repository’s own code, not a second engine.</p>
+<table>
+  <thead><tr><th>context 2048, 1023 scored</th><th>PPL</th><th>KL against BF16</th><th>same top</th></tr></thead>
+  <tbody>
+    <tr><td>HF transformers, f32</td><td class="num">13.5848</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>engine, BF16 file</td><td class="num">13.5848</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>llama.cpp, BF16 file</td><td class="num">13.5986</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>engine, Q4_K_M</td><td class="num">13.7917</td><td class="num">0.052408</td><td class="num">88.759 %</td></tr>
+    <tr><td>llama.cpp, Q4_K_M</td><td class="num">13.9561</td><td class="num">0.055758</td><td class="num">88.172 %</td></tr>
+  </tbody>
+</table>
+<p class="note">Measured on the PC, one chunk of wikitext-2 (not the phone). The engine’s Q4_K_M PPL on the phone was 13.7811. <span class="tag m">measured</span></p>
+<p>The engine’s BF16 run equals HF’s to four decimals, so the sliding ring, the window edge and the full layers’ RoPE agree with the reference at this depth. The Q4_K_M gap is between two quantized paths. The engine rounds activations to Q8_0 in blocks of 32 values; llama.cpp rounds them to Q8_K in blocks of 256. The engine’s Q4_K_M is also closer to its own BF16 run: KL 0.052408, against llama.cpp’s 0.055758.</p>
+<p>At context 512 the same engine gave 24.8542 over 20 chunks, against llama.cpp’s 24.8278. The full comparison, with speed, is on <a href="accuracy-speed.html">Is it right, and why is it slower than llama.cpp?</a>.</p>
+<p><strong>Takeaway: past position 255 the sliding and full layers see different prefixes, so a long-context check needs a reference that matches.</strong></p>
+<div class="quiz" data-quiz="check" data-for="prefix" id="c-attn-prefix">
+  <p>The engine’s BF16 PPL equals HF’s, but its Q4_K_M PPL is 0.16 above llama.cpp’s. What does that gap show?</p>
+  <ul>
+    <li data-right>The window and the RoPE are right at depth; the gap is from how each engine rounds activations for quantized dot products <div class="why">The BF16 match shows the window is right; quantized rounding differs between the two engines.</div></li>
+    <li>The sliding ring is wrong at depth, because the quantized numbers differ <div class="why">The BF16 run uses the same ring and matches HF, so the ring is not what differs.</div></li>
+    <li>Nothing can be compared once a model is quantized <div class="why">Quantized perplexities are compared all the time; the question is which part differs.</div></li>
+  </ul>
+</div>
+
+<h2 id="rope" data-short="Partial RoPE" data-step="Full layers rotate 64 of 128 values with a full head's frequencies; sliding layers rotate all of them.">Which part of each head does RoPE rotate?</h2>
+<p><strong>RoPE</strong> (rotary position embedding) turns the values of each head in pairs, by an angle that grows with the token’s position (<a href="../phase-2/rope.html">RoPE</a>). LFM3 uses the rotate-half layout: element <em>i</em> pairs with element <em>i</em> + 64 in a 128-value head. <strong>Partial RoPE</strong> rotates only some of the pairs, and leaves the rest of the head alone.</p>
+<div class="quiz" data-quiz="predict" data-for="rope" id="g-attn-rope">
+  <p>A full-attention layer rotates pairs in each 128-value head. How many of the head’s values does it rotate?</p>
+  <ul>
+    <li data-right>64, in two blocks: values 0 to 31 and 64 to 95 <div class="why">Pairs 0 to 31 each use two values, one in each half of the head.</div></li>
+    <li>32, one per pair <div class="why">A pair is two values, so 32 pairs cover 64 values.</div></li>
+    <li>All 128, as in ordinary RoPE <div class="why">Full layers rotate half the head; the other half stays as it is.</div></li>
+  </ul>
+</div>
+<p>The number of rotated pairs comes from the model file. The GGUF has a <code>rope_freqs.weight</code> tensor with 64 entries: 32 of 1.0, then 32 of 1e30. The loader counts the entries below 1e29 <span class="tag m">measured</span>:</p>
+<pre><code>// src/model/gguf.rs
+factors.iter().filter(|&&f| f &lt; 1e29).count()
+</code></pre>
+<ul>
+  <li>The count is 32 pairs, which is 64 of 128 values. The plan’s config value, <code>partial_rotary_factor 0.5</code>, says the same.</li>
+  <li>An angle divided by 1e30 is about zero, so those pairs do not turn. This is llama.cpp’s reading of the same tensor (results A0).</li>
+  <li>The pair <em>i</em> frequency is 1e6 to the power −2<em>i</em>/128, the frequency of a full 128-value head. The usual partial RoPE uses a 64-value head’s frequencies instead, which gives different angles.</li>
+</ul>
+<p>The rotation itself, in <code>src/kernels/scalar.rs</code>:</p>
+<pre><code>let rot = rotations(pos, head_size, theta);
+for head in v.chunks_exact_mut(head_size) {
+    for (i, &amp;(sin, cos)) in rot.iter().take(pairs).enumerate() {
+        let (v0, v1) = (head[i], head[i + half]);
+</code></pre>
+<ul>
+  <li><code>rot</code> holds an angle for all 64 pairs, so each pair keeps its full-head frequency.</li>
+  <li><code>take(pairs)</code> is the cut-off. Pairs past it are not touched.</li>
+  <li>Sliding layers pass <code>pairs = head_dim / 2</code> and θ = 10000, so all 64 pairs turn there.</li>
+</ul>
+<p>Full layers use θ = 1e6 and rotate half of each head. Sliding layers use θ = 1e4 and rotate all of it.</p>
+<p><strong>Takeaway: full layers rotate 64 of 128 values using a full head’s frequencies; sliding layers rotate all 128.</strong></p>
+<div class="quiz" data-quiz="check" data-for="rope" id="c-attn-rope">
+  <p>An engineer switches a full layer to the usual partial RoPE: the first 64 values, with a 64-value head’s frequencies. What goes wrong?</p>
+  <ul>
+    <li data-right>Its angles differ from the reference’s, so the numbers drift even though the output still reads as text <div class="why">The frequencies are part of the rotation; a different set gives different values.</div></li>
+    <li>The shapes no longer match, so the code fails to run <div class="why">Both versions produce 128 values per head, so the shapes match.</div></li>
+    <li>Nothing: only the order of the rotated values changes <div class="why">The frequencies, not just the order, decide each pair’s angle.</div></li>
+  </ul>
+</div>
+
+<h2 id="norm" data-short="Norm and gate" data-step="q and k get an RMSNorm per head before RoPE; each head's output is scaled by one sigmoid gate before the output projection.">What do the per-head norm and gate change?</h2>
+<p>Attention starts by projecting the normed input into q, k and v. Two more steps touch them. An <strong>RMSNorm</strong> divides a vector by the root mean square of its values, then multiplies by a learned gain. A <strong>sigmoid</strong> squashes any number into the range 0 to 1. The first step normalizes q and k. The second is a gate that scales attention’s output.</p>
+<div class="quiz" data-quiz="predict" data-for="norm" id="g-attn-norm">
+  <p>The output gate is a linear layer on the 2048-value input, with one result per query head. How many gate values does one token get?</p>
+  <ul>
+    <li data-right>16, one per query head <div class="why">Each gate value scales one head’s 128 outputs.</div></li>
+    <li>2048, one per input value <div class="why">The gate is per head, not per channel, so the input width does not set its size.</div></li>
+    <li>128, one per value in a head <div class="why">The 128 gains of the norm are shared by heads; the gate has one value per head.</div></li>
+  </ul>
+</div>
+<p><strong>QK-norm.</strong> The layer has a gain vector of 128 values for q (<code>attn_q_norm</code>) and another for k (<code>attn_k_norm</code>). The same gain is used for every head. Each query head is normalized over its own 128 values, and so is each of the 4 KV heads for k. The norm runs before RoPE:</p>
+<pre><code>if let Some(n) = &amp;a.q_norm {
+    k::rmsnorm_heads(&amp;mut s.q, n, hs, c.norm_eps);
+}
+</code></pre>
+<ul>
+  <li>The order is projection, then the norm, then RoPE, then attention. The code in <code>src/model/transformer.rs</code> runs them in that order.</li>
+  <li><code>rmsnorm_heads</code> normalizes each 128-value chunk separately with the same gain.</li>
+</ul>
+<p><strong>The output gate.</strong> A linear layer, <code>attn_gate</code>, maps the same normed input (2048 values) to 16 numbers, one per query head. The sigmoid of each number scales that head’s output after attention and before the output projection:</p>
+<pre><code>let s = 1.0 / (1.0 + (-g).exp());
+for v in head {
+    *v *= s;
+}
+</code></pre>
+<ul>
+  <li>One scalar scales all 128 values of its head. Because a sigmoid is between 0 and 1, the gate can only shrink a head’s output.</li>
+  <li>The gate reads the normed input, the same as q, k and v. The code computes it before the q, k and v projections.</li>
+  <li>Both steps exist only in LFM3. The loader sets <code>qk_norm</code>, <code>output_gate</code> and the sandwich norms from the <code>lfm3</code> architecture.</li>
+</ul>
+<p><strong>Takeaway: q and k get a per-head RMSNorm before RoPE, and each head’s output is scaled by one sigmoid gate before the output projection.</strong></p>
+<div class="quiz" data-quiz="check" data-for="norm" id="c-attn-norm">
+  <p>A head’s gate input is −20. The sigmoid of that is about 0. What happens to that head’s attention output before the output projection?</p>
+  <ul>
+    <li data-right>It is almost zeroed, because the gate multiplies it by a number near 0 <div class="why">A sigmoid of −20 is about 2 × 10⁻⁹, so the head’s values shrink to nearly nothing.</div></li>
+    <li>It doubles, because a gate can scale values above 1 <div class="why">A sigmoid stays between 0 and 1, so the gate can only shrink a head.</div></li>
+    <li>It is replaced by the value vector unchanged <div class="why">The gate multiplies the output; it does not swap in another vector.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Five of LFM3’s eleven attention layers read only the last 256 positions. Their cache is a 512-row ring, and it wraps.</p>
+<p>Past position 255 those layers and the full ones see different prefixes, so the 2048-token check needed Hugging Face in f32 as its reference. The engine’s BF16 run matches it.</p>
+<p>Full layers rotate half of each head with a full head’s frequencies. Every attention layer normalizes q and k per head, and scales each head’s output with a gate.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Perplexity and KL numbers on this page were measured on the PC (x86) on wikitext-2, one chunk at context 2048, as recorded in results/phase-lfm3.md (A5). Memory sizes are calculated from the code. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-lfm3.md A0 (rope_freqs.weight, sliding edge, KV heads), A4 (13 conv / 6 full / 5 sliding layers, 256 + 256 ring), A5 (context 2048 table: 13.5848, 13.5986, 13.7917, 13.9561, KL 0.052408 / 0.055758, same top 88.759 / 88.172 %; phone 13.7811; context 512 PPL 24.8542 vs 24.8278); plans/lfm3.md section 2 (window 256, partial_rotary_factor 0.5, kv heads 4, head_dim 128); commits 0b897a4 and b4fceba (src/kernels/mod.rs, src/kernels/scalar.rs, src/model/transformer.rs, src/model/gguf.rs, src/model/config.rs); tools/hf_ppl_lfm3.py docstring. Calculated: 4 KiB per position per layer, 8 MiB full layer at 2048, 2 MiB 512-row ring, 58 MiB and 88 MiB totals, 2 x 10^-9 sigmoid(-20). -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

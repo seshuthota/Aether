@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How does the NPU read a prompt? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">The NPU · 03</p>
+
+<h1>How does the NPU read a prompt?</h1>
+<p class="lede">A prompt is many tokens through the same weights at once, so it is a matrix times a matrix, not the matrix times a vector that decoding does. On the phone that product runs on the NPU’s matrix unit, HMX, which takes 16-bit float tiles. This page shows how our five quantized formats become those tiles, one Q4_K bug that rounded small weights to zero, the prompt speeds we measured, and the size limit of one call.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="npu-decode.html">Why does decode run as one call per token?</a>, <a href="../phase-3/prefill.html">Prefill: many tokens at once</a> and <a href="../phase-3/gemm.html">Inside the GEMM micro-kernel</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#why">Why is a prompt a matrix times a matrix?</a>
+  <a href="#tiles">What form does the matrix unit need its numbers in?</a>
+  <a href="#flush">What did an f16 multiply lose from Q4_K weights?</a>
+  <a href="#speed">How fast is a prompt on the matrix unit?</a>
+  <a href="#bank">Why can Qwen not take 512 tokens in one call?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Follow one prompt from its weights to the matrix unit, and find where it can go wrong.">What are we trying to do here?</h2>
+<p>The NPU is the Hexagon DSP on this phone, a chip inside the Snapdragon that runs our own C code. It has a vector unit (HVX) and a matrix unit (HMX). HMX multiplies 32 × 32 blocks of numbers, called <strong>tiles</strong>. A tile is a fixed-size block of fp16 values, where fp16 is a 16-bit floating-point number. HMX reads its tiles only from <strong>VTCM</strong>, the DSP’s own on-chip scratch memory, which is much smaller than DRAM.</p>
+<p>By the end of this page you can say why a prompt needs the matrix unit, what the weights and the activations look like when they reach it, and what limits one call.</p>
+
+<h2 id="why" data-short="Matrix × matrix" data-step="A prompt reuses each weight for all its tokens, so its products are arithmetic, not memory reads.">Why is a prompt a matrix times a matrix?</h2>
+<p>Decoding makes one token at a time. Each weight matrix is multiplied by one vector, the token’s activation. That is a matrix-vector product, or GEMV. An <strong>activation</strong> is the vector of numbers that one token holds as it passes through a layer.</p>
+<div class="quiz" data-quiz="predict" data-for="why" id="npu-prompt-g-why">
+  <p>A 128-token prompt goes through one weight matrix. Compared with decoding those 128 tokens one at a time, how many times is each weight read from DRAM?</p>
+  <ul>
+    <li data-right>Once, for all 128 tokens together <div class="why">The tokens share the weights while they are in the same call.</div></li>
+    <li>128 times, once for each token <div class="why">That is decoding. A prompt batches its tokens, so the weights are used again while loaded.</div></li>
+    <li>Never, because the cache holds the weights <div class="why">The KV cache holds keys and values, not weights.</div></li>
+  </ul>
+</div>
+<p>A prompt batches its tokens. Each weight is loaded once and multiplied by every token in the batch. The work is arithmetic, not reading DRAM. The phase-l5 notes say it this way: every weight is used by all the prompt’s tokens, so the work is arithmetic.</p>
+<p>Example, calculated: a group of 32 tokens against a block of 32 inputs is 32 × 32 products. Its 32 × 32 weights are loaded once and used 32 times. Decoding the same 32 tokens would load them 32 times.</p>
+<p>The CPU path works the same way, as <a href="../phase-3/prefill.html">prefill: many tokens at once</a> explains, and its kernel is in <a href="../phase-3/gemm.html">Inside the GEMM micro-kernel</a>.</p>
+<p><strong>Takeaway: a prompt reuses each weight across its tokens, so its products are matrix times matrix.</strong></p>
+<div class="quiz" data-quiz="check" data-for="why" id="npu-prompt-c-why">
+  <p>A one-token prompt goes through the same products. How many times is each weight read?</p>
+  <ul>
+    <li data-right>Once, and used once, as in decoding <div class="why">With one token there is nothing to share a weight load with.</div></li>
+    <li>Fewer times, because one token needs less arithmetic <div class="why">Arithmetic falls, but each weight still has to be read.</div></li>
+    <li>Not at all, because the matrix unit skips it <div class="why">Every product still reads its weights.</div></li>
+  </ul>
+</div>
+
+<h2 id="tiles" data-short="Fp16 tiles" data-step="HMX takes only fp16 tiles in VTCM, so every quantized format is unpacked into the same tiles first.">What form does the matrix unit need its numbers in?</h2>
+<p>Our weights are not stored as fp16. They are GGUF blocks: small integers, with one scale per block. A <strong>scale</strong> is one number that multiplies a block’s integers. <strong>Dequantizing</strong> means turning the packed integers back into real values with that scale. HMX multiplies only fp16 tiles, so the weights must be dequantized into tiles first.</p>
+<div class="quiz" data-quiz="predict" data-for="tiles" id="npu-prompt-g-tiles">
+  <p>HMX multiplies only fp16 tiles in VTCM. Our weights are packed 4-bit and 8-bit blocks. Which step makes the tiles?</p>
+  <ul>
+    <li data-right>A dequantize step: unpack each integer, multiply by its scale, store fp16 in VTCM <div class="why">That turns each packed value into a number the matrix unit can multiply.</div></li>
+    <li>HMX reads the packed blocks and converts them itself <div class="why">HMX only multiplies fp16 tiles; the packed form has to be unpacked first.</div></li>
+    <li>The CPU converts the whole model to fp16 once at load time <div class="why">The results say the weights stay in our Q4_0 layout in DRAM.</div></li>
+  </ul>
+</div>
+<p>The layout is a block of weights in DRAM, a tile in VTCM, and the matrix unit’s result:</p>
+<pre><code>weights in DRAM, packed (Q4_0, Q5_0, Q8_0, Q4_K, Q6_K)
+        |  hmx_weight_tiles: unpack, scale, round to fp16
+        v
+one fp16 weight tile, 32 x 32, in VTCM
+        |  HMX multiplies it with an activation tile
+        v
+one 32 x 32 result tile -> f32 rows for our code
+</code></pre>
+<ul>
+  <li>A tile of 32 × 32 fp16 values is <span class="tag c">calculated</span> 2048 bytes (32 × 32 × 2).</li>
+  <li>The matrix unit only runs when it is powered on. Our session asks for it in <code>dsp/aether_dsp.c</code> (<code>HAP_power_set_HMX</code>). The results say an unpowered unit never finishes.</li>
+  <li>The activations are converted to plain fp16 tiles; only the weights go through the unpacking.</li>
+</ul>
+<p>Every format is unpacked by one function, <code>hmx_weight_tiles</code>. The header says why this works:</p>
+<pre><code>// dsp/hmx_tiles.h: Every format uses the same layout, so
+// the matrix unit does not care which quantizer the
+// weights came from.
+</code></pre>
+<table>
+  <thead><tr><th>format</th><th>what the unpacking does</th><th>scale</th></tr></thead>
+  <tbody>
+    <tr><td>Q4_0</td><td>nibble minus 8, times the block scale</td><td class="num">f16</td></tr>
+    <tr><td>Q5_0</td><td>adds the fifth bit, minus 16, times the scale</td><td class="num">f16</td></tr>
+    <tr><td>Q8_0</td><td>stored byte minus 128, times the scale</td><td class="num">f16</td></tr>
+    <tr><td>Q4_K</td><td>code q, times d·scale, minus dmin·min</td><td class="num">f32, rounded once</td></tr>
+    <tr><td>Q6_K</td><td>signed code q − 32, times d·scale</td><td class="num">f32, rounded once</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li>Q4_0 keeps its 32 rows of a group in the 32 lanes of one vector, which is the layout of a tile’s 32 outputs. No lane shuffling is needed.</li>
+  <li>Q4_K and Q6_K scale in f32 and round once. The next section shows why.</li>
+</ul>
+<p><strong>Takeaway: every format is unpacked into the same fp16 tile; only the unpacking differs.</strong></p>
+<div class="quiz" data-quiz="check" data-for="tiles" id="npu-prompt-c-tiles">
+  <p>Q6_K and Q4_0 fill the same kind of tile. What is different about the Q6_K unpacking?</p>
+  <ul>
+    <li data-right>Its byte is a signed code, q minus 32, scaled in f32 <div class="why">The table above lists it; the tile layout is the same for both.</div></li>
+    <li>It skips the scale, because 6-bit codes need none <div class="why">Q6_K has a scale; it is applied in f32.</div></li>
+    <li>It writes a different tile shape into VTCM <div class="why">Every format writes the same tile layout.</div></li>
+  </ul>
+</div>
+
+<h2 id="flush" data-short="The Q4_K bug" data-step="An f16 multiply rounded small Q4_K weights to zero; scaling in f32 and rounding once fixed it.">What did an f16 multiply lose from Q4_K weights?</h2>
+<p>An <strong>f16</strong> is a 16-bit float: 1 sign bit, 5 exponent bits and 10 fraction bits. Ten fraction bits keep about three decimal digits. Near 0.05, two neighbouring f16 values are about 3e-5 apart <span class="tag c">calculated</span>. Subtract two large numbers that nearly cancel, and their small difference can fall below that spacing: it comes out as 0 or as one step.</p>
+<p>Q4_0 turns each nibble into (nibble − 8) times one scale. Q4_K also subtracts an offset, dmin·min, for each block. Both are stored in the tile as fp16.</p>
+<div class="quiz" data-quiz="predict" data-for="flush" id="npu-prompt-g-flush">
+  <p>The bug hit Q4_K weights and not Q4_0’s. Where in the Q4_K unpacking can a value vanish?</p>
+  <ul>
+    <li data-right>The offset subtraction, where the scaled value and the offset nearly cancel <div class="why">A tiny difference of two large numbers is what an f16 multiply can round to zero.</div></li>
+    <li>The 6-bit code unpacking, which overflows f16 <div class="why">The codes are small; the trouble is a value too small, not too large.</div></li>
+    <li>The activation tile, which is scaled by Q4_K’s scale <div class="why">Activations stay plain fp16 with no scale.</div></li>
+  </ul>
+</div>
+<p>The code states the cause. Above <code>pair_f32</code> in <code>dsp/hmx_tiles.h</code>:</p>
+<pre><code>// Doing the multiply in f32 matters for Q4_K: the scale
+// and the offset are large and nearly cancel, and an f16
+// multiply flushes the difference to zero.
+</code></pre>
+<p>The fix multiplies in f32 and subtracts the offset in f32. Only the finished value is rounded to f16:</p>
+<pre><code>lo = Q6_Vsf_vmpy_VsfVsf(lo, scale);
+hi = Q6_Vsf_vmpy_VsfVsf(hi, scale);
+if (has_offset) {
+    lo = Q6_Vsf_vsub_VsfVsf(lo, offset);
+    hi = Q6_Vsf_vsub_VsfVsf(hi, offset);
+}
+return to_f16_pairs(lo, hi);
+</code></pre>
+<ul>
+  <li>The rounding happens once, in <code>to_f16_pairs</code>, at the end.</li>
+  <li>Before the fix, a small Q4_K weight came out as 0. Its reference is about 7.6e-5 <span class="tag m">measured</span>.</li>
+</ul>
+<ul>
+  <li>The check is <code>sim_hmx_weight_tiles_match_gguf</code>: the tiles agree with gguf-py within a relative 2e-3. HMX itself does not run on the simulator.</li>
+</ul>
+<p>Prefill perplexity after the fix, wikitext-2, 20 × 512, against llama.cpp’s run of the same files:</p>
+<table>
+  <thead><tr><th>model, Q4_K_M</th><th>HMX prefill</th><th>f16 decode</th><th>llama.cpp</th></tr></thead>
+  <tbody>
+    <tr><td>SmolLM2-135M</td><td class="num">20.6872 ± 0.847</td><td class="num">20.7288</td><td class="num">20.7784 ± 0.85</td></tr>
+    <tr><td>Qwen2.5-0.5B</td><td class="num">16.7155 ± 0.686</td><td class="num">16.7422</td><td class="num">16.7657 ± 0.69</td></tr>
+  </tbody>
+</table>
+<p>Both prefill numbers sit inside llama.cpp’s error bars <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: scale in f32 and round once, and the small weights survive into the tile.</strong></p>
+<div class="quiz" data-quiz="check" data-for="flush" id="npu-prompt-c-flush">
+  <p>A teammate proposes rounding the scale to f16 first, then multiplying in f16. What happens to the bug?</p>
+  <ul>
+    <li data-right>It comes back, because the difference is again flushed to zero <div class="why">The code comment says the f16 multiply is the cause, and rounding first keeps it.</div></li>
+    <li>It is fixed, because the scale is smaller than the weight <div class="why">Size of the scale is not the issue; the difference of two large numbers is.</div></li>
+    <li>It is fixed, because f16 is more precise than f32 <div class="why">f16 has fewer digits than f32, not more.</div></li>
+  </ul>
+</div>
+
+<h2 id="speed" data-short="Prompt speed" data-step="About 1,600 tok/s for Q4_0 SmolLM2 at 128 tokens; Qwen reaches 778. Q4_K_M is a little slower.">How fast is a prompt on the matrix unit?</h2>
+<p>Prompt speed here is tokens per second through the whole model’s prefill, as <code>dsp_ppl</code> measures it on the phone.</p>
+<div class="quiz" data-quiz="predict" data-for="speed" id="npu-prompt-g-speed">
+  <p>Qwen’s Q4_0 prompt runs at 376 tok/s at 32 tokens and at 778 tok/s at 128. Why does it speed up?</p>
+  <ul>
+    <li data-right>The unpacking cost per matrix is nearly fixed, and more tokens share it <div class="why">Each batch pays the unpacking once; a bigger batch spreads that cost.</div></li>
+    <li>The matrix unit clocks higher during a long call <div class="why">Nothing in the results says the clock rises with the call length.</div></li>
+    <li>Longer prompts use a smaller model <div class="why">The model is the same at every length.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>Q4_0, prompt tok/s</th><th class="num">32</th><th class="num">64</th><th class="num">128</th></tr></thead>
+  <tbody>
+    <tr><td>SmolLM2-135M</td><td class="num">1205</td><td class="num">1636</td><td class="num">1608</td></tr>
+    <tr><td>Qwen2.5-0.5B</td><td class="num">376</td><td class="num">596</td><td class="num">778</td></tr>
+  </tbody>
+</table>
+<p><span class="tag m">measured</span> on the phone, 2026-10-30 (<code>results/phase-l5.md</code>, step 5b). At 128 tokens, <strong>1608</strong> is SmolLM2 and <strong>778</strong> is Qwen, both Q4_0.</p>
+<ul>
+  <li>Q4_K_M at 128 tokens: SmolLM2 1544 tok/s. Qwen 746 on a cooler run and 696 on a warmer one <span class="tag m">measured</span>.</li>
+  <li>Before Q4_K_M had HMX prefill, its 8-token HVX path ran a 241-token prompt at 272 tok/s, against 755 for Q4_0 on HMX over the same 241 tokens, both for Qwen2.5-0.5B <span class="tag m">measured</span>.</li>
+  <li>llama.cpp’s NPU backend prefilled Qwen at about 330 tok/s on this phone <span class="tag m">measured</span> (results cite phase-l3 step 8).</li>
+</ul>
+<p><strong>Takeaway: a whole-model prompt runs at 1608 tok/s for SmolLM2 and 778 for Qwen (Q4_0, 128 tokens).</strong></p>
+<div class="quiz" data-quiz="check" data-for="speed" id="npu-prompt-c-speed">
+  <p>Per matrix, unpacking costs the same for any batch. Which batch gives the most tokens per unpack?</p>
+  <ul>
+    <li data-right>The largest batch that still fits the activation bank <div class="why">Each batch shares one unpack across its tokens, and the bank sets the largest batch.</div></li>
+    <li>The smallest batch, so the tiles fit in VTCM <div class="why">Tile size does not change with the batch; the bank is what limits it.</div></li>
+    <li>128 tokens, the size the tests use <div class="why">The tests use 128, but the limit is the bank, not the tests.</div></li>
+  </ul>
+</div>
+
+<h2 id="bank" data-short="The bank" data-step="The activation tiles of one call must fit in a 3 MB bank; Qwen's down matrix fills it past 320 tokens.">Why can Qwen not take 512 tokens in one call?</h2>
+<p>One call keeps its activation tiles in one VTCM bank. The bank’s size is <code>A_MAX</code> in <code>dsp/hmx.c</code>: <code>3u &lt;&lt; 20</code>, which is 3 MB (3 × 1024 × 1024 bytes). A call checks that its tiles fit, and refuses the call if they do not (<code>dsp/model.c</code>).</p>
+<div class="quiz" data-quiz="predict" data-for="bank" id="npu-prompt-g-bank">
+  <p>SmolLM2 takes 512 tokens in one call, but Qwen only 320. What makes the difference? (SmolLM2’s hidden size is 1536; Qwen’s down matrix has 152 blocks of 32 inputs.)</p>
+  <ul>
+    <li data-right>Qwen’s down matrix has more input blocks, so each token needs more tile space <div class="why">The tiles of a group grow with the number of input blocks.</div></li>
+    <li>Qwen has more layers, and each layer keeps state in the bank <div class="why">Layers run one after another, so only one layer’s tiles are in the bank at a time.</div></li>
+    <li>SmolLM2 uses smaller tiles because it is smaller <div class="why">Both use 32 × 32 fp16 tiles, which are the same size.</div></li>
+  </ul>
+</div>
+<p>The arithmetic, <span class="tag c">calculated</span> from the same numbers the results use:</p>
+<ul>
+  <li>Qwen’s down matrix has 152 blocks of 32 inputs, so one 32-token group needs 152 tiles.</li>
+  <li>152 tiles of 2048 bytes are 311,296 bytes for each group of 32 tokens.</li>
+  <li>512 tokens are 16 groups: 4.98 MB, over the 3 MB bank.</li>
+  <li>320 tokens are 10 groups: 3.11 MB, which fits. 321 tokens need 11 groups, which does not.</li>
+  <li>SmolLM2’s hidden size is 1536, so 512 tokens fit in its bank (1.57 MB).</li>
+</ul>
+<p><strong>Takeaway: the largest call depends on the widest input of the model, because that sets the tile space each token needs.</strong></p>
+<div class="quiz" data-quiz="check" data-for="bank" id="npu-prompt-c-bank">
+  <p>A matrix has 1,024 inputs. How many bytes does one 32-token group of its tiles take in the bank?</p>
+  <ul>
+    <li data-right>65,536 bytes: 32 tiles of 2048 bytes <div class="why">1,024 inputs are 32 blocks of 32, and each block is one 2048-byte tile.</div></li>
+    <li>2,048 bytes: one tile for the whole matrix <div class="why">Each block of 32 inputs makes its own tile.</div></li>
+    <li>2,097,152 bytes: 1,024 tiles of 2048 bytes <div class="why">Inputs are grouped by 32, not one tile per input.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A prompt reuses each weight across its tokens, so the NPU runs it as a matrix times a matrix on HMX.</p>
+<p>Every format is unpacked into the same fp16 tile. Q4_K scales in f32 and rounds once, because in f16 the scaled value and the offset nearly cancelled and small weights rounded to zero.</p>
+<p>A call’s activation tiles must fit the 3 MB bank: Qwen’s longest call is 320 tokens.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) (<code>results/phase-l5.md</code>, steps 5a, 5b and 6, and the Q4_K_M prompts section; <code>IMPLEMENTATION.md</code> section 0) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-l5.md step 5a (HMX tile layout, 32 x 32 tiles, activation bank); step 5b (Q4_0 prompt tok/s 1205/1636/1608 for SmolLM2 and 376/596/778 for Qwen at 32/64/128; llama.cpp ~330 tok/s on Qwen); step 6 (8-token HVX Q4_K_M 272 tok/s over 241 tokens; Q4_0 HMX 755 over 241); Q4_K_M prompts on HMX section (PPL 20.6872 ± 0.847 and 16.7155 ± 0.686 at prefill; f16 decode 20.7288 and 16.7422; llama.cpp 20.7784 ± 0.85 and 16.7657 ± 0.69; 7.6e-5 reference; Q4_K_M at 128: SmolLM2 1544, Qwen 746 cooler and 696 warmer; 152 blocks, 2048-byte rows, 4.98 MB at 512, 3.11 MB at 320; SmolLM2 hidden 1536, 1.57 MB at 512); IMPLEMENTATION.md section 0, Next steps (2026-10-30) item 1 (hmx_weight_tiles, f32 scale rounded once, PPL, 3 MB bank, 320 tokens fit); dsp/hmx_tiles.h (hmx_weight_tiles, pair_f32 comment and code, format rules); dsp/hmx.c line 40 (A_MAX = 3u << 20); dsp/model.c line 1071 (hmx_fits check); dsp/aether_dsp.c lines 69-73 and 372-373 (HMX power); src/model/dsp.rs (hmx_prefill: every run must have a tile dequantizer) -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

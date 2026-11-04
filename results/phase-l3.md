@@ -1618,8 +1618,10 @@ its figure is the kernel alone; the chunked figure is
 | d2048 | 86 / 52 | 156 / 126 | 322 / 240 | 686 / 483 |
 | d4096 | 169 / 101 | 308 / 252 | 626 / 463 | 1292 / 918 |
 
-- **Flash's attention is 1.2–1.7× slower on the Adreno**, at every depth
-  and length except pp128 at depth 0 (where the chunked path's batch of
+- **Flash's attention is 1.2–1.7× slower on the Adreno** at depth 1024
+  and beyond, at every length. At depth 0 it is mixed: faster at pp64 and
+  pp128, 1.0–1.2× slower at pp256 and pp512. The pp128 case is the batch
+  (the chunked path’s batch of
   126 splits a 128-token prompt into passes of 126 and 2, so its 10 ms is
   two small dispatch rounds against flash's one).
 - The ratio is the work partition, not extra work: both read the same

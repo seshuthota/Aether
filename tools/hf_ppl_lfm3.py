@@ -6,8 +6,9 @@ Runs the pinned repository code in float32 on the CPU over the first CTX
 tokens of wikitext-2's test file (no BOS, as LFM3's tokenizer adds none)
 and scores the second half: the logits at positions CTX/2 .. CTX-2 predict
 tokens CTX/2+1 .. CTX-1, which is llama-perplexity's `-c CTX --chunks 1`.
-Past 512 positions the sliding layers and the full layers see different
-prefixes, so this is the reference for the context-2048 runs.
+Past 256 positions (the sliding window) the sliding layers and the full
+layers see different prefixes. The 20 x 512 runs already reach past it;
+this is the reference for the longer, context-2048 runs.
 """
 
 import sys

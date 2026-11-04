@@ -77,6 +77,8 @@ setTimeout(function () {
     <tr><td>Unicode NFC</td><td>Python’s <code>unicodedata</code></td><td>identical on 17,253 cases</td></tr>
     <tr><td>Quantizers</td><td>llama.cpp (<code>gguf</code> package, <code>libggml-base</code>)</td><td>byte-identical</td></tr>
     <tr><td>Quantized model quality</td><td><code>llama-perplexity</code></td><td>within its error bars</td></tr>
+    <tr><td>Hexagon DSP kernels (NPU)</td><td>The Hexagon simulator (<code>hexagon-sim</code>, from the SDK) on the PC; numpy and gguf-py</td><td>numpy for the f16 conversion; gguf-py for the HMX weight tiles, relative error under 2e-3. HMX does not run on the simulator</td></tr>
+    <tr><td>LFM3 at context 2048</td><td>Hugging Face <code>transformers</code> in float32 (<code>tools/hf_ppl_lfm3.py</code>)</td><td>engine’s BF16 perplexity equals HF’s to four decimals: 13.5848</td></tr>
     <tr><td>Speed</td><td><code>llama-bench</code></td><td>measured side by side</td></tr>
   </tbody>
 </table>
@@ -124,7 +126,7 @@ setTimeout(function () {
   <li><code>tools/gen_quant.py</code> and <code>gen_quant_imatrix.py</code> quantize with llama.cpp’s own code.</li>
   <li><code>tools/fetch_models.sh</code> downloads the models and builds GGUF files with llama.cpp’s converter.</li>
 </ul>
-<p>Some of these files are hundreds of megabytes, so they are <strong>regenerated, not committed</strong>. A test that needs a missing file prints <code>SKIP</code> with the path and returns, instead of failing on a fresh checkout. The cargo runner copies <code>testdata/</code> to the phone, so the same tests run there (<code>cargo test --release --target aarch64-linux-android</code>): 105 passed on the phone on 2026-10-29 <span class="tag m">measured</span>.</p>
+<p>Some of these files are hundreds of megabytes, so they are <strong>regenerated, not committed</strong>. A test that needs a missing file prints <code>SKIP</code> with the path and returns, instead of failing on a fresh checkout. The cargo runner copies <code>testdata/</code> to the phone, so the same tests run there (<code>cargo test --release --target aarch64-linux-android</code>): 123 pass on the phone after the LFM3 work (IMPLEMENTATION.md, section 0) <span class="tag m">measured</span>.</p>
 <p><strong>Takeaway: references run once on the PC and leave their answers in files, which the Rust tests read on the PC and on the phone.</strong></p>
 <div class="quiz" data-quiz="check" data-for="golden" id="c-golden">
   <p>A test prints SKIP on your machine. What does that tell you about the code?</p>
@@ -175,10 +177,11 @@ mean KLD     0.269287   0.269190 ± 0.003723</code></pre>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Results are from <code>results/phase-N.md</code> and the test suite as of 2026-10-29. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<p class="colophon">Results are from <code>results/</code> (phase-N, phase-l5, phase-lfm3) and the test suite as of 2026-11-04. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+<!-- sources: IMPLEMENTATION.md section 0 (123 phone tests after the LFM3 work; the earlier 105 was the host count); results/phase-l5.md (hexagon-sim tests sim_f16_kv_convert_matches_numpy, sim_hmx_weight_tiles_match_gguf, relative 2e-3, HMX not on the simulator); results/phase-lfm3.md A5 context 2048 table (HF f32 13.5848, engine BF16 13.5848); tools/hf_ppl_lfm3.py -->
 </body>
 </html>

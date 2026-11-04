@@ -158,7 +158,31 @@ window.AETHER_PAGES = [
       { href: "beyond/gpu-basics.html", num: "02", title: "How the GPU runs our code", desc: "Lanes, workgroups and Vulkan; 32 lanes per row group; why the GPU reads no faster than the CPU." },
       { href: "beyond/gpu-decode.html", num: "03", title: "Decoding on the GPU", desc: "The whole step with llama.cpp's perplexity, attention in chunks, clock swings, and less energy per token." },
       { href: "beyond/gpu-prompt.html", num: "04", title: "Who reads the prompt?", desc: "The CPU reads it and hands the KV cache to the GPU; a measurement that pointed the wrong way; a batched GPU pass." },
-      { href: "beyond/q4km.html", num: "05", title: "Q4_K_M files", desc: "llama.cpp's most common mix: Q5_0, super-blocks with scales of scales, accuracy against llama.cpp, and two speed fixes." }
+      { href: "beyond/q4km.html", num: "05", title: "Q4_K_M files", desc: "llama.cpp's most common mix: Q5_0, super-blocks with scales of scales, accuracy against llama.cpp, and two speed fixes." },
+      { href: "beyond/gpu-int8.html", num: "06", title: "8-bit activations on the GPU", desc: "Rounding x to 8 bits per 32 values, int8 dot products on the Adreno, and prompt lookup that finally pays there." },
+      { href: "beyond/gpu-flash.html", num: "07", title: "Flash attention: kernel or batch?", desc: "Chunks merged with a running max and sum, one pass instead of two, and a measurement that found the gain elsewhere." }
+    ]
+  },
+  {
+    section: "After Phase 8 · the NPU",
+    crumb: "The NPU",
+    pages: [
+      { href: "beyond/npu-basics.html", num: "01", title: "What the NPU is", desc: "The Hexagon DSP: HVX vectors, the HMX matrix unit, VTCM, and how our own library gets onto it through FastRPC." },
+      { href: "beyond/npu-decode.html", num: "02", title: "One call per token", desc: "Why a call costs too much to make one per matrix, so the whole decode step runs in one, with weights by DMA." },
+      { href: "beyond/npu-prompt.html", num: "03", title: "Prompts on HMX", desc: "Every format turned into the same fp16 tiles, a flush-to-zero bug, and how big a prompt fits in one call." },
+      { href: "beyond/npu-attention.html", num: "04", title: "Attention through VTCM", desc: "K/V streamed in 256-position blocks, the next block fetched early, and what it does at depth." },
+      { href: "beyond/engines.html", num: "05", title: "CPU, GPU or NPU?", desc: "Every engine on this phone in one table: speed, energy, heat, and which one to pick for which job." }
+    ]
+  },
+  {
+    section: "A hybrid model · LFM3",
+    crumb: "LFM3",
+    pages: [
+      { href: "lfm3/index.html", title: "Overview" },
+      { href: "lfm3/conv.html", num: "01", title: "Short convolutions", desc: "Layers that mix only the last few tokens, and a state that stays the same size however long the text gets." },
+      { href: "lfm3/rollback.html", num: "02", title: "Undoing a convolution", desc: "Why speculative decoding must restore the conv state, and the test that shows what happens if it does not." },
+      { href: "lfm3/attention.html", num: "03", title: "Sliding windows and partial RoPE", desc: "Layers that see only recent positions, a ring buffer, and why context 2048 needed its own reference." },
+      { href: "lfm3/accuracy-speed.html", num: "04", title: "Right, but slower", desc: "Perplexity and KL against llama.cpp and Hugging Face, and why decode trails llama.cpp: 87 % in two kernels." }
     ]
   }
 ];

@@ -20,7 +20,7 @@
 <main id="content">
 <p class="kicker">Start here · 03</p>
 <h1>Course outline</h1>
-<p class="lede">Every page these notes still need, phase by phase, and how far each one has got. The engine is ahead of the notes: Phases 0–8 are built and verified. The explanations cover Phases 0–6 and 8 with topic pages, Phase 7 with its overview and seven pages, and the work after Phase 8. For the open rows the code and the measurements mostly exist and only the page is missing. The third column says which.</p>
+<p class="lede">Every page these notes still need, phase by phase, and how far each one has got. The engine is ahead of the notes: Phases 0–8 and the later directions (K-quant files, speculative decoding, the GPU, the NPU, and the LFM3 hybrid model) are built and verified. The explanations cover Phases 0–6 and 8 with topic pages, Phase 7 with its overview and seven pages, and the work after Phase 8. For the open rows the code and the measurements mostly exist and only the page is missing. The third column says which.</p>
 <nav class="toc">
   <a href="#status">Where do the notes stand?</a>
   <a href="#p-1">What must I know before Phase 0?</a>
@@ -32,6 +32,7 @@
   <a href="#p8">Phase 8: how does Kotlin reach the engine?</a>
   <a href="#p9">Phase 9: are GPUs and NPUs worth it?</a>
   <a href="#p10">Phase 10: what else could the engine do?</a>
+  <a href="#lfm3">Later: what changes when not every layer is attention?</a>
   <a href="#capstone">How do I get from an empty repo to an app?</a>
   <a href="#site">What is still missing across the site?</a>
   <a href="#takeaway">What you should take away</a>
@@ -40,15 +41,15 @@
 <h2 id="status">Where do the notes stand?</h2>
 <p>Start with the counts.</p>
 <div class="statrow">
-  <div class="stat"><b>33</b><span>written</span></div>
-  <div class="stat"><b>6</b><span>partly covered</span></div>
+  <div class="stat"><b>42</b><span>written</span></div>
+  <div class="stat"><b>7</b><span>partly covered</span></div>
   <div class="stat"><b>11</b><span>to write</span></div>
-  <div class="stat"><b>44</b><span>items in all</span></div>
+  <div class="stat"><b>60</b><span>items in all</span></div>
 </div>
 <p><span class="tag d">written</span> the page exists and is checked against the code and <code>results/</code>. <span class="tag c">partly</span> some of it is on an existing page, linked. <span class="tag a">to write</span> nothing yet.</p>
 <p>In the third column, <strong>built</strong> means the engine has the code and the measured numbers a page can teach from; <strong>not built</strong> means the page would have to explain something the engine does not do yet.</p>
 <div class="callout"><span class="lbl">Two choices behind this list</span><p>Phases 9 and 10 go past the <a href="roadmap.html">roadmap</a>, which ends with the Android app in Phase 8. The plan only lists those topics as “later”. They are kept here as optional. Also, this phone has no efficiency cores (<a href="../phase-1/topology.html">Phase 1</a>), so where the outline says prime/performance/efficiency, the pages compare prime with performance cores and say how other chips differ.</p></div>
-<p><strong>Takeaway: 33 items are written, 6 are partly covered, and 11 still need writing.</strong></p>
+<p><strong>Takeaway: 42 items are written, 7 are partly covered, and 11 still need writing. (The count was 33, 6 and 11 on 2026-10-29, when the NPU was not started.)</strong></p>
 
 <h2 id="p-1">What must I know before Phase 0?</h2>
 <p>Phase 0 assumes some Rust and arithmetic. A <em>primer</em> is a short first introduction to a subject.</p>
@@ -58,7 +59,7 @@
     <tr><td><span class="tag c">partly</span></td><td>Rust primer: ownership, slices, <code>unsafe</code> basics. Unsafe and raw memory are on <a href="../phase-1/rust-memory.html">Raw memory in Rust</a>; ownership and slices have no page.</td><td>—</td></tr>
     <tr><td><span class="tag c">partly</span></td><td>Floats, dot products, matmul, softmax. Spread over <a href="llm.html">How an LLM makes text</a>, <a href="../phase-2/attention.html">Attention</a> and <a href="../phase-2/correctness.html">Bit-identical with llama2.c</a>; no single page from first principles.</td><td>—</td></tr>
     <tr><td><span class="tag a">to write</span></td><td>A tour of existing engines: llama.cpp/ggml, ExecuTorch, MLC-LLM, LiteRT, MNN, ncnn. What each does, and which Aether checks itself against.</td><td>llama.cpp is built for host and phone</td></tr>
-    <tr><td><span class="tag d">written</span></td><td><a href="right.html">How we know it’s right</a>: the external-reference rule, exact vs bounded results, golden files</td><td>built · <code>tools/</code>, <code>src/testutil.rs</code>; 105 tests on the phone</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="right.html">How we know it’s right</a>: the external-reference rule, exact vs bounded results, golden files</td><td>built · <code>tools/</code>, <code>src/testutil.rs</code>; 123 tests on the phone (2026-11-03; 116 on 2026-10-31)</td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="code-map.html">Code map</a>: every file in <code>src/</code> in the order a prompt meets it</td><td>built</td></tr>
   </tbody>
 </table>
@@ -102,10 +103,10 @@
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-5/safetensors.html">Reading weights in place</a>: safetensors, <code>mmap</code>, bf16 and f16 to f32</td><td>built · <code>src/format/</code></td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-5/config.html">One forward pass, two families</a>: config-driven shapes, tied embeddings, grouped-query attention, two RoPE layouts</td><td>built · <code>src/model/config.rs</code>, <code>hf.rs</code></td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-5/bytelevel.html">Byte-level BPE</a>, with Unicode tables for the pre-tokenizer. Chat templates have <a href="../phase-7/chat.html">their own page</a>.</td><td>built · checked on 433 strings against <code>tokenizers</code></td></tr>
-    <tr><td><span class="tag d">written</span></td><td><a href="../phase-5/matching-hf.html">Matching Hugging Face</a> layer by layer</td><td>built · within 5.5e-5 of <code>transformers</code>; SmolLM2-360M not checked</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../phase-5/matching-hf.html">Matching Hugging Face</a> layer by layer</td><td>built · within 5.5e-5 of <code>transformers</code> for SmolLM2-135M; SmolLM2-360M within 1.0e-4</td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: every Phase 5 topic has its own page; only the SmolLM2-360M check is still open in the engine.</strong></p>
+<p><strong>Takeaway: every Phase 5 topic has its own page, and the engine matches <code>transformers</code> for both SmolLM2 sizes.</strong></p>
 
 <h2 id="p6">Phase 6: how are the weights made smaller?</h2>
 <p>Quantization stores each weight in fewer bits. A <em>block scale</em> is one number that a small group of weights shares, so each weight can be a short integer.</p>
@@ -114,7 +115,7 @@
   <tbody>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-6/blocks.html">Block quantization</a>: block scales, the Q8_0 and Q4_0 layouts. Why fewer bytes per weight is faster is on <a href="../phase-0/decode-ceiling.html">Decode ceiling</a>.</td><td>built · byte-identical to llama.cpp</td></tr>
     <tr><td><span class="tag d">written</span></td><td>Quantizing activations: <a href="../phase-6/dot-products.html#style-b">Multiplying quantized weights</a></td><td>built</td></tr>
-    <tr><td><span class="tag d">written</span></td><td><code>sdot</code> and i8mm kernels: <a href="../phase-6/dot-products.html">Multiplying quantized weights</a></td><td><code>sdot</code> built; <code>smmla</code> 2×2 built and measured; 4×4 tile and repacked weights not built</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><code>sdot</code> and i8mm kernels: <a href="../phase-6/dot-products.html">Multiplying quantized weights</a></td><td><code>sdot</code> built; <code>smmla</code> built, with weights repacked four rows at a time and 4-row × 8-token tiles for prompts (<code>results/phase-6.md</code>)</td></tr>
     <tr><td><span class="tag d">written</span></td><td>K-quants: <a href="../beyond/q4km.html">Q4_K_M files</a> (Q5_0, Q4_K, Q6_K)</td><td>built after Phase 8 · perplexity matches llama.cpp</td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-6/perplexity.html">Perplexity and KL</a></td><td>built · matches <code>llama-perplexity</code></td></tr>
   </tbody>
@@ -131,12 +132,12 @@
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-7/chat.html">Talking to a chat model</a>: ChatML, stop tokens, the default system message</td><td>built · <code>src/chat.rs</code>; ids identical to <code>apply_chat_template</code></td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-7/benchmarking.html">Benchmarking like llama-bench</a>: pp and tg, depths, synthetic tokens, repeats, fair conditions</td><td>built · <code>examples/bench_suite.rs</code>, <code>scripts/phase7-bench.sh</code></td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-7/time.html">Where the time goes</a>: decode vs prefill limits, <code>smmla</code> and repacking, clock caps</td><td>measured · <code>results/phase-7.md</code>, <code>results/phase-6.md</code></td></tr>
-    <tr><td><span class="tag c">partly</span></td><td>KV cache sizing and quantization. Sizing for all three models is on <a href="../phase-2/kv-cache.html">The KV cache</a>.</td><td>sizing built; quantized cache not built</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>Long context, tiled attention</td><td>not built · attention is split by head only (open item)</td></tr>
-    <tr><td><span class="tag d">written</span></td><td>A sustained-speed and energy benchmark suite (joules per token): <a href="../phase-7/heat.html">Heat and energy</a></td><td>measured · 0.041 → 0.028 J/token on the CPU, 0.021–0.024 on the GPU</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>KV cache sizing and quantization. Sizing for all three models is on <a href="../phase-2/kv-cache.html">The KV cache</a>.</td><td>sizing built; quantized cache not built on the CPU (the DSP’s K/V cache is f16)</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Long context, tiled attention: <a href="../beyond/gpu-flash.html">Flash attention: was it the kernel or the batch?</a> (GPU prompt pass)</td><td>built · CPU flash-decoding by K/V head (decode −11 / −18 % at depth 512 / 1024, 2026-10-29); GPU flash attention (2026-11-02, <code>results/phase-l3.md</code>)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>A sustained-speed and energy benchmark suite (joules per token): <a href="../phase-7/heat.html">Heat and energy</a></td><td>measured · 0.041 → 0.028 J/token on the CPU; 0.028–0.032 J/token on every core set on 2026-10-31 (<code>results/phase-7.md</code>); 0.021–0.024 on the GPU (2026-10-29)</td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: GGUF, NFC, chat templates, benchmarking, where the time goes, and heat and energy have their pages; long context and the quantized cache are not built.</strong></p>
+<p><strong>Takeaway: GGUF, NFC, chat templates, benchmarking, where the time goes, and heat and energy have their pages; long context is built in part, and the quantized CPU cache is not built.</strong></p>
 
 <h2 id="p8">Phase 8: how does Kotlin reach the engine?</h2>
 <p>The app is written in Kotlin, and the engine is written in Rust. <em>JNI</em> is the bridge that lets Kotlin call native code, and an <em>APK</em> is the package file Android installs.</p>
@@ -146,35 +147,54 @@
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-8/c-abi.html">A C door into Rust</a>: the C interface, panics, error codes, the streaming callback</td><td>built · <code>include/aether.h</code>, <code>src/ffi.rs</code></td></tr>
     <tr><td><span class="tag d">written</span></td><td><a href="../phase-8/app.html">Inside the Android app</a>: JNI, the engine thread, streaming text without broken characters</td><td>built · <code>android/</code></td></tr>
     <tr><td><span class="tag a">to write</span></td><td>Packaging the <code>.so</code> in the APK (16 KB page alignment)</td><td>built · linked with <code>max-page-size=16384</code></td></tr>
-    <tr><td><span class="tag c">partly</span></td><td>App memory limits: the low-memory killer, RSS vs page cache (<a href="../phase-8/app.html#memory">app page</a>)</td><td>CLI peak measured (348 MB); the app’s own memory not measured</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>App memory limits: the low-memory killer, RSS vs page cache (<a href="../phase-8/app.html#memory">app page</a>)</td><td>CLI peak measured: 348 MB (Qwen2.5-0.5B Q4_0); the app measured once, on LFM3-1.7B: 1.30 GB PSS / 1.42 GB RSS (2026-11-03, <code>results/phase-lfm3.md</code>)</td></tr>
     <tr><td><span class="tag a">to write</span></td><td>Storing and downloading the model</td><td>stored in the app’s files folder, pushed with adb; download not built</td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: the C interface and the app have their pages; packaging and storage are still to write, and the app’s memory is not measured.</strong></p>
+<p><strong>Takeaway: the C interface and the app have their pages; packaging and storage are still to write, and the app’s memory has one measurement, LFM3’s 1.30 GB PSS.</strong></p>
 
 <h2 id="p9"><span class="tag a">optional</span> Phase 9: accelerators. Are GPUs and NPUs worth it?</h2>
-<p>An <em>accelerator</em> is a chip other than the CPU that runs model work. A GPU is a graphics chip, and an NPU is a neural processing unit. Phase 9 is optional. The Vulkan GPU path is built, and the <a href="../beyond/index.html">After Phase 8</a> section explains it.</p>
+<p>An <em>accelerator</em> is a chip other than the CPU that runs model work. A GPU is a graphics chip, and an NPU is a neural processing unit. Phase 9 is optional. The Vulkan GPU path and the Hexagon NPU are built, and the <a href="../beyond/index.html">After Phase 8</a> section explains them.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
     <tr><td><span class="tag d">written</span></td><td>GPUs: Vulkan on Adreno (<a href="../beyond/gpu-basics.html">basics</a>, <a href="../beyond/gpu-decode.html">decode</a>, <a href="../beyond/gpu-prompt.html">prompt</a>); OpenCL, Metal on iOS</td><td>Vulkan built (decode, prompt); OpenCL and Metal not</td></tr>
-    <tr><td><span class="tag a">to write</span></td><td>NPUs: QNN/Hexagon, LiteRT delegates, Core ML and the ANE</td><td>not built</td></tr>
-    <tr><td><span class="tag c">partly</span></td><td>Why accelerators help prefill more than decode</td><td>measured for the GPU: it reads memory no faster than the CPU (<a href="../beyond/gpu-basics.html#memory">GPU basics</a>); the batched GPU prompt’s phone speed is pending</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>GPU int8 products: <a href="../beyond/gpu-int8.html">Why round the activations to 8 bits on the GPU?</a></td><td>built · <code>quant_x.comp</code>, <code>qx_gemv_q8.comp</code>; KL within llama.cpp’s error bar on four files (L.3 step 20)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>GPU flash attention: <a href="../beyond/gpu-flash.html">Flash attention: was it the kernel or the batch?</a></td><td>built · the 256-token prompt pass is the default (2026-11-02)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>The NPU on the Hexagon DSP, with our own C code: <a href="../beyond/npu-basics.html">basics</a>, <a href="../beyond/npu-decode.html">decode</a>, <a href="../beyond/npu-prompt.html">prompt</a>, <a href="../beyond/npu-attention.html">attention</a></td><td>built and verified · Qwen2.5-0.5B 6.75 ms a token (123 tok/s) against llama.cpp’s NPU backend at 74 tok/s (measured, <code>results/phase-l5.md</code>)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td>Choosing an engine: <a href="../beyond/engines.html">CPU, GPU or NPU: which one should run the model?</a></td><td>built · the app’s CPU / GPU / DSP selector; <code>results/backends/</code></td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>QNN, LiteRT delegates, Core ML and the ANE</td><td>not built · we use no Qualcomm inference library</td></tr>
+    <tr><td><span class="tag c">partly</span></td><td>Why accelerators help prefill more than decode</td><td>measured for the GPU: it reads memory no faster than the CPU (<a href="../beyond/gpu-basics.html#memory">GPU basics</a>); the batched GPU prompt is measured against llama.cpp’s OpenCL (L.3 step 21: ahead at pp64 and pp128, level at pp256, 3–11 % behind at pp512); the NPU prompt runs at 1608 tok/s (SmolLM2-135M) and 778 tok/s (Qwen2.5-0.5B) at 128 tokens</td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: the GPU row is built and written up; the NPU is not started.</strong></p>
+<p><strong>Takeaway: the GPU and the NPU are built and measured; QNN, LiteRT, Core ML and the ANE, and OpenCL and Metal, are not built.</strong></p>
 
 <h2 id="p10"><span class="tag a">optional</span> Phase 10: advanced. What else could the engine do?</h2>
 <p>These three are optional. A <em>computation graph</em> is the list of operations a model runs, in order. <em>Op fusion</em> merges two operations into one pass.</p>
 <table class="plan">
   <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
   <tbody>
-    <tr><td><span class="tag a">to write</span></td><td>Graph representation and memory planning</td><td>not built · the plan defers this until a GPU backend</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>Graph representation and memory planning</td><td>not built · the plan deferred this until a GPU backend, which now exists</td></tr>
     <tr><td><span class="tag c">partly</span></td><td>Op fusion</td><td>built in the GPU decode step: adds, SwiGLU and RMSNorm folded into the matrix products (<a href="../beyond/gpu-decode.html#time">GPU decode</a>)</td></tr>
     <tr><td><span class="tag d">written</span></td><td>Speculative decoding (<a href="../beyond/speculative.html">page</a>), batching</td><td>speculative decoding built; batching several users not built</td></tr>
   </tbody>
 </table>
 <p><strong>Takeaway: speculative decoding and op fusion on the GPU are built; graph planning is not.</strong></p>
+
+<h2 id="lfm3"><span class="tag c">later</span> What changes when not every layer is attention?</h2>
+<p>LFM3-1.7B is a hybrid model: some layers are short convolutions and the rest are attention. A <em>short convolution</em> is a layer that mixes each token only with the few tokens just before it.</p>
+<table class="plan">
+  <thead><tr><th>Status</th><th>Topic</th><th>Engine</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag d">written</span></td><td><a href="../lfm3/index.html">What changes when not every layer is attention?</a>: the mixed stack, read from the GGUF metadata</td><td>built · the official GGUF files; the app runs it at 29.8 tok/s (CPU, <code>results/phase-lfm3.md</code>)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../lfm3/conv.html">What is a short convolution layer, and what does it remember?</a></td><td>built · conv layers 0.07 % of Q4_K_M decode (profile, <code>results/phase-lfm3.md</code>)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../lfm3/rollback.html">How do you undo a convolution?</a>: rollback for speculative decoding</td><td>built · bit-identical with the restore; 0.31 relative error without it</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../lfm3/attention.html">Sliding windows, partial RoPE and per-head norms</a></td><td>built · context 2048 checked against Hugging Face (BF16 PPL 13.5848, equal to HF)</td></tr>
+    <tr><td><span class="tag d">written</span></td><td><a href="../lfm3/accuracy-speed.html">Is it right, and why is it slower than llama.cpp?</a></td><td>measured · PPL and KL level with llama.cpp; Q4_K_M decode 26.1 against 44.3 tok/s (A7, same session)</td></tr>
+    <tr><td><span class="tag a">to write</span></td><td>K-quant decode: Q8_K activations and repacked rows, after K5</td><td>not on <code>main</code> · no numbers yet</td></tr>
+  </tbody>
+</table>
+<p><strong>Takeaway: the LFM3 pages are written; the K-quant decode page waits for its phone numbers, after K5.</strong></p>
 
 <h2 id="capstone">How do I get from an empty repo to an app?</h2>
 <p>One row: a checklist from an empty repo to a chat app.</p>
@@ -208,8 +228,8 @@
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/widgets.js?v=30"></script>
 </body>

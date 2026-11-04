@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short convolution layers · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">LFM3 · 01</p>
+
+<h1>What is a short convolution layer, and what does it remember?</h1>
+<p class="lede">Thirteen of LFM3’s 24 layers are not attention. Each one mixes a token with the few tokens before it, and keeps a small fixed set of vectors between tokens instead of a cache that grows with every token.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="index.html">the LFM3 overview</a>, <a href="../phase-2/attention.html">attention</a> and <a href="../phase-2/kv-cache.html">the KV cache</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#kernel">What does one conv layer compute?</a>
+  <a href="#state">What does the conv state remember?</a>
+  <a href="#versus">How does that compare with the KV cache?</a>
+  <a href="#cost">Why is it cheaper than attention at long context?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="What a conv layer is, and what this page builds: the per-token computation, the state, and the cost.">What are we trying to do here?</h2>
+<p>A <strong>convolution</strong> gives each output a weighted sum of nearby inputs. The weights are fixed numbers, one per position, called <strong>taps</strong>. The list of taps is the <strong>kernel</strong>. Slide the same kernel along a sequence and every output sees the same neighbourhood shape.</p>
+<p>A <strong>short</strong> convolution has a few taps. It is <strong>causal</strong>: each tap looks backwards, so no output sees a token that comes after it. It is <strong>depthwise</strong>: each of the 2,048 channels has its own kernel, and channels never mix inside the convolution.</p>
+<p>LFM3 uses short convolutions for 13 of its 24 layers. The other 11 are attention, and 5 of those attention layers look only at the last 256 positions. By the end of this page you can say what one conv layer computes per token, how big its memory is, and why it costs less than attention as the context grows.</p>
+
+<h2 id="kernel" data-short="One layer" data-step="Each output mixes the current token with the six before it, through two gates and a fixed kernel.">What does one conv layer compute?</h2>
+<p>A conv layer receives one vector per token, but its output must depend on earlier tokens too.</p>
+<div class="quiz" data-quiz="predict" data-for="kernel" id="g-conv-kernel">
+  <p>The output for token 10 mixes in how many earlier tokens?</p>
+  <ul>
+    <li data-right>Six, tokens 4 to 9, plus token 10 itself <div class="why">The kernel has seven taps: six for earlier tokens and one for the current token.</div></li>
+    <li>All of them, tokens 0 to 9, as attention does <div class="why">Attention reads every earlier token; a short kernel has a fixed number of taps.</div></li>
+    <li>Only token 9, the one just before <div class="why">The kernel has more than two taps, so it reaches further back than one token.</div></li>
+  </ul>
+</div>
+<p>The layer runs these steps on one token’s vector <code>x</code>, from <code>conv_token</code> in <code>src/model/transformer.rs</code>. A single <code>in_proj</code> matrix makes three vectors, <strong>B</strong>, <strong>C</strong> and <strong>x</strong>, and the layer multiplies them in pairs:</p>
+<pre><code>[b, c, x] = split3(in_proj(h))   // B, C, x
+u         = b * x                // input gate
+y         = conv(u, last 6 u's)  // depthwise, causal
+out       = out_proj(c * y)      // output gate
+</code></pre>
+<ul>
+  <li>The first <code>*</code> is the input gate: <code>B</code> scales <code>x</code> element by element before the convolution.</li>
+  <li>The second is the output gate: <code>C</code> scales the convolution’s result before <code>out_proj</code>.</li>
+  <li>The gates are plain products. The convolution path has no sigmoid or SiLU.</li>
+  <li>The width comes from the GGUF key <code>shortconv.l_cache</code> (<code>src/model/gguf.rs</code>), which defaults to 7.</li>
+</ul>
+<p>The convolution itself is <code>short_conv_step</code> in <code>src/kernels/mod.rs</code>. Its doc comment says what it computes, and its loop is the whole kernel:</p>
+<pre><code>for ch in 0..dim {
+    let mut acc = 0.0;
+    for k in 0..width - 1 {
+        acc += state[k * dim + ch] * weight[ch * width + k];
+    }
+    acc += u[ch] * weight[ch * width + width - 1];
+    out[ch] = acc;
+}
+</code></pre>
+<ul>
+  <li><code>weight[ch * width + k]</code> is channel <code>ch</code>’s tap <code>k</code>. Each channel has its own seven taps.</li>
+  <li>The last tap multiplies the current token’s <code>u</code>. The first six multiply the saved rows.</li>
+  <li>The loop runs over channels, not over tokens: one step handles one token.</li>
+</ul>
+<p><strong>Takeaway: a conv layer’s output is a fixed-weight sum over the current token and the six before it, wrapped in two gates.</strong></p>
+<div class="quiz" data-quiz="check" data-for="kernel" id="c-conv-kernel">
+  <p>A conv layer has width 4, so its taps are <code>w0</code> to <code>w3</code>. Which tap multiplies the current token’s <code>u</code>?</p>
+  <ul>
+    <li data-right><code>w3</code>, the last one <div class="why">The current token uses the last tap, at index width minus one.</div></li>
+    <li><code>w0</code>, the first one <div class="why">The first tap multiplies the oldest saved row, the one furthest back.</div></li>
+    <li><code>w4</code>, one past the last <div class="why">Taps are numbered from zero, so width 4 has no tap 4.</div></li>
+  </ul>
+</div>
+
+<h2 id="state" data-short="The state" data-step="Six rows of 2,048 numbers per conv layer, shifted by one each token and zeroed at the start.">What does the conv state remember?</h2>
+<p>A token’s output needs the <code>u</code> of earlier tokens, and those are not in the current input. So the layer keeps some of them. That kept memory is the <strong>conv state</strong>: the saved <code>u</code> vectors of one layer.</p>
+<div class="quiz" data-quiz="predict" data-for="state" id="g-conv-state">
+  <p>After 1,000 tokens, how many rows does one conv layer’s state hold?</p>
+  <ul>
+    <li data-right>Six, always <div class="why">The state is a window of fixed size: each step drops the oldest row and adds the newest.</div></li>
+    <li>One thousand, one per token <div class="why">That is the KV cache’s rule; the conv state does not store every token.</div></li>
+    <li>One, only the latest input <div class="why">The kernel needs six saved rows to reach back six tokens.</div></li>
+  </ul>
+</div>
+<p>In <code>short_conv_step</code>, the state update is two lines:</p>
+<pre><code>state.copy_within(dim..6 * dim, 0);
+state[5 * dim..].copy_from_slice(u);
+</code></pre>
+<ul>
+  <li>The first line moves rows 1 to 5 up to positions 0 to 4. The oldest row is overwritten.</li>
+  <li>The second line writes the current <code>u</code> into the last row.</li>
+  <li>The state is <code>f32</code>, and it is zeroed at the start of a sequence (<code>conv_state.fill(0.0)</code> when <code>pos == 0</code>).</li>
+</ul>
+<p>Size, from the real dimensions: 6 rows × 2,048 channels × 4 bytes is 49,152 bytes per layer <span class="tag c">calculated</span>. Thirteen conv layers hold 638,976 bytes, about 639 kB <span class="tag c">calculated</span>.</p>
+<p>The widget below shows which inputs the state holds for each token. It uses ten made-up words, so it is an illustration, not model output. The rows before the start of the text are zeros.</p>
+<div class="widget" data-conv>
+  <h3>Which inputs are in the state?</h3>
+  <p class="js-only">Drag the slider. The dark chip is the current token. The blue chips are the saved rows, and the faded chips are not in the window.</p>
+  <div class="controls">
+    <label class="field">Token <span data-t-label></span><input type="range" data-t min="0" max="9" value="7"></label>
+  </div>
+  <div data-strip></div>
+  <div class="statrow" data-stats></div>
+  <p class="note" data-note></p>
+  <p class="note nojs-only">With scripts on, this widget moves a window of seven tokens along ten words. The state keeps the six before the current one.</p>
+</div>
+<p><strong>Takeaway: the conv state is six saved rows per layer, shifted by one each token.</strong></p>
+<div class="quiz" data-quiz="check" data-for="state" id="c-conv-state">
+  <p>Token 3 is the fourth token of a sequence. How many of its state rows hold a real earlier <code>u</code>?</p>
+  <ul>
+    <li data-right>Three, for tokens 0, 1 and 2 <div class="why">The state starts at zero and each token fills one row, so three rows are real.</div></li>
+    <li>Six, because the state always holds six real rows <div class="why">The rows are real only once tokens have filled them.</div></li>
+    <li>None, the rows fill only after six tokens <div class="why">Each token fills one row as it arrives, starting with the first.</div></li>
+  </ul>
+</div>
+
+<h2 id="versus" data-short="Versus KV cache" data-step="The conv state stays at 639 kB; the KV cache grows by 24 KB per token in f32, for six layers.">How does that compare with the KV cache?</h2>
+<p>An attention layer stores a key and a value for every position, so its cache grows with the text. The KV cache is explained in <a href="../phase-2/kv-cache.html">the KV cache page</a>. LFM3 has six full-attention layers, with 4 KV heads of 128 values each. The five sliding-window layers keep only 256 positions.</p>
+<div class="quiz" data-quiz="predict" data-for="versus" id="g-conv-versus">
+  <p>The context grows from 2,048 to 32,768 tokens. What happens to one conv layer’s state?</p>
+  <ul>
+    <li data-right>It stays 49,152 bytes, the same size <div class="why">Its size depends on the kernel width and channel count, not on the number of tokens.</div></li>
+    <li>It grows sixteen-fold, like the KV cache <div class="why">The KV cache holds every position; the conv state holds six rows.</div></li>
+    <li>It grows, but stops at 256 tokens <div class="why">The 256 limit belongs to the sliding-window attention layers, not the conv layers.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th></th><th>13 conv layers, state</th><th>6 full-attention layers, KV cache</th></tr></thead>
+  <tbody>
+    <tr><td>Added per token</td><td class="num">nothing</td><td class="num">24,576 bytes (f32) <span class="tag c">calculated</span></td></tr>
+    <tr><td>At 2,048 tokens</td><td class="num">638,976 bytes <span class="tag c">calculated</span></td><td class="num">50,331,648 bytes (f32) <span class="tag c">calculated</span></td></tr>
+    <tr><td>At 32,768 tokens</td><td class="num">638,976 bytes <span class="tag c">calculated</span></td><td class="num">805,306,368 bytes (f32), 402,653,184 (f16) <span class="tag c">calculated</span></td></tr>
+  </tbody>
+</table>
+<p>The KV figures are 6 layers × 4 heads × 128 values × 2 (keys and values) × 4 bytes per position, then multiplied by the position count. Storing them as f16 halves the bytes. The engine’s own storage type is not stated here.</p>
+<ul>
+  <li>The conv state is the same size at 2,048 tokens and at 32,768.</li>
+  <li>The KV cache at 32,768 tokens is about 1,260 times the conv state (calculated, f32).</li>
+  <li>Not the same as the sliding layers: their cache stops at 256 positions, which is a window, not a state.</li>
+</ul>
+<p><strong>Takeaway: the conv state is a fixed-size window; the KV cache grows by a fixed amount with every token.</strong></p>
+<div class="quiz" data-quiz="check" data-for="versus" id="c-conv-versus">
+  <p>Why does a conv layer need no cache of earlier tokens’ keys and values?</p>
+  <ul>
+    <li data-right>It keeps only the last six <code>u</code> rows, which is enough for its seven taps <div class="why">A kernel of width seven reaches back six tokens, so six rows suffice.</div></li>
+    <li>It recomputes every earlier token each step <div class="why">That would cost more than a cache; the conv layer reads only six saved rows.</div></li>
+    <li>Its output does not depend on earlier tokens <div class="why">It does depend on them, through the six saved rows.</div></li>
+  </ul>
+</div>
+
+<h2 id="cost" data-short="Cost" data-step="The conv state update does a fixed 14,336 multiply-adds per layer; attention's grows with the context.">Why is it cheaper than attention at long context?</h2>
+<p>Attention, for one token, scores the current query against every cached key, then sums the values with those scores.</p>
+<div class="quiz" data-quiz="predict" data-for="cost" id="g-conv-cost">
+  <p>At a 2,048-token context, which layer does more multiply-adds per token for its mixing step?</p>
+  <ul>
+    <li data-right>The full-attention layer, by hundreds of times <div class="why">It scores 2,048 positions for each of 16 heads; the conv kernel does seven taps per channel.</div></li>
+    <li>The conv layer, because its matrices are bigger <div class="why">The matrices are the same cost at any length; the question is the mixing step.</div></li>
+    <li>They do the same work, since both take weighted sums <div class="why">The sums differ: one has a fixed length, the other grows with the context.</div></li>
+  </ul>
+</div>
+<p>Counting only the mixing step, not the matrix products around it:</p>
+<ul>
+  <li>Conv: 7 multiply-adds per channel × 2,048 channels = 14,336 per conv layer, at any context length <span class="tag c">calculated</span>.</li>
+  <li>Attention: 16 heads × 128 values × 2 (scores and weighted sum) = 4,096 per position, so 8,388,608 at 2,048 positions <span class="tag c">calculated</span>.</li>
+</ul>
+<p>The matrix products are not free. <code>in_proj</code> and <code>out_proj</code> run for every token and dominate the conv layer’s cost. They do not depend on depth, so they do not make long context slower.</p>
+<p>In the decode profile (300 greedy tokens of Q4_K_M on the phone), <code>short_conv_step</code> took 0.07 % of the CPU cycles. The Q4_K and Q6_K dot-product kernels, which run every matrix product including in_proj and out_proj, took 87 %, and attention took 0.9 % at that depth <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: a conv layer’s mixing step costs the same at any context length; attention’s grows with it.</strong></p>
+<div class="quiz" data-quiz="check" data-for="cost" id="c-conv-cost">
+  <p>Attention’s mixing step is 4,096 multiply-adds per cached position. How many does it take at 4,096 positions?</p>
+  <ul>
+    <li data-right>16,777,216 <div class="why">4,096 per position times 4,096 positions, calculated.</div></li>
+    <li>8,192 <div class="why">That doubles the cost per position, but the count also grows with the positions.</div></li>
+    <li>14,336 <div class="why">That is the conv kernel’s fixed count; attention’s grows with the positions.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A conv layer mixes each token with the six before it, through a fixed seven-tap kernel and two gates.</p>
+<p>Its state is six saved rows of 2,048 values, 638,976 bytes for all 13 layers, and it does not grow with the text.</p>
+<p>Its mixing step costs the same at any context length, while attention’s grows with every token.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">LFM3 numbers were measured on the iQOO 13 (SM8750) on 2026-11-03 and 2026-11-04 (results/phase-lfm3.md, A7) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script>
+(function () {
+  var root = document.querySelector("[data-conv]");
+  if (!root) return;
+  var toks = ["The", "cat", "sat", "on", "the", "mat", "and", "slept", "all", "day"];
+  var slider = root.querySelector("[data-t]");
+  var strip = root.querySelector("[data-strip]");
+  var label = root.querySelector("[data-t-label]");
+  var stats = root.querySelector("[data-stats]");
+  var note = root.querySelector("[data-note]");
+  var base = "display:inline-block;margin:.15rem;padding:.25rem .5rem;" +
+    "border-radius:.3rem;font-family:var(--mono);";
+  var look = {
+    cur: "background:var(--accent);color:var(--on-accent);",
+    state: "background:var(--blue-soft);color:var(--blue);",
+    out: "background:var(--bg-2);color:var(--faint);"
+  };
+  function stat(value, text) {
+    var d = document.createElement("div");
+    d.className = "stat";
+    var b = document.createElement("b");
+    b.textContent = value;
+    var s = document.createElement("span");
+    s.textContent = text;
+    d.appendChild(b);
+    d.appendChild(s);
+    return d;
+  }
+  function render() {
+    var t = Number(slider.value);
+    var first = Math.max(0, t - 6);
+    var held = Math.min(6, t);
+    label.textContent = "“" + toks[t] + "” (token " + t + ")";
+    strip.textContent = "";
+    toks.forEach(function (w, i) {
+      var cls = i === t ? "cur" : (i >= first && i < t ? "state" : "out");
+      var span = document.createElement("span");
+      span.textContent = w;
+      span.setAttribute("style", base + look[cls]);
+      strip.appendChild(span);
+    });
+    stats.textContent = "";
+    stats.appendChild(stat(held + " of 6", "conv state rows (fixed size)"));
+    stats.appendChild(stat(String(t + 1), "KV cache rows, one full layer (grows)"));
+    note.textContent = "The output at “" + toks[t] + "” mixes " +
+      toks.slice(first, t + 1).join(" ") + " with one tap each. Illustration: made-up words.";
+  }
+  slider.addEventListener("input", render);
+  render();
+})();
+</script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+<!-- sources: results/phase-lfm3.md A0 (13 conv, 6 full, 5 sliding layers; 6 saved rows, width 7), A4 (state rows, sliding ring of 256), A7 (short_conv_step 0.07 %, K-quant GEMVs 87 %, attention 0.9 %, 300 greedy tokens of Q4_K_M); plans/lfm3.md section 2 (config: hidden 2048, 24 layers, 4 KV heads, head_dim 128, conv width 7; state 13 x 6 x 2048 floats ~640 KB); src/model/transformer.rs conv_token, src/kernels/mod.rs short_conv_step, src/model/gguf.rs shortconv.l_cache (commits 0b897a4, b4fceba); calculated: 638,976 / 49,152 / 24,576 / 50,331,648 / 805,306,368 / 402,653,184 bytes, 14,336 and 8,388,608 multiply-adds, 1,260x ratio -->
+</body>
+</html>

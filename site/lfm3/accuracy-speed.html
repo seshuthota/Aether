@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is it right, and why is it slower than llama.cpp? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">LFM3 · 04</p>
+
+<h1>Is it right, and why is it slower than llama.cpp?</h1>
+<p class="lede">Aether gives llama.cpp’s perplexity on the same files, and its prompts run as fast. Its decode does not: 26.1 tokens a second for Q4_K_M, where llama.cpp does 44.3 on the same file. This page shows the accuracy checks, the same-session speed runs, and the part of the code that takes the time.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../phase-6/perplexity.html">perplexity and KL divergence</a>, <a href="../start/right.html">how we know it’s right</a>, <a href="../phase-1/memory.html">memory and bandwidth</a> and <a href="../beyond/q4km.html">Q4_K_M</a>. It comes after <a href="index.html">the LFM3 overview</a> and <a href="attention.html">the attention layers</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#accuracy">Does Aether give llama.cpp’s perplexity?</a>
+  <a href="#speed">How fast is decode against llama.cpp?</a>
+  <a href="#time">Where does a decode token’s time go?</a>
+  <a href="#next">What would make Q4_K_M decode faster?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Check LFM3 against two outside programs, then find the part of decode that costs the time.">What are we trying to do here?</h2>
+<p>Two questions. First, is the answer right? Perplexity (PPL) measures how surprised a model is by the real next word in a text. Lower is better. The reference is an outside program: llama.cpp, run on the same GGUF files. GGUF is the file format llama.cpp reads, with the weights and their quantization in one file. For full precision we use Hugging Face transformers (HF).</p>
+<p>Second, how fast is it, and what limits it? Decode makes one new token per step. Prompt processing reads many prompt tokens at once. Both were measured on the phone, in the same session as llama.cpp.</p>
+
+<h2 id="accuracy" data-short="Accuracy" data-step="On the PC the perplexities differ from llama.cpp by at most 0.03; the context 2048 gap is between two quantized paths.">Does Aether give llama.cpp’s perplexity?</h2>
+<p>The test text is wikitext-2, a standard collection of English articles. Each run scores 20 chunks of 512 tokens. A second measure is KL divergence against the BF16 file, a 16-bit copy of the model used as the full-precision reference. KL measures how far one model’s next-token probabilities move from another’s. Zero means identical.</p>
+<div class="quiz" data-quiz="predict" data-for="accuracy" id="g-accuracy">
+  <p>On the same chunks, Aether’s Q4_K_M scores 24.8542 and llama.cpp’s scores 24.8278. What does that gap mean?</p>
+  <ul>
+    <li data-right>Nothing is wrong: each score carries a ± of about 1.1, far larger than the gap <div class="why">Two correct engines round differently, so their scores differ a little. The spread between chunks is much larger.</div></li>
+    <li>One engine has a bug, because the two numbers differ at all <div class="why">Quantized weights are rounded differently by each engine, so exact equality is not the test.</div></li>
+    <li>Aether is wrong unless it matches to four decimal places <div class="why">A four-decimal match is not the standard for a quantized file, which both engines round their own way.</div></li>
+  </ul>
+</div>
+<p>The PC scores at 512 tokens, and the same files on the phone:</p>
+<table>
+  <thead><tr><th>file</th><th>Aether, PC</th><th>llama.cpp, PC</th><th>Aether, phone</th></tr></thead>
+  <tbody>
+    <tr><td>Q4_K_M</td><td class="num">24.8542 ± 1.11750</td><td class="num">24.8278 ± 1.11523</td><td class="num">24.8822 ± 1.11875</td></tr>
+    <tr><td>Q8_0</td><td class="num">23.5482 ± 1.05390</td><td class="num">23.5508 ± 1.05490</td><td class="num">23.5744 ± 1.05532</td></tr>
+    <tr><td>QAD-Q4_0</td><td class="num">27.1557 ± 1.24588</td><td class="num">27.1383 ± 1.24457</td><td class="num">27.1489 ± 1.24542</td></tr>
+  </tbody>
+</table>
+<p class="note">Perplexity ± its error bar, 20 chunks of 512 tokens <span class="tag m">measured</span></p>
+<p>Over all 20 chunks, Aether’s KL against the BF16 file is 0.115041, and llama.cpp’s is 0.117968. Both put the most likely next token in the same place 83.392 % of the time <span class="tag m">measured</span>.</p>
+<p>Context 2048 is harder. The model has sliding-window layers, which see only the last 256 positions, and full layers, which see everything. At 2048 the two kinds see different prefixes, so the gap between the engines is about ten times larger than at 512. The test there is one chunk, with 1023 positions scored, against HF in full precision.</p>
+<table>
+  <thead><tr><th>context 2048, one chunk</th><th>PPL</th><th>KL vs BF16</th><th>same top</th></tr></thead>
+  <tbody>
+    <tr><td>HF transformers, f32</td><td class="num">13.5848</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>Aether, BF16 file</td><td class="num">13.5848</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>llama.cpp, BF16 file</td><td class="num">13.5986</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>Aether, Q4_K_M</td><td class="num">13.7917</td><td class="num">0.052408</td><td class="num">88.759 %</td></tr>
+    <tr><td>llama.cpp, Q4_K_M</td><td class="num">13.9561</td><td class="num">0.055758</td><td class="num">88.172 %</td></tr>
+  </tbody>
+</table>
+<p class="note">Measured. The phone run of the Q4_K_M file gave 13.7811.</p>
+<p>Aether’s BF16 run equals HF to four decimal places, so the sliding ring, its window edge and the full layers’ rotary positions are right at depth. The Q4_K_M gap lies between two quantized paths, not in the model. Aether rounds the activations to Q8_0, one scale per 32 values. llama.cpp rounds them to Q8_K, one scale per 256. Aether’s Q4_K_M ends up slightly nearer its own BF16 run. The two BF16 runs differ from each other by 0.1 %.</p>
+<p><strong>Takeaway: on the PC the perplexities differ from llama.cpp by at most 0.03, and the context 2048 gap comes from rounding, not from the model.</strong></p>
+<div class="quiz" data-quiz="check" data-for="accuracy" id="c-accuracy">
+  <p>At context 2048 the BF16 run equals HF, and the Q4_K_M runs differ. What does that tell you about the Q4_K_M gap?</p>
+  <ul>
+    <li data-right>It comes from how the quantized paths round their activations, not from the sliding window or the rotary positions <div class="why">The BF16 run already matches HF at this depth, so those parts agree.</div></li>
+    <li>llama.cpp is wrong, because HF is the reference <div class="why">HF is the reference for the full-precision run. The two quantized runs are compared with each other.</div></li>
+    <li>The Q4_K_M file is damaged, so its scores differ <div class="why">Both engines read the same Q4_K_M file. The file is not the cause.</div></li>
+  </ul>
+</div>
+
+<h2 id="speed" data-short="Speed" data-step="Prompts run level with llama.cpp; decode is behind, at 0.59 times for Q4_K_M and 0.86 for QAD-Q4_0.">How fast is decode against llama.cpp?</h2>
+<p>Both engines ran in one session on the same phone: cores 2 to 7 (six threads), on battery, screen on. The phone was cooled to 45 °C before each run. The order was reversed in round 2, and round 2 is the Q4_K_M round quoted here. Prompt speed is measured at three prompt lengths. Decode speed is measured at 64 new tokens.</p>
+<div class="quiz" data-quiz="predict" data-for="speed" id="g-speed">
+  <p>Same file, same phone. Aether decodes Q4_K_M at 26.1 tokens a second and llama.cpp at 44.3. Where is the gap?</p>
+  <ul>
+    <li data-right>In decode: prompt speed is level with llama.cpp <div class="why">The prompts run within 0.86 to 1.01 times llama.cpp’s; only the one-token-at-a-time phase falls behind.</div></li>
+    <li>In the prompt: Aether reads prompts slowly <div class="why">The prompt numbers are level. Only decode falls behind.</div></li>
+    <li>Equally in both, because the file is the same <div class="why">A file sets the bytes to read. The speed depends on the code that reads them.</div></li>
+  </ul>
+</div>
+<p>Round 2, tokens a second. <span class="tag m">measured</span></p>
+<table>
+  <thead><tr><th>round 2, tok/s</th><th>pp64</th><th>pp128</th><th>pp512</th></tr></thead>
+  <tbody>
+    <tr><td>Aether Q4_K_M</td><td class="num">114.7</td><td class="num">123.1</td><td class="num">131.7</td></tr>
+    <tr><td>llama.cpp Q4_K_M</td><td class="num">133.2</td><td class="num">127.6</td><td class="num">130.3</td></tr>
+    <tr><td>Aether QAD-Q4_0</td><td class="num">197.5</td><td class="num">189.6</td><td class="num">178.5</td></tr>
+    <tr><td>llama.cpp QAD-Q4_0</td><td class="num">208.7</td><td class="num">168.2</td><td class="num">195.8</td></tr>
+  </tbody>
+</table>
+<p>Across the rounds the prompt ratios are 0.86 to 1.01 times for Q4_K_M and 0.91 to 1.13 times for QAD-Q4_0. Decode is where the gap is. The bars share one scale: the full width is 50 tokens a second.</p>
+<div class="bars" aria-label="Decode, round 2, tokens per second">
+  <div class="bar"><span>Q4_K_M, Aether</span><i style="--w:52%"></i><b>26.1</b></div>
+  <div class="bar alt"><span>Q4_K_M, llama.cpp</span><i style="--w:88.6%"></i><b>44.3</b></div>
+  <div class="bar"><span>QAD-Q4_0, Aether</span><i style="--w:85.8%"></i><b>42.9</b></div>
+  <div class="bar alt"><span>QAD-Q4_0, llama.cpp</span><i style="--w:99.2%"></i><b>49.6</b></div>
+</div>
+<p>Decode is 0.59 times llama.cpp’s speed for Q4_K_M, and 0.86 times for QAD-Q4_0. Speed falls with depth too: from depth 0 to 512 the decode loses 1 to 13 %, as expected for a model whose cache is small next to its weights.</p>
+<p>The app runs the same Q4_K_M file on the CPU, cores 2 to 7. It answered “Why is the sky blue?” with 462 tokens at 29.8 tokens a second, after 16 prompt tokens in 579 ms. The app process uses 1.30 GB PSS (proportional set size: shared memory split among the processes that use it) and 1.42 GB RSS (the memory held in RAM).</p>
+<p>A two-minute decode run, first and last 11 seconds, with the maximum temperature:</p>
+<table>
+  <thead><tr><th>sustained, 2 minutes</th><th>first 11 s</th><th>last 11 s</th><th>average</th><th>max temperature</th></tr></thead>
+  <tbody>
+    <tr><td>Q4_K_M, tok/s</td><td class="num">26.3</td><td class="num">21.3</td><td class="num">22.9</td><td class="num">86.1 °C</td></tr>
+    <tr><td>QAD-Q4_0, tok/s</td><td class="num">40.5</td><td class="num">34.1</td><td class="num">35.7</td><td class="num">88.4 °C</td></tr>
+  </tbody>
+</table>
+<p class="note">Measured. Both files lost 16 to 19 % in the first minute, then held.</p>
+<p><strong>Takeaway: prompts match llama.cpp; Q4_K_M decode runs at 0.59 times its speed and loses 16 to 19 % in the first minute of a sustained run.</strong></p>
+<div class="quiz" data-quiz="check" data-for="speed" id="c-speed">
+  <p>Aether reads the same 1.09 GB Q4_K_M file as llama.cpp, and decodes slower. What is the most likely cause?</p>
+  <ul>
+    <li data-right>How fast the kernels turn those bytes into products, since the bytes are the same <div class="why">The file is shared, so the gap is in the code that reads it.</div></li>
+    <li>The conv layers read extra bytes on every token <div class="why">The conv layers take 0.07 % of decode time, so they are not the extra cost.</div></li>
+    <li>The phone ran out of memory and paged out <div class="why">Available memory was 5.4 to 6.7 GB at the start of the runs, and peak RSS was 1.13 to 1.19 GB.</div></li>
+  </ul>
+</div>
+
+<h2 id="time" data-short="Where time goes" data-step="87 % of Q4_K_M decode is two K-quant matrix products, limited by arithmetic on per-32 scales, not by bytes.">Where does a decode token’s time go?</h2>
+<p>A profiler (simpleperf) interrupts the CPU many times a second and records which function it is in. Each record counts the cycles, the CPU’s clock ticks, spent there. A GEMV is a matrix times a vector: the weights, times one token’s activations. Decode is a long run of GEMVs, one for each weight matrix in every layer.</p>
+<div class="quiz" data-quiz="predict" data-for="time" id="g-time">
+  <p>The model has 13 short-conv layers, 6 full-attention layers and 5 sliding-window layers. Which part takes the most decode cycles?</p>
+  <ul>
+    <li data-right>The two K-quant GEMVs, the products over Q4_K and Q6_K weights <div class="why">The profile below shows that most of the decode cycles are in these two functions.</div></li>
+    <li>The 13 conv layers, since they are the most of the 24 layers <div class="why">A conv step touches a 6-row state, not a cache that grows. Counting layers is not counting cost.</div></li>
+    <li>Attention, because it is the part that grows with depth <div class="why">At this depth attention takes under 1 % of the cycles.</div></li>
+  </ul>
+</div>
+<p>Profile of 300 greedy tokens of Q4_K_M, cores 2 to 7, clocks capped at 2.75 and 2.65 GHz, 30.6 tokens a second. The speed runs used lower caps. <span class="tag m">measured</span></p>
+<table>
+  <thead><tr><th>function</th><th>share of cycles</th></tr></thead>
+  <tbody>
+    <tr><td><code>dot4_q4_k_q8_0</code></td><td class="num">54.1 %</td></tr>
+    <tr><td><code>dot4_q6_k_q8_0</code></td><td class="num">32.9 %</td></tr>
+    <tr><td>thread pool (spin and run)</td><td class="num">8.3 %</td></tr>
+    <tr><td><code>quant_rows</code> (activation to Q8_0)</td><td class="num">1.7 %</td></tr>
+    <tr><td>attention, all three paths</td><td class="num">0.9 %</td></tr>
+    <tr><td><code>short_conv_step</code></td><td class="num">0.07 %</td></tr>
+  </tbody>
+</table>
+<p>54.1 + 32.9 = 87.0, so 87 % of decode is the two K-quant GEMVs <span class="tag c">calculated</span>. The conv layers are nearly free beside them. Why are these kernels slow? The results give the reason:</p>
+<ul>
+  <li>The activation is Q8_0: one scale for every 32 values.</li>
+  <li>Each 32-value sub-block of a Q4_K or Q6_K row ends in its own int-to-float conversion and float multiply-add, with its own scale.</li>
+  <li>Q6_K adds an integer multiply by the sub-block scale.</li>
+  <li>llama.cpp’s Q8_K activation has one scale per 256 values. Its sub-blocks add in int32 and convert once per 256.</li>
+</ul>
+<p>So the kernels are limited by arithmetic, not by how many bytes they read. The implied rates back that up. Bytes per second is the file size times tokens a second <span class="tag c">calculated</span>. Q4_K_M: 1.09 GB × 26.1 gives 28.5 GB/s for Aether, and 48.3 GB/s for llama.cpp at 44.3 tokens a second. QAD-Q4_0: 44.7 GB/s for Aether against 51.7 GB/s for llama.cpp.</p>
+<p>The results name the kernels as the cause. The sustained runs above show the phone slowing in its first minute at 86 to 88 °C, which the profile does not separate from the kernel cost.</p>
+<p><strong>Takeaway: 87 % of Q4_K_M decode is two K-quant products limited by arithmetic on per-32 scales, not by memory bytes.</strong></p>
+<div class="quiz" data-quiz="check" data-for="time" id="c-time">
+  <p>A Q4_K row of 256 values, with activations in Q8_0, is converted from integer to float how many times in the current kernel?</p>
+  <ul>
+    <li data-right>8, once per 32-value sub-block <div class="why">256 divided by 32 is 8. Each sub-block has its own scale, so it converts on its own.</div></li>
+    <li>1, once per 256-value block, as Q8_K allows <div class="why">That is the count with Q8_K activations, which Aether does not use yet.</div></li>
+    <li>32, once per value <div class="why">Values are multiplied one by one, but the conversion happens once per sub-block.</div></li>
+  </ul>
+</div>
+
+<h2 id="next" data-short="What comes next" data-step="K-quant decode work with Q8_K activations is in progress on a branch; it has no phone numbers yet.">What would make Q4_K_M decode faster?</h2>
+<p>The results name the fix: give the K-quant kernels activations with one scale per 256 values, as Q8_K does, so each block converts to float once. That is its own step, after this plan. A second change under way repacks the weight rows so that one load serves several rows. The work is on a branch and has no phone numbers yet, so the speeds on this page are the current ones.</p>
+<p><strong>Takeaway: the next speed is unknown until the new kernels are measured on the phone.</strong></p>
+<div class="quiz" data-quiz="check" data-for="next" id="c-next">
+  <p>The K-quant work has no phone numbers yet. How should the 26.1 tokens a second above be read?</p>
+  <ul>
+    <li data-right>As the measured speed of the current kernels, until the new ones are measured on the phone <div class="why">A kernel’s speed counts only once it is measured on the phone.</div></li>
+    <li>As the speed the kernels will reach once the Q8_K change is in <div class="why">A planned change has no speed until it is measured.</div></li>
+    <li>As llama.cpp’s Q8_K speed on this phone <div class="why">The 44.3 is llama.cpp’s measured decode on the same file, not a Q8_K figure.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Aether matches llama.cpp’s perplexity on the same files, within 0.03 on the PC, and its prompt speed is level.</p>
+<p>Its Q4_K_M decode runs at 0.59 times llama.cpp’s speed, and 87 % of decode time is two K-quant products limited by arithmetic on per-32 scales.</p>
+<p>The fix is K-quant decode work, which has no phone numbers yet.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) or on the PC as tagged, from results/phase-lfm3.md (A5, A7). Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-lfm3.md A0 (PC PPL baselines, 20 x 512); A5 (PC and phone PPL table, 20-chunk KL 0.115041 / 83.392 % and llama.cpp 0.117968 / 83.392 %, context-2048 table, phone PPL 24.8822 / 23.5744 / 27.1489); A7 (round-2 prompt and decode tok/s, the stated ratios 0.86-1.01 and 0.91-1.13, 0.59x and 0.86x, depth 1-13 %, sustained table with max temps 86.1 and 88.4 C, app 29.8 tok/s / 462 tokens / 579 ms / 1.30 GB PSS / 1.42 GB RSS, memory figures, profile table and 87 % / 0.07 %, implied GB/s); IMPLEMENTATION.md section 0, LFM3 subsection (cross-check of the A5 and A7 numbers) -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

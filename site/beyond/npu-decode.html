@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why does decode run as one call per token? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">The NPU · 02</p>
+
+<h1>Why does decode run as one call per token?</h1>
+<p class="lede">The engine's DSP runs a whole token of Qwen2.5-0.5B in one call from the CPU: 6.75 ms, or 123 tokens per second, against 74 for llama.cpp's NPU backend. A call has a fixed cost, and a token has many matrix products. This page shows why the whole token goes in one call, and how the DSP's six threads and its DMA engine make that token fast.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="npu-basics.html">What is the NPU, and how does our code get on it?</a>, <a href="gpu-decode.html">Decoding on the GPU</a> (the decode step) and <a href="../phase-1/bandwidth.html">memory bandwidth</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#call">What does a call cost, next to a token?</a>
+  <a href="#whole">Why put the whole token in one call?</a>
+  <a href="#threads">How do six threads share one token?</a>
+  <a href="#dma">How do the weights reach the threads in time?</a>
+  <a href="#result">What did one call per token buy?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Run a whole decode token on the DSP in one call, and say what that buys.">What are we trying to do here?</h2>
+<p>A <strong>token</strong> is one pass of the model: every layer runs, then a last matrix (the <strong>classifier</strong>) scores all 151,936 words of the vocabulary and the best one is the next word. The pass is called <strong>decode</strong>. Each layer is built from <strong>matrix products</strong>: a weight matrix multiplied by a vector. Qwen2.5-0.5B has 24 layers with four matrix products each, plus the classifier.</p>
+<p>The DSP is the phone's Hexagon compute core. The CPU reaches it through <strong>FastRPC</strong>: one <strong>call</strong> hands the DSP a method number and some buffers, the DSP runs the method, and the call returns. <strong>VTCM</strong> is the DSP's own 8 MB of fast on-chip memory. <strong>DMA</strong> is a copy engine that moves bytes from DRAM into VTCM while the vector units do other work.</p>
+<p>By the end you can explain why a token is one call, and why the numbers below came out as they did.</p>
+
+<h2 id="call" data-short="Call cost" data-step="A call costs about 146 us; per-matrix calls would cost more than the whole token.">What does a call cost, next to a token?</h2>
+<p>Setup: the CPU runs a Qwen token in about 5.2 ms <span class="tag m">measured</span>. A call with no work in it costs about 146 µs <span class="tag m">measured</span> (median of 2,000), once the CPU has asked the DSP for its highest clocks. Without that request the same empty call took 393 µs.</p>
+<div class="quiz" data-quiz="predict" data-for="call" id="npudec-g-call">
+  <p>One design makes a call for each matrix product: about 170 calls per token in the first DSP measurement. Each call costs about 146 µs. What do the calls add up to per token, before any arithmetic?</p>
+  <ul>
+    <li data-right>About 25 ms, more than the whole token <div class="why">170 times 146 µs is about 24.8 ms, several times the 5.2 ms CPU token.</div></li>
+    <li>About 1 ms, since a call is cheap <div class="why">146 µs is the cost of a call that does nothing, and 170 of them add up.</div></li>
+    <li>About 6.75 ms, the same as the token <div class="why">That assumes the calls cost nothing beyond the arithmetic, which they do not.</div></li>
+  </ul>
+</div>
+<p>So a DSP called once per matrix product would spend more time on calls than on the arithmetic. The 170 counts every matrix on its own: Qwen2.5-0.5B has 24 layers of seven matrices (q, k, v, o, gate, up, down), plus the classifier, which is 169 <span class="tag c">calculated</span>. The figure shows the two designs. The call sliver and the token bar are drawn to scale from the measured numbers. The work between the calls is left out.</p>
+<figure>
+<svg class="fig" viewBox="0 0 720 176" role="img" aria-label="Per-matrix calls against one call per token, drawn to scale for the call cost">
+  <g font-size="12">
+    <text x="8" y="58" fill="var(--ink)">Per matrix</text>
+    <text x="8" y="130" fill="var(--ink)">One call</text>
+  </g>
+  <g fill="var(--copper-soft)" stroke="var(--copper)">
+    <rect x="130" y="40" width="12.5" height="26"/>
+    <rect x="170" y="40" width="12.5" height="26"/>
+    <rect x="210" y="40" width="12.5" height="26"/>
+    <rect x="250" y="40" width="12.5" height="26"/>
+  </g>
+  <text x="290" y="57" font-size="12" fill="var(--ink)">… about 170 calls: 170 × 146 µs = 24.8 ms</text>
+  <text x="290" y="73" font-size="12" class="muted">calculated, 3.7 times the token</text>
+  <rect x="130" y="112" width="12.5" height="26" fill="var(--copper-soft)" stroke="var(--copper)"/>
+  <rect x="142.5" y="112" width="567.5" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="426" y="129" font-size="12" text-anchor="middle" fill="var(--ink)">every layer and the classifier: 6.75 ms</text>
+  <text x="130" y="158" font-size="11" class="muted">Sliver: one call, 146 µs. Bar: the token, 6.75 ms. Both measured.</text>
+</svg>
+<figcaption>An illustration, drawn to scale for the two measured numbers. The copper marks are calls; the teal bar is the DSP's time for one token. The per-matrix row shows only its calls.</figcaption>
+</figure>
+<p>Two things follow. A call's cost is paid once per call, whatever the call does. And the one-call design pays it once per token, about 2 % of the 6.75 ms <span class="tag c">calculated</span>.</p>
+<p><strong>Takeaway: a call costs about 146 µs whatever it does, so calls must be few and large.</strong></p>
+<div class="quiz" data-quiz="check" data-for="call" id="npudec-c-call">
+  <p>The one-call design spends one 146 µs call on each 6.75 ms token. What share of the token is that call?</p>
+  <ul>
+    <li data-right>About 2 % <div class="why">146 µs is 0.146 ms, and 0.146 divided by 6.75 is about 0.022.</div></li>
+    <li>About 20 % <div class="why">That reads 146 µs as 1.46 ms, a unit slip that is ten times too big.</div></li>
+    <li>About a quarter <div class="why">A call is far smaller than the work it starts, so it cannot be a quarter.</div></li>
+  </ul>
+</div>
+
+<h2 id="whole" data-short="One call" data-step="The CPU uploads the model once; each token is one call that runs every layer and returns the next word.">Why put the whole token in one call?</h2>
+<p>The first DSP products were one call each. A matrix product was then the unit of work, and the call cost was paid for each. The fix was to move the whole token onto the DSP. The norms, RoPE, attention, SwiGLU, the classifier and the argmax all run there, so one call covers the token.</p>
+<p>The model's weights are copied to the DSP once, when the model loads, into one shared buffer. A second shared buffer holds the state: activations, the KV cache and the logits. Per token, the CPU writes only the token's embedding and the RoPE table. The call's doc comment in <code>src/kernels/hexagon.rs</code> says what comes back:</p>
+<pre><code>/// One decode step of the loaded model at `pos` on `threads` DSP
+/// threads: the greedy next token and the DSP's time in microseconds.</code></pre>
+<ul>
+  <li><strong>Shared, not copied.</strong> The buffers are mapped into the DSP once, so a call passes a descriptor, not the bytes.</li>
+  <li><strong>The argmax runs on the DSP.</strong> Greedy decoding needs only the best word's number, so the CPU does not read the 151,936 logits.</li>
+  <li><strong>Some time stays on the CPU.</strong> At the step the results measured, the wall time was 12.3 ms against the DSP's 10.5 ms <span class="tag m">measured</span>. The 1.8 ms is the call, the embedding and RoPE writes, and the test tool's logits check.</li>
+</ul>
+<div class="quiz" data-quiz="predict" data-for="whole" id="npudec-g-whole">
+  <p>The weights are already on the DSP when a token starts. What does the CPU still send per token?</p>
+  <ul>
+    <li data-right>The token's embedding row and the RoPE table for its position <div class="why">Those depend on the token and its position, so they change every step.</div></li>
+    <li>Every weight matrix again <div class="why">The weights were copied once, at load time, into the shared buffer.</div></li>
+    <li>The whole KV cache <div class="why">The cache lives in the state buffer, and the DSP writes it.</div></li>
+  </ul>
+</div>
+<p><strong>Takeaway: one call per token means the CPU sends little per token, and the DSP does the rest.</strong></p>
+<div class="quiz" data-quiz="check" data-for="whole" id="npudec-c-whole">
+  <p>The call returns the greedy next word, not the 151,936 logits. What does the CPU lose by that?</p>
+  <ul>
+    <li data-right>Nothing for greedy decoding, since the next word is all it needs <div class="why">Greedy decoding picks the largest logit, and the DSP already found it.</div></li>
+    <li>The logits, so perplexity cannot be measured <div class="why">The perplexity run uses a different call that returns every logit.</div></li>
+    <li>The KV cache, which is sent back in the reply <div class="why">The cache stays in the DSP's state buffer and is not part of the reply.</div></li>
+  </ul>
+</div>
+
+<h2 id="threads" data-short="Six threads" data-step="Six threads run the token together; each product is split across them with barriers.">How do six threads share one token?</h2>
+<p>The DSP has six HVX contexts, the units that run its 128-byte vector instructions (<code>qurt_hvx_get_units</code>). The token's work is split across six threads, one per context. Each thread takes a run of row groups of every product. Where a stage needs every thread's result, the threads wait at a barrier. A <strong>barrier</strong> is a point where each thread stops until all have arrived.</p>
+<div class="quiz" data-quiz="predict" data-for="threads" id="npudec-g-threads">
+  <p>The DSP has six vector contexts. If the step used eight threads, would the token be faster or slower than with six?</p>
+  <ul>
+    <li data-right>Slower, because two threads have to share a context <div class="why">Measured: eight threads read DRAM slower than six, 39.2 against 45.9 GB/s.</div></li>
+    <li>Faster, since more threads hide more waiting <div class="why">The bandwidth test showed more threads than contexts reading slower, not faster.</div></li>
+    <li>The same, since waiting threads queue up anyway <div class="why">Queued threads still share the same units and memory bus.</div></li>
+  </ul>
+</div>
+<p>With the DMA weights (the next section), the decode step at each thread count <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>DSP threads</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr></thead>
+  <tbody>
+    <tr><td>Qwen token, ms</td><td class="num">8.30</td><td class="num">7.53</td><td class="num">7.12</td><td class="num">6.93</td><td class="num">6.79</td></tr>
+  </tbody>
+</table>
+<p>Each added thread helps less than the one before. Each layer also has nine barriers, points where every thread waits for the slowest one.</p>
+<p><strong>Takeaway: six threads, one per vector context, is the fastest count; eight is slower.</strong></p>
+<div class="quiz" data-quiz="check" data-for="threads" id="npudec-c-threads">
+  <p>Four threads give 7.12 ms per token, six give 6.79 ms. Which is the better choice, and why?</p>
+  <ul>
+    <li data-right>Six, because it is faster and matches the six contexts <div class="why">The table shows the lower time at six, and six is the number of units.</div></li>
+    <li>Four, because fewer threads means less contention <div class="why">Contention rises with threads, but the measured total still falls at six.</div></li>
+    <li>Either, since the difference is noise <div class="why">The same table gives 7.12 ms at four threads and 6.79 ms at six.</div></li>
+  </ul>
+</div>
+
+<h2 id="dma" data-short="Weights by DMA" data-step="A DMA engine fills one VTCM slot while the threads compute on the other.">How do the weights reach the threads in time?</h2>
+<p>A token reads about 306 MB of Qwen's matrices. From DRAM, the DSP's read speed is 46 to 47 GB/s at best, so the reads cannot be hidden by the arithmetic alone. Before DMA, each thread prefetched its next rows into the L2 cache with <code>l2fetch</code>. That reached about 36 GB/s across the token.</p>
+<div class="quiz" data-quiz="predict" data-for="dma" id="npudec-g-dma">
+  <p>Each thread has two VTCM slots, and only one is computed on at a time. Why does a thread need two?</p>
+  <ul>
+    <li data-right>The engine fills one slot while the vector units compute on the other <div class="why">Copy and compute overlap, so the copy's time is hidden behind the arithmetic.</div></li>
+    <li>One holds the weights and one holds a backup <div class="why">Nothing is checked against a backup; each slot holds a different pair of row groups.</div></li>
+    <li>One for each matrix type, so the two can differ <div class="why">The slots are reused for every matrix; the split is in time, not in matrix type.</div></li>
+  </ul>
+</div>
+<p>The DMA engine copies a thread's next pair of row groups (2 × 32 rows, with all their blocks) from DRAM into one slot. The copy bypasses the L2. Each DSP hardware thread has its own queue. Each copy is described by a 16-byte descriptor, kept in a ring:</p>
+<ul>
+  <li><strong>Start and link.</strong> <code>dmstart</code> begins a chain and <code>dmlink</code> appends to its tail; the thread polls each descriptor's done bit (<code>dsp/aether_dsp.c</code>).</li>
+  <li><strong>A ring of 64.</strong> Each thread keeps 64 descriptors, so none is rewritten while the engine may still read it.</li>
+  <li><strong>A fixed share.</strong> Each thread has VTCM/8. Before this, slots were placed by format, and a Q8_0 run could overwrite a neighbour still on Q5_0: perplexity 47530 on the phone, against 16.30 without DMA (commit <code>c68da0a</code>).</li>
+</ul>
+<p>Per product, against <code>l2fetch</code> <span class="tag m">measured</span>, best of 1 to 6 threads:</p>
+<table>
+  <thead><tr><th>matrix</th><th>MB</th><th>l2fetch</th><th>DMA</th></tr></thead>
+  <tbody>
+    <tr><td>q/k/v</td><td class="num">0.6</td><td class="num">21 µs</td><td class="num">21 µs</td></tr>
+    <tr><td>wo</td><td class="num">0.5</td><td class="num">18 µs</td><td class="num">24 µs</td></tr>
+    <tr><td>gate/up</td><td class="num">5.4</td><td class="num">180 µs</td><td class="num">100 µs</td></tr>
+    <tr><td>down</td><td class="num">2.7</td><td class="num">105 µs</td><td class="num">63 µs</td></tr>
+    <tr><td>classifier</td><td class="num">85.1</td><td class="num">2073 µs</td><td class="num">1311 µs</td></tr>
+  </tbody>
+</table>
+<p>DMA is slower on wo, and faster on the big matrices. The token's total fell from 10.44 ms with <code>l2fetch</code> to 6.75 ms with DMA <span class="tag m">measured</span>.</p>
+<ul>
+  <li><strong>What broke first.</strong> VTCM is requested with <code>HAP_compute_res_acquire</code>. When all six threads asked at once, one got it and five waited inside the call, which never returned. The request is now made once, by the thread the call arrived on, before the workers start.</li>
+</ul>
+<p><strong>Takeaway: DMA copies the next weights into VTCM while the vector units work, and it wins on the big matrices.</strong></p>
+<div class="quiz" data-quiz="check" data-for="dma" id="npudec-c-dma">
+  <p>DMA makes wo slower (18 to 24 µs), yet the token gets faster. What explains that?</p>
+  <ul>
+    <li data-right>wo is a small share of the token, and the big matrices save far more <div class="why">Gate/up saves 80 µs and the classifier 762 µs; wo's loss is 6 µs.</div></li>
+    <li>DMA is faster on every matrix in the decode step <div class="why">The table shows wo, the one matrix where DMA is slower.</div></li>
+    <li>DMA reads the weights in a smaller format <div class="why">Both paths read the same Q4_0 bytes; only the way they arrive changes.</div></li>
+  </ul>
+</div>
+
+<h2 id="result" data-short="The result" data-step="6.75 ms a token, 123 tokens per second, with perplexity matching llama.cpp.">What did one call per token buy?</h2>
+<p>The table sets the DSP's decode against the other engines on Qwen2.5-0.5B, Q4_0 <span class="tag m">measured</span>. The GPU row is an approximation from the same comparison.</p>
+<div class="quiz" data-quiz="predict" data-for="result" id="npudec-g-result">
+  <p>llama.cpp's NPU backend takes 13.5 ms per token on this model. Our DSP decode takes 6.75 ms. What is the ratio?</p>
+  <ul>
+    <li data-right>About 2 times faster <div class="why">13.5 divided by 6.75 is 2, so the DSP token takes half as long.</div></li>
+    <li>About the same speed <div class="why">Two tokens at 6.75 ms and 13.5 ms differ by a factor of two, not a few percent.</div></li>
+    <li>About 1.3 times faster <div class="why">13.5 over 10 is 1.35, the GPU's figure, not the NPU's.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>engine, Qwen2.5-0.5B decode</th><th>ms per token</th><th>tok/s</th></tr></thead>
+  <tbody>
+    <tr><td>llama.cpp, NPU backend</td><td class="num">13.5</td><td class="num">74</td></tr>
+    <tr><td>ours, GPU</td><td class="num">about 10</td><td class="num">not stated</td></tr>
+    <tr><td>ours, CPU</td><td class="num">about 5.2</td><td class="num">192</td></tr>
+    <tr><td><strong>ours, DSP, one call per token</strong></td><td class="num"><strong>6.75</strong></td><td class="num"><strong>123</strong></td></tr>
+  </tbody>
+</table>
+<p>The DSP's output matches llama.cpp's perplexity on wikitext-2, the usual check that a model's numbers are right. Ours gives 19.7584 for the decode step, against llama.cpp's 19.7283 ± 0.84 <span class="tag m">measured</span>. The DMA change moved only how the bytes arrive, so perplexity did not change at all. <a href="../phase-6/perplexity.html">What perplexity measures</a> is on its own page.</p>
+<p><strong>Takeaway: one call per token runs twice as fast as llama.cpp's NPU backend here, with matching perplexity.</strong></p>
+<div class="quiz" data-quiz="check" data-for="result" id="npudec-c-result">
+  <p>The DMA change left the perplexity unchanged to the last digit. Why would a faster way of loading bytes not change it?</p>
+  <ul>
+    <li data-right>It changes only when the bytes arrive, not the arithmetic on them <div class="why">The same numbers are multiplied in the same order, so the result is identical.</div></li>
+    <li>It switches to fp16 weights, which round the same way <div class="why">The weights stayed Q4_0; the format did not change.</div></li>
+    <li>It skips the classifier, which dominates perplexity <div class="why">The classifier still runs every token; DMA only changes how its weights arrive.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>A call costs about 146 µs whatever it does, and a token has many matrix products. So the whole token goes in one call.</p>
+<p>Six threads share the token with nine barriers per layer, and DMA fills VTCM while the vector units compute. Together they give 6.75 ms a token, 123 tokens per second.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) in October 2026 (results/phase-l5.md, steps 1, 2, 4 and 4b, and "Every engine, one benchmark") unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-l5.md step 1 (146 µs median, 393 µs without the clock request, ~170 calls per token, ~5.2 ms CPU token); step 2 (six HVX contexts; 8-thread DRAM read 39.2 GB/s against 45.9 at 6; DSP cache flush); step 3 (9 barriers and 24 layers x 4 products + classifier); step 4 (one call per token, argmax on the DSP, 10.46 ms DSP token); step 4b (6.75 ms, 123 tok/s; 10.44 ms with l2fetch; threads 2 to 6: 8.30, 7.53, 7.12, 6.93, 6.79 ms; per-product l2fetch and DMA table; 306 MB per token; 36 GB/s; 19.7584 PPL; 12.3 ms wall against 10.5 ms DSP; 9 barriers per layer; VTCM acquire hang); "Every engine, one benchmark" (ours CPU 192 tok/s; GPU ~10 ms); llama.cpp NPU backend 13.5 ms, 74 tok/s (phase-l3 step 8 as cited in phase-l5); llama.cpp 19.7283 ± 0.84 (phase-l5 step 4 table); src/model/dsp.rs (model_decode per token, shared buffers); src/kernels/hexagon.rs (model_decode doc comment); dsp/aether_dsp.c (dmstart, dmlink, DMA_RING 64, VTCM share); commit c68da0a (VTCM/8; PPL 47530 against 16.30 on the phone). Calculated: 170 x 146 µs = 24.8 ms; 146 µs / 6.75 ms = 2 %; 13.5 / 6.75 = 2 times; 146 µs read as 1.46 ms gives the 20 % wrong option; 13.5 / 10 = 1.35. -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>

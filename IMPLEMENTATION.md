@@ -70,7 +70,9 @@ prompt lookup on the DSP (+6–28 %), Q4_K_M files on the DSP (PPL matching llam
 
 ### LFM3-1.7B (branch `lfm3`, 2026-11-03)
 
-`plans/lfm3.md`, the first hybrid model and the first that is bandwidth-bound on the phone.
+`plans/lfm3.md`, the first hybrid model, and the first big enough (1.1 GB in Q4_K_M) that its decode ceiling
+from DRAM bandwidth is within reach; A7's profile shows our decode is still limited by the
+K-quant kernels' arithmetic, not by bandwidth.
 A0 (references, official GGUFs, PC/phone baselines) and A1–A4 (mixed conv/attention stack,
 LFM3 tokenizer, kernels, sliding ring, conv rollback) are committed. A5's engine PPL on the PC matches llama.cpp: Q4_K_M 24.8542 vs 24.8278, Q8_0 23.5482 vs 23.5508, QAD-Q4_0
 27.1557 vs 27.1383, BF16 (4 chunks) 14.7419 vs 14.7313; context 2048 is 13.7917 vs 13.9561, and the full 20-chunk engine KL is 0.115041 / 83.392 %
@@ -78,7 +80,8 @@ LFM3 tokenizer, kernels, sliding ring, conv rollback) are committed. A5's engine
 same three files at 24.8822 / 23.5744 / 27.1489; 122 phone tests pass.
 A6's LFM3 chat template and thinking filter match the HF template, and the C ABI asks the
 model for its template; the app APK builds. Speculative decoding rolls the conv state back
-(tested: bit-identical with the restore, 0.31 relative error without it; LFM3 lookup gives
+(tested: bit-identical with the restore, a relative 0.642 without it on the phone,
+`results/phase-lfm3/raw/phone-tests.txt`; LFM3 lookup gives
 its plain greedy text). A7's same-session rounds against llama.cpp are measured
 (`results/phase-lfm3.md` A7): prompts level, decode behind (Q4_K_M 26.1 vs 44.3 tok/s,
 QAD-Q4_0 42.9 vs 49.6), sustained 22.9 / 35.7 tok/s at ~88 °C. The profile puts 87 % of

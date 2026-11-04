@@ -50,7 +50,7 @@ setTimeout(function () {
 
 <h2 id="goal" data-short="The goal" data-step="Measure prefill and decode separately, at several context lengths, under recorded conditions, the way llama-bench does.">What are we trying to do here?</h2>
 <p>A <strong>benchmark</strong> is a measurement made the same way every time, so that two results can be compared. For an inference engine the questions are: how fast does it read a prompt, how fast does it write, how does that change as the context grows, how soon does the first word appear, and how much memory does it take.</p>
-<p>llama.cpp answers the speed questions with <code>llama-bench</code>, and its notation is widely used, so <code>bench_suite</code> copies it. Both ran on the same phone, on the same GGUF files made by llama.cpp’s own tools, through <code>scripts/phase7-bench.sh</code>. The numbers below are Qwen2.5-0.5B-Instruct Q4_0 from 2026-10-21 (<code>results/phase-7.md</code>). The engine has become faster since then; this page is about the method.</p>
+<p>llama.cpp answers the speed questions with <code>llama-bench</code>, and its notation is widely used, so <code>bench_suite</code> copies it. Both ran on the same phone, on the same GGUF files made by llama.cpp’s own tools, through <code>scripts/phase7-bench.sh</code>. The numbers below are Qwen2.5-0.5B-Instruct Q4_0 from 2026-10-21 (<code>results/phase-7.md</code>). The engine has become faster since then. On 2026-10-31, in the same session as llama.cpp, Q4_0 decode at depth 0 was 180 tok/s against 153 (<span class="tag m">measured</span>, <code>results/phase-7.md</code>). This page is about the method.</p>
 
 <h2 id="two" data-short="Two speeds" data-step="pp N times reading an N-token prompt; tg N times generating N tokens. They are different work.">Why are there two speeds?</h2>
 <p><strong>Prefill</strong> reads the whole prompt in one batched pass. <strong>Decode</strong> then makes one token at a time, each a full pass over the weights. llama-bench writes them as <code>pp N</code> (“prompt processing”, a prompt of N tokens from an empty cache) and <code>tg N</code> (“text generation”, N new tokens), both in tokens per second.</p>
@@ -67,7 +67,7 @@ setTimeout(function () {
 
 <h2 id="depth" data-short="Depth" data-step="tg64 @ dD decodes 64 tokens after D are already in the KV cache; attention grows with D.">Why measure decode at several depths?</h2>
 <p>Each new token attends to every earlier token in the <a href="../phase-2/kv-cache.html">KV cache</a>, so decode gets slower as the conversation grows. llama-bench writes <code>tg64 @ d512</code>: 64 decode steps after 512 tokens are already in the cache. <code>bench_suite</code> fills the cache with an untimed prefill of D tokens, then times 64 single steps, recording each token’s own time.</p>
-<p>Ours on 2026-10-21, cores 2–7: tg64 @ d0 128.8 tok/s, @ d256 113.2, @ d512 62.8. That last number looked like a serious problem in attention. It was not: the next day the same commit gave 110.6 → 87.0 in three alternating runs, so the 62.8 was mostly one bad run.</p>
+<p>Ours on 2026-10-21, cores 2–7: tg64 @ d0 128.8 tok/s, @ d256 113.2, @ d512 62.8. That last number looked like a serious problem in attention. It was not: the next day the same commit gave 110.6 → 87.0 in three alternating runs, so the 62.8 was mostly one bad run. On 2026-10-31, same session, the same depth gave 159 and 159 tok/s in two rounds, against llama.cpp's 123 and 123.</p>
 <p><strong>Takeaway: decode speed depends on context length, so it is measured at several depths, and a surprising depth result needs a repeat before it is believed.</strong></p>
 <div class="quiz" data-quiz="check" data-for="depth" id="c-depth">
   <p>An app user has a 2,000-token conversation. Which number predicts their reply speed best?</p>
@@ -123,6 +123,7 @@ let tokens: Vec&lt;usize&gt; = (0..max_seq as u64)
   <li><strong>The same start:</strong> each run waits until the hottest CPU zone is below 48 °C, wakes the screen (screen-off lowers the clock caps), and records battery state and time.</li>
   <li><strong>Written down:</strong> the commit, the llama.cpp version (<code>d00685831</code>) and its build flags go in <code>results/phase-7.md</code>.</li>
 </ul>
+<p>The 2026-10-31 re-run added two things to this method. It ran both engines in two rounds, with the order reversed in the second. It also logged the clock caps at the start of each run: 1.79 / 1.96 GHz (performance / prime) for 21 of the 24 runs. Both are in <code>results/phase-7.md</code>.</p>
 <p><strong>Takeaway: same files, same cores, same thermal start, and the conditions recorded with the numbers.</strong></p>
 <div class="quiz" data-quiz="check" data-for="fair" id="c-fair">
   <p>Ours runs on a file made by our own quantizer, llama.cpp on its own file. Ours is 5 % faster. What is wrong with the comparison?</p>
@@ -166,10 +167,11 @@ let tokens: Vec&lt;usize&gt; = (0..max_seq as u64)
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) on 2026-10-21 and 2026-10-22, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) on 2026-10-21, 2026-10-22 and 2026-10-31, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
+<!-- sources: results/phase-7.md (2026-10-21, 2026-10-22 runs; same-session re-run 2026-10-31: tg64 @ d512 159 / 159 vs 123 / 123, Q4_0 tg64 @ d0 180 vs 153, two rounds, clock caps at start of runs). -->
 </html>

@@ -290,6 +290,7 @@ f32:   4 bytes /  1 weight  = 4 bytes per weight</code></pre>
 <h2 id="fair">Why compare two engines on the same bytes?</h2>
 <p>A speed or accuracy comparison is only fair if both programs read the same numbers. If each engine converted the model itself, the rounding and the block layout could differ, and the comparison would measure the conversion. So the test files are made once, by llama.cpp's own tools: <code>convert_hf_to_gguf.py</code> writes an f32 GGUF from the Hugging Face checkpoint, and <code>llama-quantize</code> makes the Q8_0 and Q4_0 versions from it.</p>
 <p>Both engines then read those files. Ours is the parser on this page. llama.cpp's <code>llama-bench</code> and <code>llama-perplexity</code> read the same bytes. The benchmark script says so in its header: "on the <strong>same GGUF files</strong>" <span class="tag m">measured</span>, <code>scripts/phase7-bench.sh</code>.</p>
+<p>Since 2026-10-30 the engine can write these files too (<code>aether-quantize</code>). Its output matches <code>llama-quantize</code> byte for byte for SmolLM2 and Qwen2.5 (<code>results/phase-6.md</code>). The comparison on this page still uses llama.cpp's files, so both engines read the same bytes.</p>
 <p>The result is that a difference in perplexity or speed comes from the engine, not from the file. The perplexity table on the Phase 7 overview is built this way: our Q8_0 and llama.cpp's Q8_0 agree to within llama.cpp's error bar, and both read the same Q8_0 file <span class="tag m">measured</span>.</p>
 <p><strong>Takeaway: one file, two readers. Any difference between them is the reader's, not the file's.</strong></p>
 
@@ -316,8 +317,9 @@ f32:   4 bytes /  1 weight  = 4 bytes per weight</code></pre>
 </main>
 </div>
 <p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
+<!-- sources: results/phase-6.md (aether-quantize output byte-identical to llama-quantize, SmolLM2 and Qwen2.5; 2026-10-30); results/phase-7.md (same-bytes comparison). -->
 </html>

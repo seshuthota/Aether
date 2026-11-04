@@ -1,10 +1,11 @@
 # Content plan: Phases 2–8
 
 Phases 0–6 and 8 have their pages, Phase 7 its overview and seven topic
-pages, and the work after Phase 8 (Q4_K_M files, speculative decoding, the
-GPU) has its own section, `beyond/`. The engine is built and verified through Phase 8
-and beyond, so every topic below has real code to point at and real numbers
-measured on this phone. This is the list of pages still to write, in
+pages, and the work after Phase 8 (K-quant files, speculative decoding, the
+GPU, the NPU) has its own section, `beyond/`; the hybrid model LFM3 has its
+own section, `lfm3/`. The engine is built and verified through Phase 8 and
+beyond (2026-11-04), so every topic below has real code to point at and real
+numbers measured on this phone. This is the list of pages still to write, in
 reading order (some entries below are now written; check `js/pages.js`).
 
 Each entry: **what the reader learns** · *interactive idea* · `where it
@@ -29,8 +30,8 @@ is labelled an illustration.
    page that explains it.*
 3. **How we know it's right** (written: `start/right.html`) — the external-reference rule: numpy,
    llama2.c, Hugging Face, llama.cpp; golden files; why a second copy of our
-   own code proves nothing. · `tools/`, `testdata/`, `src/testutil.rs`; 85
-   tests on the phone.
+   own code proves nothing. · `tools/`, `testdata/`, `src/testutil.rs`; 123
+   tests on the phone (2026-11-03; 85 was the count on 2026-10-29).
 
 ## Phase 2 · A whole model in plain Rust (stories15M)
 
@@ -202,15 +203,17 @@ MHA/GQA/MQA toggle and the step-by-step encoder.
    `smmla`). · `results/phase-7.md`.
 7. **Heat and energy** (written: `phase-7/heat.html`, with the plot) — 5 minutes of decoding: 112 → 65–75 tok/s at
    84.5 °C, 3.5 W, 0.041 J per token. · *Plot of the sustained trace.*
-8. **`smmla` and weight repacking (preview)** — a 2×8 by 8×2 int8 block
-   product per instruction; the next speed-up.
+8. **`smmla` and weight repacking (preview, now built)** — a 2×8 by 8×2 int8
+   block product per instruction; repacking gave Q4_0 decode +25–34 % on
+   2026-10-28. Covered in `phase-6/dot-products.html` and `phase-7/time.html`.
 
 ## Phase 8 · On the phone, in an app
 
 **Written (2026-10-29)**, as two pages: `phase-8/c-abi.html` (1) and
 `app.html` (2, 3, the engine thread from 4, and 5). Still open: APK
-packaging (`jniLibs`, 16 KB alignment), model storage and `run-as`, and the
-app's own memory (not measured).
+packaging (`jniLibs`, 16 KB alignment) and model storage and `run-as`. The
+app's memory has one measurement so far: LFM3-1.7B at 1.30 GB PSS (2026-11-03,
+`results/phase-lfm3.md`); the 348 MB figure in item 5 is the CLI's.
 
 1. **A C interface** — why C is the common language; opaque handles, error
    codes, and why a Rust panic must never cross into C (`catch_unwind`). ·
@@ -231,7 +234,13 @@ app's own memory (not measured).
 ## After Phase 8
 
 `beyond/q4km.html` (Q4_K_M: Q5_0, Q4_K, Q6_K, accuracy, speed) is written,
-alongside the speculative and GPU pages.
+alongside the speculative and GPU pages. Written with the 2026-11-04 update:
+the GPU pages `gpu-int8.html` and `gpu-flash.html`; the NPU pages
+`npu-basics.html`, `npu-decode.html`, `npu-prompt.html`, `npu-attention.html`
+and `engines.html` (CPU, GPU or NPU); and the LFM3 section `lfm3/index.html`,
+`conv.html`, `rollback.html`, `attention.html` and `accuracy-speed.html`.
+Still to write: K-quant decode (Q8_K activations, repacked rows), after K5.
+`start/outline.html` has the status of each row.
 
 ## Glossary terms to add
 

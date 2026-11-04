@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPU, GPU or NPU: which one should run the model? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">The NPU · 05</p>
+
+<h1>CPU, GPU or NPU: which one should run the model?</h1>
+<p class="lede">The same model, Qwen2.5-0.5B in Q4_0, ran on the phone’s CPU, its GPU and its DSP, which is the Hexagon NPU. Each one is fastest at a different job. This page puts every measured row in one table, says what each engine is good at, and shows which one to pick for a long prompt, a long reply, or a phone that must last on battery.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure. Most sections end with a <strong>check</strong>, folded until you open it. Your answers stay in this browser.</p>
+<p>This page needs <a href="gpu-decode.html">Decoding on the GPU</a>, <a href="../phase-1/power.html">power and heat</a> and <a href="../phase-7/heat.html">heat</a>. The app’s selector is on <a href="../phase-8/app.html">the app page</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#table">What did each engine measure?</a>
+  <a href="#prompt">Which engine reads a long prompt fastest?</a>
+  <a href="#reply">Which engine writes a long reply fastest?</a>
+  <a href="#energy">Which one spends the least energy per token?</a>
+  <a href="#selector">What does the app’s selector change?</a>
+  <a href="#pick">Which one should I pick for my job?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Three engines run one model; this page compares them on speed, energy and heat, row by row.">What are we trying to do here?</h2>
+<p>An <strong>engine</strong> is the hardware that does the matrix products of a model. Three engines run this phone’s model. Our CPU code runs on six threads on cores 2 to 7. Our GPU code runs on the Adreno 830. Our DSP code runs on the Hexagon v79, the phone’s NPU. All three read the same 278 MB of Qwen2.5-0.5B Q4_0 weights.</p>
+<p>A model does two jobs, and they stress the hardware differently. <strong>Prefill</strong> reads the prompt. All its tokens go through the model together, so one read of the weights serves many tokens. <strong>Decode</strong> writes the reply one token at a time, and each token reads all the weights again. Speed is counted in tokens per second (tok/s). Energy is counted in <strong>joules per token</strong>: the watts the phone drew, divided by the tokens per second. A joule is one watt for one second.</p>
+<p><strong>Takeaway: the engines differ in prefill, decode and energy, so the right one depends on the job.</strong></p>
+
+<h2 id="table" data-short="The table" data-step="One row per engine and session, with prefill, decode, five-minute speed, energy and heat.">What did each engine measure?</h2>
+<p class="setup">Every engine decoded the same model, for five minutes on battery, with the screen awake. The short runs and the five-minute runs come from the same evening. Each engine was cooled below 45 °C before its short run.</p>
+<div class="quiz" data-quiz="predict" data-for="table" id="engines-g-table">
+  <p>Which engine decodes fastest over five minutes on battery?</p>
+  <ul>
+    <li>The CPU <div class="why">It is fastest in a short burst, but five minutes of heat slows it.</div></li>
+    <li>The GPU <div class="why">It draws the least power, but its tokens are the slowest of the three.</div></li>
+    <li data-right>The DSP <div class="why">It held 130.6 tok/s for five minutes, the highest of the three.</div></li>
+  </ul>
+</div>
+<p>The table has one row per engine and session. A blank cell means that session did not measure it. Speeds are in tok/s, energy in joules per token, and heat in °C.</p>
+
+<div class="table-wrap">
+<table data-engine-table>
+  <thead><tr><th>engine, session</th><th>prefill, 64 tokens</th><th>prefill, 512 tokens</th><th>decode, depth 0</th><th>decode, depth 512</th><th>decode, 5 min</th><th>J/token, 5 min</th><th>hottest, 5 min</th></tr></thead>
+  <tbody>
+    <tr data-fit="reply"><td>CPU, cores 2–7 · 10-30</td><td class="num">776.9</td><td class="num">526.0</td><td class="num">135.8</td><td class="num">124.5</td><td class="num">107.3</td><td class="num">0.030</td><td class="num">85.3 °C</td></tr>
+    <tr data-fit="prompt battery"><td>GPU, Adreno · 10-30</td><td class="num">690.6</td><td class="num">692.6</td><td class="num">98.7</td><td class="num">88.9</td><td class="num">78.2</td><td class="num">0.029</td><td class="num">58.0 °C</td></tr>
+    <tr data-fit="reply battery"><td>DSP, Hexagon · 10-30</td><td class="num">679.0</td><td class="num">641.4</td><td class="num">131.1</td><td class="num">90.0</td><td class="num">130.6</td><td class="num">0.025</td><td class="num">69.9 °C</td></tr>
+    <tr><td>CPU, cores 2–7 · 10-29 (vs llama.cpp)</td><td class="num">749 / 832</td><td class="num">855 / 770</td><td class="num">192 / 194</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>GPU, Adreno · 10-29 (vs llama.cpp)</td><td></td><td></td><td class="num">106.5 / 101.6</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>llama.cpp CPU · 10-29</td><td class="num">930 / 831</td><td class="num">739 / 661</td><td class="num">172 / 166</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>llama.cpp OpenCL, Adreno GPU · 10-29</td><td class="num">689 / 646</td><td class="num">1347 / 1194</td><td class="num">58 / 49</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>llama.cpp Hexagon NPU · 10-29</td><td class="num">295 / 296</td><td class="num">313 / 311</td><td class="num">74.5 / 74.0</td><td></td><td></td><td></td><td class="num">68 °C in its runs</td></tr>
+    <tr data-fit="prompt"><td>GPU, int8 activations · 10-31</td><td class="num">1174 / 1200</td><td class="num">1067 / 1074</td><td class="num">101.2 / 102.6</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>llama.cpp OpenCL, same session · 10-31</td><td class="num">571 / 603</td><td class="num">1194 / 1108</td><td></td><td></td><td></td><td></td><td></td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">Rows marked 10-30 are one benchmark session, the only one where all three of our engines ran back to back. Rows with two numbers are round 1 / round 2 of one session. The 10-29 and 10-31 rows compare only with llama.cpp inside their own session. Our DSP was not in those sessions.</p>
+<p class="note">Every cell is <span class="tag m">measured</span>. The sampler’s joules over the same runs give other energy values; see the energy section.</p>
+<p><strong>Takeaway: only rows from one session compare, and the 10-30 session is the one with all three of our engines.</strong></p>
+<div class="quiz" data-quiz="check" data-for="table" id="engines-c-table">
+  <p>The CPU decoded 192 tok/s on 10-29 and 135.8 tok/s on 10-30, on the same model. What is the likeliest reason?</p>
+  <ul>
+    <li data-right>The two sessions had different heat and clock states <div class="why">Clocks differ by 10–20 % between sessions, so only rows from one session compare.</div></li>
+    <li>The 10-30 benchmark had a bug that slowed the CPU <div class="why">The 10-30 file ran the same code and its checks passed; the phone’s state changed.</div></li>
+    <li>The 10-29 run used a smaller model <div class="why">Both runs used Qwen2.5-0.5B Q4_0, 278 MB of weights.</div></li>
+  </ul>
+</div>
+
+<h2 id="prompt" data-short="Long prompt" data-step="At 512 tokens the GPU prefills fastest of ours; at 64 tokens the CPU does.">Which engine reads a long prompt fastest?</h2>
+<p class="setup">A prompt of 512 tokens is one prefill of 512 tokens. The bench reports prefill speed at 64 and at 512 tokens. A longer prompt makes the first answer come later, so prefill speed decides how long a user waits before the reply starts.</p>
+<div class="quiz" data-quiz="predict" data-for="prompt" id="engines-g-prompt">
+  <p>On 10-30, which of our engines prefills 512 tokens fastest?</p>
+  <ul>
+    <li>The CPU <div class="why">It leads at 64 tokens, so it is tempting to take it to 512 too.</div></li>
+    <li>The DSP <div class="why">It runs prompts on its matrix unit, but it came second at 512.</div></li>
+    <li data-right>The GPU <div class="why">It prefilled 692.6 tok/s at 512, ahead of the DSP and the CPU.</div></li>
+  </ul>
+</div>
+<p>The CPU prefilled 776.9 tok/s at 64 tokens, the fastest of ours at that length. At 512 tokens it fell to 526.0. The GPU went the other way: 690.6 at 64, then 692.6 at 512. The DSP sat between them at 641.4 for 512 tokens <span class="tag m">measured</span>.</p>
+<p>The DSP’s own timer, which leaves out the CPU’s part, gave 778 tok/s for 128 tokens on 2026-10-30 (<code>results/phase-l5.md</code>, step 5b). The bench’s wall-clock figure for 128 tokens was 798.9 <span class="tag m">measured</span>.</p>
+<p>The GPU’s prompt pass has changed since 10-30. On 10-31, in one session with llama.cpp’s OpenCL build, our int8 pass reached 1,174 and 1,200 tok/s at 64 tokens, against llama.cpp’s 571 and 603. At 512 tokens it was 1,067 and 1,074, against llama.cpp’s 1,194 and 1,108. So on that day ours led at 64 tokens and trailed at 512 <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: for a 512-token prompt the GPU was fastest of ours on 10-30; for 64 tokens the CPU was.</strong></p>
+<div class="quiz" data-quiz="check" data-for="prompt" id="engines-c-prompt">
+  <p>A user sends a 64-token question. Using the 10-30 table, which engine prefills it fastest?</p>
+  <ul>
+    <li data-right>The CPU, at 776.9 tok/s <div class="why">At 64 tokens it beats the GPU’s 690.6 and the DSP’s 679.0.</div></li>
+    <li>The GPU, which won at 512 <div class="why">The GPU leads at 128 and 512, not at 64.</div></li>
+    <li>The DSP, which has the matrix unit <div class="why">At 64 tokens it was the slowest of the three.</div></li>
+  </ul>
+</div>
+
+<h2 id="reply" data-short="Long reply" data-step="Decode gets slower as the cache fills; the CPU is fastest at depth 512 in our bursts.">Which engine writes a long reply fastest?</h2>
+<p class="setup">Decode reads all the weights for every token. It also reads the <strong>KV cache</strong>, the stored keys and values of every earlier token, so each step gets slower as the text grows. The table gives two depths. Depth 0 starts from an empty cache. Depth 512 has 512 tokens already in it.</p>
+<div class="quiz" data-quiz="predict" data-for="reply" id="engines-g-reply">
+  <p>A reply is written at depth 512 or more, in short bursts. Which engine is fastest there?</p>
+  <ul>
+    <li>The DSP <div class="why">It is fastest over five minutes, so it should lead at depth too.</div></li>
+    <li data-right>The CPU <div class="why">It decoded 124.5 tok/s at depth 512, against 90.0 for the DSP.</div></li>
+    <li>The GPU <div class="why">It is the coolest engine, so it should also be the fastest at depth.</div></li>
+  </ul>
+</div>
+<p>At depth 0 the CPU and DSP are close: 135.8 and 131.1 tok/s. At depth 512 the gap opens: the CPU keeps 124.5 tok/s, the DSP falls to 90.0 and the GPU to 88.9 <span class="tag m">measured</span>.</p>
+<p>The five-minute run is a different test. The DSP held 130.6 tok/s on average, and the CPU averaged 107.3. The CPU started at 188.1 tok/s in the same file and fell as the phone heated.</p>
+<p>The DSP’s depth-512 number has improved since 10-30. On 10-31 its own timer gave 8.45 ms a token at depth 512, after the key and value prefetch (<code>results/phase-l5.md</code>). That is about 118 tok/s <span class="tag c">calculated</span>. The timer leaves out the CPU’s part, and it is a different session, so it is not in the table. The 8.45 ms itself is <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: from a short start the DSP writes the longest reply fastest; once the cache holds 512 tokens, our bursts put the CPU first.</strong></p>
+
+<h2 id="energy" data-short="Energy" data-step="The CPU used the most energy per token in every reading; GPU and DSP cost less, and their order depends on the meter.">Which one spends the least energy per token?</h2>
+<p class="setup">Energy per token is the watts drawn divided by the tokens per second. An engine that is slow but low-powered can still cost more per token than a fast, hotter one. The five-minute runs used two readings of the phone’s battery and sensors. The <strong>charge counter</strong> is the battery’s own count of charge drawn, which the raw files label as a whole-phone figure. The <strong>sampler</strong> is the run’s monitor, which reads the phone every half second.</p>
+<div class="quiz" data-quiz="predict" data-for="energy" id="engines-g-energy">
+  <p>Over five minutes on battery, which engine used the least energy per token by the charge counter?</p>
+  <ul>
+    <li>The GPU <div class="why">It drew the least power, 2.26 W, but its tokens were the slowest.</div></li>
+    <li>The CPU <div class="why">It started fastest, at 188.1 tok/s, so each token should be cheap.</div></li>
+    <li data-right>The DSP <div class="why">It drew 3.28 W, but at 130.6 tok/s it spent 0.025 J a token.</div></li>
+  </ul>
+</div>
+<p>By the charge counter, the CPU spent 0.030 J a token, the GPU 0.029 and the DSP 0.025 <span class="tag m">measured</span>. The DSP’s 0.025 is about 17 % below the CPU’s 0.030 <span class="tag c">calculated</span>. The counter covered 153 s of the CPU run, 212 s of the GPU run and 281 s of the DSP run, so these are not whole-run totals.</p>
+<p>The sampler gives other values from the same runs. Its totals divided by the tokens give 0.032 J for the CPU, 0.023 for the GPU and 0.023 for the DSP <span class="tag c">calculated</span>. By that meter the GPU and the DSP tie.</p>
+<p>The 2-minute runs of 10-29 agree on one point. The CPU cost 0.029 J a token by the charge counter (0.027 by the sampler, calculated), against 0.021 for the GPU (0.024 by the sampler, calculated). The GPU ran at 67.6 °C, the CPU at 88.8 °C <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: the CPU cost the most energy per token in every reading; the GPU and the DSP cost less, and which is lower depends on the meter.</strong></p>
+<div class="quiz" data-quiz="check" data-for="energy" id="engines-c-energy">
+  <p>By the charge counter, the GPU drew less power than the DSP, yet its energy per token was higher. Why?</p>
+  <ul>
+    <li data-right>Energy per token is power divided by speed, and the GPU was slower <div class="why">Its 78.2 tok/s is well below the DSP’s 130.6, so each token took longer.</div></li>
+    <li>The GPU’s power meter reads high <div class="why">All three engines were read with the same charge counter and sampler.</div></li>
+    <li>Heat makes the GPU use more power per token <div class="why">The results give no such effect; the GPU ran the coolest of the three.</div></li>
+  </ul>
+</div>
+
+<h2 id="selector" data-short="App selector" data-step="The app's CPU, GPU and DSP choice: the GPU mode runs the prompt on the CPU.">What does the app’s selector change?</h2>
+<p class="setup">The app has one selector with three choices: CPU, GPU and DSP. It replaced the GPU checkbox in commit <code>a240b0a</code> on 2026-10-30. Each choice opens a different kind of session on the same model file.</p>
+<div class="quiz" data-quiz="predict" data-for="selector" id="engines-g-selector">
+  <p>Which choice splits one request between two engines?</p>
+  <ul>
+    <li>CPU <div class="why">It uses six threads, but all six are on one engine, the CPU.</div></li>
+    <li data-right>GPU <div class="why">The prompt is read on the CPU cores and the reply is decoded on the GPU.</div></li>
+    <li>DSP <div class="why">It is the newest choice, but its session holds the whole model.</div></li>
+  </ul>
+</div>
+<p>The code picks the session from the choice:</p>
+<pre><code>"GPU" -&gt; Aether.openGpu(file.path, coreList, MAX_SEQ)
+"DSP" -&gt; Aether.openDsp(file.path, filesDir.path, MAX_SEQ)
+else  -&gt; Aether.open(file.path, coreList, MAX_SEQ)
+</code></pre>
+<p class="note">From <code>android/app/src/main/java/dev/aether/chat/MainActivity.kt</code> at <code>a240b0a</code>.</p>
+<ul>
+  <li><strong>CPU</strong> runs the prompt and the reply on cores 2 to 7 (the chosen core list).</li>
+  <li><strong>GPU</strong> runs the reply on the GPU, but the prompt on the CPU cores. The GPU session takes the prompt from the CPU, so this mode has a CPU prefill.</li>
+  <li><strong>DSP</strong> runs the whole model on the Hexagon. The app’s files directory holds our library, and the user session was created in 28 ms.</li>
+</ul>
+<p>The in-app runs on 10-30 gave these speeds, on a different model, sampling and load, so they are not in the table. On the instruct Q4_0 model, the DSP read a 35-token prompt at 462 tok/s and decoded 183 tokens at 112 tok/s. On the Q4_K_M base model, the GPU decoded 219 tokens at 53 tok/s and the CPU decoded 512 at 171 tok/s with lookup on. The GPU’s decode has risen since; on 11-01 its Q4_K_M decode went from 53.2 to 67.5 tok/s on the charger, in a run that is only indicative <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: GPU mode splits the work, with the prompt on the CPU; DSP mode runs the whole model on the Hexagon.</strong></p>
+<div class="quiz" data-quiz="check" data-for="selector" id="engines-c-selector">
+  <p>The app’s DSP session loads our library from the app’s files directory. Why that directory?</p>
+  <ul>
+    <li data-right>The DSP loader reads the first directory in its search path, and the app puts its own there <div class="why">Step 1 of the DSP work put that directory first in ADSP_LIBRARY_PATH.</div></li>
+    <li>The CPU must copy the library to the DSP before each call <div class="why">The library is loaded once; the DSP reads shared memory, not copies.</div></li>
+    <li>The DSP cannot read files that are not in the app’s own storage <div class="why">The DSP reads our library from that path; this is about the search path, not storage rights.</div></li>
+  </ul>
+</div>
+
+<h2 id="pick" data-short="Pick by job" data-step="Three jobs, each with the engine the measured rows favour, and the rows that show why.">Which one should I pick for my job?</h2>
+<p class="setup">Three jobs come up most often: a long prompt, a long reply, and a battery that must last. Use the buttons to light up the rows that answer each job. The list below gives the same answers without scripts.</p>
+<div class="widget" data-fit-box>
+  <div class="controls js-only">
+    <button type="button" class="btn" data-fit-btn="prompt">Long prompt</button>
+    <button type="button" class="btn ghost" data-fit-btn="reply">Long reply</button>
+    <button type="button" class="btn ghost" data-fit-btn="battery">Battery first</button>
+  </div>
+  <p class="note js-only" data-fit-note></p>
+</div>
+<table class="pick">
+  <thead><tr><th>If you want</th><th>Pick</th><th>Because, measured on 10-30</th></tr></thead>
+  <tbody>
+    <tr><td>A 512-token prompt, fast</td><td>GPU</td><td class="num">692.6 tok/s, against DSP 641.4 and CPU 526.0</td></tr>
+    <tr><td>A 64-token prompt, fast</td><td>CPU</td><td class="num">776.9 tok/s, against GPU 690.6 and DSP 679.0</td></tr>
+    <tr><td>A long reply from a short start</td><td>DSP</td><td class="num">130.6 tok/s for five minutes, against CPU 107.3</td></tr>
+    <tr><td>A long reply with a long cache</td><td>CPU</td><td class="num">124.5 tok/s at depth 512, against DSP 90.0</td></tr>
+    <tr><td>The least energy per token</td><td>DSP, or GPU</td><td class="num">0.025 and 0.029 by charge counter; 0.023 each by sampler (calculated)</td></tr>
+    <tr><td>A cool phone</td><td>GPU</td><td class="num">58.0 °C after five minutes, against DSP 69.9 and CPU 85.3</td></tr>
+  </tbody>
+</table>
+<p>The CPU is never the cheapest per token in any reading. It is the speed pick for a 64-token prompt, and for a long reply once the cache holds 512 tokens. The GPU and the DSP both need the model in their formats: the app’s GPU mode says Q4_0 or Q4_K_M, and the DSP runs both (results/phase-l5.md, step 6).</p>
+<p><strong>Takeaway: pick by the job: the GPU for long prompts, the DSP for long replies from a short start, the GPU for a cool phone.</strong></p>
+<div class="quiz" data-quiz="check" data-for="pick" id="engines-c-pick">
+  <p>The phone is hot after a long game. Which engine would you pick to keep it coolest, using only the 10-30 five-minute runs?</p>
+  <ul>
+    <li>The CPU <div class="why">It is the fastest in short bursts, so it is tempting for a long game.</div></li>
+    <li>The DSP <div class="why">It used the least energy, but it ran hotter than the GPU.</div></li>
+    <li data-right>The GPU <div class="why">It ran coolest of the three, at 58.0 °C after five minutes.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>The GPU prefills a 512-token prompt fastest of our engines, the DSP writes a long reply fastest from a short start, and the CPU is best once the cache is long.</p>
+<p>The CPU costs the most energy per token in every reading. The GPU and the DSP cost less, and the order between them depends on the meter, so check both before you choose for battery.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) unless tagged otherwise. The 10-30 table is one session; 10-29 and 10-31 rows compare only inside their own session. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+<script>
+(function () {
+  var box = document.querySelector("[data-fit-box]");
+  if (!box) return;
+  var note = box.querySelector("[data-fit-note]");
+  var rows = document.querySelectorAll("[data-engine-table] tbody tr");
+  var said = {
+    prompt: "Long prompt: the GPU is fastest at 512 tokens (692.6 tok/s on 10-30). At 64 tokens the CPU is fastest (776.9).",
+    reply: "Long reply: the DSP holds 130.6 tok/s for five minutes; the CPU is faster at depth 512 (124.5 against 90.0, bursts).",
+    battery: "Battery first: by the charge counter the DSP used 0.025 J a token, the GPU 0.029, the CPU 0.030. The sampler ties the GPU and DSP at 0.023 (calculated). The CPU is last."
+  };
+  box.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-fit-btn]");
+    if (!b) return;
+    var want = b.getAttribute("data-fit-btn");
+    box.querySelectorAll("[data-fit-btn]").forEach(function (x) {
+      x.className = x === b ? "btn" : "btn ghost";
+    });
+    rows.forEach(function (tr) {
+      var tags = (tr.getAttribute("data-fit") || "").split(" ");
+      tr.style.background = tags.indexOf(want) >= 0 ? "var(--accent-soft)" : "";
+    });
+    note.textContent = said[want];
+  });
+})();
+</script>
+<!-- sources: results/backends/raw/{qwen2.5-0.5b-q4_0-cpu,-gpu,-dsp}.txt (bench_suite, 2026-10-30: pp64 776.9/690.6/679.0, pp512 526.0/692.6/641.4, tg64 d0 135.8/98.7/131.1, d512 124.5/88.9/90.0, weights 278.0 MB); results/backends/raw-sustain/qwen2.5-0.5b-q4_0-{cpu,gpu,dsp}.txt (300 s, 2026-10-30: 107.3/78.2/130.6 tok/s; charge-counter J/token 0.030/0.029/0.025 over 153/212/281 s windows; monitor max 85.3/58.0/69.9 °C; sampler energy 1018.57/536.36/901.36 J over 32256/23488/39232 tokens, calculated 0.032/0.023/0.023; CPU first burst tg64 188.1); results/phase-l3.md step 8 (2026-10-29, llama.cpp CPU, OpenCL, Hexagon, ours CPU and GPU, round 1 / 2; Hexagon 68 °C); step 5 (2026-10-29, 120 s, CPU 157.6 tok/s 0.029 J 88.8 °C, GPU 102.7 tok/s 0.021 J charge / 0.024 sampler calculated 67.6 °C); step 21 (2026-10-31, llama.cpp OpenCL and ours int8 prefill); step 23-24 (2026-11-01, GPU Q4_0 int8 decode 101.2 / 102.6 at depth 0; Q4_K_M charger 53.2 to 67.5); results/phase-l5.md steps 5b (DSP prefill 778 at 128, DSP time), 6 (app runs, 112 tok/s DSP, 462 tok/s prefill, 219 tokens 53 tok/s GPU Q4_K_M, 171 CPU with lookup, 28 ms session), key and value prefetch (2026-10-31, DSP depth 512 8.45 ms a token); results/phase-l3.md step 16 (clocks differ 10-20 % between sessions); IMPLEMENTATION.md section 0; android commit a240b0a MainActivity.kt; results/phase-8.md. -->
+</body>
+</html>

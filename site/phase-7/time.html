@@ -48,7 +48,7 @@ setTimeout(function () {
 </nav>
 
 <h2 id="goal" data-short="The goal" data-step="Explain each speed by its limit: bytes for decode, arithmetic for prefill, and the clock for both.">What are we trying to do here?</h2>
-<p>Every piece of work on a processor is limited by something: how fast data arrives from memory, how fast the arithmetic units run, or how fast the clock ticks. Knowing which limit applies tells you which change can help and which cannot. The numbers here are Qwen2.5-0.5B on cores 2–7 of this phone, from <code>results/phase-7.md</code> (2026-10-21) and <code>results/phase-6.md</code> (2026-10-24 to 29), all in tokens per second.</p>
+<p>Every piece of work on a processor is limited by something: how fast data arrives from memory, how fast the arithmetic units run, or how fast the clock ticks. Knowing which limit applies tells you which change can help and which cannot. The numbers here are Qwen2.5-0.5B on cores 2–7 of this phone, from <code>results/phase-7.md</code> (2026-10-21, and the same-session table of 2026-10-31) and <code>results/phase-6.md</code> (2026-10-24 to 29), all in tokens per second. Each figure keeps its date.</p>
 <p>By the end you can say, from a model’s size and a measured speed, how close decode is to its limit, and explain why prefill needed a different instruction rather than more threads.</p>
 
 <h2 id="decode" data-short="Decode" data-step="Each token reads every weight once, so decode is limited by memory bandwidth: bytes per token × tokens per second.">What limits decode?</h2>
@@ -70,6 +70,7 @@ all-core DRAM read (Phase 1)   ~67 GB/s</code></pre>
   <li>Q8_0 gets closer to the ceiling because each byte needs less work. Q4_0 reads fewer bytes but does more per byte.</li>
   <li>That is why decode got faster only through fewer bytes (quantization) and less work per byte (repacked weights, fewer instructions), not through more raw arithmetic.</li>
 </ul>
+<p>On 2026-10-31, same session on battery, cores 2–7 (round 1): Q4_0 decode at depth 0 was 180 tok/s against llama.cpp's 153, and Q8_0 111 against 99 (<span class="tag m">measured</span>, <code>results/phase-7.md</code>). The 2026-10-29 figures above are kept as measured.</p>
 <p><strong>Takeaway: decode reads every weight for every token, so its speed is bytes per second divided by bytes per token.</strong></p>
 
 <h2 id="prefill" data-short="Prefill" data-step="A prompt of N tokens reuses each weight N times, so prefill is limited by arithmetic, not bytes.">What limits prefill?</h2>
@@ -101,7 +102,7 @@ all-core DRAM read (Phase 1)   ~67 GB/s</code></pre>
   <li><strong>4 rows × 4 tokens</strong>: more results per loaded value.</li>
   <li><strong>Repacked weights</strong>: at load, four rows are stored interleaved 8 bytes at a time with their scales together, llama.cpp’s layout. The loop no longer shuffles weights into place, which also helped decode (Q4_0 tg64 113 → 149).</li>
 </ul>
-<p>Prefill on Q4_0 went from 165 tok/s (pp512, 2026-10-21) to 715–718 at full caps on 2026-10-29, against llama.cpp’s 540 in the same session. Both engines use the same instruction now, so the remaining differences are in how the loops around it are arranged.</p>
+<p>Prefill on Q4_0 went from 165 tok/s (pp512, 2026-10-21) to 715–718 at full caps on 2026-10-29, against llama.cpp’s 540 in the same session. Both engines use the same instruction now, so the remaining differences are in how the loops around it are arranged. On 2026-10-31, same session on battery, Q4_0 prefill at 64 tokens was 681 tok/s against llama.cpp's 541, and at 512 tokens 588 against 422 (round 1; <span class="tag m">measured</span>, <code>results/phase-7.md</code>).</p>
 <p><strong>Takeaway: prefill caught up by using an instruction that serves two tokens per weight load, and by arranging the weights for it once, at load time.</strong></p>
 <div class="quiz" data-quiz="check" data-for="smmla" id="c-smmla">
   <p>Why does <code>smmla</code> not help decode the same way?</p>
@@ -122,7 +123,7 @@ all-core DRAM read (Phase 1)   ~67 GB/s</code></pre>
     <li>Not at all <div class="why">The cache is read every token, so it adds some bytes.</div></li>
   </ul>
 </div>
-<p>The measured loss was larger: in the Phase 7 A/B, scalar attention cost about 2.5 ms per token at depth 512 on top of 9.0 ms at depth 0, NEON attention about 1.5 ms. Attention is not just reading: for every position it computes a dot product per head, an exponential for the softmax and a weighted sum, and the 14 query heads did not split evenly over 6 threads. Splitting each head’s positions into 64-position chunks (flash-decoding, <code>results/phase-6.md</code>) cut decode cycles at depth 1,024 by 18 %.</p>
+<p>The measured loss was larger: in the Phase 7 A/B, scalar attention cost about 2.5 ms per token at depth 512 on top of 9.0 ms at depth 0, NEON attention about 1.5 ms. Attention is not just reading: for every position it computes a dot product per head, an exponential for the softmax and a weighted sum, and the 14 query heads did not split evenly over 6 threads. Splitting the positions into 64-position chunks, per K/V head (flash-decoding, <code>results/phase-6.md</code>), cut decode cycles at depth 1,024 by 18 %. On 2026-10-31, same session, Q4_0 at depth 512 ran at 159 tok/s against llama.cpp's 123.</p>
 <p><strong>Takeaway: a long context adds few bytes but a lot of attention arithmetic, so it shows up as compute, not bandwidth.</strong></p>
 
 <h2 id="caps" data-short="Clock caps" data-step="The phone lowers the prime cores’ clock limit during long runs; the same binary then measures 20 % slower.">Why did the same program get slower?</h2>
@@ -162,10 +163,11 @@ all-core DRAM read (Phase 1)   ~67 GB/s</code></pre>
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) between 2026-10-21 and 2026-10-29 (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) between 2026-10-21 and 2026-10-31 (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
+<!-- sources: results/phase-7.md (2026-10-21 tables; 2026-10-29 decode 158-163 / 101-102 and pp256; 2026-10-31 same-session round 1: pp64 681 / 541, pp512 588 / 422, tg64 @ d0 180 / 153, Q8_0 tg64 111 / 99, tg64 @ d512 159 / 123); results/phase-6.md (flash-decoding, 2026-10-24 to 29). -->
 </html>

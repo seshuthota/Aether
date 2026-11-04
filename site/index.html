@@ -60,7 +60,7 @@
     <tr><td><span class="tag a">assumption</span></td><td>A stand-in used to learn the shape of an idea. 30 GB/s in the tokens-per-second exercise is one of these. It is not this phone’s bandwidth.</td></tr>
   </tbody>
 </table>
-<p>Which pages describe finished work? Phase 0 pages do: the project builds, <code>cargo test</code> runs on the phone, and the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for. The measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. Phases 5, 6 and 8 have an overview and topic pages each, and Phase 7 has its overview and seven topic pages. Work done after Phase 8 (Q4_K_M files, speculative decoding, the GPU) has its own section, <a href="beyond/index.html">After Phase 8</a>. The <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
+<p>Which pages describe finished work? Phase 0 pages do: the project builds, <code>cargo test</code> runs on the phone, and the timing harness and the <code>Tensor</code> exist. Phase 1 pages were written before its measurements, to explain what the experiments are for. The measured table now has its own page. Phases 2 to 4 are written from code that is built and checked against outside references, with the numbers measured on this phone. Phases 5, 6 and 8 have an overview and topic pages each, and Phase 7 has its overview and seven topic pages. Work done after Phase 8 (K-quant files, speculative decoding, the GPU, the NPU and the LFM3 hybrid model) has its own pages: <a href="beyond/index.html">After Phase 8</a>, and the <a href="lfm3/index.html">LFM3 section</a>. The <a href="start/outline.html">course outline</a> tracks which pages are still to write.</p>
 <p><strong>Takeaway: a number is only as good as its label, so read the label before you trust the number.</strong></p>
 
 <h2 id="why">Why build this on a phone?</h2>
@@ -72,7 +72,7 @@
   <li><strong>No fan.</strong> The first 10 seconds are not the speed after 5 minutes.</li>
   <li><strong>Energy.</strong> Every token costs battery. Joules per token is a first-class number, not a footnote.</li>
   <li><strong>Cores are not identical.</strong> On this phone they are all Oryon, in two frequency classes. Older Snapdragons also have efficiency cores. The plan’s general story has to be checked against this chip.</li>
-  <li><strong>CPU first.</strong> Every phone has ARM NEON. GPU and NPU come later, if at all.</li>
+  <li><strong>CPU first.</strong> Every phone has ARM NEON, so the CPU ran the model first. The GPU (Vulkan) and the NPU (the Hexagon DSP) came after Phase 8, and both are built.</li>
 </ul>
 <p>Where does correctness come from? Not from a second copy of our own code. Golden outputs come from outside: numpy and PyTorch for kernels, llama2.c for stories15M, Hugging Face for SmolLM2 and Qwen, llama.cpp for quantization formats. If both of our implementations share a bug, a test against ourselves cannot see it.</p>
 <p>When is a phase finished? When the engine is correct and the numbers can be explained: where the time went, and what limited it. A kernel at 40% of measured bandwidth is a finished lesson once the missing 60% has an explanation.</p>
@@ -130,7 +130,15 @@
 <p><strong>Takeaway: C is the shared language between the app and the engine, and the app adds no measurable cost.</strong></p>
 
 <h2 id="beyond">What came after Phase 8?</h2>
-<p>Three optional directions from the plan: llama.cpp’s Q4_K_M files, several tokens per weight read with speculative decoding, and decoding on the phone’s GPU.</p>
+<p>Five later directions from the plan, each built and measured on this phone:</p>
+<ul>
+  <li><strong>K-quant files:</strong> llama.cpp’s Q4_K_M files, read and multiplied by our own kernels.</li>
+  <li><strong>Speculative decoding:</strong> several tokens from one pass over the weights, with the drafts checked.</li>
+  <li><strong>The GPU:</strong> decoding on the phone’s GPU with Vulkan. On Qwen2.5-0.5B it was slower than the CPU.</li>
+  <li><strong>The NPU:</strong> our own C code on the Hexagon DSP, where a whole decode step is one call.</li>
+  <li><strong>A hybrid model (LFM3):</strong> LFM3-1.7B, whose layers are a mix of convolutions and attention.</li>
+</ul>
+<p>The NPU’s pages start at <a href="beyond/npu-basics.html">What is the NPU, and how does our code get on it?</a>. The GPU’s flash attention is in <a href="beyond/gpu-flash.html">Flash attention: was it the kernel or the batch?</a>. <a href="lfm3/index.html">LFM3</a> has its own section.</p>
 <div class="cards" data-cards="After Phase 8 · faster decoding and the GPU"></div>
 <p><strong>Takeaway: near the memory limit, the gains come from better formats, more tokens per read and cheaper hardware.</strong></p>
 
@@ -150,8 +158,8 @@
 </main>
 </div>
 <p class="colophon">Phase 0 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Phase 1 pages were written before the measurements; the measured numbers are on What Phase 1 measured. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="js/pages.js?v=34"></script>
-<script src="js/glossary.js?v=33"></script>
+<script src="js/pages.js?v=35"></script>
+<script src="js/glossary.js?v=34"></script>
 <script src="js/site.js?v=30"></script>
 </body>
 </html>

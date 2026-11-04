@@ -45,7 +45,7 @@ setTimeout(function () {
 </nav>
 
 <h2 id="goal" data-short="The goal" data-step="Stream a chat reply in an installable app, at the command-line tool’s speed.">What are we trying to do here?</h2>
-<p>The plan’s test for Phase 8 is an installable app that streams a chat reply at the same speed as the command-line tool. The app is deliberately small: a model list, a prompt box, a few settings (cores, chat template, lookup, GPU), a Generate/Stop button and the reply.</p>
+<p>The plan’s test for Phase 8 is an installable app that streams a chat reply at the same speed as the command-line tool. The app is deliberately small: a model list, a prompt box, a few settings (cores, chat template, lookup, and a CPU / GPU / DSP selector that replaced the GPU checkbox on 2026-10-30), a Generate/Stop button and the reply.</p>
 <p>Android apps are written in Kotlin and run on Android’s Java runtime. The engine is a Rust library with a C interface. This page follows one tap of Generate through the layers between them, and then asks what the app costs in memory and speed. The code is in <code>android/</code>; build steps are in <code>android/README.md</code>.</p>
 
 <h2 id="hops" data-short="Three hops" data-step="Kotlin → JNI shim in C → the C interface; strings cross as byte arrays of real UTF-8.">How does a Kotlin call reach the engine?</h2>
@@ -148,7 +148,7 @@ engine.execute {
   </ul>
 </div>
 
-<h2 id="memory" data-short="Memory" data-step="Mapped weights are file-backed and can be dropped; the CLI peaked at 348 MB for Qwen2.5-0.5B Q4_0; the app is not measured yet.">How much memory does the model take on the phone?</h2>
+<h2 id="memory" data-short="Memory" data-step="Mapped weights are file-backed and can be dropped; the CLI peaked at 348 MB for Qwen2.5-0.5B Q4_0; the Qwen app is not measured, and the LFM3 app was 1.30 GB PSS.">How much memory does the model take on the phone?</h2>
 <p>A phone shares its RAM between every app and Android itself, and Android stops apps that use too much. The engine’s memory has two kinds. The weights come from a memory-mapped file (<a href="../phase-5/safetensors.html#mmap">mmap</a>): <strong>file-backed</strong> pages that Android can drop and re-read. Everything else (the KV cache, the activations, the tokenizer’s tables) is <strong>anonymous</strong> heap memory that exists only in RAM.</p>
 <div class="quiz" data-quiz="predict" data-for="memory" id="g-memory">
   <p>Qwen2.5-0.5B in Q4_0 has 278 MB of weights. The CLI’s peak resident memory was measured. Roughly what was it?</p>
@@ -162,7 +162,7 @@ engine.execute {
 <ul>
   <li>About 70 MB is not weights. The KV cache is the biggest part that grows with context: Qwen2.5-0.5B stores 24 layers × 2 key/value heads × 64 numbers × 2 (keys and values) × 4 bytes = 24 KB per token in f32, so the app’s 2,048-token limit means up to 50 MB <span class="tag c">calculated</span>.</li>
   <li>Resident memory counts mapped weight pages once they are touched, but Android can drop those first. The anonymous part is what the low-memory killer weighs against the app.</li>
-  <li>The app’s own memory has not been measured. These are CLI numbers, and the app adds the Java runtime and its views on top.</li>
+  <li>The Qwen app’s own memory has not been measured. These are CLI numbers, and the app adds the Java runtime and its views on top. The LFM3 app was measured: 1.30 GB PSS and 1.42 GB RSS, of which 145 MB is native heap (the KV cache and buffers) (<code>results/phase-lfm3.md</code>, "The app").</li>
 </ul>
 <p><strong>Takeaway: the model costs its weights plus about 70 MB, and only the non-weight part is memory the phone cannot take back.</strong></p>
 <div class="quiz" data-quiz="check" data-for="memory" id="c-memory">
@@ -222,9 +222,10 @@ engine.execute {
 </main>
 </div>
 <p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
+<!-- sources: results/phase-8.md (app vs CLI, 2026-10-22); results/phase-6.md (CLI peak RSS 348 MB Qwen Q4_0); results/phase-lfm3.md "The app" (LFM3 1.30 GB PSS, 1.42 GB RSS, 145 MB native heap); IMPLEMENTATION.md section 0 (selector 2026-10-30). -->
 </html>

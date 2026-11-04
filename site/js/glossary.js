@@ -224,5 +224,25 @@ window.AETHER_GLOSSARY = [
   { term: "K-quants", match: ["K-quants", "K-quant"], def: "llama.cpp's formats with 256-weight super-blocks (Q4_K, Q6_K…): small integer scales per sub-block under one f16 per 256.", see: "beyond/q4km.html#ksuper" },
   { term: "super-block", match: ["super-block", "super-blocks"], def: "A K-quant block of 256 weights, split into sub-blocks of 16 or 32 that each have their own small integer scale.", see: "beyond/q4km.html#ksuper" },
   { term: "Q4_K_M", match: ["Q4_K_M"], def: "A llama.cpp preset that mixes Q4_K and Q6_K with Q5_0 and Q8_0 fallbacks. On small models it is mostly Q5_0.", see: "beyond/q4km.html#mix" },
-  { term: "Q5_0", match: ["Q5_0"], def: "Q4_0 plus a fifth bit per weight, kept together in a 32-bit word: 22 bytes per 32 weights.", see: "beyond/q4km.html#q5" }
+  { term: "Q5_0", match: ["Q5_0"], def: "Q4_0 plus a fifth bit per weight, kept together in a 32-bit word: 22 bytes per 32 weights.", see: "beyond/q4km.html#q5" },
+  // ---- the NPU
+  { term: "NPU", match: ["NPU", "NPUs"], def: "Neural processing unit: a chip on the SoC built for model arithmetic. On this phone it is the Hexagon DSP.", see: "beyond/npu-basics.html" },
+  { term: "DSP", match: ["DSP", "cDSP"], def: "Digital signal processor. The Snapdragon's compute DSP (cDSP) is a separate processor with its own vector and matrix units; it is this phone's NPU.", see: "beyond/npu-basics.html" },
+  { term: "Hexagon", match: ["Hexagon"], def: "Qualcomm's DSP architecture. The Snapdragon 8 Elite has version v79.", see: "beyond/npu-basics.html" },
+  { term: "HVX", match: ["HVX"], def: "Hexagon Vector eXtensions: the DSP's vector unit, working on 128-byte vectors.", see: "beyond/npu-basics.html" },
+  { term: "HMX", match: ["HMX"], def: "The Hexagon's matrix unit. It multiplies tiles of fp16 numbers, which suits prompts (many tokens at once).", see: "beyond/npu-prompt.html" },
+  { term: "VTCM", match: ["VTCM"], def: "Vector tightly coupled memory: a small, fast memory inside the DSP. Weights and K/V blocks are copied into it before the vector and matrix units use them.", see: "beyond/npu-basics.html" },
+  { term: "FastRPC", match: ["FastRPC"], def: "The mechanism by which a program on the CPU calls a function on the DSP. Each call has a fixed cost (about 146 µs measured here), whatever work is in it.", see: "beyond/npu-basics.html" },
+  { term: "DMA", match: ["DMA"], def: "Direct memory access: a copy engine that moves data between memories while the processor keeps computing.", see: "beyond/npu-decode.html" },
+  { term: "QuRT", match: ["QuRT"], def: "The small real-time operating system that runs on the Hexagon DSP.", see: "beyond/npu-basics.html" },
+  // ---- attention and the GPU, later
+  { term: "online softmax", match: ["online softmax"], def: "Softmax computed in one pass over chunks: keep a running maximum and a running sum, and rescale the partial result whenever the maximum grows.", see: "beyond/gpu-flash.html" },
+  { term: "flash attention", match: ["flash attention"], def: "Attention computed in one pass over the context with an online softmax, so the full row of scores is never written to memory.", see: "beyond/gpu-flash.html" },
+  // ---- LFM3
+  { term: "hybrid model", match: ["hybrid model", "hybrid models"], def: "A model whose layers are not all the same kind. LFM3 mixes short convolution layers with attention layers.", see: "lfm3/index.html" },
+  { term: "short convolution", match: ["short convolution", "short convolutions"], def: "A layer that mixes each token's vector with those of the few tokens just before it, using a fixed small set of learned weights.", see: "lfm3/conv.html" },
+  { term: "conv state", match: ["conv state"], def: "The last few inputs a short convolution layer keeps so it can process the next token. Its size is fixed, unlike the KV cache.", see: "lfm3/conv.html" },
+  { term: "sliding window", match: ["sliding window", "sliding-window"], def: "Attention that looks only at the most recent positions, a fixed number of them, instead of the whole context.", see: "lfm3/attention.html" },
+  { term: "partial RoPE", match: ["partial RoPE"], def: "RoPE applied to only part of each head's numbers; the rest are left unrotated.", see: "lfm3/attention.html" },
+  { term: "PSS", match: ["PSS"], def: "Proportional set size: a process's memory, with pages it shares with other processes split between them. Android reports app memory this way." }
 ];
