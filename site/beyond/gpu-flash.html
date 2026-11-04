@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flash attention: was it the kernel or the batch? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content" data-no-terms="dispatch">
+<p class="kicker">After Phase 8 · 07</p>
+
+<h1>Flash attention: was it the kernel or the batch?</h1>
+<p class="lede">Flash attention and a bigger prompt batch both went into the GPU’s prompt pass. The phone’s measurements say the speed came from the batch. The flash kernel alone was slower than the chunked pair it replaced. This page explains the online softmax that makes one pass exact, the two-dispatch version it replaces, and the measurements that separated the two causes.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="gpu-decode.html">Decoding on the GPU</a> (the split and merge for decode), <a href="gpu-prompt.html">Who reads the prompt?</a> and <a href="../phase-2/attention.html">attention</a>.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#split">How does attention over a long context get split?</a>
+  <a href="#online">How can one pass give the exact softmax?</a>
+  <a href="#prompt">Why did the prompt pass need two dispatches and a parts buffer?</a>
+  <a href="#measure">Did the flash kernel make the prompt faster?</a>
+  <a href="#lesson">What should you compare before you credit a change?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Explain flash attention and its two-dispatch predecessor, then read the measurements that credit the gain.">What are we trying to do here?</h2>
+<p>A prompt is read in passes. Each pass takes a batch of prompt tokens and runs them through the whole model together, so each weight matrix is read once per pass instead of once per token. Attention is the part of each layer that looks back at every earlier position in the cache: the keys and values of all the tokens before. Its cost grows with the context.</p>
+<p>Flash attention computes that look-back in one pass over the positions, without a separate step to find the largest score first. This page asks what made the GPU’s prompt pass faster in the last round of work: the new kernel, or the bigger batch it allowed. By the end you can explain the online softmax, say why the chunked version needed a merge, and read the three measurements that answer the question.</p>
+
+<h2 id="split" data-short="Chunks" data-step="Split a head’s positions into chunks; each gives (m, l, out), and a merge rescales them to one max.">How does attention over a long context get split?</h2>
+<p>Attention for one new token takes its query and compares it with the key of every cached position. That gives one score per position. Softmax turns the scores into weights, and the output is the values weighted by them. A query head is one of the model’s attention heads; Qwen2.5-0.5B has 14. A workgroup is a group of GPU threads that the GPU schedules as one unit (<a href="gpu-basics.html">How the GPU runs our code</a>).</p>
+<p>At depth 4096, one head has 4096 scores to compute. If each head is one workgroup, the GPU gets 14 workgroups for the whole token, and most of the GPU sits idle.</p>
+<div class="quiz" data-quiz="predict" data-for="split" id="gpu-flash-g-split">
+  <p>How can the attention of one token give the GPU more workgroups?</p>
+  <ul>
+    <li data-right>Cut the positions into chunks and give each (head, chunk) pair its own workgroup <div class="why">Each chunk is independent work, so the GPU can run the chunks side by side.</div></li>
+    <li>Give each head two workgroups, one for the keys and one for the values <div class="why">Splitting by data type leaves each workgroup walking every position.</div></li>
+    <li>Compute the softmax first, then the values, in two kernels <div class="why">Two kernels still walk every position once per head.</div></li>
+  </ul>
+</div>
+<p>This is flash-decoding, the split used for decode (<a href="gpu-decode.html#attention">Decoding on the GPU</a>). Each chunk of positions, here 64 of them, makes a partial result with three parts:</p>
+<ul>
+  <li><strong>m</strong>, the largest score in the chunk;</li>
+  <li><strong>l</strong>, the sum of e<sup>score − m</sup> over the chunk’s positions;</li>
+  <li><strong>out</strong>, the chunk’s weighted sum of values, also taken relative to m.</li>
+</ul>
+<pre><code>one token, 14 query heads, 4096 cached positions
+
+chunk 0    positions     0 ..   63   -&gt;  m0,  l0,  out0
+chunk 1    positions    64 ..  127   -&gt;  m1,  l1,  out1
+  ...
+chunk 63   positions  4032 .. 4095   -&gt;  m63, l63, out63
+                    |
+                    v
+merge, one workgroup per head   -&gt;  the head's output
+</code></pre>
+<p>A merge step combines the chunks of a head. With M the largest chunk max, it scales each chunk by e<sup>m<sub>c</sub> − M</sup>, so every chunk shares one reference point. This is <code>attention_merge.comp</code>, used for decode and by the chunked prompt path:</p>
+<pre><code>float mx = -1.0 / 0.0;
+for (uint c = 0; c &lt; n; c++) mx = max(mx, parts[base + c * stride]);
+float num = 0.0, den = 0.0;
+for (uint c = 0; c &lt; n; c++) {
+    float w = exp(parts[base + c * stride] - mx);
+    num += w * parts[base + c * stride + 2 + d];
+    den += w * parts[base + c * stride + 1];
+}
+o[(t * n_heads + h) * hs + d] = num / den;
+</code></pre>
+<ul>
+  <li>The first loop finds M, the largest chunk max.</li>
+  <li><code>w</code> is the factor e<sup>m<sub>c</sub> − M</sup> for one chunk. It is never above 1.</li>
+  <li>The sums <code>num</code> and <code>den</code> use the same factor, so the chunks add up correctly.</li>
+  <li>The division happens once, at the end.</li>
+</ul>
+<p>At depth 4096 with 64-position chunks, a head has 64 chunks, so one token has 14 × 64 = 896 workgroups <span class="tag c">calculated</span>. That keeps the GPU busy. The cost is one partial result per chunk, written and then read back. The split suits decode because a decode step has one token: without it there are only 14 heads of work, and splitting over positions is the only other source of parallel work.</p>
+<p><strong>Takeaway: a long context is cut into chunks; each gives (m, l, out), and a merge rescales them to one max.</strong></p>
+<div class="quiz" data-quiz="check" data-for="split" id="gpu-flash-c-split">
+  <p>At depth 8192, with 64-position chunks, how many chunks does one head have?</p>
+  <ul>
+    <li data-right>128 <div class="why">8192 divided by 64 positions a chunk.</div></li>
+    <li>8192 <div class="why">That counts positions. A chunk holds 64 of them, so there are far fewer chunks.</div></li>
+    <li>14 <div class="why">That is the number of heads. The chunks are a split of each head’s positions.</div></li>
+  </ul>
+</div>
+
+<h2 id="online" data-short="Online softmax" data-step="A running max and sum, with the sum rescaled when the max rises, give the exact softmax in one pass.">How can one pass give the exact softmax?</h2>
+<p>Softmax divides each score’s exponential by the sum of all of them. An exponential of a large score overflows: the float becomes too big to store and turns into infinity. The usual fix subtracts the largest score M from every score first, so every exponent is zero or below. That needs M before the first exponent, so the usual version reads every score twice: once to find M, once to add up.</p>
+<p>Flash attention avoids the first read. It keeps two numbers as it goes: the <strong>running max</strong> m, the largest score so far, and the <strong>running sum</strong> l, the sum of e<sup>score − m</sup> so far.</p>
+<div class="quiz" data-quiz="predict" data-for="online" id="gpu-flash-g-online">
+  <p>Chunk 3 holds a score larger than the running max. The running sum holds terms measured against the old max. What must happen to the running sum?</p>
+  <ul>
+    <li data-right>It is multiplied by e<sup>old max − new max</sup>, and then the new terms are added <div class="why">The factor moves the old terms onto the new reference point.</div></li>
+    <li>Nothing: the new terms are simply added to it <div class="why">The old terms are still measured against the old max, so they are overstated.</div></li>
+    <li>It is reset to zero, and the chunk starts again <div class="why">That throws away the weight of every earlier position.</div></li>
+  </ul>
+</div>
+<p>When a new score is larger than m, the old sum was measured against the old max, so it has to be scaled to the new one. For a new score s, with m′ = max(m, s):</p>
+<pre><code>l = l · e^(m − m′) + e^(s − m′)
+</code></pre>
+<ul>
+  <li>If m′ equals m, the factor is e⁰ = 1 and the sum only grows.</li>
+  <li>If a larger score arrives, the factor is below 1 and shrinks the old sum to the new reference.</li>
+  <li>The weighted sum of values (acc) takes the same factor. At the end the output is acc ÷ l.</li>
+</ul>
+<p><span class="tag a">illustration</span> Made-up scores, two per chunk. A real chunk holds 64 positions. The running values after each chunk:</p>
+<table>
+  <thead><tr><th>after</th><th>scores in the chunk</th><th>running max m</th><th>factor e<sup>old m − m′</sup></th><th>running sum l</th></tr></thead>
+  <tbody>
+    <tr><td>start</td><td>none</td><td class="num">−∞</td><td class="num">–</td><td class="num">0</td></tr>
+    <tr><td>chunk 1</td><td>1.0, 3.0</td><td class="num">3.0</td><td class="num">–</td><td class="num">1.1353</td></tr>
+    <tr><td>chunk 2</td><td>2.0, 0.5</td><td class="num">3.0</td><td class="num">1</td><td class="num">1.5853</td></tr>
+    <tr><td>chunk 3</td><td>4.0, 2.5</td><td class="num">4.0</td><td class="num">0.3679</td><td class="num">1.8063</td></tr>
+  </tbody>
+</table>
+<p>Chunk 2 adds two terms, e<sup>−1</sup> and e<sup>−2.5</sup>, to the sum, and the max stays 3.0. Chunk 3 is the step that matters. The max rose from 3.0 to 4.0, so the old sum becomes 1.5853 × 0.3679 = 0.5832. Then the two new terms, 1 and 0.2231, are added: 0.5832 + 1.2231 = 1.8063. The chunk merge reaches the same 1.8063 from each chunk’s own max and sum: 0.4177 + 0.1655 + 1.2231.</p>
+<p><strong>Takeaway: keep a running max and sum, and multiply the sum by e<sup>old max − new max</sup> whenever the max rises.</strong></p>
+<div class="quiz" data-quiz="check" data-for="online" id="gpu-flash-c-online">
+  <p>Chunk 4’s largest score is 3.5, and the running max is 4.0. What is the factor for the old running sum?</p>
+  <ul>
+    <li data-right>1, because the max stays 4.0 <div class="why">Only a larger score moves the max, so the old sum needs no change.</div></li>
+    <li>e<sup>3.5 − 4.0</sup> = 0.6065 <div class="why">The factor compares the old running max with the new one, not with the chunk’s max.</div></li>
+    <li>0, because the old sum is dropped <div class="why">Dropping it loses every earlier position.</div></li>
+  </ul>
+</div>
+
+<h2 id="prompt" data-short="Two dispatches" data-step="The chunked prompt path needs a parts buffer and a merge; flash writes the finished output in one dispatch.">Why did the prompt pass need two dispatches and a parts buffer?</h2>
+<p>The prompt pass works on a batch of tokens at a time (<a href="gpu-prompt.html">Who reads the prompt?</a>). The chunked prompt path gives each workgroup a head, a chunk and a group of 32 tokens. Its partial results need somewhere to go: a <strong>parts buffer</strong> with one slot per token, head and chunk, each holding (m, l, out). For a head of 64 values, a slot is 66 floats.</p>
+<p>So the chunked prompt path is two dispatches per layer. <code>attention_tile.comp</code> writes the slots, and <code>attention_merge.comp</code> reads them back.</p>
+<div class="quiz" data-quiz="predict" data-for="prompt" id="gpu-flash-g-prompt">
+  <p>The parts buffer has a fixed budget of 32 MB, sized for the whole cache. What happens to the batch as the cache grows?</p>
+  <ul>
+    <li data-right>It shrinks, because the same budget holds fewer tokens’ slots <div class="why">More positions mean more chunks, so each token needs more slots.</div></li>
+    <li>It grows, because more chunks share the work <div class="why">More chunks mean more slots to store, which needs more room, not less.</div></li>
+    <li>It stays fixed, because the model’s layers set the batch <div class="why">The batch is set by the buffer’s size, not by the model.</div></li>
+  </ul>
+</div>
+<p>Each slot has a fixed size, but a longer cache has more slots per token, so the budget holds fewer tokens. For Qwen2.5-0.5B the batch is 128 tokens at 4096 positions (the cap), 70 at 8192 and 17 at 32768 <span class="tag c">calculated</span> from the budget in <code>plans/flash-attention.md</code>. At 17 tokens the 64-token matrix tiles run a quarter full, which slows the whole pass, not only attention.</p>
+<p>The merge is short. This is the core of <code>attention_merge.comp</code>:</p>
+<pre><code>float mx = -1.0 / 0.0;
+for (uint c = 0; c &lt; n; c++) mx = max(mx, parts[base + c * stride]);
+float num = 0.0, den = 0.0;
+for (uint c = 0; c &lt; n; c++) {
+    float w = exp(parts[base + c * stride] - mx);
+    num += w * parts[base + c * stride + 2 + d];
+    den += w * parts[base + c * stride + 1];
+}
+o[(t * n_heads + h) * hs + d] = num / den;
+</code></pre>
+<ul>
+  <li>Each token and head reads back every chunk it wrote, so the parts are read as well as written.</li>
+  <li>The parts are sized for the whole cache, not for the tokens that are actually there.</li>
+</ul>
+<p><code>attention_flash.comp</code> drops both problems. Each workgroup takes 32 tokens of one head, walks every position those tokens can see in one pass with the running max and sum, and writes the finished output to <code>xb2</code>. There is one dispatch per layer, no parts and no merge, and the batch no longer depends on the cache length. The default batch is now 256 tokens (commit <code>3f0aee0</code>).</p>
+<p><strong>Takeaway: the chunked prompt path paid for its split in a parts buffer, and the buffer capped the batch as the cache grew.</strong></p>
+<div class="quiz" data-quiz="check" data-for="prompt" id="gpu-flash-c-prompt">
+  <p>Flash’s prompt attention runs once per layer. How many attention dispatches does that take?</p>
+  <ul>
+    <li data-right>One: each workgroup walks all of its positions, so there is no merge <div class="why">The running max and sum make a single pass exact, so the merge is gone.</div></li>
+    <li>Two: the tile shader and the merge, as before <div class="why">That is the chunked path. Flash has no parts, so it needs no merge.</div></li>
+    <li>One per chunk, so the chunks run in parallel <div class="why">Chunks are the chunked path’s split. Flash has none.</div></li>
+  </ul>
+</div>
+
+<h2 id="measure" data-short="The measurements" data-step="The flash kernel was slower than the chunked pair; the faster pass came from the 256-token batch.">Did the flash kernel make the prompt faster?</h2>
+<p>The GPU record leads here, from step 22 to step 28. Step 22 replaced the first prompt attention shader, which gave each token its own workgroup, with <code>attention_tile.comp</code>. Attention at 512 tokens fell from 134.6 ms to 57.3 ms <span class="tag m">measured</span> (profiled, phone charging). That was a real kernel gain, and it was kept.</p>
+<p>The next question was whether one dispatch beats the chunked pair at depth, where the cache is long.</p>
+<div class="quiz" data-quiz="predict" data-for="measure" id="gpu-flash-g-measure">
+  <p>Flash has one dispatch and no merge. At depth 4096 with 512 tokens, is its attention kernel faster or slower than the chunked pair?</p>
+  <ul>
+    <li data-right>Slower, even with no merge <div class="why">On this phone the flash kernel took longer, with no merge to pay for.</div></li>
+    <li>Faster, since the merge is gone <div class="why">The merge was 109 ms of 918, so removing it cannot pay for a slower kernel.</div></li>
+    <li>The same, since both read the same keys and values <div class="why">Equal bytes are not equal time: the GPU needs enough workgroups running at once.</div></li>
+  </ul>
+</div>
+<p><span class="tag m">measured</span> Attention at pp512 in milliseconds, Qwen2.5-0.5B Q4_0. The chunked column is step 26, the flash column step 27, and both sides ran in the same session:</p>
+<table>
+  <thead><tr><th>depth</th><th>chunked: tile + merge</th><th>flash</th><th>chunked share of the whole pass</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0</td><td class="num">67</td><td class="num">83</td><td class="num">16 %</td></tr>
+    <tr><td class="num">1024</td><td class="num">281</td><td class="num">384</td><td class="num">44 %</td></tr>
+    <tr><td class="num">2048</td><td class="num">483</td><td class="num">686</td><td class="num">57 %</td></tr>
+    <tr><td class="num">4096</td><td class="num">918</td><td class="num">1292</td><td class="num">71 %</td></tr>
+  </tbody>
+</table>
+<p>From depth 1024 up, the flash kernel was 1.2 to 1.7 times slower at every length. At depth 0 it was faster at pp64 and pp128 (3 and 7 ms against 4 and 10), about level at pp256 (23 against 22) and slower at pp512 (83 against 67). The reason is how the work is split, not extra work: both read the same keys and values. A 128-token pass gives flash 14 × 4 = 56 workgroups, each walking every position in turn. The chunked path dispatched 1,000 to 4,000 short workgroups, and the GPU stayed full.</p>
+<p>The whole pass was level at depth 0 (408 against 417 ms at pp512) and 25 % slower at depth 4096 (1621 against 1296 ms). Flash lost on the kernel, and at depth it lost on the pass too.</p>
+<p>Step 28 then raised the batch to 256 tokens, with the same flash kernel. Its attention fell, because 256 tokens double the token groups per head (8 instead of 4) and halve the number of passes.</p>
+<p><span class="tag m">measured</span> Attention in milliseconds at pp512, flash kernel, 128 against 256 tokens a pass, one session (step 28):</p>
+<table>
+  <thead><tr><th>depth</th><th>128 tokens</th><th>256 tokens</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0</td><td class="num">83</td><td class="num">67</td></tr>
+    <tr><td class="num">1024</td><td class="num">387</td><td class="num">305</td></tr>
+    <tr><td class="num">2048</td><td class="num">686</td><td class="num">530</td></tr>
+    <tr><td class="num">4096</td><td class="num">1289</td><td class="num">1007</td></tr>
+  </tbody>
+</table>
+<p><span class="tag m">measured</span> The whole GPU pass at pp512, Qwen2.5-0.5B Q4_0, in milliseconds. The chunked column is from step 26’s session; the two flash columns are from step 28’s session:</p>
+<table>
+  <thead><tr><th>depth</th><th>chunked, 126 tokens</th><th>flash, 128 tokens</th><th>flash, 256 tokens</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0</td><td class="num">417</td><td class="num">408</td><td class="num">364</td></tr>
+    <tr><td class="num">1024</td><td class="num">643</td><td class="num">728</td><td class="num">612</td></tr>
+    <tr><td class="num">2048</td><td class="num">846</td><td class="num">1011</td><td class="num">826</td></tr>
+    <tr><td class="num">4096</td><td class="num">1296</td><td class="num">1615</td><td class="num">1313</td></tr>
+  </tbody>
+</table>
+<p><strong>So the gain is the batch, not the flash kernel.</strong> Flash at 128 tokens was no faster than the chunked path. At 256 tokens the whole pass was 11 to 19 % faster than flash at 128, and the stages other than attention dropped 8 to 10 %: each weight matrix is read twice for 512 tokens instead of four times. The flash kernel itself is still 1.10× the chunked one at depth 4096 (1007 against 918 ms). Flash’s real contribution is that it makes 256 tokens possible at any context. The chunked partial results would take about 68 MB at a 4.6K cache and about 480 MB at 32K. The chunked path was not measured at 256 tokens, so it might beat flash there.</p>
+<p><strong>Takeaway: the flash kernel was slower on this phone; the faster pass came from the 256-token batch that flash made possible.</strong></p>
+<div class="quiz" data-quiz="check" data-for="measure" id="gpu-flash-c-measure">
+  <p>Step 28 kept the shader and changed only the batch. Attention at depth 4096 fell from 1289 to 1007 ms. Why?</p>
+  <ul>
+    <li data-right>Each 256-token pass has twice as many token groups per head, so more workgroups run at once <div class="why">The same shader spreads over more workgroups, so the GPU is busier.</div></li>
+    <li>The shader now stores keys as f16 <div class="why">Both batch sizes use the same f16 storage, and the shader did not change.</div></li>
+    <li>Each token attends to fewer positions <div class="why">Every token still sees the same positions; only the number of passes changed.</div></li>
+  </ul>
+</div>
+
+<h2 id="lesson" data-short="Compare fairly" data-step="Compare one change at a time, in one session, in both run orders, with a per-stage profile.">What should you compare before you credit a change?</h2>
+<p>This story changed two things: the kernel, flash in place of the chunked pair, and the batch, 128 tokens to 256. The phone also changes under you. During the flash session the CPU clock caps fell (step 26: cpu0 from 2.92 to 2.40 GHz), so one run can differ from the next for reasons that have nothing to do with the code.</p>
+<div class="quiz" data-quiz="predict" data-for="lesson" id="gpu-flash-g-lesson">
+  <p>You want to know whether flash’s kernel beats the chunked pair. Which comparison answers that?</p>
+  <ul>
+    <li data-right>Both kernels at the same batch, in one session, with the run order reversed in a second round <div class="why">Only one thing differs, and the drift hits both arms alike.</div></li>
+    <li>Flash at 256 tokens against chunked at 126, from last week’s session <div class="why">That changes two things and the session, so the difference has no single cause.</div></li>
+    <li>The fastest run of each, one run each <div class="why">One run can catch a clock spike, and the best of one run is noise.</div></li>
+  </ul>
+</div>
+<p>The comparison that isolates the kernel holds the batch fixed. Each pair runs back to back, the order is reversed in the second round, and the figures are compared within a pair, not across the hour. A profile counts GPU time per stage, so the attention share can be read even when the whole run has drifted. The Phase 7 page on <a href="../phase-7/attention-ab.html">NEON attention, measured honestly</a> teaches the same method on the CPU: one timing run can mislead, and run order matters.</p>
+<p>Step 28’s batch comparison was across sessions, as its own text says. That is why this page reads the chunked column as a guide and not as a verdict.</p>
+<p><strong>Takeaway: change one thing per comparison, run the arms back to back in both orders, and profile by stage.</strong></p>
+<div class="quiz" data-quiz="check" data-for="lesson" id="gpu-flash-c-lesson">
+  <p>Two runs of the same pass are taken 20 minutes apart, and a clock cap fell between them. How should you read their difference?</p>
+  <ul>
+    <li data-right>As a guide only, unless the runs were back to back in both orders <div class="why">Drift over the hour is not a code difference; only back-to-back pairs compare.</div></li>
+    <li>Average the two runs, since the drift cancels out <div class="why">A number averaged across a drift matches neither run.</div></li>
+    <li>Take the faster run as the true speed <div class="why">A run can be fast because the clocks were high at that moment.</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Flash attention is one pass with a running max and sum. The chunked pair is two dispatches, and its parts buffer capped the batch as the cache grew.</p>
+<p>On this phone the flash kernel was slower than the chunked pair. The faster prompt pass came from the 256-token batch that flash made possible.</p>
+<p>Change one thing at a time, and compare it in one session.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750, Adreno 830) in October and November 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
+<!-- sources: results/phase-l3.md step 22 (attention 134.6 to 57.3 ms at pp512; the variant kept); step 26 (chunked attention + merge 67/281/483/918 ms at pp512 for depths 0/1024/2048/4096; shares 16/44/57/71 %; whole pass 417 ms at depth 0, 643 at 1024, 846 at 2048, 1296 at 4096; CPU caps cpu0 2.92 to 2.40 GHz; merge 109 ms of 918 at depth 4096); step 27 (flash attention 83/384/686/1292 ms at pp512; 1.2 to 1.7x slower; pp128 at depth 0 the exception; 56 workgroups; 1,000 to 4,000 chunked workgroups; whole pass 408 against 417 ms at depth 0 and 1621 against 1296 at depth 4096); step 28 (attention 128 vs 256 tokens: 83/67, 387/305, 686/530, 1289/1007 ms; whole pass flash 408/728/1011/1615 and 364/612/826/1313 ms; 11 to 19 % faster; stages other than attention 8 to 10 %; 1.10x at depth 4096; 68 MB and 480 MB partial results; 8 token groups instead of 4; chunked at 256 not measured); plans/flash-attention.md (66 floats per slot; 32 MB budget; batch 128 / 70 / 17 at 4096 / 8192 / 32768, calculated; quarter-full 64-token tiles; one dispatch, no merge); shaders/attention_flash.comp, shaders/attention_tile.comp, shaders/attention_merge.comp (the merge core quoted from attention_merge.comp); commits 30b3b29 (the gain is the batch) and 3f0aee0 (256 tokens a pass is the default). Calculated: 896 workgroups, 128 chunks at 8192. Illustration (not measured): the three-chunk scores 1.0, 3.0 / 2.0, 0.5 / 4.0, 2.5 and every running value in the table. -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>
