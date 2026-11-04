@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How does attention stream through VTCM? · Aether notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c5c54'/%3E%3Cpath d='M8 23 L16 8 L24 23' fill='none' stroke='%23f4faf8' stroke-width='2.4'/%3E%3Cpath d='M11 18 H21' stroke='%23f4faf8' stroke-width='2.4'/%3E%3C/svg%3E">
+<script>
+// Scripts run: CSS hides each quiz until learn.js builds it (is-ready) or
+// gives up on it (is-fallback). If any quiz is still neither after 5 s,
+// learn.js hung or died: fall back to the scripts-off view.
+document.documentElement.classList.add("js");
+setTimeout(function () {
+  if (document.querySelector(".quiz:not(.is-ready):not(.is-fallback)")) document.documentElement.classList.remove("js");
+}, 5000);
+</script>
+<link rel="stylesheet" href="../css/site.css?v=30">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="../index.html"><span>Æ</span>ther notes</a>
+  <span class="crumb" data-crumb></span>
+  <span class="spacer"></span>
+  <button class="theme" type="button" data-theme-toggle>Auto</button>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Notes" data-nav></nav>
+<main id="content">
+<p class="kicker">The NPU · 04</p>
+
+<h1>How does attention stream through VTCM?</h1>
+<p class="lede">Attention reads more of the cache at every token as the text grows. On the DSP, the cache sits in DRAM, so the DSP copies it through its on-chip memory in blocks of 256 positions, overlaps each copy with the work on the block before, and stores the keys and values as f16. At depth 2048 on Qwen2.5-0.5B these changes took attention from 17680 to 2234 µs per token.</p>
+
+<div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
+<p>This page needs <a href="../phase-2/kv-cache.html">The KV cache</a>, <a href="../phase-2/attention.html">Attention, step by step</a> and <a href="npu-basics.html">What is the NPU, and how does our code get on it?</a>. Depth means the number of positions already in the cache.</p>
+</div>
+
+<nav class="toc" data-stepmap>
+  <a href="#goal">What are we trying to do here?</a>
+  <a href="#depth">Why does attention get slower with depth?</a>
+  <a href="#stream">How does attention fit a cache that VTCM cannot hold?</a>
+  <a href="#loop">Why compute four score vectors at once?</a>
+  <a href="#pad">Why add a vector to a power-of-two stride?</a>
+  <a href="#f16">What does an f16 cache change?</a>
+  <a href="#measured">What did each change buy at depth 2048?</a>
+  <a href="#check">Check yourself</a>
+  <a href="#takeaway">What you should take away</a>
+</nav>
+
+<h2 id="goal" data-short="The goal" data-step="Read the K/V cache through the DSP's on-chip memory in blocks, and overlap the copies with the compute.">What are we trying to do here?</h2>
+<p>Decode runs attention once per layer, for every token. The cache keeps a key and a value for every layer, every K/V head and every position so far (<a href="../phase-2/kv-cache.html">The KV cache</a>). Attention reads them from there. On the DSP the cache is in DRAM, the phone’s main memory. The DSP also has its own on-chip memory, called VTCM, which is 8 MB on this phone. By the end you can explain how the DSP’s attention moves the cache through VTCM, why each change was made, and what each one measured at depth 2048.</p>
+
+<h2 id="depth" data-short="Why it slows" data-step="Attention reads the K and V of every cached position, so its bytes per token grow with depth.">Why does attention get slower with depth?</h2>
+<p>Each decode token runs two kinds of work. The weight products multiply the token by fixed matrices. Attention looks back at the earlier positions and mixes their values.</p>
+<div class="quiz" data-quiz="predict" data-for="depth" id="npu-attention-g-depth">
+  <p>As the cache grows from 0 to 2048 positions, which work reads more bytes per token?</p>
+  <ul>
+    <li data-right>Attention, which reads the key and value of every cached position <div class="why">Each token scores against all cached keys and sums all cached values.</div></li>
+    <li>The weight products, which read the same matrices at any depth <div class="why">They do read the same matrices, but that does not change with depth; the cache does.</div></li>
+    <li>Neither, because the cache is only written, not read <div class="why">Attention reads the whole cache for every token; the write is one position.</div></li>
+  </ul>
+</div>
+<p>Depth is the number of cached positions. Attention reads each position’s key and value, so its bytes per token grow with depth. The weight products read the same matrices at every depth, so their time stays flat. Qwen2.5-0.5B on the DSP spent 263 µs in attention at depth 0, 3464 µs at depth 512 and 17142 µs at depth 2048 <span class="tag m">measured</span>, with the rest of the step within a few tens of microseconds across those depths.</p>
+<p>Qwen has 14 query heads and 2 K/V heads, so each K/V head serves a group of 7 query heads. SmolLM2-135M has 9 and 3, groups of 3. A K/V head’s values are needed by every query head in its group.</p>
+<p><strong>Takeaway: attention’s bytes per token grow with every cached position; the weight products’ do not.</strong></p>
+<div class="quiz" data-quiz="check" data-for="depth" id="npu-attention-c-depth">
+  <p>Qwen has 14 query heads and 2 K/V heads. For one token and one K/V head, how many query heads need its values?</p>
+  <ul>
+    <li data-right>7, the group of query heads that share that K/V head <div class="why">Each K/V head serves one group of 7 query heads.</div></li>
+    <li>14, one for every query head <div class="why">Query heads share K/V heads, so not every head needs its own copy.</div></li>
+    <li>2, the number of K/V heads <div class="why">That counts the K/V heads, not the query heads that use each one.</div></li>
+  </ul>
+</div>
+
+<h2 id="stream" data-short="Blocks in VTCM" data-step="Copy one block of 256 positions of one K/V head into VTCM, and let every query head of that group read it there.">How does attention fit a cache that VTCM cannot hold?</h2>
+<p>A DMA is a copy the DSP’s engine does while the thread goes on computing. Depth 2048 needs more K and V than VTCM holds, so attention cannot copy the whole cache first.</p>
+<div class="quiz" data-quiz="predict" data-for="stream" id="npu-attention-g-stream">
+  <p>The cache at depth 2048 is larger than VTCM. What should attention do?</p>
+  <ul>
+    <li data-right>Copy one block of 256 positions at a time, and use each block for every query head that needs it <div class="why">A block that fits is copied once, and the whole group reads it from VTCM.</div></li>
+    <li>Copy the whole cache into VTCM before the layer starts <div class="why">The cache is bigger than VTCM, so the copy cannot fit.</div></li>
+    <li>Shrink the cache until it fits in VTCM <div class="why">Every position is needed; a smaller format helps, but does not make the cache fit.</div></li>
+  </ul>
+</div>
+<p>Attention works in pieces of one K/V head and one block. A block is 256 positions of one K/V head: its keys are packed, and its values follow in order. The DMA copies it into one of two slots in the thread’s share of VTCM. Every query head of that K/V head reads the block there. Each thread keeps a running maximum, sum and output for each query head, so the softmax can be finished block by block. The merge is of the same kind as the one for the GPU’s chunks (<a href="gpu-decode.html#attention">Decoding on the GPU</a>). The blocks merge in order after a barrier, the point where every thread waits for the others.</p>
+<pre><code>// dsp/model.c
+#define ATTN_BLOCK 256
+#define ATTN_STREAM_AT 256
+</code></pre>
+<ul>
+  <li>Below 256 positions the cache is not streamed. Attention reads it from DRAM and asks L2 for bytes ahead of the loads: <code>l2fetch</code>, a request to the L2 cache to load bytes before they are used.</li>
+  <li>One slot holds the keys and values of one block: 64 KB at f16, calculated from 64 values per head and 256 positions <span class="tag c">calculated</span>.</li>
+  <li>The pieces, (K/V head, block), are spread over the six threads, so a layer’s 2 or 3 K/V heads do not leave threads idle.</li>
+</ul>
+<figure>
+<svg class="fig" viewBox="0 0 680 320" role="img" aria-label="K/V cache in DRAM split into blocks, copied into two VTCM slots, then computed, with a double-buffered timeline">
+  <text class="muted" x="20" y="16" font-size="12">K/V cache in DRAM</text>
+  <rect x="20" y="24" width="150" height="176" fill="none" stroke="var(--line)"/>
+  <rect x="20" y="24" width="150" height="22" fill="var(--accent-soft)" stroke="var(--line)"/>
+  <text x="30" y="39" font-size="11" fill="var(--ink)">block 0 (0–255)</text>
+  <text x="30" y="61" font-size="11" fill="var(--muted)">block 1</text>
+  <text x="30" y="83" font-size="11" fill="var(--muted)">block 2</text>
+  <text x="30" y="105" font-size="11" fill="var(--muted)">block 3</text>
+  <text x="30" y="127" font-size="11" fill="var(--muted)">block 4</text>
+  <text x="30" y="149" font-size="11" fill="var(--muted)">block 5</text>
+  <text x="30" y="171" font-size="11" fill="var(--muted)">block 6</text>
+  <text x="30" y="193" font-size="11" fill="var(--muted)">block 7</text>
+  <text x="250" y="16" font-size="12" class="muted">VTCM, on-chip</text>
+  <rect x="250" y="24" width="150" height="176" fill="none" stroke="var(--line)"/>
+  <rect x="262" y="40" width="126" height="60" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <text x="325" y="66" font-size="12" text-anchor="middle" fill="var(--ink)">slot A</text>
+  <text x="325" y="84" font-size="11" text-anchor="middle" fill="var(--muted)">K and V of one block</text>
+  <rect x="262" y="120" width="126" height="60" rx="6" fill="var(--blue-soft)" stroke="var(--blue)"/>
+  <text x="325" y="146" font-size="12" text-anchor="middle" fill="var(--ink)">slot B</text>
+  <text x="325" y="164" font-size="11" text-anchor="middle" fill="var(--muted)">K and V of one block</text>
+  <line x1="170" y1="35" x2="262" y2="70" stroke="var(--muted)"/>
+  <line x1="170" y1="127" x2="262" y2="150" stroke="var(--muted)"/>
+  <rect x="440" y="60" width="220" height="80" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="550" y="92" font-size="12" text-anchor="middle" fill="var(--ink)">compute: every query head</text>
+  <text x="550" y="110" font-size="12" text-anchor="middle" fill="var(--ink)">of this K/V head reads it</text>
+  <line x1="388" y1="70" x2="440" y2="90" stroke="var(--muted)"/>
+  <text x="20" y="252" font-size="12" fill="var(--muted)">copy</text>
+  <text x="20" y="292" font-size="12" fill="var(--muted)">compute</text>
+  <rect x="110" y="234" width="100" height="28" rx="4" fill="var(--blue-soft)"/>
+  <text x="160" y="252" font-size="11" text-anchor="middle" fill="var(--ink)">block 0 → A</text>
+  <rect x="216" y="234" width="100" height="28" rx="4" fill="var(--blue-soft)"/>
+  <text x="266" y="252" font-size="11" text-anchor="middle" fill="var(--ink)">block 1 → B</text>
+  <rect x="322" y="234" width="100" height="28" rx="4" fill="var(--blue-soft)"/>
+  <text x="372" y="252" font-size="11" text-anchor="middle" fill="var(--ink)">block 2 → A</text>
+  <rect x="428" y="234" width="100" height="28" rx="4" fill="var(--blue-soft)"/>
+  <text x="478" y="252" font-size="11" text-anchor="middle" fill="var(--ink)">block 3 → B</text>
+  <rect x="534" y="234" width="100" height="28" rx="4" fill="var(--blue-soft)"/>
+  <text x="584" y="252" font-size="11" text-anchor="middle" fill="var(--ink)">block 4 → A</text>
+  <rect x="110" y="274" width="100" height="28" rx="4" fill="var(--line)"/>
+  <text x="160" y="292" font-size="11" text-anchor="middle" fill="var(--ink)">wait</text>
+  <rect x="216" y="274" width="100" height="28" rx="4" fill="var(--accent-soft)"/>
+  <text x="266" y="292" font-size="11" text-anchor="middle" fill="var(--ink)">block 0 in A</text>
+  <rect x="322" y="274" width="100" height="28" rx="4" fill="var(--accent-soft)"/>
+  <text x="372" y="292" font-size="11" text-anchor="middle" fill="var(--ink)">block 1 in B</text>
+  <rect x="428" y="274" width="100" height="28" rx="4" fill="var(--accent-soft)"/>
+  <text x="478" y="292" font-size="11" text-anchor="middle" fill="var(--ink)">block 2 in A</text>
+  <rect x="534" y="274" width="100" height="28" rx="4" fill="var(--accent-soft)"/>
+  <text x="584" y="292" font-size="11" text-anchor="middle" fill="var(--ink)">block 3 in B</text>
+</svg>
+<figcaption>Illustration, not a trace. The block count (8 at depth 2048) and the two slots come from <code>dsp/model.c</code>. Each copy starts before the block before it is computed, and the two slots alternate.</figcaption>
+</figure>
+<p>That order is the double buffer. While block <var>n</var> is computed from one slot, block <var>n + 1</var> is copied into the other. The thread starts the next copy before it starts the current block, so the wait is only what the copy sticks out past the compute. The measured wait for the busiest thread at depth 2048 on Qwen was 494 µs with f32 K and V, and 254 µs with f16 (see <a href="#f16">What does an f16 cache change?</a>) <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: copy each block once into VTCM and overlap the next copy with the compute on this block.</strong></p>
+<div class="quiz" data-quiz="check" data-for="stream" id="npu-attention-c-stream">
+  <p>Attention at depth 2048 uses blocks of 256 positions. How many blocks does one K/V head have?</p>
+  <ul>
+    <li data-right>8, since 2048 divided by 256 is 8 <div class="why">The block size divides the depth exactly at 2048.</div></li>
+    <li>256, the block size itself <div class="why">The block size is the positions in one block, not the number of blocks.</div></li>
+    <li>2, one per slot <div class="why">The slots hold one block each at a time; the cache has more blocks than slots.</div></li>
+  </ul>
+</div>
+
+<h2 id="loop" data-short="Score vectors" data-step="Four score vectors and four sums run side by side, so each waits less on the one before it.">Why compute four score vectors at once?</h2>
+<p>A score vector here is 32 scores, one per position, computed on the DSP’s 128-byte vector unit (HVX). Each step multiplies a key vector by a query value and adds the product to an accumulator, the register that holds a running total. Each add waits for the add before it in the same chain.</p>
+<div class="quiz" data-quiz="predict" data-for="loop" id="npu-attention-g-loop">
+  <p>If four score vectors are computed together, each with its own running total, what changes?</p>
+  <ul>
+    <li data-right>Four chains of adds run side by side, so each waits less on the previous add <div class="why">Each chain still waits for its own add, but the other chains fill that time.</div></li>
+    <li>The scores change, since the adds happen in a new order <div class="why">Each score keeps the same add order, so the bits stay the same.</div></li>
+    <li>The exp is skipped for three of the four vectors <div class="why">Every score still goes through the exp; the change is in how many adds run at once.</div></li>
+  </ul>
+</div>
+<p>The loop now computes four 32-position score vectors together. Each vector still adds its even and odd elements apart, then together, so every score has the same bits as before. Here is the inner loop in <code>block_head</code> (<code>dsp/model.c</code>), with one of the four key chunks shown:</p>
+<pre><code>HVX_Vector qe = splat_f(qh[e]), qo = splat_f(qh[e + 1]);
+e0 = VADD(e0, VMUL(qe, ae0));
+o0 = VADD(o0, VMUL(qo, be0));
+e1 = VADD(e1, VMUL(qe, ao0));
+</code></pre>
+<ul>
+  <li>A splat copies one value into every lane of a vector. Here <code>qe</code> is one query value, used by four loads.</li>
+  <li>Eight add chains (<code>e0</code> to <code>e3</code>, <code>o0</code> to <code>o3</code>) run side by side. Before, there were two.</li>
+  <li>The value sum uses the same idea: four accumulators, and one head’s four pairs are kept in named vectors, so they stay in registers, the fast slots the processor computes with.</li>
+</ul>
+<p>At depth 2048 on Qwen, the busiest thread’s score time fell from 1338 to 764 µs, and SmolLM2’s from 957 to 547 µs <span class="tag m">measured</span>. On SmolLM2 the DMA wait rose from 1302 to 1589 µs, because the shorter score no longer covered the copy. Value time for the busiest thread fell from 1776 to 837 µs on Qwen and from 1613 to 599 µs on SmolLM2 <span class="tag m">measured</span>.</p>
+<p>Few-token passes share the copies too. Prompt lookup checks several draft tokens in one call. Before, each token copied every block again. Now the tokens that reach a block share one copy. At depth 2048, eight tokens of attention cost 6.2 times one token on Qwen, where before the share it was 8.0 times <span class="tag m">measured</span>.</p>
+<p><strong>Takeaway: independent chains hide each other’s waits, and the sharing cuts the copies.</strong></p>
+<div class="quiz" data-quiz="check" data-for="loop" id="npu-attention-c-loop">
+  <p>Each score keeps the same add order after the change. What happened to perplexity?</p>
+  <ul>
+    <li data-right>It stayed at the same digits, because the scores have the same bits <div class="why">Same scores give the same softmax and the same output.</div></li>
+    <li>It dropped a little, because the new schedule rounds differently <div class="why">Rounding changes only when the add order changes; here it did not.</div></li>
+    <li>It improved, because four scores are computed more precisely <div class="why">Precision is set by the number format, which did not change.</div></li>
+  </ul>
+</div>
+
+<h2 id="pad" data-short="Stride pad" data-step="A power-of-two row stride gets one extra vector, which removes a share of the cache conflicts.">Why add a vector to a power-of-two stride?</h2>
+<p>The keys are stored transposed: row <var>e</var> holds element <var>e</var> of the key for every position. The stride is how far apart those rows sit. Here is the rule in <code>dsp/model.c</code>:</p>
+<pre><code>M.att_stride = (M.seq_len + 63) / 64 * 64;
+if (M.att_stride &amp;&amp; (M.att_stride &amp; (M.att_stride - 1)) == 0)
+    M.att_stride += 64;
+</code></pre>
+<ul>
+  <li>Round the context up to whole f16 vectors, 64 halves each.</li>
+  <li>If that is a power of two, add one more vector.</li>
+  <li>At context 4096, the pad removed 912 µs of Qwen’s depth-512 attention and 284 µs of SmolLM2’s, with f32 keys <span class="tag m">measured</span>.</li>
+</ul>
+<p>The results call the cost “set conflicts”, and say they were about a quarter of Qwen’s depth-512 attention before the pad. The pad was measured with f32 keys. The f16 cache keeps the rule, and the results do not rerun the pad with f16.</p>
+<p><strong>Takeaway: a power-of-two stride cost set conflicts in the measured runs; one extra vector removed them.</strong></p>
+<div class="quiz" data-quiz="check" data-for="pad" id="npu-attention-c-pad">
+  <p>The context is 512 positions, with f16 keys. How many halves does one key row take?</p>
+  <ul>
+    <li data-right>576, because 512 is a power of two, so one vector of 64 is added <div class="why">The rule adds one f16 vector to a power-of-two stride.</div></li>
+    <li>512, with no pad <div class="why">Forgets the rule: a power-of-two stride gets the extra vector.</div></li>
+    <li>544, the f32 pad of 32 elements <div class="why">The f32 cache padded by 32 floats; the f16 cache pads by a whole vector of 64 halves.</div></li>
+  </ul>
+</div>
+
+<h2 id="f16" data-short="f16 cache" data-step="Keys and values stored as 16-bit floats: half the bytes, the same f32 arithmetic, and a store that costs more.">What does an f16 cache change?</h2>
+<p>Each number in the cache is an IEEE f16: a 16-bit float, half the size of the f32 float the arithmetic uses. The store converts f32 to f16 when a key or value is written. The loads convert back to f32, so the arithmetic is unchanged. At depth 2048 one K/V head’s keys and values take 1 MB in f32, and 512 KB in f16 <span class="tag c">calculated</span>.</p>
+<div class="quiz" data-quiz="predict" data-for="f16" id="npu-attention-g-f16">
+  <p>The cache now holds half as many bytes per value. How much less attention time does that buy at depth 2048?</p>
+  <ul>
+    <li data-right>Less DMA waiting, since each block is half the bytes; attention gains less than half <div class="why">The copies move half the bytes, but the converts and the merge add time back.</div></li>
+    <li>Exactly half, because attention time follows the bytes <div class="why">The convert and merge do not shrink with the bytes, so the gain is smaller.</div></li>
+    <li>None, because the DSP computes in f32 either way <div class="why">The bytes still halve in DRAM and VTCM, and the waiting follows the bytes.</div></li>
+  </ul>
+</div>
+<p>The store costs more, and the wait costs less. On SmolLM2 the DMA wait for the busiest thread fell from 1589 to 265 µs at depth 2048, while its score rose from 547 to 677 µs for the convert <span class="tag m">measured</span>. Attention went from 3151 to 2031 µs on SmolLM2 and from 2435 to 2234 µs on Qwen. Qwen’s DMA wait halved, from 494 to 254 µs, and its busiest thread’s merge rose from 153 to 547 µs. Perplexity did not move by more than 0.1 against llama.cpp’s f16 cache <span class="tag m">measured</span>.</p>
+<ul>
+  <li>The bias, RoPE and cache store cost more on SmolLM2: 283 µs, against 160 before the change.</li>
+  <li>There is no f32 switch. The results say a branch in the inner loop is not cheap.</li>
+</ul>
+<p><strong>Takeaway: f16 halves the bytes and cuts the copy wait, but the convert gives back part of the gain.</strong></p>
+<div class="quiz" data-quiz="check" data-for="f16" id="npu-attention-c-f16">
+  <p>On Qwen at depth 2048, the f16 cache cut attention from 2435 to 2234 µs. Why is that less than the byte count suggests?</p>
+  <ul>
+    <li data-right>On Qwen the bytes were the smaller share of the stage, so cutting them moved less <div class="why">Qwen’s DMA wait was already a smaller bucket than the score and merge work.</div></li>
+    <li>f16 does not change the bytes read from DRAM <div class="why">It does halve them; the limit is the other work in the stage.</div></li>
+    <li>The convert doubles the bytes again <div class="why">The convert changes the number format on load and store, not the byte count in memory.</div></li>
+  </ul>
+</div>
+
+<h2 id="measured" data-short="The chain" data-step="Each change at depth 2048, Qwen and SmolLM2 side by side, with the step each one left.">What did each change buy at depth 2048?</h2>
+<p>The table is a chain: each row is the next change, and its sessions differ in clock speed and temperature. Read the order of the gains, not the exact ratios. The start is the wide value loop, measured in the same profile as the prefetch.</p>
+<div class="quiz" data-quiz="predict" data-for="measured" id="npu-attention-g-measured">
+  <p>Five changes follow the wide value loop. Which one cut the most Qwen attention at depth 2048?</p>
+  <ul>
+    <li data-right>The l2fetch of the next blocks, from 17680 down to 7774 µs <div class="why">It removed about 9.9 ms, more than any later change.</div></li>
+    <li>Streaming through VTCM, the biggest design change <div class="why">It cut 3766 µs, less than the l2fetch step before it.</div></li>
+    <li>The f16 cache, since it halves the bytes <div class="why">It cut 201 µs on Qwen; the bytes were the smaller share there.</div></li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>change</th><th>Qwen attention µs</th><th>Qwen DSP step ms</th><th>SmolLM2 attention µs</th><th>SmolLM2 DSP step ms</th></tr></thead>
+  <tbody>
+    <tr><td>four accumulators, one wide value pass (start)</td><td class="num">17680</td><td class="num">24.14</td><td class="num">15108</td><td class="num">17.47</td></tr>
+    <tr><td>l2fetch of the next key and value blocks</td><td class="num">7774</td><td class="num">14.23</td><td class="num">7435</td><td class="num">9.99</td></tr>
+    <tr><td>256-position blocks streamed through VTCM</td><td class="num">4008</td><td class="num">10.39</td><td class="num">3689</td><td class="num">5.97</td></tr>
+    <tr><td>accumulators kept in named vectors</td><td class="num">2994</td><td class="num">9.30</td><td class="num">3273</td><td class="num">5.57</td></tr>
+    <tr><td>four score vectors at once</td><td class="num">2435</td><td class="num">8.79</td><td class="num">3151</td><td class="num">5.43</td></tr>
+    <tr><td>f16 keys and values</td><td class="num">2234</td><td class="num">8.60</td><td class="num">2031</td><td class="num">4.43</td></tr>
+  </tbody>
+</table>
+<p class="note">All measured <span class="tag m">measured</span>, from <code>results/phase-l5.md</code>, depth 2048, Q4_0 weights.</p>
+<p>The biggest single cut was the l2fetch. At depth 2048 it removed 9.91 ms on Qwen, about half of that stage. The results say that half was DRAM latency: the bytes were already in the loop, waiting. Streaming then removed the repeated reads of each K/V head. At the final build, attention at depth 0, 512 and 2048 was 236, 953 and 2234 µs on Qwen, and 227, 937 and 2031 µs on SmolLM2 <span class="tag m">measured</span>. Depth 0 still uses the prefetch path, because a context under 256 positions does not stream.</p>
+<p>The f16 cache cut more on SmolLM2 (3151 to 2031 µs) than on Qwen (2435 to 2234 µs). The results call SmolLM2 the copy-bound model; on Qwen the bytes were still the smaller share at depth 2048.</p>
+<p><strong>Takeaway: the l2fetch gave the largest cut; each later change moved a smaller share.</strong></p>
+<div class="quiz" data-quiz="check" data-for="measured" id="npu-attention-c-measured">
+  <p>In the last row, Qwen’s DSP step fell from 8.79 to 8.60 ms. What was the main reason?</p>
+  <ul>
+    <li data-right>Attention, which fell from 2435 to 2234 µs in the same row <div class="why">Attention fell 201 µs and the step 190 µs, so attention carried the change.</div></li>
+    <li>The weight products, which the f16 cache does not touch <div class="why">The products are a separate stage; the row’s change is in attention.</div></li>
+    <li>The clock, which rose during that run <div class="why">At depth 2048 the products matched the score run (gate/up 2100 against 2116 µs).</div></li>
+  </ul>
+</div>
+
+<h2 id="check" data-short="Your answers" data-step="Your answers on this page, ready to copy into your notes.">Check yourself</h2>
+<p class="nojs-only">Most sections above end with a check question and its answer.</p>
+<p class="js-only">The checks for this page sit at the end of each section above. This box counts them. A wrong answer you were certain of shows up in the step map (“On this page”) as <span class="mk flag">✗ recheck</span>: reread that section, and bring it to the next session.</p>
+<div class="widget" data-record>
+  <h3>Your answers on this page</h3>
+  <div class="statrow" data-stats></div>
+  <div class="controls">
+    <button type="button" class="btn" data-copy>Copy my answers as Markdown</button>
+    <button type="button" class="btn ghost" data-clear>Clear my answers</button>
+  </div>
+  <div class="note" data-note></div>
+  <div data-understood></div>
+</div>
+
+<h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
+<p>Attention reads every cached key and value, so its bytes per token grow with depth. The DSP copies the cache through VTCM in 256-position blocks, reads each block once for its whole query group, and overlaps each copy with the compute on the block before.</p>
+<p>At depth 2048 on the phone, the changes took Qwen’s attention from 17680 to 2234 µs per token. The l2fetch gave the largest share, and f16 halved the bytes but gave back part of the gain.</p>
+
+<nav class="pager" data-pager></nav>
+</main>
+</div>
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) for L.5 (results/phase-l5.md) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-l5.md "Decode profile at depth" (attention 263 / 3464 / 17142 µs at depth 0 / 512 / 2048, Qwen; 17680 wide-loop start, 15108 SmolLM2); "Key and value prefetch" (7774 / 7435 µs; 9.91 ms removed; DRAM latency); "One read of each K/V block" (4008 / 3689 µs; 3.77 ms removed); "Where the 4 ms goes" (2994 / 3273 µs; value 1776 → 837 and 1613 → 599 µs busiest thread; DMA wait); "Four score vectors at once" (score 1338 → 764 and 957 → 547 µs; DMA 1302 → 1589 µs; 2435 / 3151 µs; perplexity digits); "Few-token passes share each K/V block" (6.2× and 8.0× at 8 tokens); "Key-stride padding" (912 µs and 284 µs at depth 512, context 4096, f32; 3815 → 2902 µs); "f16 K/V cache" (2234 / 2031 µs; 236 / 953 / 2234 and 227 / 937 / 2031 µs; DMA waits 494 → 254 µs and 1589 → 265 µs; step 8.79 → 8.60 and 5.43 → 4.43 ms; merge 153 → 547 µs; bias + RoPE + store 283 vs 160 µs; perplexity within 0.1); results step 2 (VTCM 8 MB); dsp/model.c (ATTN_BLOCK 256, ATTN_STREAM_AT 256, att_stride rule, block_head inner loop, slot size calculated from hs = 64); calculated: 1 MB and 512 KB per K/V head at depth 2048, 64 KB per slot. Commits: e152a2b, a9351f8, fb64ffb, 26d8a08, e3adee4, 492e592, abdbf8d, c4eaf93, 4e1aebf. -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
+<script src="../js/site.js?v=30"></script>
+<script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+</body>
+</html>
