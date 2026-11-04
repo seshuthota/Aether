@@ -480,14 +480,16 @@ fixes) and measure that tree.
       group disappear, and is `q4_k_scales_mins` / `u8x8_to_f32` visible?
 - [x] K2: quantizer bytes, scalar and NEON dots, model path — done under
       QEMU (`raw/qemu-tests.txt`: `quant::` 7, `kernels::` 17).
-- [ ] K2: LFM3 Q4_K_M PPL 20 × 512: today 24.8822 (phone); llama.cpp
-      24.8278. PC run pending; phone spot check only.
-- [ ] K2: LFM3 Q4_K_M context 2048: today 13.7811 (phone) / 13.7917 (PC),
-      KL 0.052408; llama.cpp 13.9561 / 0.055758. PC run pending; phone spot
-      check only. Record the KL either way; A5 found our Q8_0 rounding
-      slightly closer to BF16, which is the cost side of this step.
-- [ ] K2: Qwen2.5-0.5B Q4_K_M PPL against llama.cpp's (phase 6). PC run
-      pending; phone spot check only.
+- [x] K2: LFM3 Q4_K_M PPL 20 × 512 — PC done: **24.9094**, KL 0.118284,
+      83.078 % (llama.cpp 24.8278 / 0.117968 / 83.392 %); phone spot check
+      only.
+- [x] K2: LFM3 Q4_K_M context 2048 — PC done: **14.0234**, KL 0.054800,
+      89.345 % (llama.cpp 13.9561 / 0.055758 / 88.172 %); phone spot check
+      only. KL against BF16 rose 0.052408 → 0.054800, the cost side A5
+      predicted.
+- [x] K2: Qwen2.5-0.5B Q4_K_M — PC done: **16.7186**, KL 0.032851,
+      90.137 % (llama.cpp 16.7657 / 0.033112 / 90.10 %); phone spot check
+      only.
 - [ ] K2: `kquant_bench` and `tg64` after, against K0/K1 (phone only).
 - [x] K2: the speculative and batched-vs-decode tests pass — done under QEMU
       (`session::` 5, `model::gguf::` 6).
