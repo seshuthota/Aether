@@ -209,8 +209,11 @@ changes results (the rounding is llama.cpp's).
   within the bound.
 - `cargo check --target aarch64-linux-android --all-targets` passes; the
   NEON kernels are not run on the host.
-- Pending: host 1-chunk LFM3 Q4_K_M PPL (running) and the phone PPL/KL
-  before and after; see the list below.
+- Host, one chunk of LFM3 Q4_K_M (ctx 512, 255 tokens scored): PPL
+  **10.3471**. Before K2 the same chunk was 10.3666; llama.cpp's is 10.3223.
+  The Q8_K rounding moved us toward llama.cpp, as the plan expected.
+- Pending: the full 20-chunk PPL/KL on the phone (and the Qwen file); see
+  the list below.
 
 ## Phone checks pending
 
