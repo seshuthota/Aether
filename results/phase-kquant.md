@@ -376,12 +376,14 @@ Under QEMU (`raw/qemu-tests.txt`):
 | `--lib kernels::` | 17 passed | 0:33 |
 | `--lib session::` | 5 passed after the gap-only test change | 6:06 |
 | `--lib model::gguf::` (skip `lfm3_matches_transformers`) | 6 passed | 9:50 |
+| `lfm3_matches_transformers` alone | 1 passed | 52:09 |
 | full `--lib` (skip `lfm3_matches_transformers`) | 121 passed, 1 failed | 37:18 |
 
 `model::gguf::` with all seven tests was SIGKILLed (signal 9) while the
-LFM3 f32/BF16 match test ran beside the Part 2 accuracy run; the six other
-tests pass with `--test-threads=1`. That one test is a host-only memory
-case and is not skipped on the phone.
+LFM3 f32/BF16 match test ran beside the Part 2 accuracy run. Run alone
+after that memory was free, `lfm3_matches_transformers` passes under QEMU
+too (29 short + 9 long logits, every layer tap and 16 greedy tokens match
+HF). So all seven `model::gguf::` tests are covered.
 
 The full suite's one failure is QEMU-only:
 `sys::cpu::tests::cache_line_matches_aligned_buf` reads CTR_EL0 as 32 bytes

@@ -116,3 +116,17 @@ test result: FAILED. 121 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out
 error: test failed, to rerun pass `--lib`
 Command exited with non-zero status 101
 # wall 37:17.59
+
+== cargo test --lib model::gguf::tests::lfm3_matches_transformers (alone)
+   Compiling aether v0.1.0 (/home/curious/Documents/hermes-projects/Aether-impl)
+    Finished `release` profile [optimized + debuginfo] target(s) in 33.35s
+     Running unittests src/lib.rs (target/aarch64-unknown-linux-musl/release/deps/aether-d926bf889c31ed80)
+
+running 1 test
+test model::gguf::tests::lfm3_matches_transformers has been running for over 60 seconds
+LFM3: 29 short + 9 long logits, every layer tap and 16 greedy tokens match HF
+test model::gguf::tests::lfm3_matches_transformers ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 123 filtered out; finished in 3095.67s
+
+# wall 52:09.10
