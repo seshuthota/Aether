@@ -232,8 +232,8 @@ target/release/aether MODEL --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw
 | --- | --- | --- | --- | --- |
 | 1 | LFM3 Q4_K_M, ctx 2048, 1 chunk, PPL + KL | 13.7917, KL 0.052408, 88.759 % | **14.0234, KL 0.054800, 89.345 %** | 13.9561, 0.055758, 88.172 % |
 | 2 | Qwen2.5-0.5B Q4_K_M, 20 × 512, PPL + KL | 16.7088, KL 0.031828, 90.43 % | **16.7186, KL 0.032851, 90.137 %** | 16.7657, 0.033112, 90.10 % |
-| 3 | LFM3 Q4_K_M, 20 × 512, PPL + KL | 24.8542, KL 0.115041, 83.392 % | pending | 24.8278, 0.117968, 83.392 % |
-| 4 | control: Qwen2.5-0.5B Q4_0, 20 × 512, PPL | 19.7470 | pending | — |
+| 3 | LFM3 Q4_K_M, 20 × 512, PPL + KL | 24.8542, KL 0.115041, 83.392 % | **24.9094, KL 0.118284, 83.078 %** | 24.8278, 0.117968, 83.392 % |
+| 4 | control: Qwen2.5-0.5B Q4_0, 20 × 512, PPL | 19.7470 | **19.7441** (moved; K1 control running) | — |
 
 Run 1: PPL and KL moved **toward** llama.cpp — the PPL gap shrank from
 0.164 to 0.067 and KL from 0.052408 to 0.054800 (llama.cpp 0.055758) —
@@ -244,8 +244,17 @@ adopting llama.cpp's Q8_K rounding.
 Run 2: every number moved toward llama.cpp — PPL gap 0.0569 → 0.0471, KL
 gap 0.001284 → 0.000261, same-top gap 0.33 → 0.04 points.
 
-Run 4 has no K-quant matrix and must stay 19.7470 to the digit; if it moves,
-something outside the K-quant path changed.
+Run 3: KL moved toward llama.cpp (gap 0.0029 → 0.0003) but PPL moved away
+(0.0264 → 0.0816) and same-top fell 0.314 points; against BF16 the KL rose
+0.115041 → 0.118284. A mixed result, not the uniform move at ctx 2048.
+
+Run 4 has no K-quant matrix and should stay 19.7470 to the digit; it came
+out 19.7441, a 0.0029 shift. The phase-6 value predates the LFM3 merge, so
+the proper before is the pre-K2 tree: a `5116346` (K1) run of the same
+command is in flight (`raw/pc-k2-qwen-q4_0-k1.txt`). If K1 also gives
+19.7441, the shift is older than K2 and the phase-6 number is stale; if K1
+gives 19.7470, K2 changed a path that has no K-quant matrix and must be
+found.
 
 ## K3. Repacked K-quant rows for decode
 
