@@ -126,7 +126,7 @@ setTimeout(function () {
   <li><code>tools/gen_quant.py</code> and <code>gen_quant_imatrix.py</code> quantize with llama.cpp’s own code.</li>
   <li><code>tools/fetch_models.sh</code> downloads the models and builds GGUF files with llama.cpp’s converter.</li>
 </ul>
-<p>Some of these files are hundreds of megabytes, so they are <strong>regenerated, not committed</strong>. A test that needs a missing file prints <code>SKIP</code> with the path and returns, instead of failing on a fresh checkout. The cargo runner copies <code>testdata/</code> to the phone, so the same tests run there (<code>cargo test --release --target aarch64-linux-android</code>): 105 passed on the phone on 2026-10-29, and 123 pass on the phone after the LFM3 work (IMPLEMENTATION.md, section 0) <span class="tag m">measured</span>.</p>
+<p>Some of these files are hundreds of megabytes, so they are <strong>regenerated, not committed</strong>. A test that needs a missing file prints <code>SKIP</code> with the path and returns, instead of failing on a fresh checkout. The cargo runner copies <code>testdata/</code> to the phone, so the same tests run there (<code>cargo test --release --target aarch64-linux-android</code>): 123 pass on the phone after the LFM3 work (IMPLEMENTATION.md, section 0) <span class="tag m">measured</span>.</p>
 <p><strong>Takeaway: references run once on the PC and leave their answers in files, which the Rust tests read on the PC and on the phone.</strong></p>
 <div class="quiz" data-quiz="check" data-for="golden" id="c-golden">
   <p>A test prints SKIP on your machine. What does that tell you about the code?</p>
@@ -182,6 +182,6 @@ mean KLD     0.269287   0.269190 ± 0.003723</code></pre>
 <script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
-<!-- sources: IMPLEMENTATION.md section 0 (123 phone tests after the LFM3 work; 105 on 2026-10-29 kept as history from the earlier page); results/phase-l5.md (hexagon-sim tests sim_f16_kv_convert_matches_numpy, sim_hmx_weight_tiles_match_gguf, relative 2e-3, HMX not on the simulator); results/phase-lfm3.md A5 context 2048 table (HF f32 13.5848, engine BF16 13.5848); tools/hf_ppl_lfm3.py -->
+<!-- sources: IMPLEMENTATION.md section 0 (123 phone tests after the LFM3 work; the earlier 105 was the host count); results/phase-l5.md (hexagon-sim tests sim_f16_kv_convert_matches_numpy, sim_hmx_weight_tiles_match_gguf, relative 2e-3, HMX not on the simulator); results/phase-lfm3.md A5 context 2048 table (HF f32 13.5848, engine BF16 13.5848); tools/hf_ppl_lfm3.py -->
 </body>
 </html>
