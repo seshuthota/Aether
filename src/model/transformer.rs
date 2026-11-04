@@ -497,7 +497,6 @@ struct State {
     key_cache: AlignedBuf,
     value_cache: AlignedBuf,
     cache_off: Vec<usize>,
-    #[allow(dead_code)] // used by the sliding-window ring in A4
     cache_rows: Vec<usize>,
     /// The last 6 `u` rows of every conv layer, concatenated.
     conv_state: AlignedBuf,
@@ -729,14 +728,11 @@ impl Transformer {
                         k::gate_heads(&mut s.xb, &s.gate, hs);
                     }
 
-                    let _ = k;
-                    let _ = v;
-                    if let Some(w) = window {
+                    if window.is_some() {
                         let ring = s.cache_rows[l];
                         let slot = layer_off + (pos % ring) * kv_dim;
                         s.key_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_k[at..at + kv_dim]);
                         s.value_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_v[at..at + kv_dim]);
-                        let _ = w;
                     }
 
                     k::linear_on(pool, &mut s.xb2, &s.xb, &a.wo);
@@ -914,8 +910,6 @@ impl Transformer {
                             k::gate_heads(&mut b.xb[i * dim..(i + 1) * dim], &b.gate[i * c.n_heads..(i + 1) * c.n_heads], hs);
                         }
                     }
-                    let _ = k;
-                    let _ = v;
                     if window.is_some() {
                         let ring = s.cache_rows[l];
                         for i in 0..t {
@@ -994,4 +988,3 @@ impl Transformer {
         &b.logits
     }
 }
-

@@ -317,8 +317,12 @@ mod tests {
 
 
     /// Speculative decoding must roll the conv state back with the KV cache:
-    /// after a batched check that contains rejected drafts, continuing from
-    /// the accepted prefix gives the same next-token logits as plain decode.
+    /// after a batched check whose two drafts are rejected, the next batch
+    /// gives the logits of a run that never saw them. Both runs put every
+    /// position through a 3-token batch (on the phone a single token takes
+    /// the GEMV path, whose rounding differs), so they agree bit for bit.
+    /// The same check without the restore must fail, so the bound is known
+    /// to catch a missing rollback.
     #[test]
     fn lfm3_conv_state_rolls_back() {
         let Some(p) = crate::testutil::golden("gguf/LFM3-1.7B-Q4_K_M.gguf") else { return };
@@ -327,20 +331,26 @@ mod tests {
         let mut plain = Transformer::new(c, w);
         let mut spec = Transformer::new(c2, w2);
         let tokens: Vec<usize> = (0..16).map(|i| 100 + (i * 37) % 5000).collect();
-        let logits = plain.forward_batch(&tokens, 0).to_vec();
-        let next = crate::kernels::argmax(&logits);
-        let mut logits2 = spec.forward_batch(&tokens, 0).to_vec();
-        assert_eq!(next, crate::kernels::argmax(&logits2));
-        // The batched check: the certain token and two drafts.
-        let drafts = [next, 1234, 5678];
-        let _rows = spec.forward_batch_logits(&drafts, 16, 0).to_vec();
-        let l16 = plain.forward(next, 16).to_vec();
-        let next2 = crate::kernels::argmax(&l16);
-        let plain17 = plain.forward(next2, 17).to_vec();
-        spec.restore_conv(16);
-        logits2.copy_from_slice(spec.forward(next2, 17));
-        let (_, rel) = max_errors(&plain17, &logits2);
-        assert!(rel < 0.5, "conv rollback: logits relative error {rel:.2e}");
+        let next = crate::kernels::argmax(plain.forward_batch(&tokens, 0));
+        let vocab = plain.config.vocab_size;
+        // Positions 16, 17, 18: the certain token, then two fixed tokens.
+        let want = plain.forward_batch_logits(&[next, 777, 4321], 16, 0)[vocab..3 * vocab].to_vec();
+        // Logits error at 17 and 18 after a check with rejected drafts at
+        // 17 and 18, with or without the restore.
+        let mut run = |restore: bool| {
+            assert_eq!(crate::kernels::argmax(spec.forward_batch(&tokens, 0)), next);
+            spec.forward_batch_logits(&[next, 1234, 5678], 16, 0);
+            if restore {
+                spec.restore_conv(16);
+            }
+            let got = &spec.forward_batch_logits(&[777, 4321, 99], 17, 0)[..2 * vocab];
+            max_errors(got, &want).1
+        };
+        let rel = run(true);
+        assert!(rel < 1e-5, "conv rollback: logits rel {rel:.2e}");
+        let bad = run(false);
+        assert!(bad > 1e-2, "without the restore: logits rel {bad:.2e}");
+        println!("conv rollback: logits rel {rel:.2e}; without the restore {bad:.2e}");
     }
 
     /// llama.cpp's own f32 conversion of SmolLM2 (`llama`: Q/K rows

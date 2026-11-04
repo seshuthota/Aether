@@ -1943,13 +1943,17 @@ mod tests {
             .filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("attention_causal_"))
             .collect();
         dirs.sort();
-        let mut worst = 0.0f32;
+        let (mut worst, mut tested) = (0.0f32, 0);
         for dir in &dirs {
             let name = dir.file_name().unwrap().to_str().unwrap();
             let (shape, tail) = name.strip_prefix("attention_causal_").unwrap().split_once("_p").unwrap();
             let (pos0, nt) = tail.split_once("_t").unwrap();
             let dims: Vec<usize> = shape.split('x').map(|s| s.parse().unwrap()).collect();
             let (nh, nkv, hs) = (dims[0], dims[1], dims[2]);
+            // The shaders stop at head size 64 (LFM3's 128 is plans/lfm3.md A8).
+            if hs > 64 {
+                continue;
+            }
             let (pos0, nt): (usize, usize) = (pos0.parse().unwrap(), nt.parse().unwrap());
             let (_, q) = crate::testutil::read_npy(&dir.join("q.npy"));
             let (_, k) = crate::testutil::read_npy(&dir.join("k.npy"));
@@ -2014,8 +2018,9 @@ mod tests {
             let bound = 4.0 * 2f32.powi(-11) * vmax;
             assert!(abs <= bound, "{name}: abs {abs:.2e}, {:.2e} of max |v| (bound {bound:.2e})", abs / vmax);
             worst = worst.max(abs / vmax);
+            tested += 1;
         }
-        Some((worst, dirs.len()))
+        Some((worst, tested))
     }
 
     #[test]
