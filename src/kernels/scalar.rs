@@ -129,11 +129,18 @@ pub(crate) fn rotations(pos: usize, head_size: usize, theta: f32) -> Vec<(f32, f
 /// a different pairing of the elements — mixing the two up still runs, and
 /// produces garbage.
 pub fn rope_halves(v: &mut [f32], pos: usize, head_size: usize, theta: f32) {
+    rope_halves_pairs(v, pos, head_size, theta, head_size / 2);
+}
+
+/// [`rope_halves`] with only the first `pairs` pairs rotated; the rest of
+/// the head is left as it is (LFM3's zero-tail partial RoPE).
+pub fn rope_halves_pairs(v: &mut [f32], pos: usize, head_size: usize, theta: f32, pairs: usize) {
     assert_eq!(v.len() % head_size, 0);
+    assert!(pairs <= head_size / 2);
     let half = head_size / 2;
     let rot = rotations(pos, head_size, theta);
     for head in v.chunks_exact_mut(head_size) {
-        for (i, &(sin, cos)) in rot.iter().enumerate() {
+        for (i, &(sin, cos)) in rot.iter().take(pairs).enumerate() {
             let (v0, v1) = (head[i], head[i + half]);
             head[i] = v0 * cos - v1 * sin;
             head[i + half] = v0 * sin + v1 * cos;

@@ -158,6 +158,9 @@ impl DspModel {
     /// every prefill token's logits (for perplexity), else the last's.
     pub fn new(dsp: &Dsp, config: Config, weights: Weights, threads: u32, batch: usize, all_logits: bool) -> Result<DspModel> {
         let c = &config;
+        if c.layers.iter().any(|l| matches!(l, crate::model::config::LayerKind::Conv { .. })) {
+            return Err("LFM3's hybrid conv/attention stack is CPU-only; the DSP path is a later plan".into());
+        }
         let (dim, kv_dim, hid, vocab) = (c.dim, c.kv_dim(), c.hidden_dim, c.vocab_size);
         let nl = weights.layers.len();
 
@@ -176,10 +179,11 @@ impl DspModel {
             o[..3 * r.len()].copy_from_slice(r.as_flattened());
         };
         for (l, lw) in weights.layers.iter().enumerate() {
+            let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
             let o = &mut desc[d::LAYER0 + l * d::L_N..][..d::L_N];
             let what = format!("layer {l}'s matrices");
-            runs(&mut o[d::L_QKV..], 3, place(&mut wl, &mut mats, &[(&lw.wq, dim), (&lw.wk, kv_dim), (&lw.wv, kv_dim)], dim, &what)?);
-            runs(&mut o[d::L_WO..], 1, place(&mut wl, &mut mats, &[(&lw.wo, dim)], dim, &what)?);
+            runs(&mut o[d::L_QKV..], 3, place(&mut wl, &mut mats, &[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], dim, &what)?);
+            runs(&mut o[d::L_WO..], 1, place(&mut wl, &mut mats, &[(&a.wo, dim)], dim, &what)?);
             runs(&mut o[d::L_GU..], 2, place(&mut wl, &mut mats, &[(&lw.w_gate, hid), (&lw.w_up, hid)], dim, &what)?);
             runs(&mut o[d::L_WDOWN..], 1, place(&mut wl, &mut mats, &[(&lw.w_down, dim)], hid, &what)?);
             for (i, n) in [dim, dim, dim, kv_dim, kv_dim].into_iter().enumerate() {
@@ -203,11 +207,12 @@ impl DspModel {
                 repack_qx(m, rows, &mut out[at..]);
             }
             for (l, lw) in weights.layers.iter().enumerate() {
+                let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
                 let o = desc[d::LAYER0 + l * d::L_N + d::L_ATTN_NORM..][..5].to_vec();
                 put_f32(out, o[0], &lw.attn_norm);
                 put_f32(out, o[1], &lw.ffn_norm);
                 // No bias: zeros.
-                for (at, b, n) in [(o[2], &lw.bq, dim), (o[3], &lw.bk, kv_dim), (o[4], &lw.bv, kv_dim)] {
+                for (at, b, n) in [(o[2], &a.bq, dim), (o[3], &a.bk, kv_dim), (o[4], &a.bv, kv_dim)] {
                     match b {
                         Some(b) => put_f32(out, at, b),
                         None => out[at as usize..][..4 * n].fill(0),

@@ -78,6 +78,59 @@ def attention_causal_ref(q, k, v, pos0):
     return out
 
 
+def rope_partial_ref(x, pos, hs, theta, pairs):
+    """LFM3's zero-tail partial RoPE: the first `pairs` pairs use the
+    frequencies of a full `hs`-wide head; the rest do not rotate."""
+    x = x.astype(np.float64).reshape(-1, hs)
+    out = x.copy()
+    half = hs // 2
+    i = np.arange(0, 2 * pairs, 2)
+    ang = pos / theta ** (i / hs)
+    c, s = np.cos(ang), np.sin(ang)
+    a, b = x[:, :pairs], x[:, half : half + pairs]
+    out[:, :pairs] = a * c - b * s
+    out[:, half : half + pairs] = a * s + b * c
+    return out.reshape(-1)
+
+
+def short_conv_ref(u, weight, state, width):
+    u = u.astype(np.float64)
+    w = weight.astype(np.float64)
+    st = state.astype(np.float64).copy()
+    out = np.empty_like(u)
+    for t in range(u.shape[0]):
+        for ch in range(u.shape[1]):
+            acc = 0.0
+            for k in range(width - 1):
+                acc += st[k, ch] * w[ch, k]
+            acc += u[t, ch] * w[ch, width - 1]
+            out[t, ch] = acc
+        st[:-1] = st[1:]
+        st[-1] = u[t]
+    return out, st
+
+
+def rmsnorm_heads_ref(x, weight, heads, hs):
+    x = x.astype(np.float64).reshape(heads, hs)
+    w = weight.astype(np.float64)
+    out = w * (x / np.sqrt(np.mean(x * x, axis=-1, keepdims=True) + 1e-5))
+    return out.reshape(-1)
+
+
+def gate_ref(x, gates, hs):
+    x = x.astype(np.float64).reshape(-1, hs)
+    g = 1.0 / (1.0 + np.exp(-gates.astype(np.float64)))
+    return (x * g[:, None]).reshape(-1)
+
+
+def attention_window_ref(q, k, v, pos, window):
+    q64, k64, v64 = (a.astype(np.float64) for a in (q, k, v))
+    start = max(pos + 1 - window, 0)
+    s = k64[start : pos + 1] @ q64 / np.sqrt(q.shape[-1])
+    e = np.exp(s - s.max())
+    return (e / e.sum()) @ v64[start : pos + 1]
+
+
 def main():
     root = Path(sys.argv[1])
     odd = [1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 129]
@@ -124,6 +177,34 @@ def main():
         for pos0, nts in [(0, (1, 31, 32, 33, 128)), (1, (1, 31, 32, 33, 128)),
                           (63, (1, 31, 32, 33, 128)), (64, (1, 31, 32, 33, 128)),
                           (1000, (33,)), (4000, (33,))]:
+            for nt in nts:
+                q, k, v = f32(nt, nh, hs), f32(pos0 + nt, nkv, hs), f32(pos0 + nt, nkv, hs)
+                save(root, f"attention_causal_{nh}x{nkv}x{hs}_p{pos0}_t{nt}", q=q, k=k, v=v, out=attention_causal_ref(q, k, v, pos0))
+    # LFM3 kernels: short conv, per-head RMSNorm, per-head gate, zero-tail
+    # RoPE and sliding-window attention.
+    for dim in (7, 17, 64, 128, 2048):
+        width = 7
+        for t in (1, 3, 7, 16):
+            u, w, st = f32(t, dim), f32(dim, width), f32(6, dim)
+            out, end = short_conv_ref(u, w, st, width)
+            save(root, f"shortconv_d{dim}_w{width}_t{t}", u=u, weight=w, state=st, out=out, state_out=end)
+    for heads, hs in ((2, 7), (3, 64), (4, 128), (16, 128)):
+        x, wt = f32(heads * hs, scale=3.0), f32(hs)
+        save(root, f"headnorm_{heads}x{hs}", x=x, weight=wt, out=rmsnorm_heads_ref(x, wt, heads, hs))
+        g = f32(heads, scale=2.0)
+        save(root, f"gate_{heads}x{hs}", x=x, gates=g, out=gate_ref(x, g, hs))
+    for heads, hs, pairs in ((2, 128, 32), (4, 128, 32), (2, 64, 32), (3, 128, 48)):
+        for pos in (0, 1, 255, 4000):
+            x = f32(heads * hs)
+            save(root, f"partial_rope_{heads}x{hs}_p{pos}_r{pairs}", x=x, out=rope_partial_ref(x, pos, hs, 1e6, pairs))
+    for hs in (64, 128):
+        for n, window, pos in ((300, 256, 254), (300, 256, 255), (300, 256, 256),
+                               (300, 256, 257), (1024, 256, 1023), (1024, 1024, 1023)):
+            q, k, v = f32(hs), f32(n, hs), f32(n, hs)
+            save(root, f"window_attention_{hs}_n{n}_p{pos}_w{window}", q=q, k=k, v=v, window=np.array(window, np.float32),
+                 out=attention_window_ref(q, k, v, pos, window))
+    for nh, nkv, hs in ((4, 4, 128), (4, 2, 128)):
+        for pos0, nts in ((0, (1, 33, 128)), (64, (1, 33, 128)), (1000, (33,))):
             for nt in nts:
                 q, k, v = f32(nt, nh, hs), f32(pos0 + nt, nkv, hs), f32(pos0 + nt, nkv, hs)
                 save(root, f"attention_causal_{nh}x{nkv}x{hs}_p{pos0}_t{nt}", q=q, k=k, v=v, out=attention_causal_ref(q, k, v, pos0))

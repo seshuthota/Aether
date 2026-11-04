@@ -20,9 +20,9 @@ use std::time::{Duration, Instant};
 pub enum Text {
     /// llama2.c: BOS first; BOS again means "story over".
     Llama2c(l2c_tok::Tokenizer),
-    /// Hugging Face byte-level BPE (SmolLM2, Qwen2): no BOS added; stops at
-    /// end-of-text or the chat end-of-turn token.
-    Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize> },
+    /// Hugging Face byte-level BPE (SmolLM2, Qwen2, LFM3): no BOS added;
+    /// stops at end-of-text or the chat end-of-turn token.
+    Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize>, lfm3: bool },
 }
 
 impl Text {
@@ -34,7 +34,8 @@ impl Text {
         stops.extend(tok.token_id("<|im_end|>"));
         stops.extend(tok.token_id("<|endoftext|>"));
         let start = id("tokenizer.ggml.bos_token_id").or(stops.first().copied()).unwrap_or(0);
-        Ok(Text::Hf { tok: Box::new(tok), start, stops })
+        let lfm3 = g.get("general.architecture").and_then(Value::as_str) == Some("lfm3");
+        Ok(Text::Hf { tok: Box::new(tok), start, stops, lfm3 })
     }
 
     pub fn encode(&self, prompt: &str) -> Vec<usize> {
@@ -82,6 +83,19 @@ impl Text {
         match self {
             Text::Llama2c(_) => id == l2c_tok::BOS,
             Text::Hf { stops, .. } => stops.contains(&id),
+        }
+    }
+
+    pub fn is_lfm3(&self) -> bool {
+        matches!(self, Text::Hf { lfm3: true, .. })
+    }
+
+    /// The prompt for a one-turn chat, in this model family's template.
+    pub fn chat_prompt(&self, system: Option<&str>, user: &str, thinking: bool) -> String {
+        match self {
+            Text::Llama2c(_) => user.to_string(),
+            Text::Hf { lfm3: true, .. } => crate::chat::lfm3(system, user, thinking),
+            Text::Hf { .. } => crate::chat::chatml(system.unwrap_or(crate::chat::QWEN_DEFAULT_SYSTEM), user),
         }
     }
 }
@@ -208,7 +222,7 @@ impl Session {
             let mut stops: Vec<usize> = id("eos_token_id").into_iter().collect();
             stops.extend(tok.token_id("<|im_end|>"));
             let start = id("bos_token_id").or(stops.first().copied()).unwrap_or(0);
-            (config, weights, Text::Hf { tok: Box::new(tok), start, stops })
+            (config, weights, Text::Hf { tok: Box::new(tok), start, stops, lfm3: false })
         } else {
             let (mut config, weights) = llama2c::load(path)?;
             config.seq_len = config.seq_len.min(max_seq);
@@ -293,6 +307,7 @@ impl Session {
     /// (results/phase-6.md, "Prompt lookup decoding"), so a greedy run can
     /// fork from plain greedy decoding where two tokens are that close.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let k = k.min(crate::model::transformer::MAX_DRAFT - 1);
         self.generate_speculative(prompt, sampler, steps, k, |_, hist, max| lookup_draft(hist, ngram, k.min(max)).to_vec(), emit)
     }
 
@@ -304,6 +319,7 @@ impl Session {
     /// is decided by the target, so greedy text is the target's greedy text
     /// (under its batched numbers) and sampled text keeps its distribution.
     pub fn generate_draft(&mut self, draft: &mut Drafter, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
+        let k = k.min(crate::model::transformer::MAX_DRAFT - 1);
         assert_eq!(draft.model.config.vocab_size, self.model.config.vocab_size, "draft and target models need the same vocabulary");
         assert!(draft.model.config.seq_len >= steps.min(self.model.config.seq_len), "draft model's context is too short");
         // The draft reads the prompt up front, all but its last token (the
@@ -368,6 +384,7 @@ impl Session {
                     let (t, accepted) = sampler.sample_draft(rows.next().unwrap(), d);
                     if !accepted {
                         len.update(draft.len(), i);
+                        self.model.restore_conv(pos - 1);
                         next = t;
                         continue 'tokens;
                     }
@@ -414,6 +431,11 @@ impl Drafter {
             return Vec::new();
         }
         let keep = self.fed.iter().zip(hist).take_while(|(a, b)| a == b).count().min(hist.len() - 1);
+        // A hybrid draft model's conv state goes back with the cache (a
+        // no-op for all-attention models).
+        if keep > 0 && keep < self.fed.len() {
+            self.model.restore_conv(keep - 1);
+        }
         self.fed.truncate(keep);
         target.swap_pool(&mut self.model);
         let mut logits = self.model.forward_batch(&hist[keep..], keep).to_vec();
@@ -851,6 +873,59 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap() + "\n", std::fs::read_to_string(want).unwrap());
         assert_eq!(stats.prefill_tokens + stats.decode_tokens, 64);
         assert!(look.accepted > 0 && look.accepted < look.drafted, "{look:?}");
+    }
+
+    /// LFM3 with a draft model gives its own plain greedy text: the target
+    /// is the Q4_K_M file and the draft the QAD-Q4_0 file, which disagrees
+    /// now and then, so rejected drafts are rolled back in the conv layers
+    /// of both models as well as their KV caches. On the host the batched
+    /// check and plain decode do the same arithmetic and the texts are
+    /// equal; on the phone the check's batches take the i8mm GEMM and plain
+    /// decode the GEMV, whose rounding differs, so greedy text may fork
+    /// where two tokens nearly tie (results/phase-6.md, "Prompt lookup
+    /// decoding"). The fork must be such a tie in plain decode's logits.
+    #[test]
+    fn lfm3_draft_decoding_keeps_the_greedy_text() {
+        let (Some(model), Some(qad)) = (golden("gguf/LFM3-1.7B-Q4_K_M.gguf"), golden("gguf/LFM3-1.7B-QAD-Q4_0.gguf")) else { return };
+        let prompt = "The three primary colours are";
+        let steps = 48;
+        let mut s = Session::open(&model, None, 64, Format::F32, None).unwrap();
+        // Plain greedy decoding, as `generate` does it, keeping each step's
+        // logits; like it, the token sampled after position `steps - 1` is
+        // emitted too.
+        let mut ids = s.text.encode(prompt);
+        let np = ids.len();
+        let mut logits = vec![s.model.forward_batch(&ids, 0).to_vec()];
+        while ids.len() <= steps {
+            let next = crate::kernels::argmax(logits.last().unwrap());
+            if s.text.is_stop(next) {
+                break;
+            }
+            ids.push(next);
+            let pos = ids.len() - 1;
+            logits.push(s.model.forward(next, pos).to_vec());
+        }
+        let mut draft = Drafter::new(Session::open(&qad, None, 64, Format::F32, None).unwrap());
+        let mut spec: Vec<Vec<u8>> = Vec::new();
+        let (_, look) = s.generate_draft(&mut draft, prompt, &mut Sampler::new(0.0, 0.9, 0, 1), steps, 4, |b| {
+            spec.push(b.to_vec());
+            true
+        });
+        assert!(look.accepted > 0 && look.accepted < look.drafted, "{look:?}");
+        let plain: Vec<Vec<u8>> = ids[np..].iter().map(|&t| s.text.piece(0, t)).collect();
+        let Some(d) = plain.iter().zip(&spec).position(|(a, b)| a != b) else {
+            assert_eq!(spec.len(), plain.len(), "spec {} tokens, plain {}", spec.len(), plain.len());
+            println!("{look:?}: same {} tokens", plain.len());
+            return;
+        };
+        assert!(cfg!(target_arch = "aarch64"), "the host's texts fork at token {d}");
+        let l = &logits[d];
+        let ours = ids[np + d];
+        let theirs = (0..s.model.config.vocab_size).find(|&t| s.text.piece(0, t) == spec[d]).unwrap();
+        let scale = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let gap = (l[ours] - l[theirs]) / scale;
+        println!("{look:?}: fork at token {d} ({:?} vs {:?}), gap {gap:.2e} of max |logit|", String::from_utf8_lossy(&plain[d]), String::from_utf8_lossy(&spec[d]));
+        assert!(d >= 8 && gap < 2e-2, "fork at token {d}, gap {gap:.2e}");
     }
 
     /// The GPU's argmax (greedy decoding) is the index the CPU's argmax

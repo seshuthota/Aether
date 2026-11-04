@@ -1,0 +1,310 @@
+
+running 123 tests
+test aligned::tests::empty_buffer_gives_empty_slice ... ok
+test aligned::tests::huge_length_is_rejected - should panic ... ok
+test aligned::tests::empty_buffer_is_aligned_and_drops_cleanly ... ok
+test aligned::tests::starts_zeroed_and_writes_are_visible ... ok
+test aligned::tests::start_is_64_aligned_for_awkward_lengths ... ok
+test bench::tests::bench_runs_warmup_plus_iters ... ok
+test aligned::tests::chunks_can_be_shared_across_threads ... ok
+test bench::tests::median_even_count_averages_middle_two ... ok
+test bench::tests::median_odd_count ... ok
+test bench::tests::outlier_moves_mean_but_not_median ... ok
+test chat::tests::think_filter_hides_split_spans ... ok
+test eval::tests::log_probs_normalise ... ok
+test ffi::tests::c_abi_gpu_session ... ok
+test format::imatrix::tests::collected_imatrix_matches_llama_imatrix ... ok
+test format::imatrix::tests::k_quant_mix_with_imatrix_matches_llama_quantize ... ok
+test format::imatrix::tests::reads_llama_imatrix_files ... ok
+test format::imatrix::tests::imatrix_conversion_matches_llama_quantize_pure ... ok
+test format::json::tests::errors_point_at_the_problem ... ok
+test format::imatrix::tests::writes_llama_imatrix_files ... ok
+test format::json::tests::integers_for_shapes_and_ids ... ok
+test format::json::tests::scalars_and_nesting ... ok
+test format::json::tests::string_escapes_and_surrogates ... ok
+test format::quantize::tests::writes_llama_quantize_files ... ok
+test format::mmap::tests::maps_a_file_and_an_empty_file ... ok
+test format::quantize::tests::writes_llama_quantize_q4_k_m ... ok
+test format::quantize::tests::writes_llama_quantize_files_with_imatrix ... ok
+test format::safetensors::tests::bf16_widening_is_exact ... ok
+test format::safetensors::tests::f16_known_values ... ok
+test format::safetensors::tests::reads_smollm2_header ... ok
+attention: 42 cases vs numpy, worst relative error 2.35e-6
+test kernels::tests::attention_group_matches_numpy ... ok
+test kernels::tests::attention_matches_numpy ... ok
+attention parts: 36 (case, chunk) pairs vs numpy
+test kernels::tests::attention_parts_merge_to_numpy ... ok
+test format::gguf::tests::reads_llama_cpp_files ... ok
+test kernels::tests::gate_matches_numpy ... ok
+test kernels::tests::attention_window_matches_numpy ... ok
+test format::json::tests::parses_model_files ... ok
+matmul_batch: 11 cases vs numpy, worst relative error 5.21e-7
+test kernels::tests::matmul_batch_matches_numpy ... ok
+test kernels::tests::k_quant_linear_matches_reference ... ok
+neon::gemv_one_acc: 89 cases vs numpy, worst relative error 3.14e-6
+matmul (dispatched): 89 cases vs numpy, worst relative error 3.14e-6
+test eval::tests::self_comparison_is_zero ... ok
+neon::gemv_row_4acc: 89 cases vs numpy, worst relative error 3.14e-6
+test kernels::tests::rmsnorm_heads_matches_numpy ... ok
+test kernels::tests::rmsnorm_softmax_swiglu_match_numpy ... ok
+test kernels::tests::rope_matches_numpy ... ok
+test kernels::tests::rope_partial_matches_numpy ... ok
+scalar::matmul: 89 cases vs numpy, worst relative error 1.76e-6
+test kernels::tests::matmul_matches_numpy ... ok
+test kernels::tests::short_conv_matches_numpy ... ok
+test membench::tests::byte_counts_follow_stream_rule ... ok
+test membench::tests::copy_scale_add ... ok
+test membench::tests::read_sum_is_exact_on_small_integers ... ok
+test membench::tests::read_sum_on_misaligned_slice ... ok
+neon::gemv: 89 cases vs numpy, worst relative error 3.14e-6
+test kernels::tests::neon_gemv_steps_match_numpy ... ok
+test model::gguf::tests::lfm3_matches_transformers ... ok
+test ffi::tests::c_abi_round_trip ... ok
+test model::gguf::tests::qwen2_bf16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_f16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_gguf_matches_transformers ... ok
+test model::gguf::tests::smollm2_gguf_matches_transformers ... ok
+test chat::tests::matches_transformers_chat_template ... ok
+test kernels::tests::quantized_linear_batch_matches_reference ... ok
+test model::gguf::tests::lfm3_q4km_loads ... ok
+test chat::tests::lfm3_matches_transformers_chat_template ... ok
+batched prefill (5+12+13) then decode, 1 threads: tokens identical, worst relative error 4.60e-6
+stories15M/greedy.dump: 64 positions, every token identical to llama2.c
+attn         max abs 3.338e-6  max rel 2.384e-6
+attn_norm    max abs 1.621e-5  max rel 1.555e-6
+attn_out     max abs 1.907e-6  max rel 2.661e-6
+embed        max abs 0.000e0  max rel 0.000e0
+ffn_norm     max abs 9.418e-6  max rel 1.852e-6
+ffn_out      max abs 6.676e-6  max rel 3.316e-6
+final_norm   max abs 5.722e-5  max rel 2.063e-6
+k            max abs 1.049e-5  max rel 1.326e-6
+logits       max abs 4.292e-5  max rel 2.134e-6
+q            max abs 9.060e-6  max rel 1.189e-6
+resid_attn   max abs 8.583e-6  max rel 1.943e-6
+resid_ffn    max abs 8.583e-6  max rel 4.432e-6
+swiglu       max abs 3.052e-5  max rel 3.566e-6
+v            max abs 4.888e-6  max rel 2.176e-6
+test model::llama2c::tests::greedy_matches_llama2c_at_every_layer ... ok
+test kernels::tests::quantized_linear_matches_reference ... ok
+stories15M/sampled.dump: 64 positions, every token identical to llama2.c
+test model::llama2c::tests::seeded_sampling_matches_llama2c ... ok
+batched prefill (5+12+13) then decode, 4 threads: tokens identical, worst relative error 4.60e-6
+test model::llama2c::tests::batched_prefill_matches_llama2c ... ok
+test model::sampler::tests::draft_sampling_keeps_the_distribution ... ok
+test model::sampler::tests::rng_range ... ok
+test model::sampler::tests::temperature_zero_is_argmax ... ok
+test model::sampler::tests::top_k_one_is_argmax ... ok
+test model::sampler::tests::top_p_keeps_only_the_nucleus ... ok
+test monitor::tests::constant_power_integrates_to_power_times_time ... ok
+test monitor::tests::counter_energy_uses_the_window_between_steps ... ok
+stories15M/greedy.dump: 64 positions, every token identical to llama2.c
+test model::llama2c::tests::threaded_greedy_matches_llama2c ... ok
+test monitor::tests::trapezoid_is_exact_for_a_ramp ... ok
+test pool::tests::dynamic_blocks_cover_everything_once ... ok
+test pool::tests::every_share_runs_once_per_job ... ok
+stories15M/long.dump: 222 positions, every token identical to llama2.c
+test pool::tests::parked_workers_wake_up ... ok
+test pool::tests::split_covers_everything_once ... ok
+test quant::tests::f16_rounding_is_round_to_nearest_even ... ok
+long context, decode, 1 thread: worst relative error 4.43e-6
+test quant::tests::imatrix_quantizers_are_byte_identical_to_llama_cpp ... ok
+SmolLM2 (safetensors) attn_norm    worst relative error vs transformers 6.44e-6
+SmolLM2 (safetensors) attn_out     worst relative error vs transformers 4.22e-5
+SmolLM2 (safetensors) embed        worst relative error vs transformers 0.00e0
+SmolLM2 (safetensors) ffn_norm     worst relative error vs transformers 1.00e-5
+SmolLM2 (safetensors) ffn_out      worst relative error vs transformers 6.79e-5
+SmolLM2 (safetensors) final_norm   worst relative error vs transformers 1.65e-6
+SmolLM2 (safetensors) logits       worst relative error vs transformers 7.50e-7
+SmolLM2 (safetensors) resid_attn   worst relative error vs transformers 1.41e-5
+SmolLM2 (safetensors) resid_ffn    worst relative error vs transformers 1.41e-5
+SmolLM2 (safetensors) v            worst relative error vs transformers 1.11e-5
+test quant::tests::k_quants_match_gguf ... ok
+test quant::tests::quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::repacked_rows_dequantize_like_row_major ... ok
+test quant::tests::scalar_dots_match_reference ... ok
+test session::tests::draft_length_adapts ... ok
+test session::tests::draft_model_decoding_gives_llama2c_greedy_text ... ok
+test session::tests::generates_llama2c_text_and_stops_on_request ... ok
+stories15M/long.dump: 222 positions, every token identical to llama2.c
+long context, 200-token prefill: worst relative error 4.26e-6
+test model::llama2c::tests::long_context_matches_llama2c ... ok
+test kernels::tests::threaded_matmuls_are_bit_identical ... ok
+SmolLM2 (safetensors): 48 greedy tokens identical to transformers.generate
+test sys::affinity::tests::parses_singles_ranges_and_newline ... ok
+monitor: 127 samples over 3.00 s, max temp 84.6 °C, no battery power readings
+test monitor::tests::samples_until_stopped ... ok
+test sys::affinity::tests::rejects_core_beyond_cpu_set ... ok
+CTR_EL0 data cache line: 64 bytes
+test sys::cpu::tests::cache_line_matches_aligned_buf ... ok
+test sys::sysfs::tests::every_online_core_has_a_max_frequency ... ok
+cpu0: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu1: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu2: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu3: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu4: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu5: cur Some(2745600) kHz, cap Some(2745600) kHz, max Some(3532800) kHz
+cpu6: cur Some(2649600) kHz, cap Some(2649600) kHz, max Some(4320000) kHz
+cpu7: cur Some(2649600) kHz, cap Some(2649600) kHz, max Some(4320000) kHz
+thermal_zone0 aoss-0                   54600 m°C
+thermal_zone1 cpu-0-0-0                75700 m°C
+thermal_zone2 cpu-0-0-1                77600 m°C
+thermal_zone3 cpu-0-1-0                71500 m°C
+thermal_zone4 cpu-0-1-1                73000 m°C
+thermal_zone5 cpu-0-2-0                77600 m°C
+thermal_zone6 cpu-0-2-1                78800 m°C
+thermal_zone7 cpu-0-3-0                70300 m°C
+thermal_zone8 cpu-0-3-1                73000 m°C
+thermal_zone9 cpu-0-4-0                76900 m°C
+thermal_zone10 cpu-0-4-1                78000 m°C
+thermal_zone11 cpu-0-5-0                70700 m°C
+thermal_zone12 cpu-0-5-1                73000 m°C
+thermal_zone13 cpuss-0-0                75700 m°C
+thermal_zone14 cpuss-0-1                76500 m°C
+thermal_zone15 aoss-1                   54800 m°C
+thermal_zone16 cpu-1-0-0                70200 m°C
+thermal_zone17 cpu-1-0-1                76000 m°C
+thermal_zone18 cpu-1-1-0                74100 m°C
+thermal_zone19 cpu-1-1-1                78700 m°C
+thermal_zone20 cpuss-1-0                66400 m°C
+thermal_zone21 cpuss-1-1                71000 m°C
+thermal_zone22 pm8550-bcl-lvl0          0 m°C
+thermal_zone23 aoss-2                   54200 m°C
+thermal_zone24 pm8550-bcl-lvl1          0 m°C
+thermal_zone25 gpuss-0                  52300 m°C
+thermal_zone26 gpuss-1                  53800 m°C
+thermal_zone27 pm8550-bcl-lvl2          0 m°C
+thermal_zone28 gpuss-2                  53000 m°C
+thermal_zone29 vbat                     0 m°C
+thermal_zone30 gpuss-3                  52600 m°C
+thermal_zone31 pmih010x-bcl-lvl0        0 m°C
+thermal_zone32 gpuss-4                  58400 m°C
+thermal_zone33 pmih010x-bcl-lvl1        0 m°C
+thermal_zone34 gpuss-5                  58800 m°C
+thermal_zone35 pmih010x-bcl-lvl2        0 m°C
+thermal_zone36 gpuss-6                  56100 m°C
+thermal_zone37 pmih010x-ibat2-lvl0      161 m°C
+thermal_zone38 gpuss-7                  55700 m°C
+thermal_zone39 pmih010x-ibat2-lvl1      161 m°C
+thermal_zone40 mdmss-0                  53000 m°C
+thermal_zone41 pmih010x-bcl2-lvl0       0 m°C
+thermal_zone42 mdmss-1                  48800 m°C
+thermal_zone43 pmih010x-bcl2-lvl1       0 m°C
+thermal_zone44 mdmss-2                  49900 m°C
+thermal_zone45 pmih010x-bcl2-lvl2       0 m°C
+thermal_zone46 mdmss-3                  51500 m°C
+thermal_zone47 camera-0                 53000 m°C
+thermal_zone48 camera-1                 50700 m°C
+thermal_zone49 video                    56100 m°C
+thermal_zone50 aoss-3                   55200 m°C
+thermal_zone51 nsphvx-0                 50200 m°C
+thermal_zone52 nsphvx-1                 49400 m°C
+thermal_zone53 nsphvx-2                 49800 m°C
+thermal_zone54 nsphmx-0                 53200 m°C
+thermal_zone55 nsphmx-1                 52100 m°C
+thermal_zone56 nsphmx-2                 49800 m°C
+thermal_zone57 nsphmx-3                 51300 m°C
+thermal_zone58 ddr                      56000 m°C
+thermal_zone59 bq_bms                   32000 m°C
+thermal_zone60 pmr735d_tz               37000 m°C
+thermal_zone61 socd                     45 m°C
+thermal_zone62 quiet_therm              34901 m°C
+thermal_zone63 bat_btb_therm            35255 m°C
+test model::hf::tests::smollm2_matches_transformers ... ok
+thermal_zone64 wlan-therm               37562 m°C
+test sys::sysfs::tests::missing_file_names_the_path ... ok
+thermal_zone65 ltepa_ntc                37035 m°C
+test tensor::tests::from_vec_rejects_wrong_length - should panic ... ok
+thermal_zone66 nrpa_ntc                 41761 m°C
+test tensor::tests::get_set_roundtrip_and_row_major_order ... ok
+test tensor::tests::index_of_2_3_1_is_79 ... ok
+test tensor::tests::out_of_range_index_panics - should panic ... ok
+test tensor::tests::scalar_and_vector_shapes ... ok
+test tensor::tests::size_in_bytes ... ok
+thermal_zone67 ap_therm                 40183 m°C
+test tensor::tests::strides_are_products_of_dims_to_the_right ... ok
+test tensor::tests::strides_of_3_by_4_are_4_and_1 ... ok
+running on: aarch64
+test tests::prints_arch ... ok
+thermal_zone68 usb-therm                33604 m°C
+thermal_zone69 sub_board_therm          33646 m°C
+thermal_zone70 chg_ic_therm             34937 m°C
+thermal_zone71 tz_shell                 33204 m°C
+thermal_zone72 tz_game_shell            32628 m°C
+thermal_zone73 vir_tbat                 320 m°C
+thermal_zone74 vir_tbat_sub             0 m°C
+thermal_zone75 vir_tbatwls              0 m°C
+thermal_zone76 vir_tbatwls_sub          0 m°C
+thermal_zone77 vir_amb                  31692 m°C
+thermal_zone78 tz_shell_tmax            33204 m°C
+thermal_zone79 tz_shell_bmax            32857 m°C
+thermal_zone80 pm8550_tz                41324 m°C
+thermal_zone81 pm8550ve_d_tz            42097 m°C
+thermal_zone82 pm8550ve_f_tz            45594 m°C
+test sys::affinity::tests::pinning_moves_the_thread ... ok
+test tokenizer::bytelevel::tests::gpt2_regex_cases ... ok
+thermal_zone83 pm8550ve_g_tz            40450 m°C
+thermal_zone84 pm8550ve_i_tz            42232 m°C
+thermal_zone85 pm8550vs_j_tz            50972 m°C
+thermal_zone86 pmih010x_tz              38977 m°C
+thermal_zone87 pmih010x_lite_tz         51409 m°C
+thermal_zone88 fg_sh366009              32000 m°C
+thermal_zone89 usb                      32000 m°C
+thermal_zone90 wireless                 -40000 m°C
+thermal_zone91 battery                  32000 m°C
+thermal_zone92 sdr0_pa                  -273000 m°C
+thermal_zone93 sdr0                     -273000 m°C
+thermal_zone94 mmw_ific0                -273000 m°C
+test session::tests::lookup_decoding_gives_llama2c_greedy_text ... ok
+test tokenizer::bytelevel::tests::lfm2_regex_cases ... ok
+gguf/smollm2-135m-q8_0.gguf: 433 strings, encode and decode identical to HF tokenizers
+battery AndroidService: status Some("Discharging"), current Some(-195000) uA, voltage Some(3856000) uV, counter Some(1488000) uAh
+test sys::sysfs::tests::inventory ... ok
+conv rollback: logits rel 0.00e0; without the restore 6.42e-1
+test model::gguf::tests::lfm3_conv_state_rolls_back ... ok
+models/SmolLM2-135M/tokenizer.json: 433 strings, encode and decode identical to HF tokenizers
+test tokenizer::bytelevel::tests::matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_regex_cases ... ok
+test tokenizer::llama2c::tests::decode_inverts_encode ... ok
+323 strings encode identically to llama2.c
+test tokenizer::llama2c::tests::encode_matches_llama2c_on_corpus ... ok
+test tokenizer::nfc::tests::known_cases ... ok
+17253 NFC cases identical to Python's unicodedata
+test tokenizer::nfc::tests::matches_python_unicodedata ... ok
+gguf/qwen2.5-0.5b-q8_0.gguf: 433 strings, encode and decode identical to HF tokenizers
+test tokenizer::bytelevel::tests::gguf_tokenizer_matches_hf_tokenizers ... ok
+models/Qwen2.5-0.5B-Instruct/tokenizer.json: 433 strings, encode and decode identical to HF tokenizers
+test tokenizer::bytelevel::tests::qwen2_matches_hf_tokenizers_on_corpus ... ok
+gguf/LFM3-1.7B-Q4_K_M.gguf: 436 strings, encode and decode identical to HF tokenizers
+test tokenizer::bytelevel::tests::lfm3_gguf_tokenizer_matches_hf_tokenizers ... ok
+models/LFM3-1.7B/tokenizer.json: 436 strings, encode and decode identical to HF tokenizers
+test tokenizer::bytelevel::tests::lfm2_matches_hf_tokenizers_on_corpus ... ok
+SmolLM2-360M (safetensors) attn_norm    worst relative error vs transformers 1.71e-6
+SmolLM2-360M (safetensors) attn_out     worst relative error vs transformers 2.50e-5
+SmolLM2-360M (safetensors) embed        worst relative error vs transformers 0.00e0
+SmolLM2-360M (safetensors) ffn_norm     worst relative error vs transformers 2.90e-6
+SmolLM2-360M (safetensors) ffn_out      worst relative error vs transformers 9.72e-6
+SmolLM2-360M (safetensors) final_norm   worst relative error vs transformers 1.29e-6
+SmolLM2-360M (safetensors) logits       worst relative error vs transformers 1.24e-6
+SmolLM2-360M (safetensors) resid_attn   worst relative error vs transformers 1.77e-6
+SmolLM2-360M (safetensors) resid_ffn    worst relative error vs transformers 4.31e-5
+SmolLM2-360M (safetensors) v            worst relative error vs transformers 4.96e-6
+Qwen2.5 (safetensors) attn_norm    worst relative error vs transformers 9.23e-5
+Qwen2.5 (safetensors) attn_out     worst relative error vs transformers 3.12e-4
+Qwen2.5 (safetensors) embed        worst relative error vs transformers 0.00e0
+Qwen2.5 (safetensors) ffn_norm     worst relative error vs transformers 1.24e-4
+Qwen2.5 (safetensors) ffn_out      worst relative error vs transformers 2.40e-4
+Qwen2.5 (safetensors) final_norm   worst relative error vs transformers 1.32e-6
+Qwen2.5 (safetensors) logits       worst relative error vs transformers 2.31e-6
+Qwen2.5 (safetensors) resid_attn   worst relative error vs transformers 1.75e-4
+Qwen2.5 (safetensors) resid_ffn    worst relative error vs transformers 1.79e-4
+Qwen2.5 (safetensors) v            worst relative error vs transformers 9.18e-5
+SmolLM2-360M (safetensors): 48 greedy tokens identical to transformers.generate
+test model::hf::tests::smollm2_360m_matches_transformers ... ok
+Qwen2.5 (safetensors): 48 greedy tokens identical to transformers.generate
+test model::hf::tests::qwen2_matches_transformers ... ok
+test session::tests::lfm3_draft_decoding_keeps_the_greedy_text has been running for over 60 seconds
+Lookup { passes: 13, drafted: 46, accepted: 30 }: fork at token 22 (" the" vs " brown"), gap 2.25e-3 of max |logit|
+test session::tests::lfm3_draft_decoding_keeps_the_greedy_text ... ok
+
+test result: ok. 123 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 69.68s
+

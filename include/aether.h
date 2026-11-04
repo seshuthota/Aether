@@ -57,7 +57,7 @@ int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, Aethe
  * (Q4_0, Q5_0, Q8_0, Q4_K and Q6_K work). */
 int aether_open_dsp(const char *path, const char *dir, uint32_t max_seq, AetherSession **out);
 
-/* Generates a reply. chat != 0 wraps the prompt in the ChatML template.
+/* Generates a reply. chat != 0 uses the loaded model's chat template
  * temperature 0 = greedy. stats may be NULL. */
 int aether_generate(AetherSession *session, const char *prompt, int chat,
                     float temperature, float top_p, uint32_t max_tokens, uint64_t seed,

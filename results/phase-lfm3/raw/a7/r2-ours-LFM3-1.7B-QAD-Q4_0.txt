@@ -1,0 +1,32 @@
+# 2026-11-03T19:53:52+05:30, commit 991d9d2
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 80
+# temperature: 389
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# mScreenState=ON
+MemTotal:       15472808 kB
+MemFree:         1376460 kB
+MemAvailable:    6748244 kB
+# bench_suite testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf | q4_0+f32 | weights 1041.4 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 632 ms
+test,tok_per_s,ms
+pp64,197.5,324.0
+pp128,189.6,675.1
+pp512,178.5,2867.8
+tg64@d0,42.9,1492.5
+# tg64@d0 per token: median 23.24 ms, p95 24.83 ms (192 samples)
+tg64@d256,41.1,1556.7
+# tg64@d256 per token: median 24.20 ms, p95 25.16 ms (192 samples)
+tg64@d512,40.6,1575.1
+# tg64@d512 per token: median 24.51 ms, p95 26.18 ms (192 samples)
+ttft_pp64,2.9,344.4
+# peak RSS 1143096 kB
+# monitor: 79 samples over 38.81 s, max temp 88.0 °C, energy 21.35 J, avg power 0.55 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf","quantization":"q4_0+f32","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":632,"prefill":[{"prompt_tokens":64,"median_ms":324.0,"p95_ms":476.9,"tokens_per_second":197.5},{"prompt_tokens":128,"median_ms":675.1,"p95_ms":680.7,"tokens_per_second":189.6},{"prompt_tokens":512,"median_ms":2867.8,"p95_ms":2911.5,"tokens_per_second":178.5}],"decode":[{"context_depth":0,"median_ms_per_token":23.24,"p95_ms_per_token":24.83,"tokens_per_second":42.9},{"context_depth":256,"median_ms_per_token":24.20,"p95_ms_per_token":25.16,"tokens_per_second":41.1},{"context_depth":512,"median_ms_per_token":24.51,"p95_ms_per_token":26.18,"tokens_per_second":40.6}],"ttft_pp64_ms":344.4,"peak_memory_mb":1116},"system_state":{"battery_status":"Discharging","max_temp_c":88.0,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1958400,"cpu7":1958400},"avg_power_w":0.55}}

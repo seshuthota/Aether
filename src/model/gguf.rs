@@ -19,7 +19,7 @@
 //! biases (small, always f32) are copied.
 
 use super::config::{Config, RopeLayout};
-use super::transformer::{LayerWeights, Weights};
+use super::transformer::{AttentionWeights, ConvWeights, LayerWeights, Mixer, Weights};
 use crate::aligned::AlignedBuf;
 use crate::format::gguf::{GgmlType, Gguf, Value};
 use crate::format::safetensors::{bf16_to_f32, f16_to_f32};
@@ -37,24 +37,67 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
     let arch = g.get("general.architecture").and_then(Value::as_str).ok_or_else(|| bad("no general.architecture".into()))?.to_string();
     let rope_layout = match arch.as_str() {
         "llama" => RopeLayout::AdjacentPairs,
-        "qwen2" => RopeLayout::Halves,
-        other => return Err(bad(format!("architecture {other:?} is not supported (llama, qwen2)"))),
+        "qwen2" | "lfm3" => RopeLayout::Halves,
+        other => return Err(bad(format!("architecture {other:?} is not supported (llama, qwen2, lfm3)"))),
     };
     let key = |k: &str| g.get(&format!("{arch}.{k}"));
     let num = |k: &str| key(k).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(format!("missing {arch}.{k}")));
+    let arr = |k: &str| key(k).and_then(Value::as_array);
+    let lfm3 = arch == "lfm3";
     let n_heads = num("attention.head_count")?;
+    let dim = num("embedding_length")?;
+    let n_layers = num("block_count")?;
     let embd = g.tensor("token_embd.weight").ok_or_else(|| bad("no token_embd.weight".into()))?;
+    let head_dim = key("attention.key_length").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(dim / n_heads);
+    let kv_arr: Option<Vec<usize>> = arr("attention.head_count_kv").map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect());
+    let n_kv_heads = kv_arr
+        .as_ref()
+        .and_then(|a| a.iter().copied().find(|&v| v > 0))
+        .or_else(|| key("attention.head_count_kv").and_then(Value::as_u64).map(|v| v as usize))
+        .unwrap_or(n_heads);
+    let window = key("attention.sliding_window").and_then(Value::as_u64).unwrap_or(256) as usize;
+    let sliding: Option<Vec<bool>> = arr("attention.sliding_window_pattern").map(|a| a.iter().map(|v| matches!(v, Value::Bool(true))).collect());
+    let theta_full = key("rope.freq_base").and_then(Value::as_f64).unwrap_or(10000.0) as f32;
+    let theta_swa = key("rope.freq_base_swa").and_then(Value::as_f64).unwrap_or(theta_full as f64) as f32;
+    let pairs_full = match g.tensor("rope_freqs.weight") {
+        Some(t) if t.dims == [head_dim / 2] => {
+            let factors = widen(g.data(t)?, t.ty, head_dim / 2);
+            factors.iter().filter(|&&f| f < 1e29).count()
+        }
+        _ => head_dim / 2,
+    };
+    let conv_width = key("shortconv.l_cache").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(7);
+    let layers = (0..n_layers)
+        .map(|l| {
+            let is_conv = lfm3 && kv_arr.as_ref().is_some_and(|a| a.get(l).copied().unwrap_or(0) == 0);
+            if is_conv {
+                crate::model::config::LayerKind::Conv { width: conv_width }
+            } else {
+                let is_sliding = lfm3 && sliding.as_ref().and_then(|a| a.get(l)).copied().unwrap_or(false);
+                let (theta, pairs) = if is_sliding { (theta_swa, head_dim / 2) } else { (theta_full, pairs_full) };
+                crate::model::config::LayerKind::Attention {
+                    window: if is_sliding { Some(window) } else { None },
+                    rope: crate::model::config::Rope { theta, pairs, layout: rope_layout },
+                }
+            }
+        })
+        .collect::<Vec<_>>();
     let config = Config {
-        dim: num("embedding_length")?,
+        dim,
         hidden_dim: num("feed_forward_length")?,
-        n_layers: num("block_count")?,
+        n_layers,
         n_heads,
-        n_kv_heads: num("attention.head_count_kv").unwrap_or(n_heads),
+        n_kv_heads,
+        head_dim,
         vocab_size: embd.dims[1],
         seq_len: num("context_length")?.min(max_seq),
-        rope_theta: key("rope.freq_base").and_then(Value::as_f64).unwrap_or(10000.0) as f32,
+        rope_theta: theta_full,
         rope_layout,
         norm_eps: key("attention.layer_norm_rms_epsilon").and_then(Value::as_f64).ok_or_else(|| bad("missing rms epsilon".into()))? as f32,
+        layers,
+        qk_norm: lfm3,
+        output_gate: lfm3,
+        sandwich_norm: lfm3,
     };
     let c = &config;
     let (dim, kv_dim, hidden) = (c.dim, c.kv_dim(), c.hidden_dim);
@@ -86,20 +129,38 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
         Ok(Some(widen(g.data(t)?, t.ty, n)))
     };
     let required = |name: &str, n: usize| vector(name, n)?.ok_or_else(|| bad(format!("missing tensor {name}")));
+    let optional_matrix = |name: &str, rows: usize, cols: usize| -> io::Result<Option<Weight>> {
+        if g.tensor(name).is_some() { matrix(name, rows, cols).map(Some) } else { Ok(None) }
+    };
 
     let layers = (0..c.n_layers)
         .map(|l| {
             let p = format!("blk.{l}");
+            let mixer = match c.kind(l) {
+                crate::model::config::LayerKind::Attention { .. } => Mixer::Attention(AttentionWeights {
+                    wq: matrix(&format!("{p}.attn_q.weight"), dim, dim)?,
+                    wk: matrix(&format!("{p}.attn_k.weight"), kv_dim, dim)?,
+                    wv: matrix(&format!("{p}.attn_v.weight"), kv_dim, dim)?,
+                    wo: matrix(&format!("{p}.attn_output.weight"), dim, dim)?,
+                    bq: vector(&format!("{p}.attn_q.bias"), dim)?,
+                    bk: vector(&format!("{p}.attn_k.bias"), kv_dim)?,
+                    bv: vector(&format!("{p}.attn_v.bias"), kv_dim)?,
+                    q_norm: vector(&format!("{p}.attn_q_norm.weight"), head_dim)?,
+                    k_norm: vector(&format!("{p}.attn_k_norm.weight"), head_dim)?,
+                    gate: optional_matrix(&format!("{p}.attn_gate.weight"), n_heads, dim)?,
+                }),
+                crate::model::config::LayerKind::Conv { width } => Mixer::Conv(ConvWeights {
+                    in_proj: matrix(&format!("{p}.shortconv.in_proj.weight"), 3 * dim, dim)?,
+                    conv: matrix(&format!("{p}.shortconv.conv.weight"), dim, width)?,
+                    out_proj: matrix(&format!("{p}.shortconv.out_proj.weight"), dim, dim)?,
+                }),
+            };
             Ok(LayerWeights {
                 attn_norm: required(&format!("{p}.attn_norm.weight"), dim)?,
-                wq: matrix(&format!("{p}.attn_q.weight"), dim, dim)?,
-                wk: matrix(&format!("{p}.attn_k.weight"), kv_dim, dim)?,
-                wv: matrix(&format!("{p}.attn_v.weight"), kv_dim, dim)?,
-                wo: matrix(&format!("{p}.attn_output.weight"), dim, dim)?,
-                bq: vector(&format!("{p}.attn_q.bias"), dim)?,
-                bk: vector(&format!("{p}.attn_k.bias"), kv_dim)?,
-                bv: vector(&format!("{p}.attn_v.bias"), kv_dim)?,
+                mixer,
+                post_attn_norm: vector(&format!("{p}.post_attention_norm.weight"), dim)?,
                 ffn_norm: required(&format!("{p}.ffn_norm.weight"), dim)?,
+                post_ffn_norm: vector(&format!("{p}.post_ffw_norm.weight"), dim)?,
                 w_gate: matrix(&format!("{p}.ffn_gate.weight"), hidden, dim)?,
                 w_up: matrix(&format!("{p}.ffn_up.weight"), hidden, dim)?,
                 w_down: matrix(&format!("{p}.ffn_down.weight"), dim, hidden)?,
@@ -132,11 +193,164 @@ mod tests {
     use super::*;
     use crate::model::Transformer;
     use crate::model::reference::check_against_transformers;
-    use crate::testutil::host_golden;
+    use crate::testutil::{host_golden, max_errors};
+    use crate::format::safetensors::SafeTensors;
+    use crate::model::Observer;
+    use std::collections::HashMap;
 
     fn model(rel: &str) -> Option<Transformer> {
         let (config, weights, _) = load(host_golden(rel)?, 256).unwrap();
         Some(Transformer::new(config, weights))
+    }
+
+    /// LFM3's mixed stack: 13 short-conv layers, 6 full and 5 sliding
+    /// attention layers, QK-norm, per-head gate, sandwich norms and the
+    /// zero-tail RoPE factors.
+    #[test]
+    fn lfm3_q4km_loads() {
+        let Some(p) = crate::testutil::golden("gguf/LFM3-1.7B-Q4_K_M.gguf") else { return };
+        let (c, w, _) = load(p, 2048).unwrap();
+        assert_eq!((c.n_layers, c.dim, c.head_dim, c.n_heads, c.n_kv_heads), (24, 2048, 128, 16, 4));
+        assert_eq!(c.kind(0), crate::model::config::LayerKind::Conv { width: 7 });
+        assert!(c.is_attention(2) && c.is_attention(4));
+        assert_eq!(c.window(2), None);
+        assert_eq!(c.window(4), Some(256));
+        assert_eq!(c.rope(2).pairs, 32);
+        assert_eq!(c.rope(4).pairs, 64);
+        assert_eq!(c.rope(2).theta, 1e6);
+        assert_eq!(c.rope(4).theta, 1e4);
+        assert!(c.qk_norm && c.output_gate && c.sandwich_norm);
+        assert!(w.layers[0].conv().is_some());
+        let a = w.layers[2].attention().unwrap();
+        assert_eq!(a.q_norm.as_ref().unwrap().len(), 128);
+        assert_eq!(a.k_norm.as_ref().unwrap().len(), 128);
+        assert!(a.gate.is_some());
+        assert!(w.layers[0].post_attn_norm.is_some() && w.layers[0].post_ffn_norm.is_some());
+    }
+
+
+    #[derive(Default)]
+    struct Collect(HashMap<(String, i32, usize), Vec<f32>>);
+    impl Observer for Collect {
+        fn tap(&mut self, name: &str, layer: Option<usize>, pos: usize, data: &[f32]) {
+            self.0.insert((name.to_string(), layer.map_or(-1, |l| l as i32), pos), data.to_vec());
+        }
+    }
+
+    fn ref_tensor(st: &SafeTensors, name: &str) -> (Vec<usize>, Vec<f32>) {
+        let v = st.get(name).unwrap_or_else(|| panic!("reference has no {name}"));
+        let mut all = vec![0.0; v.numel()];
+        v.to_f32(&mut all);
+        (v.shape.to_vec(), all)
+    }
+
+    fn ref_row(st: &SafeTensors, name: &str, row: usize, width: usize) -> Vec<f32> {
+        let (shape, all) = ref_tensor(st, name);
+        assert!(row < shape[0] && shape[1] == width);
+        all[row * width..(row + 1) * width].to_vec()
+    }
+
+    fn check_logits(label: &str, ours: &[f32], want: &[f32]) {
+        let (_, rel) = max_errors(ours, want);
+        assert!(rel < 1e-3, "{label}: logits relative error {rel:.2e}");
+    }
+
+    /// LFM3 against the pinned HF repository (f32, eager): every layer's
+    /// residual after a 29-token prompt, full short logits, selected logits
+    /// from a 320-token prompt (past the 256-position sliding window), and
+    /// 16 greedy tokens.
+    #[test]
+    fn lfm3_matches_transformers() {
+        let (Some(p), Some(refp)) = (host_golden("gguf/LFM3-1.7B-BF16.gguf"), host_golden("lfm3/ref.safetensors")) else { return };
+        let (c, w, _) = load(p, 320).unwrap();
+        let mut t = Transformer::new(c.clone(), w);
+        let st = SafeTensors::open(refp).unwrap();
+        let vocab = c.vocab_size;
+
+        let (_, ids) = ref_tensor(&st, "short_ids");
+        let ids: Vec<usize> = ids.into_iter().map(|x| x as usize).collect();
+        let (_, want) = ref_tensor(&st, "short_logits");
+        let ours = t.forward_batch_logits(&ids, 0, 0).to_vec();
+        for pos in 0..ids.len() {
+            check_logits(&format!("short logits pos {pos}"), &ours[pos * vocab..(pos + 1) * vocab], &want[pos * vocab..(pos + 1) * vocab]);
+        }
+
+        let mut obs = Collect::default();
+        t.forward_batch_traced(&ids, 0, &mut obs);
+        for l in 0..c.n_layers {
+            for pos in 0..ids.len() {
+                let key = ("resid_ffn".to_string(), l as i32, pos);
+                let got = obs.0.get(&key).unwrap_or_else(|| panic!("no tap {key:?}"));
+                let want = ref_row(&st, &format!("L{l}.resid_ffn"), pos, c.dim);
+                let (_, rel) = max_errors(got, &want);
+                if rel >= 1e-3 {
+                    let mut best = (usize::MAX, f32::INFINITY);
+                    for ll in 0..c.n_layers {
+                        let (_, r) = max_errors(got, &ref_row(&st, &format!("L{ll}.resid_ffn"), pos, c.dim));
+                        if r < best.1 { best = (ll, r); }
+                    }
+                    println!("L{l} pos{pos} rel {rel:.3e}; best HF layer {:?}; got {:?} want {:?}", best, &got[..4], &want[..4]);
+                }
+                assert!(rel < 1e-3, "L{l}.resid_ffn pos {pos}: relative error {rel:.2e}");
+            }
+        }
+
+        let (_, long) = ref_tensor(&st, "long_ids");
+        let long: Vec<usize> = long.into_iter().map(|x| x as usize).collect();
+        let (_, posv) = ref_tensor(&st, "long_positions");
+        let (_, want_long) = ref_tensor(&st, "long_logits");
+        let long_logits = t.forward_batch_logits(&long, 0, 0).to_vec();
+        for (r, pv) in posv.iter().enumerate() {
+            let pos = *pv as usize;
+            check_logits(&format!("long logits pos {pos}"), &long_logits[pos * vocab..(pos + 1) * vocab], &want_long[r * vocab..(r + 1) * vocab]);
+        }
+
+        let (_, greedy) = ref_tensor(&st, "greedy_ids");
+        let mut logits = t.forward_batch(&ids, 0).to_vec();
+        for k in 0..16 {
+            let next = crate::kernels::argmax(&logits);
+            assert_eq!(next, greedy[ids.len() + k] as usize, "greedy token {k}");
+            logits.copy_from_slice(t.forward(next, ids.len() + k));
+        }
+        println!("LFM3: 29 short + 9 long logits, every layer tap and 16 greedy tokens match HF");
+    }
+
+
+    /// Speculative decoding must roll the conv state back with the KV cache:
+    /// after a batched check whose two drafts are rejected, the next batch
+    /// gives the logits of a run that never saw them. Both runs put every
+    /// position through a 3-token batch (on the phone a single token takes
+    /// the GEMV path, whose rounding differs), so they agree bit for bit.
+    /// The same check without the restore must fail, so the bound is known
+    /// to catch a missing rollback.
+    #[test]
+    fn lfm3_conv_state_rolls_back() {
+        let Some(p) = crate::testutil::golden("gguf/LFM3-1.7B-Q4_K_M.gguf") else { return };
+        let (c, w, _) = load(&p, 64).unwrap();
+        let (c2, w2, _) = load(&p, 64).unwrap();
+        let mut plain = Transformer::new(c, w);
+        let mut spec = Transformer::new(c2, w2);
+        let tokens: Vec<usize> = (0..16).map(|i| 100 + (i * 37) % 5000).collect();
+        let next = crate::kernels::argmax(plain.forward_batch(&tokens, 0));
+        let vocab = plain.config.vocab_size;
+        // Positions 16, 17, 18: the certain token, then two fixed tokens.
+        let want = plain.forward_batch_logits(&[next, 777, 4321], 16, 0)[vocab..3 * vocab].to_vec();
+        // Logits error at 17 and 18 after a check with rejected drafts at
+        // 17 and 18, with or without the restore.
+        let mut run = |restore: bool| {
+            assert_eq!(crate::kernels::argmax(spec.forward_batch(&tokens, 0)), next);
+            spec.forward_batch_logits(&[next, 1234, 5678], 16, 0);
+            if restore {
+                spec.restore_conv(16);
+            }
+            let got = &spec.forward_batch_logits(&[777, 4321, 99], 17, 0)[..2 * vocab];
+            max_errors(got, &want).1
+        };
+        let rel = run(true);
+        assert!(rel < 1e-5, "conv rollback: logits rel {rel:.2e}");
+        let bad = run(false);
+        assert!(bad > 1e-2, "without the restore: logits rel {bad:.2e}");
+        println!("conv rollback: logits rel {rel:.2e}; without the restore {bad:.2e}");
     }
 
     /// llama.cpp's own f32 conversion of SmolLM2 (`llama`: Q/K rows

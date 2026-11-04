@@ -217,7 +217,7 @@ mod tests {
     fn matrices(w: &Weights) -> Vec<(String, &Weight)> {
         let mut v = vec![("token_embd".to_string(), &w.token_embedding)];
         for (i, l) in w.layers.iter().enumerate() {
-            for (n, m) in [("attn_q", &l.wq), ("attn_k", &l.wk), ("attn_v", &l.wv), ("attn_output", &l.wo), ("ffn_gate", &l.w_gate), ("ffn_down", &l.w_down), ("ffn_up", &l.w_up)] {
+            for (n, m) in l.matrices() {
                 v.push((format!("blk.{i}.{n}"), m));
             }
         }

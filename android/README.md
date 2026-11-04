@@ -31,6 +31,7 @@ folder exists):
 
 ```
 adb push qwen2.5-0.5b-instruct-q4_0.gguf /sdcard/Android/data/dev.aether.chat/files/
+adb push LFM3-1.7B-Q4_K_M.gguf /sdcard/Android/data/dev.aether.chat/files/   # ~1.1 GB
 ```
 
 Reading through shared storage goes through Android's FUSE layer. To keep

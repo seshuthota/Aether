@@ -1,0 +1,32 @@
+# 2026-11-03T19:40:40+05:30, commit 991d9d2
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 82
+# temperature: 344
+# Capacity level: -1
+# cpu0 cap 2745600 kHz
+# cpu6 cap 2649600 kHz
+# mScreenState=ON
+MemTotal:       15472808 kB
+MemFree:          615700 kB
+MemAvailable:    5398464 kB
+# bench_suite testdata/gguf/LFM3-1.7B-Q4_K_M.gguf | q4_k+q6_k+f32 | weights 1091.4 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 127 ms
+test,tok_per_s,ms
+pp64,160.5,398.7
+pp128,174.6,733.2
+pp512,159.2,3215.8
+tg64@d0,29.8,2150.9
+# tg64@d0 per token: median 33.10 ms, p95 35.84 ms (192 samples)
+tg64@d256,17.0,3758.1
+# tg64@d256 per token: median 38.90 ms, p95 104.81 ms (192 samples)
+tg64@d512,25.9,2474.9
+# tg64@d512 per token: median 38.17 ms, p95 61.14 ms (192 samples)
+ttft_pp64,1.9,530.0
+# peak RSS 1188380 kB
+# monitor: 118 samples over 58.31 s, max temp 88.4 °C, energy 196.82 J, avg power 3.38 W, charge counter: 134.9 J over a 31 s window = 4.35 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/LFM3-1.7B-Q4_K_M.gguf","quantization":"q4_k+q6_k+f32","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":127,"prefill":[{"prompt_tokens":64,"median_ms":398.7,"p95_ms":1960.5,"tokens_per_second":160.5},{"prompt_tokens":128,"median_ms":733.2,"p95_ms":737.5,"tokens_per_second":174.6},{"prompt_tokens":512,"median_ms":3215.8,"p95_ms":3231.9,"tokens_per_second":159.2}],"decode":[{"context_depth":0,"median_ms_per_token":33.10,"p95_ms_per_token":35.84,"tokens_per_second":29.8},{"context_depth":256,"median_ms_per_token":38.90,"p95_ms_per_token":104.81,"tokens_per_second":17.0},{"context_depth":512,"median_ms_per_token":38.17,"p95_ms_per_token":61.14,"tokens_per_second":25.9}],"ttft_pp64_ms":530.0,"peak_memory_mb":1161},"system_state":{"battery_status":"Discharging","max_temp_c":88.4,"min_freq_khz":{"cpu0":556800,"cpu1":556800,"cpu2":556800,"cpu3":556800,"cpu4":556800,"cpu5":556800,"cpu6":1958400,"cpu7":1958400},"avg_power_w":4.35}}

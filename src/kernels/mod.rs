@@ -18,7 +18,25 @@ pub mod vulkan;
 use crate::pool::{SharedOut, ThreadPool};
 use crate::quant::{BlockQ8_0, QK};
 use crate::weight::Weight;
-pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, softmax};
+pub use scalar::{add_inplace, argmax, rmsnorm, rmsnorm_inplace, rope_adjacent, rope_halves, rope_halves_pairs, softmax};
+
+/// RMSNorm each head of `x` with the same gain (LFM3's QK-norm).
+pub fn rmsnorm_heads(x: &mut [f32], weight: &[f32], head_size: usize, eps: f32) {
+    assert_eq!(weight.len(), head_size);
+    for head in x.chunks_exact_mut(head_size) {
+        rmsnorm_inplace(head, weight, eps);
+    }
+}
+
+/// Multiply head `h` of `x` by `sigmoid(gates[h])` (LFM3's output gate).
+pub fn gate_heads(x: &mut [f32], gates: &[f32], head_size: usize) {
+    for (head, &g) in x.chunks_exact_mut(head_size).zip(gates) {
+        let s = 1.0 / (1.0 + (-g).exp());
+        for v in head {
+            *v *= s;
+        }
+    }
+}
 
 /// SwiGLU in place, `gate_i = silu(gate_i) * up_i` (see [`scalar::swiglu`]);
 /// NEON with a polynomial `exp` on aarch64.
@@ -85,6 +103,65 @@ pub fn attention_group<'a>(
     #[cfg(not(target_arch = "aarch64"))]
     for (oh, qh) in out.chunks_exact_mut(hs).zip(q.chunks_exact(hs)) {
         scalar::attention_head(oh, qh, &keys, &values, pos, scores);
+    }
+}
+
+/// [`attention_group`] over only the last `window` positions ending at
+/// `pos` (a sliding-window layer). `scores` needs `min(window, pos + 1)`
+/// entries. A full layer passes `usize::MAX`.
+pub fn attention_group_window<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    hs: usize,
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    window: usize,
+    scores: &mut [f32],
+) {
+    let start = (pos + 1).saturating_sub(window);
+    let n = pos + 1 - start;
+    attention_group(out, q, hs, |t| keys(start + t), |t| values(start + t), n - 1, scores);
+}
+
+/// [`attention_head`] with a sliding window.
+#[allow(clippy::too_many_arguments)]
+pub fn attention_head_window<'a>(
+    out: &mut [f32],
+    q: &[f32],
+    keys: impl Fn(usize) -> &'a [f32],
+    values: impl Fn(usize) -> &'a [f32],
+    pos: usize,
+    window: usize,
+    scores: &mut [f32],
+) {
+    attention_group_window(out, q, q.len(), keys, values, pos, window, scores);
+}
+
+/// One depthwise causal short-conv step: `out[ch] = Σ_{k < width-1}
+/// state[k][ch] · weight[ch][k] + u[ch] · weight[ch][width-1]`, then the
+/// state shifts one row and `u` becomes its last row.
+pub fn short_conv_step(u: &[f32], weight: &[f32], state: &mut [f32], dim: usize, width: usize, out: &mut [f32]) {
+    assert_eq!((u.len(), out.len(), weight.len()), (dim, dim, dim * width));
+    assert!(width >= 1 && width <= 7);
+    assert_eq!(state.len(), 6 * dim);
+    for ch in 0..dim {
+        let mut acc = 0.0;
+        for k in 0..width - 1 {
+            acc += state[k * dim + ch] * weight[ch * width + k];
+        }
+        acc += u[ch] * weight[ch * width + width - 1];
+        out[ch] = acc;
+    }
+    state.copy_within(dim..6 * dim, 0);
+    state[5 * dim..].copy_from_slice(u);
+}
+
+/// [`short_conv_step`] for `t` consecutive tokens.
+pub fn short_conv_rows(u: &[f32], weight: &[f32], state: &mut [f32], dim: usize, width: usize, out: &mut [f32], t: usize) {
+    assert_eq!((u.len(), out.len()), (t * dim, t * dim));
+    for i in 0..t {
+        short_conv_step(&u[i * dim..(i + 1) * dim], weight, state, dim, width, &mut out[i * dim..(i + 1) * dim]);
     }
 }
 
@@ -884,6 +961,79 @@ mod tests {
             let (_, rel) = max_errors(&x, &want);
             let bound = 2e-6 + 2.0 * pos as f32 * f32::EPSILON;
             assert!(rel < bound, "{name}: rel {rel:.2e}");
+        }
+    }
+
+    #[test]
+    fn short_conv_matches_numpy() {
+        for dir in cases("shortconv_") {
+            let (u, w, st, want, end) = (arr(&dir, "u"), arr(&dir, "weight"), arr(&dir, "state"), arr(&dir, "out"), arr(&dir, "state_out"));
+            let dim = st.len() / 6;
+            let width = w.len() / dim;
+            let t = u.len() / dim;
+            let mut state = st.clone();
+            let mut out = vec![f32::NAN; u.len()];
+            short_conv_rows(&u, &w, &mut state, dim, width, &mut out, t);
+            let (_, rel) = max_errors(&out, &want);
+            assert!(rel < 1e-5, "{}: out rel {rel:.2e}", dir.display());
+            assert_eq!(state, end, "{}: final state", dir.display());
+        }
+    }
+
+    #[test]
+    fn rmsnorm_heads_matches_numpy() {
+        for dir in cases("headnorm_") {
+            let (mut x, weight, want) = (arr(&dir, "x"), arr(&dir, "weight"), arr(&dir, "out"));
+            let hs = weight.len();
+            rmsnorm_heads(&mut x, &weight, hs, 1e-5);
+            let (_, rel) = max_errors(&x, &want);
+            assert!(rel < 1e-5, "{}: rel {rel:.2e}", dir.display());
+        }
+    }
+
+    #[test]
+    fn gate_matches_numpy() {
+        for dir in cases("gate_") {
+            let (mut x, gates, want) = (arr(&dir, "x"), arr(&dir, "gates"), arr(&dir, "out"));
+            let heads = gates.len();
+            let hs = x.len() / heads;
+            gate_heads(&mut x, &gates, hs);
+            let (_, rel) = max_errors(&x, &want);
+            assert!(rel < 1e-6, "{}: rel {rel:.2e}", dir.display());
+        }
+    }
+
+    #[test]
+    fn rope_partial_matches_numpy() {
+        for dir in cases("partial_rope_") {
+            let (mut x, want) = (arr(&dir, "x"), arr(&dir, "out"));
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            let body = name.trim_start_matches("partial_rope_");
+            let (shape, rest) = body.split_once("_p").unwrap();
+            let (pos, pairs) = rest.split_once("_r").unwrap();
+            let hs: usize = shape.split('x').nth(1).unwrap().parse().unwrap();
+            let pos: usize = pos.parse().unwrap();
+            let pairs: usize = pairs.parse().unwrap();
+            rope_halves_pairs(&mut x, pos, hs, 1e6, pairs);
+            let (_, rel) = max_errors(&x, &want);
+            let bound = 2e-6 + 2.0 * pos as f32 * f32::EPSILON;
+            assert!(rel < bound, "{name}: rel {rel:.2e}");
+        }
+    }
+
+    #[test]
+    fn attention_window_matches_numpy() {
+        for dir in cases("window_attention_") {
+            let (q, k, v, window, want) = (arr(&dir, "q"), arr(&dir, "k"), arr(&dir, "v"), arr(&dir, "window"), arr(&dir, "out"));
+            let hs = q.len();
+            let n = k.len() / hs;
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            let pos: usize = name.rsplit("_p").next().unwrap().split('_').next().unwrap().parse().unwrap();
+            let window = window[0] as usize;
+            let (mut out, mut scores) = (vec![f32::NAN; hs], vec![f32::NAN; n + 3]);
+            attention_head_window(&mut out, &q, |t| &k[t * hs..(t + 1) * hs], |t| &v[t * hs..(t + 1) * hs], pos, window, &mut scores);
+            let (_, rel) = max_errors(&out, &want);
+            assert!(rel < 1e-5, "{}: rel {rel:.2e}", dir.display());
         }
     }
 }

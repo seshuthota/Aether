@@ -354,11 +354,17 @@ pub fn attention_group<'a>(
     assert!(g * hs == q.len() && out.len() == q.len());
     let n = pos + 1;
     assert!(scores.len() >= g * n);
-    if hs == 64 || hs == 48 {
+    if hs == 64 || hs == 48 || hs == 128 {
         let (k, v) = (|t: usize| checked(keys(t), hs), |t: usize| checked(values(t), hs));
         // SAFETY: lengths checked above and in `checked`.
         unsafe {
-            if hs == 64 { group_fixed::<16>(out, q, &k, &v, n, scores, None) } else { group_fixed::<12>(out, q, &k, &v, n, scores, None) }
+            if hs == 64 {
+                group_fixed::<16>(out, q, &k, &v, n, scores, None)
+            } else if hs == 48 {
+                group_fixed::<12>(out, q, &k, &v, n, scores, None)
+            } else {
+                group_fixed::<32>(out, q, &k, &v, n, scores, None)
+            }
         }
         return;
     }
@@ -417,11 +423,17 @@ pub fn attention_group_part<'a>(
     let g = q.len() / hs;
     assert!(g * hs == q.len() && part.len() == q.len() + 2 * g && scores.len() >= g * n);
     let (acc, ms) = part.split_at_mut(q.len());
-    assert!(hs == 64 || hs == 48, "attention_group_part: head size {hs}");
+    assert!(hs == 64 || hs == 48 || hs == 128, "attention_group_part: head size {hs}");
     let (k, v) = (|t: usize| checked(keys(t), hs), |t: usize| checked(values(t), hs));
     // SAFETY: lengths checked above and in `checked`.
     unsafe {
-        if hs == 64 { group_fixed::<16>(acc, q, &k, &v, n, scores, Some(ms)) } else { group_fixed::<12>(acc, q, &k, &v, n, scores, Some(ms)) }
+        if hs == 64 {
+            group_fixed::<16>(acc, q, &k, &v, n, scores, Some(ms))
+        } else if hs == 48 {
+            group_fixed::<12>(acc, q, &k, &v, n, scores, Some(ms))
+        } else {
+            group_fixed::<32>(acc, q, &k, &v, n, scores, Some(ms))
+        }
     }
 }
 

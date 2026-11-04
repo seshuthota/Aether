@@ -1,0 +1,47 @@
+# 2026-11-03T20:06:16+05:30, commit 991d9d2
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 78
+# temperature: 399
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# mScreenState=ON
+MemTotal:       15472808 kB
+MemFree:          775864 kB
+MemAvailable:    6786192 kB
+# bench_suite testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf | q4_0+f32 | weights 1041.4 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 747 ms
+test,tok_per_s,ms
+pp64,194.2,329.6
+pp128,180.3,709.9
+pp512,180.2,2840.7
+tg64@d0,42.6,1503.9
+# tg64@d0 per token: median 23.14 ms, p95 24.75 ms (192 samples)
+tg64@d256,40.8,1569.0
+# tg64@d256 per token: median 24.14 ms, p95 28.08 ms (192 samples)
+tg64@d512,40.6,1578.1
+# tg64@d512 per token: median 24.50 ms, p95 25.71 ms (192 samples)
+ttft_pp64,2.9,342.6
+# peak RSS 1142532 kB
+# monitor: 79 samples over 38.89 s, max temp 88.0 °C, energy 65.90 J, avg power 1.69 W
+{"device":{"model":"I2401","android_version":"16","soc":"SM8750"},"model":{"name":"testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf","quantization":"q4_0+f32","context_length":577},"configuration":{"backend":"cpu","threads":6,"cores":[2, 3, 4, 5, 6, 7],"warmup_runs":0,"measured_runs":3},"results":{"model_load_ms":747,"prefill":[{"prompt_tokens":64,"median_ms":329.6,"p95_ms":549.0,"tokens_per_second":194.2},{"prompt_tokens":128,"median_ms":709.9,"p95_ms":804.3,"tokens_per_second":180.3},{"prompt_tokens":512,"median_ms":2840.7,"p95_ms":2847.6,"tokens_per_second":180.2}],"decode":[{"context_depth":0,"median_ms_per_token":23.14,"p95_ms_per_token":24.75,"tokens_per_second":42.6},{"context_depth":256,"median_ms_per_token":24.14,"p95_ms_per_token":28.08,"tokens_per_second":40.8},{"context_depth":512,"median_ms_per_token":24.50,"p95_ms_per_token":25.71,"tokens_per_second":40.6}],"ttft_pp64_ms":342.6,"peak_memory_mb":1116},"system_state":{"battery_status":"Discharging","max_temp_c":88.0,"min_freq_khz":{"cpu0":1152000,"cpu1":1152000,"cpu2":1152000,"cpu3":1152000,"cpu4":1152000,"cpu5":1152000,"cpu6":1958400,"cpu7":1958400},"avg_power_w":1.69}}
+sustain_t_s,tok_per_s
+11,40.5
+22,39.4
+32,38.3
+43,36.8
+54,34.3
+65,34.4
+77,34.0
+88,33.7
+99,34.3
+111,33.6
+122,34.1
+# sustained: 4352 tokens in 122 s = 35.7 tok/s average
+# monitor: 245 samples over 121.79 s, max temp 88.4 °C, energy 495.75 J, avg power 4.07 W, charge counter: 206.5 J over a 42 s window = 4.92 W
+# energy per token: 0.138 J (4.92 W from charge counter)

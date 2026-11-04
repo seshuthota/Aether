@@ -25,7 +25,7 @@
 //! the `l`-th `dim*dim` slice of the `wq` block.
 
 use super::config::{Config, RopeLayout};
-use super::transformer::{LayerWeights, Weights};
+use super::transformer::{AttentionWeights, LayerWeights, Mixer, Weights};
 use crate::aligned::AlignedBuf;
 use crate::weight::Weight;
 use std::io;
@@ -46,18 +46,26 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
         return Err(bad(format!("bad header {h:?}")));
     }
     let shared = h[5] > 0;
-    let config = Config {
-        dim: h[0] as usize,
+    let dim = h[0] as usize;
+    let n_heads = h[3] as usize;
+    let mut config = Config {
+        dim,
         hidden_dim: h[1] as usize,
         n_layers: h[2] as usize,
-        n_heads: h[3] as usize,
+        n_heads,
         n_kv_heads: h[4] as usize,
+        head_dim: dim / n_heads,
         vocab_size: h[5].unsigned_abs() as usize,
         seq_len: h[6] as usize,
         rope_theta: 10000.0,
         rope_layout: RopeLayout::AdjacentPairs,
         norm_eps: 1e-5,
+        layers: Vec::new(),
+        qk_norm: false,
+        output_gate: false,
+        sandwich_norm: false,
     };
+    config.all_attention(10000.0, RopeLayout::AdjacentPairs);
     let c = &config;
     let (dim, hidden, layers, kv_dim) = (c.dim, c.hidden_dim, c.n_layers, c.kv_dim());
 
@@ -86,14 +94,21 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
             let mut next = |i: usize| per_layer[i].next().unwrap();
             LayerWeights {
                 attn_norm: next(0),
-                wq: Weight::from(next(1)),
-                wk: Weight::from(next(2)),
-                wv: Weight::from(next(3)),
-                wo: Weight::from(next(4)),
-                bq: None,
-                bk: None,
-                bv: None,
+                mixer: Mixer::Attention(AttentionWeights {
+                    wq: Weight::from(next(1)),
+                    wk: Weight::from(next(2)),
+                    wv: Weight::from(next(3)),
+                    wo: Weight::from(next(4)),
+                    bq: None,
+                    bk: None,
+                    bv: None,
+                    q_norm: None,
+                    k_norm: None,
+                    gate: None,
+                }),
+                post_attn_norm: None,
                 ffn_norm: next(5),
+                post_ffn_norm: None,
                 w_gate: Weight::from(next(6)),
                 w_down: Weight::from(next(7)),
                 w_up: Weight::from(next(8)),

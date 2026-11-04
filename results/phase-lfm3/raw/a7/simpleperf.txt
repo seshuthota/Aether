@@ -1,0 +1,28 @@
+# 2026-11-04, simpleperf record -e cpu-cycles:u -o perf.data ./aether testdata/gguf/LFM3-1.7B-Q4_K_M.gguf -i 'The history of the printing press' -t 0 -n 300 -c 2-7
+# caps cpu0/cpu6 2.75/2.65 GHz, battery 61 %, screen on, CPU 46.5 C at start
+# prefill: 6 tokens in 179.6 ms | decode: 294 tokens in 9620.2 ms (30.6 tok/s) | peak RSS 1196208 kB
+# simpleperf report -i perf.data --sort symbol
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data ./aether testdata/gguf/LFM3-1.7B-Q4_K_M.gguf -i The history of the printing press -t 0 -n 300 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 235818
+Event count: 138724653382
+
+Overhead  Symbol
+54.11%    aether::kernels::neon_quant::dot4_q4_k_q8_0
+32.88%    aether::kernels::neon_quant::dot4_q6_k_q8_0
+7.01%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+1.71%     aether::kernels::quant_rows
+1.25%     <aether::pool::ThreadPool>::run
+0.44%     aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#1}>
+0.44%     aether::kernels::quant_rows_mmla
+0.43%     aether::model::transformer::attention_chunked::{closure#0}
+0.30%     aether::kernels::neon_quant::mmla4_k::<3>
+0.11%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.11%     __memcpy_aarch64_nt
+0.11%     <aether::model::transformer::Transformer>::forward
+0.11%     scudo::HybridMutex::tryLock()
+0.10%     aether::kernels::neon_quant::quantize_q8_0
+0.08%     aether::kernels::neon::swiglu
+0.08%     aether::kernels::scalar::rmsnorm
+0.08%     __memset_aarch64_nt

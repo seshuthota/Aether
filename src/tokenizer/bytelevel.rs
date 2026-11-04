@@ -131,6 +131,16 @@ pub fn gpt2_split(s: &str) -> Vec<(usize, usize)> {
 /// one preceding punctuation or space character (`(hello` is one piece);
 /// numbers are always single digits; newline runs are grouped.
 pub fn qwen2_split(s: &str) -> Vec<(usize, usize)> {
+    qwen_like_split(s, 1)
+}
+
+/// LFM3's pre-tokenizer: Qwen2's regex with `\p{N}{1,3}` instead of
+/// `\p{N}` (digits in groups of up to three).
+pub fn lfm2_split(s: &str) -> Vec<(usize, usize)> {
+    qwen_like_split(s, 3)
+}
+
+fn qwen_like_split(s: &str, max_digits: usize) -> Vec<(usize, usize)> {
     let cs: Vec<(usize, char)> = s.char_indices().collect();
     let end = s.len();
     let at = |i: usize| cs.get(i).map(|&(b, _)| b).unwrap_or(end);
@@ -175,10 +185,14 @@ pub fn qwen2_split(s: &str) -> Vec<(usize, usize)> {
             i = e;
             continue;
         }
-        // 3. \p{N}: a single digit
+        // 3. \p{N}{1,max_digits}
         if is_number(c) {
-            out.push((at(i), at(i + 1)));
-            i += 1;
+            let mut e = i;
+            while e < cs.len() && e - i < max_digits && is_number(cs[e].1) {
+                e += 1;
+            }
+            out.push((at(i), at(e)));
+            i = e;
             continue;
         }
         // 4.  ?[^\s\p{L}\p{N}]+[\r\n]*
@@ -213,6 +227,9 @@ pub fn qwen2_split(s: &str) -> Vec<(usize, usize)> {
 /// The exact regex Qwen2's tokenizer.json declares (recognised verbatim).
 const QWEN2_REGEX: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
+/// The exact regex LFM3's tokenizer.json declares (recognised verbatim).
+const LFM2_REGEX: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
 /// How text is split into words before BPE.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PreTokenizer {
@@ -220,6 +237,8 @@ enum PreTokenizer {
     Gpt2 { split_digits: bool },
     /// Qwen2 regex.
     Qwen2,
+    /// LFM3: Qwen2's regex with digit runs of up to three.
+    Lfm2,
 }
 
 /// GPT-2's byte → stand-in character table: printable Latin-1 bytes map to
@@ -249,6 +268,9 @@ pub struct Tokenizer {
     pre: PreTokenizer,
     /// Apply Unicode NFC first (Qwen2).
     nfc: bool,
+    /// A pre-token already in the vocabulary is one token, without merges
+    /// (LFM3).
+    ignore_merges: bool,
     byte_char: [char; 256],
     char_byte: HashMap<char, u8>,
 }
@@ -320,28 +342,31 @@ impl Tokenizer {
             Some("Sequence") => pre_json.get("pretokenizers").and_then(Json::as_array).unwrap_or(&[]).iter().collect(),
             _ => vec![pre_json],
         };
-        let (mut split_digits, mut gpt2, mut qwen2) = (false, false, false);
+        let (mut split_digits, mut gpt2, mut qwen2, mut lfm2) = (false, false, false, false);
         for step in steps {
             let flag = |k: &str| step.get(k).and_then(Json::as_bool);
             match step.get("type").and_then(Json::as_str) {
                 Some("Digits") if flag("individual_digits") == Some(true) => split_digits = true,
                 Some("ByteLevel") if flag("add_prefix_space") != Some(true) => gpt2 |= flag("use_regex") != Some(false),
-                Some("Split")
-                    if step.get("pattern").and_then(|p| p.get("Regex")).and_then(Json::as_str) == Some(QWEN2_REGEX)
-                        && step.get("behavior").and_then(Json::as_str) == Some("Isolated") =>
-                {
-                    qwen2 = true
+                Some("Split") if step.get("behavior").and_then(Json::as_str) == Some("Isolated") => {
+                    match step.get("pattern").and_then(|p| p.get("Regex")).and_then(Json::as_str) {
+                        Some(QWEN2_REGEX) => qwen2 = true,
+                        Some(LFM2_REGEX) => lfm2 = true,
+                        other => return Err(bad(format!("unsupported split regex {other:?}"))),
+                    }
                 }
                 other => return Err(bad(format!("unsupported pre-tokenizer step {other:?}"))),
             }
         }
-        let pre = match (gpt2, qwen2) {
-            (true, false) => PreTokenizer::Gpt2 { split_digits },
-            (false, true) if !split_digits => PreTokenizer::Qwen2,
+        let pre = match (gpt2, qwen2, lfm2) {
+            (true, false, false) => PreTokenizer::Gpt2 { split_digits },
+            (false, true, false) if !split_digits => PreTokenizer::Qwen2,
+            (false, false, true) if !split_digits => PreTokenizer::Lfm2,
             _ => return Err(bad("unsupported combination of pre-tokenizers".into())),
         };
+        let ignore_merges = model.get("ignore_merges").and_then(Json::as_bool).unwrap_or(false);
 
-        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc))
+        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc, ignore_merges))
     }
 
     /// The tokenizer embedded in a GGUF file (`tokenizer.ggml.*` keys), so a
@@ -366,15 +391,17 @@ impl Tokenizer {
             .map(|v| v.as_str().and_then(|s| s.split_once(' ')).map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| bad("bad merge".into())))
             .collect::<io::Result<_>>()?;
         let merges = merge_ranks(&vocab, &merge_list)?;
-        let (pre, nfc) = match g.get("tokenizer.ggml.pre").and_then(Value::as_str).unwrap_or("default") {
-            "smollm" => (PreTokenizer::Gpt2 { split_digits: true }, false),
-            "qwen2" => (PreTokenizer::Qwen2, true),
-            "gpt-2" | "default" => (PreTokenizer::Gpt2 { split_digits: false }, false),
+        let (pre, nfc, ignore_merges) = match g.get("tokenizer.ggml.pre").and_then(Value::as_str).unwrap_or("default") {
+            "smollm" => (PreTokenizer::Gpt2 { split_digits: true }, false, false),
+            "qwen2" => (PreTokenizer::Qwen2, true, false),
+            "lfm2" => (PreTokenizer::Lfm2, false, true),
+            "gpt-2" | "default" => (PreTokenizer::Gpt2 { split_digits: false }, false, false),
             other => return Err(bad(format!("GGUF pre-tokenizer {other:?} is not supported"))),
         };
-        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc))
+        Ok(Tokenizer::assemble(id_to_token, vocab, merges, added, pre, nfc, ignore_merges))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assemble(
         id_to_token: Vec<String>,
         vocab: HashMap<String, usize>,
@@ -382,10 +409,11 @@ impl Tokenizer {
         added: Vec<(String, usize)>,
         pre: PreTokenizer,
         nfc: bool,
+        ignore_merges: bool,
     ) -> Tokenizer {
         let byte_char = bytes_to_unicode();
         let char_byte = byte_char.iter().enumerate().map(|(b, &c)| (c, b as u8)).collect();
-        Tokenizer { id_to_token, vocab, merges, added, pre, nfc, byte_char, char_byte }
+        Tokenizer { id_to_token, vocab, merges, added, pre, nfc, ignore_merges, byte_char, char_byte }
     }
 
     pub fn vocab_size(&self) -> usize {
@@ -434,8 +462,9 @@ impl Tokenizer {
     fn encode_plain(&self, text: &str, out: &mut Vec<usize>) {
         let normalized = if self.nfc { super::nfc::nfc(text) } else { std::borrow::Cow::Borrowed(text) };
         let text: &str = &normalized;
-        if self.pre == PreTokenizer::Qwen2 {
-            for (a, b) in qwen2_split(text) {
+        if matches!(self.pre, PreTokenizer::Qwen2 | PreTokenizer::Lfm2) {
+            let spans = if self.pre == PreTokenizer::Qwen2 { qwen2_split(text) } else { lfm2_split(text) };
+            for (a, b) in spans {
                 self.bpe(&text[a..b], out);
             }
             return;
@@ -464,13 +493,14 @@ impl Tokenizer {
 
     /// Byte-level mapping and merges for one pre-tokenized word.
     fn bpe(&self, word: &str, out: &mut Vec<usize>) {
-        let mut syms: Vec<usize> = word
-            .bytes()
-            .map(|b| {
-                let mut buf = [0u8; 4];
-                self.vocab[self.byte_char[b as usize].encode_utf8(&mut buf) as &str]
-            })
-            .collect();
+        let mapped: String = word.bytes().map(|b| self.byte_char[b as usize]).collect();
+        if self.ignore_merges {
+            if let Some(&id) = self.vocab.get(&mapped) {
+                out.push(id);
+                return;
+            }
+        }
+        let mut syms: Vec<usize> = mapped.chars().map(|c| self.vocab[&c.to_string()]).collect();
         loop {
             // The best-ranked adjacent pair, leftmost on ties.
             let best = syms.windows(2).enumerate().filter_map(|(i, w)| self.merges.get(&(w[0], w[1])).map(|&(rank, id)| (rank, i, id))).min();
@@ -535,11 +565,38 @@ mod tests {
         assert_eq!(w("!!\n\nz"), ["!!\n\n", "z"]);
     }
 
+    /// Hand-checked splits of LFM3's regex: digit runs of up to three, and
+    /// otherwise Qwen2's rules.
+    #[test]
+    fn lfm2_regex_cases() {
+        let w = |s: &'static str| lfm2_split(s).into_iter().map(|(a, b)| &s[a..b]).collect::<Vec<_>>();
+        assert_eq!(w("Hello world"), ["Hello", " world"]);
+        assert_eq!(w("1234567"), ["123", "456", "7"]);
+        assert_eq!(w("a1234b"), ["a", "123", "4", "b"]);
+        assert_eq!(w("(hello) 12345"), ["(hello", ")", " ", "123", "45"]);
+        assert_eq!(w("IT'S ok"), ["IT", "'S", " ok"]);
+        assert_eq!(w("a\n\n  b"), ["a", "\n\n", " ", " b"]);
+    }
+
     /// Qwen2.5's tokenizer (NFC + its own regex, 151k vocabulary) against
     /// HF tokenizers on the same corpus.
     #[test]
     fn qwen2_matches_hf_tokenizers_on_corpus() {
         check_corpus("models/Qwen2.5-0.5B-Instruct/tokenizer.json", "qwen2.5-0.5b");
+    }
+
+    /// LFM3's tokenizer: no normalizer, `\p{N}{1,3}`, `ignore_merges`, 140
+    /// added tokens, against HF tokenizers on 436 strings.
+    #[test]
+    fn lfm2_matches_hf_tokenizers_on_corpus() {
+        check_corpus("models/LFM3-1.7B/tokenizer.json", "lfm3");
+    }
+
+    /// The tokenizer embedded in the official Q4_K_M GGUF must behave the
+    /// same as the tokenizer.json it was converted from.
+    #[test]
+    fn lfm3_gguf_tokenizer_matches_hf_tokenizers() {
+        check_corpus("gguf/LFM3-1.7B-Q4_K_M.gguf", "lfm3");
     }
 
     /// 433 strings (whitespace, Unicode scripts, emoji, code, chat markup
