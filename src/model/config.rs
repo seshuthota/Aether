@@ -29,6 +29,15 @@ pub enum LayerKind {
     Conv { width: usize },
 }
 
+/// The MLP's nonlinearity on the gate branch, multiplied by the up branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    /// `silu(gate) · up` (Llama, Qwen, LFM3).
+    SwiGlu,
+    /// `gelu(gate) · up`, GELU's tanh approximation (Gemma).
+    GeluTanh,
+}
+
 /// Shape and constants of a decoder-only transformer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -61,6 +70,26 @@ pub struct Config {
     pub output_gate: bool,
     /// RMSNorm on the mixer and FFN outputs before they enter the residual.
     pub sandwich_norm: bool,
+    /// Per-layer head size when layers differ (Gemma 4: 256 on sliding
+    /// layers, 512 on full ones); empty means `head_dim` everywhere.
+    pub head_dims: Vec<usize>,
+    /// Per-layer MLP width when layers differ; empty means `hidden_dim`.
+    pub hidden_dims: Vec<usize>,
+    /// The layer whose K/V cache each layer reads (Gemma 4's shared KV:
+    /// layers 15–34 read 13 or 14 and compute no K/V); empty means its own.
+    pub kv_source: Vec<usize>,
+    /// Scale of the attention scores; `None` is 1/√(head size).
+    pub attn_scale: Option<f32>,
+    /// The embedding row is multiplied by this (Gemma: √dim).
+    pub embed_scale: f32,
+    /// Logits become `cap · tanh(logits / cap)` (Gemma).
+    pub logit_softcap: Option<f32>,
+    /// RMSNorm without a gain on v per head (Gemma 4).
+    pub v_norm: bool,
+    pub activation: Activation,
+    /// Width of the per-layer embedding of each layer (Gemma 4: 256); 0
+    /// for none.
+    pub ple_dim: usize,
 }
 
 impl Config {
@@ -77,6 +106,61 @@ impl Config {
     /// How many query heads share each K/V head.
     pub fn kv_group(&self) -> usize {
         self.n_heads / self.n_kv_heads
+    }
+
+    /// Head size of `layer`'s attention.
+    pub fn head_dim_of(&self, layer: usize) -> usize {
+        self.head_dims.get(layer).copied().unwrap_or(self.head_dim)
+    }
+
+    /// Width of `layer`'s queries (all query heads), and of its attention
+    /// output before `wo`.
+    pub fn q_dim(&self, layer: usize) -> usize {
+        self.n_heads * self.head_dim_of(layer)
+    }
+
+    /// Width of `layer`'s K (and V) row.
+    pub fn kv_dim_of(&self, layer: usize) -> usize {
+        self.n_kv_heads * self.head_dim_of(layer)
+    }
+
+    /// `layer`'s MLP width.
+    pub fn hidden_of(&self, layer: usize) -> usize {
+        self.hidden_dims.get(layer).copied().unwrap_or(self.hidden_dim)
+    }
+
+    /// The layer whose cache `layer` reads (itself unless KV is shared).
+    pub fn kv_source_of(&self, layer: usize) -> usize {
+        self.kv_source.get(layer).copied().unwrap_or(layer)
+    }
+
+    /// Whether `layer` computes and stores its own K/V.
+    pub fn owns_kv(&self, layer: usize) -> bool {
+        self.kv_source_of(layer) == layer
+    }
+
+    /// The widest q / attention output, K/V row and MLP over all layers
+    /// (buffer sizes).
+    pub fn max_q_dim(&self) -> usize {
+        (0..self.n_layers).map(|l| self.q_dim(l)).max().unwrap_or(0).max(self.n_heads * self.head_dim)
+    }
+
+    pub fn max_kv_dim(&self) -> usize {
+        (0..self.n_layers).map(|l| self.kv_dim_of(l)).max().unwrap_or(0).max(self.kv_dim())
+    }
+
+    pub fn max_hidden(&self) -> usize {
+        (0..self.n_layers).map(|l| self.hidden_of(l)).max().unwrap_or(0).max(self.hidden_dim)
+    }
+
+    /// Whether every layer has the same shape and none of Gemma's extras,
+    /// as the GPU and DSP paths assume.
+    pub fn uniform(&self) -> bool {
+        self.head_dims.is_empty() && self.hidden_dims.is_empty() && self.kv_source.is_empty() && self.ple_dim == 0
+    }
+
+    pub fn has_window(&self) -> bool {
+        (0..self.n_layers).any(|l| self.window(l).is_some())
     }
 
     pub fn kind(&self, layer: usize) -> LayerKind {

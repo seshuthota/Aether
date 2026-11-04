@@ -74,6 +74,8 @@ pub enum GgmlType {
     #[allow(non_camel_case_types)] // ggml's names
     Q4_K,
     #[allow(non_camel_case_types)]
+    Q5_K,
+    #[allow(non_camel_case_types)]
     Q6_K,
     /// Any other type, by its ggml id (refused when its data is requested).
     Other(u32),
@@ -87,6 +89,7 @@ impl GgmlType {
             2 => GgmlType::Q4_0,
             6 => GgmlType::Q5_0,
             12 => GgmlType::Q4_K,
+            13 => GgmlType::Q5_K,
             14 => GgmlType::Q6_K,
             8 => GgmlType::Q8_0,
             30 => GgmlType::BF16,
@@ -103,6 +106,7 @@ impl GgmlType {
             GgmlType::Q5_0 => 6,
             GgmlType::Q8_0 => 8,
             GgmlType::Q4_K => 12,
+            GgmlType::Q5_K => 13,
             GgmlType::Q6_K => 14,
             GgmlType::BF16 => 30,
             GgmlType::Other(id) => id,
@@ -118,6 +122,7 @@ impl GgmlType {
             GgmlType::Q4_0 => Some(n / 32 * 18),
             GgmlType::Q5_0 => Some(n / 32 * 22),
             GgmlType::Q4_K => Some(n / 256 * 144),
+            GgmlType::Q5_K => Some(n / 256 * 176),
             GgmlType::Q6_K => Some(n / 256 * 210),
             GgmlType::Other(_) => None,
         }

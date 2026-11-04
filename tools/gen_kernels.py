@@ -8,6 +8,9 @@ computed in float64 from those exact float32 inputs, then stored as float32):
   matmul_<d>x<n>/        w [d, n], x [n], out [d]               out = W @ x
   gemm_<t>x<d>x<n>/      w [d, n], x [t, n], out [t, d]         out = X @ W.T
   rmsnorm_<n>/           x, weight, out                         eps = 1e-5
+  gelu_<n>/              gate, up, out                          gelu_tanh(gate) * up (Gemma)
+  softcap_<n>/           x, out                                 30 tanh(x / 30)
+  plainnorm_<h>x<hs>/    x, out                                 RMSNorm per head, no gain, eps 1e-6
   softmax_<n>/           x, out
   swiglu_<n>/            gate, up, out                          silu(gate) * up
   rope_<heads>x<hs>_p<pos>/  x, out (adjacent pairs, theta 1e4)
@@ -208,6 +211,33 @@ def main():
             for nt in nts:
                 q, k, v = f32(nt, nh, hs), f32(pos0 + nt, nkv, hs), f32(pos0 + nt, nkv, hs)
                 save(root, f"attention_causal_{nh}x{nkv}x{hs}_p{pos0}_t{nt}", q=q, k=k, v=v, out=attention_causal_ref(q, k, v, pos0))
+    # Gemma 4 (appended last, so earlier cases keep their data): GELU (tanh
+    # form) × up, RMSNorm without a gain (eps 1e-6), the logit soft-cap, and
+    # attention with head sizes 256 / 512 and one K/V head for eight queries.
+    for n in odd + [256, 6144]:
+        g, u = f32(n, scale=3.0), f32(n)
+        g64 = g.astype(np.float64)
+        gelu = 0.5 * g64 * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (g64 + 0.044715 * g64**3)))
+        save(root, f"gelu_{n}", gate=g, up=u, out=gelu * u)
+        x = f32(n, scale=40.0)
+        save(root, f"softcap_{n}", x=x, out=30.0 * np.tanh(x.astype(np.float64) / 30.0))
+    for heads, hs in ((3, 17), (1, 256), (1, 512)):
+        x = f32(heads * hs, scale=3.0).astype(np.float64).reshape(heads, hs)
+        out = x / np.sqrt((x * x).mean(axis=1, keepdims=True) + 1e-6)
+        save(root, f"plainnorm_{heads}x{hs}", x=x.reshape(-1), out=out.reshape(-1))
+    for hs in (256, 512):
+        for n in (1, 7, 600):
+            q, k, v = f32(hs), f32(n, hs), f32(n, hs)
+            s_ = k.astype(np.float64) @ q.astype(np.float64) / np.sqrt(hs)
+            e = np.exp(s_ - s_.max())
+            save(root, f"attention_{n}x{hs}", q=q, k=k, v=v, out=(e / e.sum()) @ v.astype(np.float64))
+        for pos0, nt in ((0, 1), (0, 33), (100, 7)):
+            q, k, v = f32(nt, 8, hs), f32(pos0 + nt, 1, hs), f32(pos0 + nt, 1, hs)
+            save(root, f"attention_causal_8x1x{hs}_p{pos0}_t{nt}", q=q, k=k, v=v, out=attention_causal_ref(q, k, v, pos0))
+    for n, window, pos in ((600, 512, 510), (600, 512, 511), (600, 512, 512), (600, 512, 599)):
+        q, k, v = f32(256), f32(n, 256), f32(n, 256)
+        save(root, f"window_attention_256_n{n}_p{pos}_w{window}", q=q, k=k, v=v, window=np.array(window, np.float32),
+             out=attention_window_ref(q, k, v, pos, window))
     print(f"wrote {len(list(root.iterdir()))} cases to {root}")
 
 

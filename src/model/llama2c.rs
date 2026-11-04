@@ -24,7 +24,7 @@
 //! Each tensor of all layers is stored contiguously, so layer `l`'s `wq` is
 //! the `l`-th `dim*dim` slice of the `wq` block.
 
-use super::config::{Config, RopeLayout};
+use super::config::{Activation, Config, RopeLayout};
 use super::transformer::{AttentionWeights, LayerWeights, Mixer, Weights};
 use crate::aligned::AlignedBuf;
 use crate::weight::Weight;
@@ -64,6 +64,15 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
         qk_norm: false,
         output_gate: false,
         sandwich_norm: false,
+        head_dims: Vec::new(),
+        hidden_dims: Vec::new(),
+        kv_source: Vec::new(),
+        attn_scale: None,
+        embed_scale: 1.0,
+        logit_softcap: None,
+        v_norm: false,
+        activation: Activation::SwiGlu,
+        ple_dim: 0,
     };
     config.all_attention(10000.0, RopeLayout::AdjacentPairs);
     let c = &config;
@@ -96,8 +105,8 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
                 attn_norm: next(0),
                 mixer: Mixer::Attention(AttentionWeights {
                     wq: Weight::from(next(1)),
-                    wk: Weight::from(next(2)),
-                    wv: Weight::from(next(3)),
+                    wk: Some(Weight::from(next(2))),
+                    wv: Some(Weight::from(next(3))),
                     wo: Weight::from(next(4)),
                     bq: None,
                     bk: None,
@@ -111,11 +120,13 @@ pub fn load(path: impl AsRef<Path>) -> io::Result<(Config, Weights)> {
                 post_ffn_norm: None,
                 w_gate: Weight::from(next(6)),
                 w_down: Weight::from(next(7)),
+                ple: None,
+                out_scale: None,
                 w_up: Weight::from(next(8)),
             }
         })
         .collect();
-    Ok((config, Weights { token_embedding: Weight::from(token_embedding), layers, final_norm, classifier }))
+    Ok((config, Weights { token_embedding: Weight::from(token_embedding), layers, final_norm, classifier, ple: None }))
 }
 
 struct Cursor<'a> {

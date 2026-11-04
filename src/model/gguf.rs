@@ -1,5 +1,7 @@
-//! Loader for GGUF model files (llama.cpp's format): `llama` and `qwen2`
-//! architectures, tensors in f32 / f16 / bf16 / Q8_0 / Q4_0.
+//! Loader for GGUF model files (llama.cpp's format): `llama`, `qwen2`,
+//! `lfm3` and `gemma4` architectures, tensors in f32 / f16 / bf16 / Q8_0 /
+//! Q4_0 / Q5_0 / Q4_K / Q6_K (and Q5_K for Gemma 4's per-layer embedding
+//! table, which is only looked up).
 //!
 //! Hyperparameters come from metadata keys prefixed with the architecture
 //! name (`qwen2.embedding_length`, `qwen2.attention.head_count_kv`, …).
@@ -18,12 +20,12 @@
 //! pressure); f16/bf16 matrices are widened to owned f32. Norm gains and
 //! biases (small, always f32) are copied.
 
-use super::config::{Config, RopeLayout};
-use super::transformer::{AttentionWeights, ConvWeights, LayerWeights, Mixer, Weights};
+use super::config::{Activation, Config, RopeLayout};
+use super::transformer::{AttentionWeights, ConvWeights, LayerWeights, Mixer, PleTable, PleWeights, Weights};
 use crate::aligned::AlignedBuf;
 use crate::format::gguf::{GgmlType, Gguf, Value};
 use crate::format::safetensors::{bf16_to_f32, f16_to_f32};
-use crate::weight::{Floats, Mapped, Store, Weight};
+use crate::weight::{Floats, Mapped, Rows, Store, Weight};
 use std::io;
 use std::path::Path;
 
@@ -37,13 +39,14 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
     let arch = g.get("general.architecture").and_then(Value::as_str).ok_or_else(|| bad("no general.architecture".into()))?.to_string();
     let rope_layout = match arch.as_str() {
         "llama" => RopeLayout::AdjacentPairs,
-        "qwen2" | "lfm3" => RopeLayout::Halves,
-        other => return Err(bad(format!("architecture {other:?} is not supported (llama, qwen2, lfm3)"))),
+        "qwen2" | "lfm3" | "gemma4" => RopeLayout::Halves,
+        other => return Err(bad(format!("architecture {other:?} is not supported (llama, qwen2, lfm3, gemma4)"))),
     };
     let key = |k: &str| g.get(&format!("{arch}.{k}"));
     let num = |k: &str| key(k).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(format!("missing {arch}.{k}")));
     let arr = |k: &str| key(k).and_then(Value::as_array);
     let lfm3 = arch == "lfm3";
+    let gemma4 = arch == "gemma4";
     let n_heads = num("attention.head_count")?;
     let dim = num("embedding_length")?;
     let n_layers = num("block_count")?;
@@ -66,6 +69,23 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
         }
         _ => head_dim / 2,
     };
+    // Gemma 4: sliding layers have their own head size; the last
+    // `shared_kv_layers` layers read the cache of the last layer of the same
+    // kind before them that has one (llama.cpp's `kv_source`).
+    let head_dim_swa = key("attention.key_length_swa").and_then(Value::as_u64).map_or(head_dim, |v| v as usize);
+    let is_sliding = |l: usize| (lfm3 || gemma4) && sliding.as_ref().and_then(|a| a.get(l)).copied().unwrap_or(false);
+    let shared = key("attention.shared_kv_layers").and_then(Value::as_u64).unwrap_or(0) as usize;
+    if shared > 0 && n_layers < shared + 2 {
+        return Err(bad(format!("{shared} shared KV layers of {n_layers}")));
+    }
+    let kv_from = n_layers - shared;
+    let ffn: Vec<usize> = match arr("feed_forward_length") {
+        Some(a) => a.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect(),
+        None => vec![num("feed_forward_length")?; n_layers],
+    };
+    if ffn.len() != n_layers || ffn.contains(&0) {
+        return Err(bad(format!("feed_forward_length {ffn:?} for {n_layers} layers")));
+    }
     let conv_width = key("shortconv.l_cache").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(7);
     let layers = (0..n_layers)
         .map(|l| {
@@ -73,10 +93,10 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
             if is_conv {
                 crate::model::config::LayerKind::Conv { width: conv_width }
             } else {
-                let is_sliding = lfm3 && sliding.as_ref().and_then(|a| a.get(l)).copied().unwrap_or(false);
-                let (theta, pairs) = if is_sliding { (theta_swa, head_dim / 2) } else { (theta_full, pairs_full) };
+                let sl = is_sliding(l);
+                let (theta, pairs) = if sl { (theta_swa, head_dim_swa / 2) } else { (theta_full, pairs_full) };
                 crate::model::config::LayerKind::Attention {
-                    window: if is_sliding { Some(window) } else { None },
+                    window: if sl { Some(window) } else { None },
                     rope: crate::model::config::Rope { theta, pairs, layout: rope_layout },
                 }
             }
@@ -84,7 +104,7 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
         .collect::<Vec<_>>();
     let config = Config {
         dim,
-        hidden_dim: num("feed_forward_length")?,
+        hidden_dim: ffn.iter().copied().max().unwrap_or(0),
         n_layers,
         n_heads,
         n_kv_heads,
@@ -95,12 +115,24 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
         rope_layout,
         norm_eps: key("attention.layer_norm_rms_epsilon").and_then(Value::as_f64).ok_or_else(|| bad("missing rms epsilon".into()))? as f32,
         layers,
-        qk_norm: lfm3,
+        qk_norm: lfm3 || gemma4,
         output_gate: lfm3,
-        sandwich_norm: lfm3,
+        sandwich_norm: lfm3 || gemma4,
+        head_dims: if gemma4 { (0..n_layers).map(|l| if is_sliding(l) { head_dim_swa } else { head_dim }).collect() } else { Vec::new() },
+        hidden_dims: if ffn.iter().any(|&f| f != ffn[0]) { ffn.clone() } else { Vec::new() },
+        kv_source: if shared > 0 { (0..n_layers).map(|l| if l < kv_from { l } else if is_sliding(l) { kv_from - 2 } else { kv_from - 1 }).collect() } else { Vec::new() },
+        attn_scale: if gemma4 { Some(1.0) } else { None },
+        embed_scale: if gemma4 { (dim as f32).sqrt() } else { 1.0 },
+        logit_softcap: key("final_logit_softcapping").and_then(Value::as_f64).map(|v| v as f32).filter(|&v| v > 0.0),
+        v_norm: gemma4,
+        activation: if gemma4 { Activation::GeluTanh } else { Activation::SwiGlu },
+        ple_dim: key("embedding_length_per_layer_input").and_then(Value::as_u64).unwrap_or(0) as usize,
     };
     let c = &config;
-    let (dim, kv_dim, hidden) = (c.dim, c.kv_dim(), c.hidden_dim);
+    if gemma4 && (0..c.n_layers).any(|l| c.kv_source_of(l) != l && c.window(l) != c.window(c.kv_source_of(l))) {
+        return Err(bad("a shared-KV layer reads a layer of the other kind".into()));
+    }
+    let dim = c.dim;
 
     // A matrix `[rows, cols]` (GGUF dims [cols, rows]), in place if possible.
     let matrix = |name: &str, rows: usize, cols: usize| -> io::Result<Weight> {
@@ -117,7 +149,24 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
             GgmlType::Q4_K => Weight::Q4_K(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 256)?)),
             GgmlType::Q6_K => Weight::Q6_K(Store::Mapped(Mapped::new(g.map.clone(), t.offset, n / 256)?)),
             GgmlType::F16 | GgmlType::BF16 => Weight::from(widen(g.data(t)?, t.ty, n)),
+            GgmlType::Q5_K => return Err(bad(format!("{name}: Q5_K is only supported for lookup tables"))),
             GgmlType::Other(id) => return Err(bad(format!("{name}: ggml type {id} is not supported"))),
+        })
+    };
+    // A table read a row at a time, left in the mapped file.
+    let rows = |name: &str, rows: usize, cols: usize| -> io::Result<Rows> {
+        let t = g.tensor(name).ok_or_else(|| bad(format!("missing tensor {name}")))?;
+        if t.dims != [cols, rows] {
+            return Err(bad(format!("{name}: dims {:?}, expected [{cols}, {rows}]", t.dims)));
+        }
+        let (n, m) = (rows * cols, g.map.clone());
+        Ok(match t.ty {
+            GgmlType::Q4_0 => Rows::Q4_0(Mapped::new(m, t.offset, n / 32)?),
+            GgmlType::Q8_0 => Rows::Q8_0(Mapped::new(m, t.offset, n / 32)?),
+            GgmlType::Q5_K => Rows::Q5_K(Mapped::new(m, t.offset, n / 256)?),
+            GgmlType::BF16 => Rows::BF16(Mapped::new(m, t.offset, n)?),
+            GgmlType::F32 => Rows::F32(Mapped::new(m, t.offset, n)?),
+            other => return Err(bad(format!("{name}: {other:?} is not supported for a lookup table"))),
         })
     };
     // A small f32 vector, copied (norm gains, biases).
@@ -136,17 +185,22 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
     let layers = (0..c.n_layers)
         .map(|l| {
             let p = format!("blk.{l}");
+            let (hd, qd, kv_dim, hidden, own) = (c.head_dim_of(l), c.q_dim(l), c.kv_dim_of(l), c.hidden_of(l), c.owns_kv(l));
+            // Shared-KV layers compute no K/V; files that still carry those
+            // tensors (unsloth's Gemma 4 Q4_K_M) have them ignored.
+            let own_matrix = |name: &str| if own { matrix(name, kv_dim, dim).map(Some) } else { Ok(None) };
+            let own_vector = |name: &str, n: usize| if own { vector(name, n) } else { Ok(None) };
             let mixer = match c.kind(l) {
                 crate::model::config::LayerKind::Attention { .. } => Mixer::Attention(AttentionWeights {
-                    wq: matrix(&format!("{p}.attn_q.weight"), dim, dim)?,
-                    wk: matrix(&format!("{p}.attn_k.weight"), kv_dim, dim)?,
-                    wv: matrix(&format!("{p}.attn_v.weight"), kv_dim, dim)?,
-                    wo: matrix(&format!("{p}.attn_output.weight"), dim, dim)?,
-                    bq: vector(&format!("{p}.attn_q.bias"), dim)?,
-                    bk: vector(&format!("{p}.attn_k.bias"), kv_dim)?,
-                    bv: vector(&format!("{p}.attn_v.bias"), kv_dim)?,
-                    q_norm: vector(&format!("{p}.attn_q_norm.weight"), head_dim)?,
-                    k_norm: vector(&format!("{p}.attn_k_norm.weight"), head_dim)?,
+                    wq: matrix(&format!("{p}.attn_q.weight"), qd, dim)?,
+                    wk: own_matrix(&format!("{p}.attn_k.weight"))?,
+                    wv: own_matrix(&format!("{p}.attn_v.weight"))?,
+                    wo: matrix(&format!("{p}.attn_output.weight"), dim, qd)?,
+                    bq: vector(&format!("{p}.attn_q.bias"), qd)?,
+                    bk: own_vector(&format!("{p}.attn_k.bias"), kv_dim)?,
+                    bv: own_vector(&format!("{p}.attn_v.bias"), kv_dim)?,
+                    q_norm: vector(&format!("{p}.attn_q_norm.weight"), hd)?,
+                    k_norm: own_vector(&format!("{p}.attn_k_norm.weight"), hd)?,
                     gate: optional_matrix(&format!("{p}.attn_gate.weight"), n_heads, dim)?,
                 }),
                 crate::model::config::LayerKind::Conv { width } => Mixer::Conv(ConvWeights {
@@ -164,6 +218,16 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
                 w_gate: matrix(&format!("{p}.ffn_gate.weight"), hidden, dim)?,
                 w_up: matrix(&format!("{p}.ffn_up.weight"), hidden, dim)?,
                 w_down: matrix(&format!("{p}.ffn_down.weight"), dim, hidden)?,
+                ple: if c.ple_dim > 0 {
+                    Some(PleWeights {
+                        inp_gate: matrix(&format!("{p}.inp_gate.weight"), c.ple_dim, dim)?,
+                        proj: matrix(&format!("{p}.proj.weight"), dim, c.ple_dim)?,
+                        post_norm: required(&format!("{p}.post_norm.weight"), dim)?,
+                    })
+                } else {
+                    None
+                },
+                out_scale: vector(&format!("{p}.layer_output_scale.weight"), 1)?.map(|v| v[0]),
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
@@ -172,6 +236,16 @@ pub fn load(path: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weigh
         layers,
         final_norm: required("output_norm.weight", dim)?,
         classifier: if g.tensor("output.weight").is_some() { Some(matrix("output.weight", c.vocab_size, dim)?) } else { None },
+        ple: if c.ple_dim > 0 {
+            let n = c.n_layers * c.ple_dim;
+            Some(PleTable {
+                table: rows("per_layer_token_embd.weight", c.vocab_size, n)?,
+                proj: matrix("per_layer_model_proj.weight", n, dim)?,
+                proj_norm: required("per_layer_proj_norm.weight", c.ple_dim)?,
+            })
+        } else {
+            None
+        },
     };
     Ok((config, weights, g))
 }
@@ -315,6 +389,93 @@ mod tests {
         println!("LFM3: 29 short + 9 long logits, every layer tap and 16 greedy tokens match HF");
     }
 
+
+    /// Gemma 4 E2B's shapes, from both files: per-layer head sizes and FFN
+    /// widths, shared KV (the Q4_K_M file's unused K/V in layers 15–34
+    /// ignored), partial RoPE on full layers, and the per-layer embedding
+    /// table left mapped in its own format.
+    #[test]
+    fn gemma4_loads() {
+        for (file, table) in [("gguf/gemma-4-E2B-it-Q4_0.gguf", "q4_0"), ("gguf/gemma-4-E2B-it-Q4_K_M.gguf", "q5_k")] {
+            let Some(p) = crate::testutil::golden(file) else { continue };
+            let (c, w, _) = load(p, 1024).unwrap();
+            assert_eq!((c.n_layers, c.dim, c.n_heads, c.n_kv_heads, c.vocab_size, c.ple_dim), (35, 1536, 8, 1, 262144, 256));
+            let full = [4, 9, 14, 19, 24, 29, 34];
+            for l in 0..35 {
+                let is_full = full.contains(&l);
+                assert_eq!(c.window(l), if is_full { None } else { Some(512) }, "layer {l}");
+                assert_eq!(c.head_dim_of(l), if is_full { 512 } else { 256 }, "layer {l}");
+                assert_eq!(c.hidden_of(l), if l < 15 { 6144 } else { 12288 }, "layer {l}");
+                assert_eq!(c.kv_source_of(l), if l < 15 { l } else if is_full { 14 } else { 13 }, "layer {l}");
+                assert_eq!(c.rope(l).pairs, if is_full { 64 } else { 128 }, "layer {l}");
+                assert_eq!(c.rope(l).theta, if is_full { 1e6 } else { 1e4 }, "layer {l}");
+                let a = w.layers[l].attention().unwrap();
+                assert_eq!((a.wk.is_some(), a.wv.is_some(), a.k_norm.is_some()), (l < 15, l < 15, l < 15), "layer {l}");
+                assert!(w.layers[l].ple.is_some() && w.layers[l].out_scale.is_some());
+            }
+            assert_eq!((c.attn_scale, c.logit_softcap, c.v_norm), (Some(1.0), Some(30.0), true));
+            assert_eq!(c.embed_scale, (1536f32).sqrt());
+            assert_eq!(w.ple.as_ref().unwrap().table.format_name(), table);
+        }
+    }
+
+    /// Gemma 4 E2B (BF16 file) against transformers' f32 run
+    /// (`tools/hf_dump_gemma4.py`): every layer's output and the per-layer
+    /// inputs of a 30-token prompt, its logits by the batched and the
+    /// one-token path, logits of a 600-token prompt around the 512 window,
+    /// and a 16-token greedy continuation.
+    #[test]
+    fn gemma4_matches_transformers() {
+        let (Some(p), Some(refp)) = (host_golden("gguf/gemma-4-E2B-it-BF16.gguf"), host_golden("gemma4/ref.safetensors")) else { return };
+        let (c, w, _) = load(p, 640).unwrap();
+        let mut t = Transformer::new(c.clone(), w);
+        let st = SafeTensors::open(refp).unwrap();
+        let vocab = c.vocab_size;
+        let as_ids = |v: Vec<f32>| -> Vec<usize> { v.into_iter().map(|x| x as usize).collect() };
+
+        let ids = as_ids(ref_tensor(&st, "short_ids").1);
+        let (_, want) = ref_tensor(&st, "short_logits");
+        let mut obs = Collect::default();
+        t.forward_batch_traced(&ids, 0, &mut obs);
+        let mut worst = 0f32;
+        for pos in 0..ids.len() {
+            let n = c.n_layers * c.ple_dim;
+            let (_, rel) = max_errors(&obs.0[&("ple".to_string(), -1, pos)], &ref_row(&st, "ple", pos, n));
+            assert!(rel < 1e-3, "ple pos {pos}: relative error {rel:.2e}");
+            for l in 0..c.n_layers {
+                let got = &obs.0[&("layer_out".to_string(), l as i32, pos)];
+                let (_, rel) = max_errors(got, &ref_row(&st, &format!("L{l}.layer_out"), pos, c.dim));
+                worst = worst.max(rel);
+                assert!(rel < 1e-3, "L{l}.layer_out pos {pos}: relative error {rel:.2e}");
+            }
+        }
+        let ours = t.forward_batch_logits(&ids, 0, 0).to_vec();
+        for pos in 0..ids.len() {
+            check_logits(&format!("short logits pos {pos}"), &ours[pos * vocab..(pos + 1) * vocab], &want[pos * vocab..(pos + 1) * vocab]);
+        }
+        for (pos, &tok) in ids.iter().enumerate() {
+            let one = t.forward(tok, pos).to_vec();
+            check_logits(&format!("one-token logits pos {pos}"), &one, &want[pos * vocab..(pos + 1) * vocab]);
+        }
+
+        let long = as_ids(ref_tensor(&st, "long_ids").1);
+        let (_, posv) = ref_tensor(&st, "long_positions");
+        let (_, want_long) = ref_tensor(&st, "long_logits");
+        let long_logits = t.forward_batch_logits(&long, 0, 0).to_vec();
+        for (r, pv) in posv.iter().enumerate() {
+            let pos = *pv as usize;
+            check_logits(&format!("long logits pos {pos}"), &long_logits[pos * vocab..(pos + 1) * vocab], &want_long[r * vocab..(r + 1) * vocab]);
+        }
+
+        let greedy = as_ids(ref_tensor(&st, "greedy_ids").1);
+        let mut logits = t.forward_batch(&ids, 0).to_vec();
+        for k in 0..16 {
+            let next = crate::kernels::argmax(&logits);
+            assert_eq!(next, greedy[ids.len() + k], "greedy token {k}");
+            logits.copy_from_slice(t.forward(next, ids.len() + k));
+        }
+        println!("Gemma 4: {} short + {} long logits, every layer (worst {worst:.2e}) and 16 greedy tokens match HF", ids.len(), posv.len());
+    }
 
     /// Speculative decoding must roll the conv state back with the KV cache:
     /// after a batched check whose two drafts are rejected, the next batch

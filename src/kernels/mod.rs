@@ -28,6 +28,43 @@ pub fn rmsnorm_heads(x: &mut [f32], weight: &[f32], head_size: usize, eps: f32) 
     }
 }
 
+/// RMSNorm each head of `x` without a gain (Gemma 4's V norm).
+pub fn rmsnorm_heads_plain(x: &mut [f32], head_size: usize, eps: f32) {
+    for head in x.chunks_exact_mut(head_size) {
+        let ss = head.iter().map(|v| v * v).sum::<f32>() / head_size as f32 + eps;
+        let scale = 1.0 / ss.sqrt();
+        for v in head {
+            *v *= scale;
+        }
+    }
+}
+
+/// `gate_i = gelu(gate_i) * up_i`, GELU's tanh approximation
+/// (`gelu_pytorch_tanh`, ggml's `ggml_gelu`):
+/// `0.5 x (1 + tanh(√(2/π) (x + 0.044715 x³)))`.
+pub fn gelu_tanh(gate: &mut [f32], up: &[f32]) {
+    assert_eq!(gate.len(), up.len());
+    const C: f32 = 0.797_884_6; // √(2/π)
+    for (g, &u) in gate.iter_mut().zip(up) {
+        let x = *g;
+        *g = 0.5 * x * (1.0 + (C * x * (1.0 + 0.044715 * x * x)).tanh()) * u;
+    }
+}
+
+/// `x *= s`.
+pub fn scale_inplace(x: &mut [f32], s: f32) {
+    for v in x {
+        *v *= s;
+    }
+}
+
+/// `x = cap · tanh(x / cap)` (Gemma's final logit soft-cap).
+pub fn softcap(x: &mut [f32], cap: f32) {
+    for v in x {
+        *v = cap * (*v / cap).tanh();
+    }
+}
+
 /// Multiply head `h` of `x` by `sigmoid(gates[h])` (LFM3's output gate).
 pub fn gate_heads(x: &mut [f32], gates: &[f32], head_size: usize) {
     for (head, &g) in x.chunks_exact_mut(head_size).zip(gates) {
@@ -1100,6 +1137,37 @@ mod tests {
             let (_, rel) = max_errors(&x, &want);
             assert!(rel < 1e-5, "{}: rel {rel:.2e}", dir.display());
         }
+    }
+
+    /// Gemma 4's GELU (tanh form) × up, its gainless V norm and its logit
+    /// soft-cap, against numpy in float64.
+    #[test]
+    fn gemma_elementwise_matches_numpy() {
+        let mut n = 0;
+        for dir in cases("gelu_") {
+            let (mut g, u, want) = (arr(&dir, "gate"), arr(&dir, "up"), arr(&dir, "out"));
+            gelu_tanh(&mut g, &u);
+            let (_, rel) = max_errors(&g, &want);
+            assert!(rel < 1e-6, "{}: rel {rel:.2e}", dir.display());
+            n += 1;
+        }
+        for dir in cases("softcap_") {
+            let (mut x, want) = (arr(&dir, "x"), arr(&dir, "out"));
+            softcap(&mut x, 30.0);
+            let (_, rel) = max_errors(&x, &want);
+            assert!(rel < 1e-6, "{}: rel {rel:.2e}", dir.display());
+            n += 1;
+        }
+        for dir in cases("plainnorm_") {
+            let (mut x, want) = (arr(&dir, "x"), arr(&dir, "out"));
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            let hs: usize = name.rsplit('x').next().unwrap().parse().unwrap();
+            rmsnorm_heads_plain(&mut x, hs, 1e-6);
+            let (_, rel) = max_errors(&x, &want);
+            assert!(rel < 1e-5, "{}: rel {rel:.2e}", dir.display());
+            n += 1;
+        }
+        assert!(n > 0);
     }
 
     #[test]

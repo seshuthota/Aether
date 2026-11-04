@@ -17,7 +17,7 @@
 //! token's k and v, so a new token costs one pass over the weights plus a
 //! read of the cache, instead of recomputing the whole prefix.
 
-use super::config::{Config, RopeLayout};
+use super::config::{Activation, Config, RopeLayout};
 use crate::aligned::AlignedBuf;
 use crate::kernels as k;
 use crate::pool::{SharedOut, ThreadPool, par_chunks_mut};
@@ -29,8 +29,10 @@ use std::io;
 /// any storage format; norm gains and biases are always f32.
 pub struct AttentionWeights {
     pub wq: Weight,
-    pub wk: Weight,
-    pub wv: Weight,
+    /// `None` in layers that read another layer's cache (Gemma 4's shared
+    /// KV), which compute no K/V.
+    pub wk: Option<Weight>,
+    pub wv: Option<Weight>,
     pub wo: Weight,
     /// Biases added after the q / k / v projections (Qwen2 has them;
     /// Llama-style models do not).
@@ -42,6 +44,13 @@ pub struct AttentionWeights {
     pub k_norm: Option<AlignedBuf>,
     /// One sigmoid gate per query head, from the normed layer input.
     pub gate: Option<Weight>,
+}
+
+impl AttentionWeights {
+    /// K and V, for layers that compute their own.
+    pub fn kv(&self) -> Option<(&Weight, &Weight)> {
+        self.wk.as_ref().zip(self.wv.as_ref())
+    }
 }
 
 /// The gated short convolution of one layer.
@@ -74,6 +83,32 @@ pub struct LayerWeights {
     pub w_down: Weight,
     /// W3: the branch multiplied by the gate.
     pub w_up: Weight,
+    /// Gemma 4's per-layer embedding block, after the FFN.
+    pub ple: Option<PleWeights>,
+    /// The layer's output is multiplied by this (Gemma 4's
+    /// `layer_output_scale`).
+    pub out_scale: Option<f32>,
+}
+
+/// Gemma 4's per-layer embedding block of one layer: `x += post_norm(proj ·
+/// (gelu(inp_gate · x) ⊙ ple[layer]))`.
+pub struct PleWeights {
+    /// `[ple_dim, dim]`.
+    pub inp_gate: Weight,
+    /// `[dim, ple_dim]`.
+    pub proj: Weight,
+    pub post_norm: AlignedBuf,
+}
+
+/// Gemma 4's per-layer embedding inputs, computed once per token: the
+/// token's row of `table` (`[vocab, n_layers · ple_dim]`) plus a projection
+/// of the scaled embedding, normed per layer.
+pub struct PleTable {
+    pub table: crate::weight::Rows,
+    /// `[n_layers · ple_dim, dim]`.
+    pub proj: Weight,
+    /// `[ple_dim]`, shared by every layer's slice.
+    pub proj_norm: AlignedBuf,
 }
 
 impl LayerWeights {
@@ -97,12 +132,18 @@ impl LayerWeights {
         let mut v = vec![("ffn_gate", &self.w_gate), ("ffn_down", &self.w_down), ("ffn_up", &self.w_up)];
         match &self.mixer {
             Mixer::Attention(a) => {
-                v.extend([("attn_q", &a.wq), ("attn_k", &a.wk), ("attn_v", &a.wv), ("attn_output", &a.wo)]);
+                v.push(("attn_q", &a.wq));
+                v.extend(a.wk.iter().map(|w| ("attn_k", w)));
+                v.extend(a.wv.iter().map(|w| ("attn_v", w)));
+                v.push(("attn_output", &a.wo));
                 if let Some(g) = &a.gate {
                     v.push(("attn_gate", g));
                 }
             }
             Mixer::Conv(c) => v.extend([("shortconv.in_proj", &c.in_proj), ("shortconv.conv", &c.conv), ("shortconv.out_proj", &c.out_proj)]),
+        }
+        if let Some(p) = &self.ple {
+            v.extend([("inp_gate", &p.inp_gate), ("proj", &p.proj)]);
         }
         v
     }
@@ -115,6 +156,8 @@ pub struct Weights {
     pub final_norm: AlignedBuf,
     /// `[vocab, dim]`, or `None` when tied to `token_embedding`.
     pub classifier: Option<Weight>,
+    /// Gemma 4's per-layer embeddings.
+    pub ple: Option<PleTable>,
 }
 
 impl Weights {
@@ -151,7 +194,7 @@ impl Weights {
     /// Applies `f(matrix, columns, llama.cpp tensor name)` to every matrix,
     /// not the norms.
     fn map_matrices(self, c: &Config, f: impl Fn(Weight, usize, &str) -> Weight) -> Weights {
-        let (dim, hidden) = (c.dim, c.hidden_dim);
+        let dim = c.dim;
         Weights {
             token_embedding: f(self.token_embedding, dim, "token_embd.weight"),
             layers: self
@@ -163,9 +206,9 @@ impl Weights {
                     let mixer = match l.mixer {
                         Mixer::Attention(a) => Mixer::Attention(AttentionWeights {
                             wq: g(a.wq, dim, "attn_q"),
-                            wk: g(a.wk, dim, "attn_k"),
-                            wv: g(a.wv, dim, "attn_v"),
-                            wo: g(a.wo, dim, "attn_output"),
+                            wk: a.wk.map(|w| g(w, dim, "attn_k")),
+                            wv: a.wv.map(|w| g(w, dim, "attn_v")),
+                            wo: g(a.wo, c.q_dim(i), "attn_output"),
                             bq: a.bq,
                             bk: a.bk,
                             bv: a.bv,
@@ -187,13 +230,17 @@ impl Weights {
                         ffn_norm: l.ffn_norm,
                         post_ffn_norm: l.post_ffn_norm,
                         w_gate: g(l.w_gate, dim, "ffn_gate"),
-                        w_down: g(l.w_down, hidden, "ffn_down"),
+                        w_down: g(l.w_down, c.hidden_of(i), "ffn_down"),
                         w_up: g(l.w_up, dim, "ffn_up"),
+                        ple: l.ple.map(|p| PleWeights { inp_gate: g(p.inp_gate, dim, "inp_gate"), proj: g(p.proj, c.ple_dim, "proj"), post_norm: p.post_norm }),
+                        out_scale: l.out_scale,
                     }
                 })
                 .collect(),
             final_norm: self.final_norm,
             classifier: self.classifier.map(|w| f(w, dim, "output.weight")),
+            // The table is only looked up, never converted or repacked.
+            ple: self.ple.map(|p| PleTable { table: p.table, proj: f(p.proj, dim, "per_layer_model_proj.weight"), proj_norm: p.proj_norm }),
         }
     }
 
@@ -209,6 +256,7 @@ impl Weights {
             + self.layers.iter().map(|l| norms(l) + mats(l)).sum::<usize>()
             + self.final_norm.len() * 4
             + self.classifier.as_ref().map_or(0, Weight::bytes)
+            + self.ple.as_ref().map_or(0, |p| p.proj.bytes())
     }
 
     /// The storage format of the first matrix, for the CLI's load line.
@@ -224,8 +272,11 @@ impl Weights {
 #[allow(clippy::too_many_arguments)]
 fn attention(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
     #[cfg(target_arch = "aarch64")]
-    if c.window(layer).is_none() && (c.head_size() == 64 || c.head_size() == 48 || c.head_size() == 128) && pos + 1 > ATTN_CHUNK {
-        return attention_chunked(pool, c, out, q, kc, vc, pos);
+    {
+        let hs = c.head_dim_of(layer);
+        if c.window(layer).is_none() && (hs == 64 || hs == 48 || hs == 128) && pos + 1 > ATTN_CHUNK {
+            return attention_chunked(pool, c, layer, out, q, kc, vc, pos);
+        }
     }
     attention_whole(pool, c, layer, out, q, kc, vc, scores, pos)
 }
@@ -238,7 +289,7 @@ fn attention(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32
 /// time.
 #[allow(clippy::too_many_arguments)]
 fn attention_whole(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], scores: &mut [f32], pos: usize) {
-    let (hs, kv_dim, group, seq) = (c.head_size(), c.kv_dim(), c.kv_group(), c.seq_len);
+    let (hs, kv_dim, group, seq) = (c.head_dim_of(layer), c.kv_dim_of(layer), c.kv_group(), c.seq_len);
     let window = c.window(layer).unwrap_or(usize::MAX);
     let head = |h: usize, out_h: &mut [f32], scores_h: &mut [f32]| {
         let kv_off = (h / group) * hs; // which K/V head this query head reads
@@ -283,9 +334,10 @@ const ATTN_CHUNK: usize = 64;
 /// then merged in context order ([`k::neon::merge_parts`]); the chunks
 /// depend only on `pos`, so the result does not depend on the threads.
 #[cfg(target_arch = "aarch64")]
-fn attention_chunked(pool: Option<&ThreadPool>, c: &Config, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], pos: usize) {
-    let (hs, kv_dim, g) = (c.head_size(), c.kv_dim(), c.kv_group());
-    let (n, gh) = (pos + 1, c.kv_group() * c.head_size());
+#[allow(clippy::too_many_arguments)]
+fn attention_chunked(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mut [f32], q: &[f32], kc: &[f32], vc: &[f32], pos: usize) {
+    let (hs, kv_dim, g) = (c.head_dim_of(layer), c.kv_dim_of(layer), c.kv_group());
+    let (n, gh) = (pos + 1, g * hs);
     let nc = n.div_ceil(ATTN_CHUNK);
     let items = c.n_kv_heads * nc;
     // Per item: g·hs of unnormalised output, then 2g of (max, sum).
@@ -337,12 +389,12 @@ fn attention_batch(pool: Option<&ThreadPool>, c: &Config, layer: usize, out: &mu
     let window = c.window(layer).unwrap_or(usize::MAX);
     let Some(p) = pool.filter(|p| p.threads() > 1 && t > 1) else {
         for i in 0..t {
-            let dim = c.n_heads * c.head_size();
+            let dim = c.q_dim(layer);
             attention_whole(pool, c, layer, &mut out[i * dim..(i + 1) * dim], &q[i * dim..(i + 1) * dim], kc, vc, scores, start + i);
         }
         return;
     };
-    let (hs, kv_dim, group, nh) = (c.head_size(), c.kv_dim(), c.kv_group(), c.n_heads);
+    let (hs, kv_dim, group, nh) = (c.head_dim_of(layer), c.kv_dim_of(layer), c.kv_group(), c.n_heads);
     let nkv = nh / group;
     assert!(out.len() >= t * nh * hs && q.len() >= t * nh * hs);
     let o = SharedOut(out.as_mut_ptr());
@@ -442,10 +494,10 @@ fn conv_batch(pool: Option<&ThreadPool>, c: &Config, s: &mut State, b: &mut Batc
 /// `pos`.
 fn bias_rope(c: &Config, layer: usize, v: &mut [f32], bias: Option<&AlignedBuf>, pos: usize) {
     add_bias(v, bias);
-    let rope = c.rope(layer);
+    let (rope, hs) = (c.rope(layer), c.head_dim_of(layer));
     match rope.layout {
-        RopeLayout::AdjacentPairs => k::rope_adjacent(v, pos, c.head_size(), rope.theta),
-        RopeLayout::Halves => k::rope_halves_pairs(v, pos, c.head_size(), rope.theta, rope.pairs),
+        RopeLayout::AdjacentPairs => k::rope_adjacent(v, pos, hs, rope.theta),
+        RopeLayout::Halves => k::rope_halves_pairs(v, pos, hs, rope.theta, rope.pairs),
     }
 }
 
@@ -453,6 +505,37 @@ fn bias_rope(c: &Config, layer: usize, v: &mut [f32], bias: Option<&AlignedBuf>,
 fn add_bias(x: &mut [f32], bias: Option<&AlignedBuf>) {
     if let Some(b) = bias {
         k::add_inplace(x, b);
+    }
+}
+
+/// The MLP's `gate = act(gate) · up`.
+fn activate(c: &Config, gate: &mut [f32], up: &[f32]) {
+    match c.activation {
+        Activation::SwiGlu => k::swiglu(gate, up),
+        Activation::GeluTanh => k::gelu_tanh(gate, up),
+    }
+}
+
+/// Gemma 4's per-layer inputs of one token, `[n_layers, ple_dim]`, from
+/// the scaled embedding `e` (llama.cpp's `project_per_layer_inputs`):
+/// `(norm(proj · e / √dim) + table[token] · √ple_dim) / √2`, the norm per
+/// layer's slice with the shared gain.
+fn ple_inputs(pool: Option<&ThreadPool>, c: &Config, p: &PleTable, token: usize, e: &[f32], out: &mut [f32]) {
+    k::linear_on(pool, out, e, &p.proj);
+    ple_finish(c, p, token, out);
+}
+
+/// [`ple_inputs`] after the projection `out = proj · e`.
+fn ple_finish(c: &Config, p: &PleTable, token: usize, out: &mut [f32]) {
+    k::scale_inplace(out, 1.0 / (c.dim as f32).sqrt());
+    for slice in out.chunks_exact_mut(c.ple_dim) {
+        k::rmsnorm_inplace(slice, &p.proj_norm, c.norm_eps);
+    }
+    let mut row = vec![0.0f32; out.len()];
+    p.table.row_f32(token, &mut row);
+    let s = (c.ple_dim as f32).sqrt();
+    for (o, &r) in out.iter_mut().zip(&row) {
+        *o = (*o + r * s) * std::f32::consts::FRAC_1_SQRT_2;
     }
 }
 
@@ -483,17 +566,18 @@ const PREFILL_CHUNK: usize = 256;
 /// Buffers reused by every forward call, allocated once.
 struct State {
     x: AlignedBuf,      // residual stream [dim]
-    xb: AlignedBuf,     // normed input / attention output [dim]
+    xb: AlignedBuf,     // normed input [dim] / attention output [q_dim]
     xb2: AlignedBuf,    // projection output [dim]
     hb: AlignedBuf,     // MLP gate [hidden]
     hb2: AlignedBuf,    // MLP up [hidden]
     conv: AlignedBuf,   // conv B,C,x [3·dim]
-    q: AlignedBuf,      // [dim]
+    q: AlignedBuf,      // [q_dim]
     att: AlignedBuf,    // attention scores, one row per head [n_heads, seq_len]
     gate: AlignedBuf,   // one attention gate per head [n_heads]
     logits: AlignedBuf, // [vocab]
     /// Keys of every attention layer, concatenated: layer `l` starts at
-    /// `cache_off[l]` and has `cache_rows[l]` positions.
+    /// float `cache_off[l]` and has `cache_rows[l]` positions of
+    /// `kv_dim_of(l)` floats (none for a layer reading another's cache).
     key_cache: AlignedBuf,
     value_cache: AlignedBuf,
     cache_off: Vec<usize>,
@@ -507,6 +591,10 @@ struct State {
     /// (or chunk): `window + PREFILL_CHUNK` K/V rows.
     slide_k: AlignedBuf,
     slide_v: AlignedBuf,
+    /// Gemma 4: this token's per-layer embedding inputs `[n_layers,
+    /// ple_dim]`, and one layer's gate `[ple_dim]`.
+    ple_in: AlignedBuf,
+    ple_g: AlignedBuf,
 }
 
 /// Buffers for [`Transformer::forward_batch`]: the single-token buffers,
@@ -516,13 +604,15 @@ struct Batch {
     /// Logits of several positions, `[k, vocab]` (perplexity evaluation).
     logits: Vec<f32>,
     x: AlignedBuf,   // [cap, dim]
-    xb: AlignedBuf,  // [cap, dim]
+    xb: AlignedBuf,  // [cap, dim] / [cap, q_dim]
     xb2: AlignedBuf, // [cap, dim]
-    q: AlignedBuf,    // [cap, dim]
+    q: AlignedBuf,    // [cap, q_dim]
     gate: AlignedBuf, // [cap, n_heads]
     hb: AlignedBuf,   // [cap, hidden]
     hb2: AlignedBuf,  // [cap, hidden]
     conv: AlignedBuf, // [cap, 3·dim]
+    ple_in: AlignedBuf, // [cap, n_layers · ple_dim]
+    ple_g: AlignedBuf,  // [cap, ple_dim]
 }
 
 impl Batch {
@@ -532,13 +622,15 @@ impl Batch {
             cap,
             logits: Vec::new(),
             x: z(c.dim),
-            xb: z(c.dim),
+            xb: z(c.dim.max(c.max_q_dim())),
             xb2: z(c.dim),
-            q: z(c.dim),
+            q: z(c.max_q_dim()),
             gate: z(c.n_heads),
-            hb: z(c.hidden_dim),
-            hb2: z(c.hidden_dim),
+            hb: z(c.max_hidden()),
+            hb2: z(c.max_hidden()),
             conv: z(3 * c.dim),
+            ple_in: z(c.n_layers * c.ple_dim),
+            ple_g: z(c.ple_dim),
         }
     }
 }
@@ -563,7 +655,7 @@ impl Transformer {
         let mut total = 0;
         for l in 0..c.n_layers {
             cache_off.push(total);
-            let rows = if c.is_attention(l) {
+            let rows = if c.is_attention(l) && c.owns_kv(l) {
                 match c.window(l) {
                     Some(w) => (w + PREFILL_CHUNK).min(c.seq_len),
                     None => c.seq_len,
@@ -572,7 +664,7 @@ impl Transformer {
                 0
             };
             cache_rows.push(rows);
-            total += rows;
+            total += rows * c.kv_dim_of(l);
         }
         let max_window = (0..c.n_layers).filter_map(|l| c.window(l)).max().unwrap_or(0);
         let mut conv_off = Vec::with_capacity(c.n_layers);
@@ -585,24 +677,26 @@ impl Transformer {
         }
         let state = State {
             x: AlignedBuf::zeros(c.dim),
-            xb: AlignedBuf::zeros(c.dim),
+            xb: AlignedBuf::zeros(c.dim.max(c.max_q_dim())),
             xb2: AlignedBuf::zeros(c.dim),
-            hb: AlignedBuf::zeros(c.hidden_dim),
-            hb2: AlignedBuf::zeros(c.hidden_dim),
+            hb: AlignedBuf::zeros(c.max_hidden()),
+            hb2: AlignedBuf::zeros(c.max_hidden()),
             conv: AlignedBuf::zeros(3 * c.dim),
-            q: AlignedBuf::zeros(c.dim),
+            q: AlignedBuf::zeros(c.max_q_dim()),
             att: AlignedBuf::zeros(c.n_heads * c.seq_len),
             gate: AlignedBuf::zeros(c.n_heads),
             logits: AlignedBuf::zeros(c.vocab_size),
-            key_cache: AlignedBuf::zeros(total * c.kv_dim()),
-            value_cache: AlignedBuf::zeros(total * c.kv_dim()),
+            key_cache: AlignedBuf::zeros(total),
+            value_cache: AlignedBuf::zeros(total),
             cache_off,
             cache_rows,
             conv_state: AlignedBuf::zeros(conv_total),
             conv_off,
             conv_snap: AlignedBuf::zeros(conv_total * (MAX_DRAFT + 1)),
-            slide_k: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.kv_dim() } else { 0 }),
-            slide_v: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.kv_dim() } else { 0 }),
+            slide_k: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.max_kv_dim() } else { 0 }),
+            slide_v: AlignedBuf::zeros(if max_window > 0 { (max_window + PREFILL_CHUNK) * c.max_kv_dim() } else { 0 }),
+            ple_in: AlignedBuf::zeros(c.n_layers * c.ple_dim),
+            ple_g: AlignedBuf::zeros(c.ple_dim),
         };
         let batch = Batch::new(&config, 0);
         Transformer { config, weights, state, batch, pool: None }
@@ -663,7 +757,7 @@ impl Transformer {
         let w = &self.weights;
         let s = &mut self.state;
         let pool = self.pool.as_ref();
-        let (hs, kv_dim) = (c.head_size(), c.kv_dim());
+        let dim = c.dim;
         assert!(pos < c.seq_len, "position {pos} beyond seq_len {}", c.seq_len);
         assert!(token < c.vocab_size, "token {token} beyond vocab {}", c.vocab_size);
 
@@ -671,25 +765,37 @@ impl Transformer {
             s.conv_state.fill(0.0);
         }
         w.token_embedding.row_f32(token, &mut s.x);
+        if c.embed_scale != 1.0 {
+            k::scale_inplace(&mut s.x, c.embed_scale);
+        }
         obs.tap("embed", None, pos, &s.x);
+        if let Some(p) = &w.ple {
+            ple_inputs(pool, c, p, token, &s.x, &mut s.ple_in);
+            obs.tap("ple", None, pos, &s.ple_in);
+        }
 
         for (l, lw) in w.layers.iter().enumerate() {
-            k::rmsnorm(&mut s.xb, &s.x, &lw.attn_norm, c.norm_eps);
-            obs.tap("attn_norm", Some(l), pos, &s.xb);
+            let (hs, qd, kv_dim) = (c.head_dim_of(l), c.q_dim(l), c.kv_dim_of(l));
+            k::rmsnorm(&mut s.xb[..dim], &s.x, &lw.attn_norm, c.norm_eps);
+            obs.tap("attn_norm", Some(l), pos, &s.xb[..dim]);
 
             match &lw.mixer {
                 Mixer::Attention(a) => {
                     let window = c.window(l);
-                    let layer_off = s.cache_off[l] * kv_dim;
+                    // A layer that shares KV reads its source's cache, which
+                    // already holds this position (the source runs first).
+                    let (src, own) = (c.kv_source_of(l), c.owns_kv(l));
+                    let layer_off = s.cache_off[src];
                     let (att_pos, at);
                     if let Some(w) = window {
-                        let ring = s.cache_rows[l];
+                        let ring = s.cache_rows[src];
                         let pre = (w - 1).min(pos);
-                        for j in 0..pre {
-                            let src = layer_off + ((pos - pre + j) % ring) * kv_dim;
+                        let rows = if own { pre } else { pre + 1 };
+                        for j in 0..rows {
+                            let from = layer_off + ((pos - pre + j) % ring) * kv_dim;
                             let dst = j * kv_dim;
-                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[src..src + kv_dim]);
-                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[src..src + kv_dim]);
+                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[from..from + kv_dim]);
+                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[from..from + kv_dim]);
                         }
                         att_pos = pre;
                         at = pre * kv_dim;
@@ -698,44 +804,59 @@ impl Transformer {
                         at = pos * kv_dim;
                     }
                     if let Some(g) = &a.gate {
-                        k::linear_on(pool, &mut s.gate, &s.xb, g);
+                        k::linear_on(pool, &mut s.gate, &s.xb[..dim], g);
                     }
                     let (k, v): (&mut [f32], &mut [f32]) = match window {
                         Some(_) => (&mut s.slide_k[..], &mut s.slide_v[..]),
                         None => (&mut s.key_cache[layer_off..], &mut s.value_cache[layer_off..]),
                     };
-                    let qkv: &mut [&mut [f32]] = &mut [&mut s.q, &mut k[at..at + kv_dim], &mut v[at..at + kv_dim]];
-                    k::linear_many_on(pool, qkv, &s.xb, &[&a.wq, &a.wk, &a.wv]);
-                    add_bias(&mut s.q, a.bq.as_ref());
-                    add_bias(&mut k[at..at + kv_dim], a.bk.as_ref());
-                    add_bias(&mut v[at..at + kv_dim], a.bv.as_ref());
+                    let q = &mut s.q[..qd];
+                    match (&a.wk, &a.wv) {
+                        (Some(wk), Some(wv)) if own => {
+                            let qkv: &mut [&mut [f32]] = &mut [&mut *q, &mut k[at..at + kv_dim], &mut v[at..at + kv_dim]];
+                            k::linear_many_on(pool, qkv, &s.xb[..dim], &[&a.wq, wk, wv]);
+                        }
+                        _ => k::linear_on(pool, q, &s.xb[..dim], &a.wq),
+                    }
+                    add_bias(q, a.bq.as_ref());
                     if let Some(n) = &a.q_norm {
-                        k::rmsnorm_heads(&mut s.q, n, hs, c.norm_eps);
+                        k::rmsnorm_heads(q, n, hs, c.norm_eps);
                     }
-                    if let Some(n) = &a.k_norm {
-                        k::rmsnorm_heads(&mut k[at..at + kv_dim], n, hs, c.norm_eps);
+                    bias_rope(c, l, q, None, pos);
+                    if own {
+                        add_bias(&mut k[at..at + kv_dim], a.bk.as_ref());
+                        add_bias(&mut v[at..at + kv_dim], a.bv.as_ref());
+                        if let Some(n) = &a.k_norm {
+                            k::rmsnorm_heads(&mut k[at..at + kv_dim], n, hs, c.norm_eps);
+                        }
+                        if c.v_norm {
+                            k::rmsnorm_heads_plain(&mut v[at..at + kv_dim], hs, c.norm_eps);
+                        }
+                        bias_rope(c, l, &mut k[at..at + kv_dim], None, pos);
                     }
-
-                    bias_rope(c, l, &mut s.q, None, pos);
-                    bias_rope(c, l, &mut k[at..at + kv_dim], None, pos);
-                    obs.tap("q", Some(l), pos, &s.q);
+                    obs.tap("q", Some(l), pos, q);
                     obs.tap("k", Some(l), pos, &k[at..at + kv_dim]);
                     obs.tap("v", Some(l), pos, &v[at..at + kv_dim]);
-
-                    attention(pool, c, l, &mut s.xb, &s.q, k, v, &mut s.att, att_pos);
-                    obs.tap("attn", Some(l), pos, &s.xb);
-                    if a.gate.is_some() {
-                        k::gate_heads(&mut s.xb, &s.gate, hs);
+                    // The kernels scale scores by 1/√hs; another scale is
+                    // folded into q.
+                    if let Some(sc) = c.attn_scale {
+                        k::scale_inplace(q, sc * (hs as f32).sqrt());
                     }
 
-                    if window.is_some() {
+                    attention(pool, c, l, &mut s.xb[..qd], q, k, v, &mut s.att, att_pos);
+                    obs.tap("attn", Some(l), pos, &s.xb[..qd]);
+                    if a.gate.is_some() {
+                        k::gate_heads(&mut s.xb[..qd], &s.gate, hs);
+                    }
+
+                    if window.is_some() && own {
                         let ring = s.cache_rows[l];
                         let slot = layer_off + (pos % ring) * kv_dim;
                         s.key_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_k[at..at + kv_dim]);
                         s.value_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_v[at..at + kv_dim]);
                     }
 
-                    k::linear_on(pool, &mut s.xb2, &s.xb, &a.wo);
+                    k::linear_on(pool, &mut s.xb2, &s.xb[..qd], &a.wo);
                 }
                 Mixer::Conv(cw) => {
                     let width = match c.kind(l) {
@@ -753,24 +874,43 @@ impl Transformer {
             obs.tap("resid_attn", Some(l), pos, &s.x);
 
             // --- MLP ---
-            k::rmsnorm(&mut s.xb, &s.x, &lw.ffn_norm, c.norm_eps);
-            obs.tap("ffn_norm", Some(l), pos, &s.xb);
-            k::linear_many_on(pool, &mut [&mut s.hb, &mut s.hb2], &s.xb, &[&lw.w_gate, &lw.w_up]);
-            k::swiglu(&mut s.hb, &s.hb2);
-            obs.tap("swiglu", Some(l), pos, &s.hb);
-            k::linear_on(pool, &mut s.xb, &s.hb, &lw.w_down);
+            let hidden = c.hidden_of(l);
+            k::rmsnorm(&mut s.xb[..dim], &s.x, &lw.ffn_norm, c.norm_eps);
+            obs.tap("ffn_norm", Some(l), pos, &s.xb[..dim]);
+            k::linear_many_on(pool, &mut [&mut s.hb[..hidden], &mut s.hb2[..hidden]], &s.xb[..dim], &[&lw.w_gate, &lw.w_up]);
+            activate(c, &mut s.hb[..hidden], &s.hb2[..hidden]);
+            obs.tap("swiglu", Some(l), pos, &s.hb[..hidden]);
+            k::linear_on(pool, &mut s.xb[..dim], &s.hb[..hidden], &lw.w_down);
             if let Some(n) = &lw.post_ffn_norm {
-                k::rmsnorm_inplace(&mut s.xb, n, c.norm_eps);
+                k::rmsnorm_inplace(&mut s.xb[..dim], n, c.norm_eps);
             }
-            obs.tap("ffn_out", Some(l), pos, &s.xb);
-            k::add_inplace(&mut s.x, &s.xb);
+            obs.tap("ffn_out", Some(l), pos, &s.xb[..dim]);
+            k::add_inplace(&mut s.x, &s.xb[..dim]);
             obs.tap("resid_ffn", Some(l), pos, &s.x);
+
+            // --- per-layer embedding (Gemma 4) ---
+            if let Some(p) = &lw.ple {
+                let pd = c.ple_dim;
+                k::linear_on(pool, &mut s.ple_g, &s.x, &p.inp_gate);
+                k::gelu_tanh(&mut s.ple_g, &s.ple_in[l * pd..(l + 1) * pd]);
+                k::linear_on(pool, &mut s.xb[..dim], &s.ple_g, &p.proj);
+                k::rmsnorm_inplace(&mut s.xb[..dim], &p.post_norm, c.norm_eps);
+                obs.tap("ple_out", Some(l), pos, &s.xb[..dim]);
+                k::add_inplace(&mut s.x, &s.xb[..dim]);
+            }
+            if let Some(sc) = lw.out_scale {
+                k::scale_inplace(&mut s.x, sc);
+            }
+            obs.tap("layer_out", Some(l), pos, &s.x);
         }
 
         k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
         obs.tap("final_norm", None, pos, &s.x);
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
         k::linear_on(pool, &mut s.logits, &s.x, cls);
+        if let Some(cap) = c.logit_softcap {
+            k::softcap(&mut s.logits, cap);
+        }
         obs.tap("logits", None, pos, &s.logits);
         &s.logits
     }
@@ -789,7 +929,7 @@ impl Transformer {
     /// [`Transformer::forward_traced`].
     pub fn forward_batch_traced<O: Observer>(&mut self, tokens: &[usize], start: usize, obs: &mut O) -> &[f32] {
         let t = tokens.len();
-        if t <= PREFILL_CHUNK || !self.config.has_conv() {
+        if t <= PREFILL_CHUNK || !(self.config.has_conv() || self.config.has_window()) {
             return self.batch_impl(tokens, start, t - 1, obs);
         }
         let mut last = Vec::new();
@@ -808,7 +948,7 @@ impl Transformer {
     pub fn forward_batch_logits(&mut self, tokens: &[usize], start: usize, from: usize) -> &[f32] {
         assert!(from < tokens.len());
         let t = tokens.len();
-        if t <= PREFILL_CHUNK || !self.config.has_conv() {
+        if t <= PREFILL_CHUNK || !(self.config.has_conv() || self.config.has_window()) {
             return self.batch_impl(tokens, start, from, &mut NoTrace);
         }
         let vocab = self.config.vocab_size;
@@ -841,15 +981,29 @@ impl Transformer {
         if start == 0 {
             s.conv_state.fill(0.0);
         }
-        let (dim, hidden, kv_dim, hs) = (c.dim, c.hidden_dim, c.kv_dim(), c.head_size());
+        let dim = c.dim;
 
         for (i, &tok) in tokens.iter().enumerate() {
             assert!(tok < c.vocab_size, "token {tok} beyond vocab {}", c.vocab_size);
-            w.token_embedding.row_f32(tok, &mut b.x[i * dim..(i + 1) * dim]);
-            obs.tap("embed", None, start + i, &b.x[i * dim..(i + 1) * dim]);
+            let x = &mut b.x[i * dim..(i + 1) * dim];
+            w.token_embedding.row_f32(tok, x);
+            if c.embed_scale != 1.0 {
+                k::scale_inplace(x, c.embed_scale);
+            }
+            obs.tap("embed", None, start + i, x);
+        }
+        if let Some(p) = &w.ple {
+            let n = c.n_layers * c.ple_dim;
+            let x = &b.x;
+            k::linear_batch_on(pool, &mut b.ple_in[..t * n], &x[..t * dim], &p.proj, t);
+            par_chunks_mut(pool, &mut b.ple_in[..t * n], n, &|i, o| ple_finish(c, p, tokens[i], o));
+            for i in 0..t {
+                obs.tap("ple", None, start + i, &b.ple_in[i * n..(i + 1) * n]);
+            }
         }
 
         for (l, lw) in w.layers.iter().enumerate() {
+            let (hs, qd, kv_dim, hidden) = (c.head_dim_of(l), c.q_dim(l), c.kv_dim_of(l), c.hidden_of(l));
             // --- attention ---
             // Per-token steps between the matmuls go across the pool too
             // (`par_chunks_mut`); alone on the calling thread they left the
@@ -862,15 +1016,19 @@ impl Transformer {
             match &lw.mixer {
                 Mixer::Attention(a) => {
                     let window = c.window(l);
-                    let layer_off = s.cache_off[l] * kv_dim;
+                    // A layer that shares KV reads its source's cache, which
+                    // already holds these positions (the source runs first).
+                    let (src, own) = (c.kv_source_of(l), c.owns_kv(l));
+                    let layer_off = s.cache_off[src];
                     let (att_start, c0, c1) = if let Some(w) = window {
-                        let ring = s.cache_rows[l];
+                        let ring = s.cache_rows[src];
                         let pre = (w - 1).min(start);
-                        for j in 0..pre {
-                            let src = layer_off + ((start - pre + j) % ring) * kv_dim;
+                        let rows = if own { pre } else { pre + t };
+                        for j in 0..rows {
+                            let from = layer_off + ((start - pre + j) % ring) * kv_dim;
                             let dst = j * kv_dim;
-                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[src..src + kv_dim]);
-                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[src..src + kv_dim]);
+                            s.slide_k[dst..dst + kv_dim].copy_from_slice(&s.key_cache[from..from + kv_dim]);
+                            s.slide_v[dst..dst + kv_dim].copy_from_slice(&s.value_cache[from..from + kv_dim]);
                         }
                         (pre, pre * kv_dim, (pre + t) * kv_dim)
                     } else {
@@ -880,37 +1038,53 @@ impl Transformer {
                         Some(_) => (&mut s.slide_k[..], &mut s.slide_v[..]),
                         None => (&mut s.key_cache[layer_off..], &mut s.value_cache[layer_off..]),
                     };
-                    let qkv: &mut [&mut [f32]] = &mut [&mut b.q[..t * dim], &mut k[c0..c1], &mut v[c0..c1]];
-                    k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&a.wq, &a.wk, &a.wv], t);
-                    par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| add_bias(q, a.bq.as_ref()));
-                    par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| add_bias(kr, a.bk.as_ref()));
-                    par_chunks_mut(pool, &mut v[c0..c1], kv_dim, &|_, vv| add_bias(vv, a.bv.as_ref()));
+                    let q = &mut b.q[..t * qd];
+                    match (&a.wk, &a.wv) {
+                        (Some(wk), Some(wv)) if own => {
+                            let qkv: &mut [&mut [f32]] = &mut [&mut *q, &mut k[c0..c1], &mut v[c0..c1]];
+                            k::linear_many_batch_on(pool, qkv, &b.xb[..t * dim], &[&a.wq, wk, wv], t);
+                        }
+                        _ => k::linear_batch_on(pool, q, &b.xb[..t * dim], &a.wq, t),
+                    }
+                    par_chunks_mut(pool, q, qd, &|_, q| add_bias(q, a.bq.as_ref()));
                     if let Some(n) = &a.q_norm {
-                        par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|_, q| k::rmsnorm_heads(q, n, hs, c.norm_eps));
+                        par_chunks_mut(pool, q, qd, &|_, q| k::rmsnorm_heads(q, n, hs, c.norm_eps));
                     }
-                    if let Some(n) = &a.k_norm {
-                        par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| k::rmsnorm_heads(kr, n, hs, c.norm_eps));
+                    par_chunks_mut(pool, q, qd, &|i, q| bias_rope(c, l, q, None, start + i));
+                    if own {
+                        par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| add_bias(kr, a.bk.as_ref()));
+                        par_chunks_mut(pool, &mut v[c0..c1], kv_dim, &|_, vv| add_bias(vv, a.bv.as_ref()));
+                        if let Some(n) = &a.k_norm {
+                            par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|_, kr| k::rmsnorm_heads(kr, n, hs, c.norm_eps));
+                        }
+                        if c.v_norm {
+                            par_chunks_mut(pool, &mut v[c0..c1], kv_dim, &|_, vv| k::rmsnorm_heads_plain(vv, hs, c.norm_eps));
+                        }
+                        par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|i, kr| bias_rope(c, l, kr, None, start + i));
                     }
-                    par_chunks_mut(pool, &mut b.q[..t * dim], dim, &|i, q| bias_rope(c, l, q, None, start + i));
-                    par_chunks_mut(pool, &mut k[c0..c1], kv_dim, &|i, kr| bias_rope(c, l, kr, None, start + i));
                     if let Some(g) = &a.gate {
                         k::linear_batch_on(pool, &mut b.gate[..t * c.n_heads], &b.xb[..t * dim], g, t);
                     }
                     for i in 0..t {
                         let pos = start + i;
-                        obs.tap("q", Some(l), pos, &b.q[i * dim..(i + 1) * dim]);
+                        obs.tap("q", Some(l), pos, &q[i * qd..(i + 1) * qd]);
                         obs.tap("k", Some(l), pos, &k[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                         obs.tap("v", Some(l), pos, &v[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                     }
+                    // The kernels scale scores by 1/√hs; another scale is
+                    // folded into q.
+                    if let Some(sc) = c.attn_scale {
+                        k::scale_inplace(q, sc * (hs as f32).sqrt());
+                    }
 
-                    attention_batch(pool, c, l, &mut b.xb[..t * dim], &b.q[..t * dim], k, v, &mut s.att, att_start, t);
+                    attention_batch(pool, c, l, &mut b.xb[..t * qd], q, k, v, &mut s.att, att_start, t);
                     for i in 0..t {
-                        obs.tap("attn", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+                        obs.tap("attn", Some(l), start + i, &b.xb[i * qd..(i + 1) * qd]);
                         if a.gate.is_some() {
-                            k::gate_heads(&mut b.xb[i * dim..(i + 1) * dim], &b.gate[i * c.n_heads..(i + 1) * c.n_heads], hs);
+                            k::gate_heads(&mut b.xb[i * qd..(i + 1) * qd], &b.gate[i * c.n_heads..(i + 1) * c.n_heads], hs);
                         }
                     }
-                    if window.is_some() {
+                    if window.is_some() && own {
                         let ring = s.cache_rows[l];
                         for i in 0..t {
                             let slot = layer_off + ((start + i) % ring) * kv_dim;
@@ -918,7 +1092,7 @@ impl Transformer {
                             s.value_cache[slot..slot + kv_dim].copy_from_slice(&s.slide_v[c0 + i * kv_dim..c0 + (i + 1) * kv_dim]);
                         }
                     }
-                    k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * dim], &a.wo, t);
+                    k::linear_batch_on(pool, &mut b.xb2[..t * dim], &b.xb[..t * qd], &a.wo, t);
                 }
                 Mixer::Conv(cw) => {
                     let width = match c.kind(l) {
@@ -948,7 +1122,7 @@ impl Transformer {
             }
             k::linear_many_batch_on(pool, &mut [&mut b.hb[..t * hidden], &mut b.hb2[..t * hidden]], &b.xb[..t * dim], &[&lw.w_gate, &lw.w_up], t);
             let hb2 = &b.hb2;
-            par_chunks_mut(pool, &mut b.hb[..t * hidden], hidden, &|i, g| k::swiglu(g, &hb2[i * hidden..(i + 1) * hidden]));
+            par_chunks_mut(pool, &mut b.hb[..t * hidden], hidden, &|i, g| activate(c, g, &hb2[i * hidden..(i + 1) * hidden]));
             for i in 0..t {
                 obs.tap("swiglu", Some(l), start + i, &b.hb[i * hidden..(i + 1) * hidden]);
             }
@@ -964,6 +1138,27 @@ impl Transformer {
             for i in 0..t {
                 obs.tap("resid_ffn", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
             }
+
+            // --- per-layer embedding (Gemma 4) ---
+            if let Some(p) = &lw.ple {
+                let (pd, n) = (c.ple_dim, c.n_layers * c.ple_dim);
+                k::linear_batch_on(pool, &mut b.ple_g[..t * pd], &b.x[..t * dim], &p.inp_gate, t);
+                let ple_in = &b.ple_in;
+                par_chunks_mut(pool, &mut b.ple_g[..t * pd], pd, &|i, g| k::gelu_tanh(g, &ple_in[i * n + l * pd..i * n + (l + 1) * pd]));
+                k::linear_batch_on(pool, &mut b.xb[..t * dim], &b.ple_g[..t * pd], &p.proj, t);
+                par_chunks_mut(pool, &mut b.xb[..t * dim], dim, &|_, o| k::rmsnorm_inplace(o, &p.post_norm, c.norm_eps));
+                for i in 0..t {
+                    obs.tap("ple_out", Some(l), start + i, &b.xb[i * dim..(i + 1) * dim]);
+                }
+                let xb = &b.xb;
+                par_chunks_mut(pool, &mut b.x[..t * dim], dim, &|i, x| k::add_inplace(x, &xb[i * dim..(i + 1) * dim]));
+            }
+            if let Some(sc) = lw.out_scale {
+                par_chunks_mut(pool, &mut b.x[..t * dim], dim, &|_, x| k::scale_inplace(x, sc));
+            }
+            for i in 0..t {
+                obs.tap("layer_out", Some(l), start + i, &b.x[i * dim..(i + 1) * dim]);
+            }
         }
 
         let cls = w.classifier.as_ref().unwrap_or(&w.token_embedding);
@@ -974,6 +1169,9 @@ impl Transformer {
             k::rmsnorm_inplace(&mut s.x, &w.final_norm, c.norm_eps);
             obs.tap("final_norm", None, start + t - 1, &s.x);
             k::linear_on(pool, &mut s.logits, &s.x, cls);
+            if let Some(cap) = c.logit_softcap {
+                k::softcap(&mut s.logits, cap);
+            }
             obs.tap("logits", None, start + t - 1, &s.logits);
             return &s.logits;
         }
@@ -985,6 +1183,10 @@ impl Transformer {
         }
         b.logits.resize(rows * c.vocab_size, 0.0);
         k::linear_batch_on(pool, &mut b.logits, &b.x[logits_from * dim..t * dim], cls, rows);
+        if let Some(cap) = c.logit_softcap {
+            let v = c.vocab_size;
+            par_chunks_mut(pool, &mut b.logits, v, &|_, r| k::softcap(r, cap));
+        }
         &b.logits
     }
 }

@@ -499,6 +499,9 @@ impl GpuModel {
         if c.layers.iter().any(|l| matches!(l, crate::model::config::LayerKind::Conv { .. })) {
             return Err("LFM3's hybrid conv/attention stack is CPU-only; the GPU path is a later plan".into());
         }
+        if !c.uniform() {
+            return Err("per-layer shapes, shared KV and per-layer embeddings (Gemma 4) are CPU-only; the GPU path is a later plan".into());
+        }
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Flash attention has no parts and no merge, so its batch does not
         // shrink with the context; the two older prompt shaders' still does.
@@ -516,12 +519,13 @@ impl GpuModel {
         let mut layers = Vec::new();
         for (l, lw) in weights.layers.iter().enumerate() {
             let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
+            let (wk, wv) = a.kv().ok_or_else(|| format!("layer {l} has no K/V"))?;
             let bias = |b: &Option<crate::aligned::AlignedBuf>, n: usize| match b {
                 Some(b) => f32buf(b),
                 None => zeros(n),
             };
             layers.push(Layer {
-                wqkv: parts(gpu, &[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
+                wqkv: parts(gpu, &[(&a.wq, dim), (wk, kv_dim), (wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
                 wo: mat(&a.wo, dim, "wo")?,
                 w_gate_up: parts(gpu, &[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", |ws| Mat::new(gpu, ws, "w_gate/w_up"))?,
                 w_down: mat(&lw.w_down, dim, "w_down")?,
@@ -737,9 +741,10 @@ impl GpuModel {
             let mut mm = Vec::new();
             for (l, lw) in weights.layers.iter().enumerate() {
                 let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
+            let (wk, wv) = a.kv().ok_or_else(|| format!("layer {l} has no K/V"))?;
                 let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, int8, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
                 mm.push([
-                    h(&[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
+                    h(&[(&a.wq, dim), (wk, kv_dim), (wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
                     h(&[(&a.wo, dim)], "wo", true, &x)?,
                     h(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", false, &hb12)?,
                     h(&[(&lw.w_down, dim)], "w_down", true, &x)?,

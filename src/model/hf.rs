@@ -18,7 +18,7 @@
 //! as the engine's matrices, so tensors are copied in as they are (widened
 //! from bf16 to f32). transformers applies RoPE in the rotate-half layout.
 
-use super::config::{Config, RopeLayout};
+use super::config::{Activation, Config, RopeLayout};
 use super::transformer::{AttentionWeights, LayerWeights, Mixer, Weights};
 use crate::aligned::AlignedBuf;
 use crate::format::json::Json;
@@ -62,6 +62,15 @@ pub fn load_config(dir: &Path, max_seq: usize) -> io::Result<Config> {
         qk_norm: false,
         output_gate: false,
         sandwich_norm: false,
+        head_dims: Vec::new(),
+        hidden_dims: Vec::new(),
+        kv_source: Vec::new(),
+        attn_scale: None,
+        embed_scale: 1.0,
+        logit_softcap: None,
+        v_norm: false,
+        activation: Activation::SwiGlu,
+        ple_dim: 0,
     };
     config.all_attention(theta, RopeLayout::Halves);
     Ok(config)
@@ -96,8 +105,8 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
                 attn_norm: tensor(&format!("{p}.input_layernorm.weight"), &[dim])?,
                 mixer: Mixer::Attention(AttentionWeights {
                     wq: mat(&format!("{p}.self_attn.q_proj.weight"), &[dim, dim])?,
-                    wk: mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?,
-                    wv: mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?,
+                    wk: Some(mat(&format!("{p}.self_attn.k_proj.weight"), &[kv_dim, dim])?),
+                    wv: Some(mat(&format!("{p}.self_attn.v_proj.weight"), &[kv_dim, dim])?),
                     wo: mat(&format!("{p}.self_attn.o_proj.weight"), &[dim, dim])?,
                     bq: bias(&format!("{p}.self_attn.q_proj.bias"), dim)?,
                     bk: bias(&format!("{p}.self_attn.k_proj.bias"), kv_dim)?,
@@ -112,6 +121,8 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
                 w_gate: mat(&format!("{p}.mlp.gate_proj.weight"), &[hidden, dim])?,
                 w_up: mat(&format!("{p}.mlp.up_proj.weight"), &[hidden, dim])?,
                 w_down: mat(&format!("{p}.mlp.down_proj.weight"), &[dim, hidden])?,
+                ple: None,
+                out_scale: None,
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
@@ -124,6 +135,7 @@ pub fn load(dir: impl AsRef<Path>, max_seq: usize) -> io::Result<(Config, Weight
         layers,
         final_norm: tensor("model.norm.weight", &[dim])?,
         classifier,
+        ple: None,
     };
     Ok((config, weights))
 }
