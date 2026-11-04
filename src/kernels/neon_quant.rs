@@ -567,7 +567,9 @@ pub unsafe fn dot4_q4_k_q8_k_x4(group: &[BlockQ4_Kx4], x: &[BlockQ8_K]) -> [f32;
 }
 
 /// Four repacked Q6_K rows · one Q8_K activation. As the Q4_K version, each
-/// `sdot` lane is one row.
+/// `sdot` lane is one row. The values are built as the int8 4·(q − 32) with
+/// the same nibble/`sri` construction as [`q6_k_block_q8_k`], including the
+/// 0xAA flip of each `qh` pair's upper bit.
 ///
 /// # Safety
 /// The CPU must have `dotprod`; `group` and `x` must have the same length.
@@ -578,6 +580,7 @@ pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32;
     for (g, xb) in group.iter().zip(x) {
         // SAFETY: group and x have the same length; register-only ops.
         unsafe {
+            let flip = vdupq_n_u8(0xAA);
             let mut sumi = vdupq_n_s32(0);
             for s in 0..16 {
                 let (n, t) = (s / 8, s % 8);
@@ -587,7 +590,7 @@ pub unsafe fn dot4_q6_k_q8_k_x4(group: &[BlockQ6_Kx4], x: &[BlockQ8_K]) -> [f32;
                 let mut s16 = vdupq_n_s32(0);
                 for j in 0..4 {
                     let ql = vld1q_u8(g.ql.as_ptr().add(n * 256 + 16 * (v0 + j)));
-                    let qh = vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + j)));
+                    let qh = veorq_u8(vld1q_u8(g.qh.as_ptr().add(n * 128 + 16 * ((v0 % 8) + j))), flip);
                     let lo = if high { vandq_u8(ql, vdupq_n_u8(0xF0)) } else { vshlq_n_u8::<4>(ql) };
                     let q = sri2(vshlq_u8(qh, vdupq_n_s8(6 - 2 * k as i8)), lo);
                     let a = dup4(xb.qs.as_ptr().add(16 * s + 4 * j));
