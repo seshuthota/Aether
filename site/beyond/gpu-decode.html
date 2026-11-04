@@ -172,7 +172,8 @@ out = sum_c e^(m_c - M) * out_c
   </ul>
 </div>
 <p>The per-stage GPU timestamps show where the step goes: the matrix products are about 75 % of it, and run at 30–40 GB/s there, while the other stages total about 1.1 ms <span class="tag m">measured</span>. Each dispatch’s fixed cost (<a href="gpu-basics.html#small">about 10 µs</a>) adds up over ~290 dispatches per token.</p>
-<p>Measured on the phone: stacking wq/wk/wv and gate/up cut q/k/v’s GPU time by 20 % and gate/up’s by 6 %, about 3–4 % of a token. Built and checked on the PC since, waiting for the phone’s timing <span class="tag a">not yet measured on the phone</span>: the residual adds, the SwiGLU and the RMS norms are folded into the matrix products next to them, which brings a token from ~290 to ~169 dispatches with the same perplexity.</p>
+<p>Measured on the phone: stacking wq/wk/wv and gate/up cut q/k/v’s GPU time by 20 % and gate/up’s by 6 %, about 3–4 % of a token. Next, the residual adds, the SwiGLU and the RMS norms were folded into the matrix products next to them, which would bring a token from ~290 to ~169 dispatches with the same perplexity. On the phone (2026-10-29, results/phase-l3.md step 7) the full fold made a token slower: GPU time went from 9.3–9.6 to 10.4 ms per token, because each fused product repeats the norm or the exponentials in every workgroup. Gate/up and down were un-fused again. The two fusions kept save about 0.2 ms, which is inside the run-to-run spread. The dispatch counts are counts of shader calls, not timings.</p>
+<p>Decode can also round x to 8 bits, as the few-token pass does, and use int8 dot products (<a href="gpu-int8.html">why the GPU rounds activations to 8 bits</a>). That is the default since 2026-11-01. On the charger (step 23, indicative: the tok/s include the CPU’s scoring), Q4_K_M decode went from 53.2 to 67.5 tok/s (+27 %) and Q4_0 from 79.3 to 80.9, with the same perplexity: Q4_K_M 16.7167 with f32 x, 16.7154 with int8 x, llama.cpp 16.7657 ± 0.688. On battery in the same session (step 24), Q4_K_M at depth 0 went from 62.1 and 63.7 to 86.0 and 102.5 tok/s, and Q4_0 stayed level (100.9 and 101.0 against 101.2 and 102.6).</p>
 <p><strong>Takeaway: GPU decode is limited by its matrix products and the fixed cost per dispatch, not by the CPU between tokens.</strong></p>
 <div class="quiz" data-quiz="check" data-for="time" id="c-time">
   <p>Folding RMSNorm into the next matrix product means each of that product’s workgroups recomputes the norm. Why is that still a saving?</p>
@@ -204,9 +205,10 @@ out = sum_c e^(m_c - M) * out_c
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md, steps 4 to 6) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<!-- sources: results/phase-l3.md steps 4–6 (2026-10-29, the 10-29 numbers above); step 7 (fusions on the phone, 9.3–9.6 → 10.4 ms per token, 2026-10-29); steps 23 and 24 (int8 x decode: Q4_K_M 53.2 → 67.5 tok/s, 62.1/63.7 → 86.0/102.5 tok/s, Q4_0 79.3 → 80.9, PPL 16.7167 / 16.7154, 2026-11-01) -->
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md, steps 4 to 7) and on 2026-11-01 for the int8 numbers (steps 23 and 24) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>

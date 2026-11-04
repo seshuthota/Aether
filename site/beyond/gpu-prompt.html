@@ -118,7 +118,7 @@ each row: kv_dim floats (128 for Qwen2.5-0.5B)
   </ul>
 </div>
 
-<h2 id="gpubatch" data-short="GPU batch" data-step="Every stage gets a token index; matrix products become tiled GEMMs. Correct; phone speed pending.">Can the GPU read the prompt in one batch too?</h2>
+<h2 id="gpubatch" data-short="GPU batch" data-step="Every stage gets a token index; matrix products become tiled GEMMs. Correct; measured on the phone 2026-10-31.">Can the GPU read the prompt in one batch too?</h2>
 <p>The CPU copy costs 278 MB. A batched pass on the GPU itself needs no second copy. Every stage needs a batched form:</p>
 <ul>
   <li>The matrix products become matrix-matrix products: <code>q4_0_gemm.comp</code> computes tiles of 64 rows × 64 tokens in shared memory, so each weight is read once per 64 tokens. On its own it reached about 260 GFLOP/s on the Adreno <span class="tag m">measured</span>.</li>
@@ -134,8 +134,20 @@ each row: kv_dim floats (128 for Qwen2.5-0.5B)
   </ul>
 </div>
 <p>Through <code>vk_ppl … batch</code>, 128 tokens per pass: SmolLM2-135M 27.6910 and Qwen2.5-0.5B 19.7193, the same as token by token <span class="tag m">measured</span> (on the PC’s GPU, which matches the phone’s perplexities to four decimals).</p>
-<p>Its speed on the phone is not measured yet. From the GEMM’s 260 GFLOP/s, a rough estimate is a few hundred tokens per second: several times the token-by-token GPU prompt, but likely below the CPU’s 570–635 <span class="tag a">estimate, not measured</span>. So the app’s GPU mode keeps the CPU for the prompt, and the GPU batch is the option that saves the memory.</p>
-<p><strong>Takeaway: a batched GPU pass needs every stage to take a token index; it gives the same perplexity, and its phone speed decides when to use it.</strong></p>
+<p>On 2026-10-29 its speed on the phone was not measured yet. The estimate then, from the GEMM’s 260 GFLOP/s, was a few hundred tokens per second: several times the token-by-token GPU prompt, but likely below the CPU’s 570–635 <span class="tag a">estimate, not measured</span>. So the app’s GPU mode kept the CPU for the prompt, and the GPU batch was the option that saves the memory (results/phase-l3.md step 11, 2026-10-30).</p>
+<p>On 2026-10-31 it was measured against llama.cpp’s OpenCL build in the same session (<span class="tag m">measured</span>, results/phase-l3.md step 21). The prompt was fed 128 tokens a pass. Tokens per second, round 1 / round 2, two rounds in opposite orders:</p>
+<table>
+  <thead><tr><th>Qwen2.5-0.5B, prompt tok/s</th><th>pp64</th><th>pp128</th><th>pp256</th><th>pp512</th></tr></thead>
+  <tbody>
+    <tr><td>Q4_0, ours (int8 products)</td><td class="num">1174 / 1200</td><td class="num">1346 / 1367</td><td class="num">1237 / 1250</td><td class="num">1067 / 1074</td></tr>
+    <tr><td>Q4_0, llama.cpp OpenCL</td><td class="num">571 / 603</td><td class="num">901 / 911</td><td class="num">1225 / 1133</td><td class="num">1194 / 1108</td></tr>
+    <tr><td>Q4_K_M, ours (int8 products)</td><td class="num">826 / 835</td><td class="num">1030 / 1027</td><td class="num">964 / 954</td><td class="num">851 / 857</td></tr>
+    <tr><td>Q4_K_M, llama.cpp OpenCL</td><td class="num">185 / 188</td><td class="num">214 / 183</td><td class="num">217 / 213</td><td class="num">220 / 217</td></tr>
+  </tbody>
+</table>
+<p>Q4_0 is ahead at 64 and 128 tokens, level at 256 and behind at 512: llama.cpp gets faster up to 256 tokens, ours peaks at 128. On Q4_K_M ours is 4–5× faster, because llama.cpp’s OpenCL build has no Adreno-tuned Q4_K kernel. At 512 tokens attention was 28 % of the GPU’s time (results/phase-l3.md step 22, 2026-11-01). A tiled attention shader, 32 tokens a workgroup, took Q4_0 at 512 tokens from 1068 / 1065 to 1307 / 1281 tok/s in the same session on battery (step 24, 2026-11-01).</p>
+<p>The prompt pass then moved to 256 tokens a pass (step 28, 2026-11-02). The flash attention kernel makes that possible at any depth, because it writes no per-chunk partial results. For Q4_0 at 512 tokens, the GPU time of the whole pass at depth 0 went from 408 ms at 128 tokens a pass to 364 ms at 256 (profiled, <span class="tag m">measured</span>). The flash kernel alone was not faster: 1.2–1.7× slower on attention than the chunked one, at every depth and length but one (step 27, 2026-11-02). The gain is the batch, not the kernel.</p>
+<p><strong>Takeaway: a batched GPU pass needs every stage to take a token index; it gives the same perplexity, and on the phone it beats llama.cpp’s OpenCL prompt for Q4_0 at 64 and 128 tokens (2026-10-31).</strong></p>
 <div class="quiz" data-quiz="check" data-for="gpubatch" id="c-gpubatch">
   <p>Token 5 of a batch attends to positions up to its own. Where do the keys of tokens 0–4 of the same batch come from?</p>
   <ul>
@@ -166,9 +178,10 @@ each row: kv_dim floats (128 for Qwen2.5-0.5B)
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<!-- sources: results/phase-l3.md step 11 (app keeps prompt on CPU, 2026-10-30), step 21 (Q4_0 and Q4_K_M tok/s vs llama.cpp OpenCL, 2026-10-31), step 22 (attention 28 % at 512, 2026-11-01), step 24 (per-token 1068 / 1065, tiled 1307 / 1281, 2026-11-01), step 27 (flash 1.2–1.7× slower on attention, 2026-11-02), step 28 (408 → 364 ms whole pass, 256-token passes, 2026-11-02) -->
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-l3.md, the 10-29 numbers) and 2026-10-31 to 2026-11-02 (steps 21 to 28) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>

@@ -78,13 +78,23 @@
   </tbody>
 </table>
 <p class="note">Conditions: 2026-10-21, on battery (75 → 73 %), screen on, every run started below 48 °C. Clock caps from the battery apply. The d512 row is probably a bad run: the same commit later gave 87.0 tok/s at that depth, and the results file does not trust this number. A ratio above 1 means llama.cpp is faster.</p>
+<p>On 2026-10-31 the benchmark ran again in one session on battery, against llama.cpp, on cores 2–7 (<code>results/phase-7.md</code>, "Same session against llama-bench"). Round 1 of two, tok/s <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th>Qwen2.5-0.5B</th><th>pp64 ours / llama.cpp</th><th>tg64 @ d0 ours / llama.cpp</th><th>tg64 @ d512 ours / llama.cpp</th></tr></thead>
+  <tbody>
+    <tr><td>Q4_0</td><td>681 / 541</td><td>180 / 153</td><td>159 / 123</td></tr>
+    <tr><td>Q8_0</td><td>818 / 613</td><td>111 / 99</td><td>102 / 84</td></tr>
+    <tr><td>Q4_K_M</td><td>551 / 167</td><td>112 / 91</td><td>104 / 72</td></tr>
+  </tbody>
+</table>
+<p class="note">The 2026-10-21 tables above stay as they were measured. On 2026-10-31 ours was ahead in every cell of both rounds. Q4_K_M prefill was 3.3 to 4.3 times llama.cpp's, because llama.cpp has no repacked K-quant path in this build.</p>
 <ul>
-  <li><strong>Decode is close.</strong> At short context the two engines are level. On 2026-10-22 the same engine was about 20 % behind in a re-run, so "within about 20 %" is the fair statement. Run-to-run spread is as large as that gap.</li>
-  <li><strong>Prefill is 2.1 to 5.8 times slower.</strong> Our quantized prefill still uses a row-by-row <code>sdot</code> kernel for each group of tokens. llama.cpp uses <code>smmla</code>, an instruction that multiplies two 2 × 8 blocks of 8-bit numbers at once, on repacked weights.</li>
+  <li><strong>Decode is close.</strong> At short context the two engines are level. On 2026-10-22 the same engine was about 20 % behind in a re-run, so "within about 20 %" is the fair statement. Run-to-run spread is as large as that gap. On 2026-10-31, same session on battery, Q4_0 decode at depth 0 was 180 tok/s against llama.cpp's 153 (round 1; round 2 gave 182 and 152), so ours was ahead that day.</li>
+  <li><strong>Prefill was 2.1 to 5.8 times slower on 2026-10-21.</strong> Then our quantized prefill still used a row-by-row <code>sdot</code> kernel for each group of tokens. llama.cpp used <code>smmla</code>, an instruction that multiplies two 2 × 8 blocks of 8-bit numbers at once, on repacked weights. On 2026-10-31, same session, our Q4_0 prefill at 64 tokens was 681 tok/s against llama.cpp's 541 (<span class="tag m">measured</span>), so ours was ahead.</li>
   <li><strong>The <code>smmla</code> follow-up.</strong> Two rows by two tokens per instruction, so each weight loaded serves two tokens. On 2026-10-24, Q4_0 prefill rose by 22 to 37 % over the <code>sdot</code> build, and the gap to llama.cpp in the same session fell from 2.9–3.7 times to 2.3–2.8 times <span class="tag c">calculated</span> from <code>results/phase-6.md</code>. The Q8_0 prefill did not change, because its interleaving costs what the instruction saves. See the Phase 6 dot-products page, <a href="../phase-6/dot-products.html">dot products and smmla</a>.</li>
-  <li><strong>Cores 6–7 are different.</strong> On the two prime cores, llama.cpp decodes 1.6 times faster (123.7 against 78.8 tok/s). Two of its threads already saturate the bandwidth decode needs, while our Q4_0 kernel spends instructions unpacking nibbles before every multiply.</li>
+  <li><strong>Cores 6–7 were different on 2026-10-21.</strong> On the two prime cores, llama.cpp decoded 1.6 times faster (123.7 against 78.8 tok/s). Two of its threads already saturate the bandwidth decode needs, while our Q4_0 kernel spends instructions unpacking nibbles before every multiply. On 2026-10-31, same session, the prime cores ran Q4_0 decode at 139 tok/s against llama.cpp's 124 (round 1; round 2 gave 138 against 108).</li>
 </ul>
-<p><strong>Takeaway: decode is a memory problem and we are close to llama.cpp on it; prefill is an arithmetic problem and the gap is real.</strong></p>
+<p><strong>Takeaway: on 2026-10-21 decode was close to llama.cpp and prefill was 2 to 6 times behind. On 2026-10-31, in the same session, both were ahead on the CPU. Decode is limited by memory and prefill by arithmetic either way.</strong></p>
 
 <h2 id="sustained">What happens over five minutes, and what does a token cost?</h2>
 <p>A single burst can flatter a phone. Heat builds, and the system lowers the clock. So the benchmark also runs decode for five minutes, back to back, and records the speed over time and the battery's energy use. The conditions are the Q4_0 model on cores 2–7, starting from position 0.</p>
@@ -111,14 +121,14 @@
 <p><strong>Takeaway: the file format explains how the model loads, the attention page how a speed claim should be tested, and the NFC page why the tokenizer rewrites text first, the chat page how to ask the model a question, the benchmarking page how the speeds were measured, the time page what limits them, and the heat page what they cost.</strong></p>
 
 <h2 id="open">What is still open?</h2>
-<p>Four things this phase did not finish. Each one is a question for a later run, not a result.</p>
+<p>Four things this phase listed as open on 2026-10-21. Here is where each one stands on 2026-11-04. Each is a question for a later run, not a result.</p>
 <ul>
-  <li><strong>Prefill.</strong> The gap to llama.cpp is 2 to 3 times at best. The <code>smmla</code> kernel with interleaved activations, a 4 × 4 tile, and repacked weights are the next steps. The Phase 6 log says this work was paused on 2026-10-24.</li>
-  <li><strong>Attention across positions.</strong> Work is split by head, so 14 heads over 6 threads gives some threads three heads and others two. Splitting across positions as well would even that out. It has not been done.</li>
-  <li><strong>Decode at depth 512.</strong> The first table's 62.8 tok/s is probably a bad run. The later same-commit runs gave 110.6 → 87.0 with scalar attention. The cause of the drop at depth is not established.</li>
-  <li><strong>The file writer.</strong> The engine reads GGUF files, but it has no writer. The files come from llama.cpp's converter and <code>llama-quantize</code>. The tracker still lists item 7.5 as in progress.</li>
+  <li><strong>Prefill.</strong> Closed on the CPU. On 2026-10-31, in the same session, our Q4_0 prefill was ahead of llama.cpp. The <code>smmla</code> work is on <a href="time.html">Where the time goes</a>. Prefill on the GPU and the NPU is a separate question: see <a href="../beyond/engines.html">CPU, GPU or NPU</a>.</li>
+  <li><strong>Attention across positions.</strong> Done on 2026-10-29. Flash-decoding (<a href="../phase-6/index.html">Phase 6</a>) gives each thread items of one K/V head and one 64-position chunk, so the 14 query heads no longer share out one per thread. An earlier split across positions, per query head, was reverted because it kept the rereads.</li>
+  <li><strong>Decode at depth 512.</strong> The 62.8 tok/s from 2026-10-21 was probably a bad run, and the cause of the drop is not established. On 2026-10-31, in the same session, the same depth ran at 159 tok/s against llama.cpp's 123.</li>
+  <li><strong>The file writer.</strong> Done on 2026-10-30. <code>aether-quantize</code> writes GGUF files, and its output matches <code>llama-quantize</code> byte for byte for SmolLM2 and Qwen2.5 (<code>results/phase-6.md</code>). This phase's comparison still uses llama.cpp's files, so both engines read the same bytes.</li>
 </ul>
-<p><strong>Takeaway: the open questions are prefill speed, attention balance and one unexplained depth result.</strong></p>
+<p><strong>Takeaway: on 2026-11-04 the open questions are the GPU and NPU prompt paths and the cause of the 2026-10-21 depth result.</strong></p>
 
 <h2 id="files">Which files hold the code?</h2>
 <p>Find the file for the page you are reading. The results file holds the measurements, with the conditions they were taken under.</p>
@@ -143,8 +153,8 @@
 <details class="check"><summary>Why does the loader need to know the architecture name, when the tensors already say what shape they are?</summary>
 <p>The shapes do not say how the rotation pairs its numbers. Llama files have their query and key rows permuted by the converter, so adjacent-pair rotation is correct; Qwen files are not permuted, so the halves layout is correct. The shapes are the same either way, so only <code>general.architecture</code> tells the loader which one to use. The wrong layout still loads and runs, and it gives garbage.</p>
 </details>
-<details class="check"><summary>Decode is close to llama.cpp but prefill is 2 to 6 times slower. Why do the two differ so much?</summary>
-<p>Decode reads every weight once per token, so its speed is set by memory bandwidth, and our Q4_0 decode reaches about 36 GB/s, half of what the phone can read. Prefill reuses each weight across the prompt tokens, so its speed is set by arithmetic. Our quantized prefill still uses a row kernel per token group, while llama.cpp uses a blocked integer multiply, so it does more work per weight load.</p>
+<details class="check"><summary>On 2026-10-21, decode was close to llama.cpp but prefill was 2 to 6 times slower. Why do the two differ so much?</summary>
+<p>Decode reads every weight once per token, so its speed is set by memory bandwidth, and our Q4_0 decode reaches about 36 GB/s, half of what the phone can read. Prefill reuses each weight across the prompt tokens, so its speed is set by arithmetic. Our quantized prefill still uses a row kernel per token group, while llama.cpp uses a blocked integer multiply, so it does more work per weight load. (That was the 2026-10-21 build. Later builds use <code>smmla</code> on repacked weights; see <a href="time.html">Where the time goes</a>.)</p>
 </details>
 <details class="check"><summary>The energy figure is 0.041 J per token. Is that how much energy the CPU used?</summary>
 <p>No. It is the battery's measured power for the whole phone, with the screen on, divided by the tokens per second. The display and everything else are included, so the CPU's share is smaller. The page's sustained run says so for that reason.</p>
@@ -153,14 +163,15 @@
 <h2 id="takeaway">What you should take away</h2>
 <p>A new model family is mostly config switches and a tokenizer, but the file format and the chat template each need their own code.</p>
 <p>The engine matches llama.cpp's accuracy on the same files, so the speed gap is about the kernels.</p>
-<p>Decode is close, prefill is not. The next work is the batched integer kernel for prefill.</p>
+<p>On 2026-10-21 decode was close and prefill was not. On 2026-10-31, in the same session, our prefill was ahead of llama.cpp on the CPU too.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 7 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
+<!-- sources: results/phase-7.md (2026-10-21 tables; "Same session against llama-bench", 2026-10-31, round 1 and 2); results/phase-6.md (flash-decoding 2026-10-29; aether-quantize 2026-10-30); IMPLEMENTATION.md section 0 (same-session table 2026-10-31). -->
 </html>

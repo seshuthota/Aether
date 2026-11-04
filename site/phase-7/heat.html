@@ -129,7 +129,7 @@ setTimeout(function () {
 <p>From 0.041 to 0.028 J per token <span class="tag c">calculated</span>, and the newer run also peaked cooler, 80.3 against 84.5 °C <span class="tag m">measured</span>. The power reading fell too, from 3.49 to 2.65 W. Both runs were limited by the same thermal budget; the faster code simply finishes more tokens inside it.</p>
 <p><strong>Takeaway: on a phone, speed and energy usually improve together, because a token that finishes sooner spends less time drawing power.</strong></p>
 
-<h2 id="gpu" data-short="CPU or GPU" data-step="The GPU decodes at two thirds of the CPU’s speed for half the power: less energy per token and a cooler phone.">CPU or GPU for a long chat?</h2>
+<h2 id="gpu" data-short="CPU or GPU" data-step="On 2026-10-29 the GPU decoded at two thirds of the CPU’s speed for half the power. On 2026-10-30 the DSP was fastest over five minutes and used least energy.">CPU, GPU or DSP for a long chat?</h2>
 <p>After Phase 8 the engine can also decode on the phone’s GPU (<a href="../beyond/gpu-decode.html">Decoding on the GPU</a>). The same test, 120 seconds each, 2026-10-29 <span class="tag m">measured</span>:</p>
 <table>
   <thead><tr><th></th><th class="num">tok/s</th><th class="num">power</th><th class="num">energy per token</th><th class="num">max temp</th></tr></thead>
@@ -139,7 +139,17 @@ setTimeout(function () {
   </tbody>
 </table>
 <p>The GPU is slower, but it draws about half the power, so each token costs less energy, and the phone stays 20 °C cooler. Reading speed for a person is a few words per second, so 100 tok/s is already far faster than anyone reads. For a long answer the cooler, cheaper path can be the better one, and it leaves the CPU free for the app.</p>
-<p><strong>Takeaway: the fastest path is not always the best one on a phone; the GPU trades a third of the speed for a fifth to a quarter less energy per token and a much cooler phone.</strong></p>
+<p>On 2026-10-30 the three engines were run again, five minutes each on battery, Qwen2.5-0.5B Q4_0, with whole-phone power from the battery counter (<code>results/phase-l5.md</code>, "Every engine, one benchmark"; <code>results/backends/</code>) <span class="tag m">measured</span>:</p>
+<table>
+  <thead><tr><th></th><th class="num">tok/s average</th><th class="num">power</th><th class="num">energy per token</th><th class="num">hottest</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, cores 2–7</td><td class="num">107.3</td><td class="num">3.23 W</td><td class="num">0.030 J</td><td class="num">85 °C</td></tr>
+    <tr><td>GPU</td><td class="num">78.2</td><td class="num">2.26 W</td><td class="num">0.029 J</td><td class="num">58 °C</td></tr>
+    <tr><td>DSP (the Hexagon NPU)</td><td class="num">130.6</td><td class="num">3.28 W</td><td class="num">0.025 J</td><td class="num">70 °C</td></tr>
+  </tbody>
+</table>
+<p>Over minutes the DSP was the fastest engine and the one that used least energy per token. The GPU drew the least power, but it was slow enough that its energy per token was about the CPU's. <a href="../beyond/npu-basics.html">What the NPU is</a> and <a href="../beyond/engines.html">CPU, GPU or NPU: which one should run the model?</a> cover the other engines.</p>
+<p><strong>Takeaway: the fastest path is not always the best one on a phone. On 2026-10-29 the GPU traded a third of the speed for a fifth to a quarter less energy per token and a much cooler phone. On 2026-10-30 the DSP used the least energy of the three over five minutes.</strong></p>
 <div class="quiz" data-quiz="check" data-for="gpu" id="c-gpu">
   <p>An app shows a 50-token reply to a quick question. Which path makes more sense?</p>
   <ul>
@@ -164,12 +174,12 @@ setTimeout(function () {
 </div>
 
 <h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
-<p>A phone is fast only while it is cool, so measure speed over minutes. Energy per token is battery power divided by speed, and it counts the whole phone. Faster code usually costs less energy per token, and the GPU, slower than the CPU, uses the least energy and runs much cooler.</p>
+<p>A phone is fast only while it is cool, so measure speed over minutes. Energy per token is battery power divided by speed, and it counts the whole phone. Faster code usually costs less energy per token, and on 2026-10-29 the GPU, slower than the CPU, used less energy and ran much cooler. On 2026-10-30 the DSP used the least energy per token over five minutes.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) on battery (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>, <code>results/phase-l3.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) on battery (<code>results/phase-7.md</code>, <code>results/phase-6.md</code>, <code>results/phase-l3.md</code>, <code>results/phase-l5.md</code>) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
 <script>
 // The sustained-decode chart: 10-second windows from bench_suite --sustain
 // (results/phase-7/raw/aether-qwen-q4_0-c2-7-sustained.txt and
@@ -255,9 +265,10 @@ setTimeout(function () {
   hit.addEventListener("pointerleave", hide);
 })();
 </script>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
+<!-- sources: results/phase-7.md (2026-10-21 and 2026-10-29 sustained runs); results/phase-6.md (2026-10-29 sustained run, 120 s); results/phase-l3.md (GPU, 2026-10-29); results/phase-l5.md "Every engine, one benchmark" (2026-10-30: CPU 107.3 tok/s 3.23 W 0.030 J 85 C; GPU 78.2 2.26 W 0.029 J 58 C; DSP 130.6 3.28 W 0.025 J 70 C); results/backends/. -->
 </html>

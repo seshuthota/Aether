@@ -120,7 +120,7 @@ now: "returns the"  -> drafts: "sum of a"
     <li>Both equally <div class="why">The drafts are only as good as the repetition between the text and what came before.</div></li>
   </ul>
 </div>
-<p>Qwen2.5-0.5B Q4_0, cores 2–7, two rounds, decode tokens per second <span class="tag m">measured</span>:</p>
+<p>Qwen2.5-0.5B Q4_0, cores 2–7, two rounds, decode tokens per second (2026-10-29) <span class="tag m">measured</span>:</p>
 <table>
   <thead><tr><th>prompt, sampler</th><th>plain</th><th><code>--lookup 3</code></th><th><code>--lookup 4</code></th></tr></thead>
   <tbody>
@@ -130,8 +130,11 @@ now: "returns the"  -> drafts: "sum of a"
     <tr><td>story, temperature 0.7, top-p 0.9</td><td class="num">147–156</td><td class="num">142–152</td><td class="num">137–146</td></tr>
   </tbody>
 </table>
-<p>Copying gains 60–75 % with greedy decoding. Fresh prose is about neutral: within −10 % to +15 %, inside the run-to-run spread. A longer n-gram (3) found too few matches to pay for its passes.</p>
-<p><strong>Takeaway: prompt lookup costs nothing to draft and pays when the output repeats earlier text.</strong></p>
+<p>Copying gains 60–75 % with greedy decoding. Fresh prose is about neutral: within −10 % to +15 %, inside the run-to-run spread. A longer n-gram (3) found too few matches to pay for its passes. (Those numbers are from 2026-10-29, on the CPU.)</p>
+<p>The GPU and the DSP run the same lookup, and the GPU’s first result was a loss. On 2026-10-30 the GPU went from 69 to 28 tok/s on the copying prompt, Q4_0 (<span class="tag m">measured</span>, results/phase-l5.md step 6). Each extra token of the GPU’s few-token pass cost about a whole decode dispatch. On 2026-10-31 int8 few-token products (<a href="gpu-int8.html">why the GPU rounds activations to 8 bits</a>; results/phase-l3.md step 14) made lookup pay on the copying prompts: Q4_0 code 104.3 tok/s plain and 123.0 at K = 4 (+18 %); Q4_K_M code 63.8 plain and 117.3 at K = 4 (+84 %). Where few drafts are accepted it still loses: GPU Q4_0 prose 100 and 98 tok/s with the adaptive rule, against 115 and 123 plain (2026-11-01, results/phase-l3.md step 25). On the DSP, lookup gave +6–28 % on the phase-6 prompts (2026-10-30, results/phase-l5.md step 6: 119 → 149, 111 → 142 and 111 → 118 tok/s plain against lookup).</p>
+<p>LFM3-1.7B, the hybrid model, needs one more piece for lookup. Its short-convolution layers keep a small state, and a rejected draft must undo its effect on that state. The engine snapshots the state for the last 32 tokens and restores it (<a href="../lfm3/rollback.html">how the convolution rollback works</a>). On the phone the test’s logits match exactly with the restore and differ by a relative 0.642 without it (results/phase-lfm3/raw/phone-tests.txt).
+</p>
+<p><strong>Takeaway: prompt lookup costs nothing to draft and pays when the output repeats earlier text; since 2026-10-31 that holds on the GPU too.</strong></p>
 
 <h2 id="draft" data-short="Draft model" data-step="A small model's drafts are good, but at 2x the target's speed they cost too much.">Why didn’t a small draft model help more?</h2>
 <p>The classic version uses a <strong>draft model</strong>: a smaller model with the same vocabulary that decodes K tokens on its own, which the target then checks. SmolLM2 comes in 135M and 360M sizes, so the 135M model drafted for the 360M one.</p>
@@ -222,9 +225,10 @@ now: "returns the"  -> drafts: "sum of a"
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-6.md, “Prompt lookup decoding” and “Speculative decoding with a draft model”) unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<!-- sources: results/phase-6.md “Prompt lookup decoding” and “Speculative decoding with a draft model” (2026-10-29, CPU); results/phase-l5.md step 6 (DSP and GPU lookup, 2026-10-30: GPU 69 → 28, DSP 119 → 149, 111 → 142, 111 → 118); results/phase-l3.md steps 14 (GPU Q4_0 104.3 → 123.0, Q4_K_M 63.8 → 117.3, 2026-10-31) and 25 (GPU Q4_0 prose 100 / 98 vs 115 / 123, 2026-11-01); IMPLEMENTATION.md section 0 (DSP +6–28 %; LFM3 rollback 0.31 and bit-identical, flagged for review); results/phase-lfm3.md (restore_conv, 32-token snapshot) -->
+<p class="colophon">Numbers on this page were measured on the iQOO 13 (SM8750) on 2026-10-29 (results/phase-6.md, “Prompt lookup decoding” and “Speculative decoding with a draft model”), and the GPU and DSP lookup numbers on 2026-10-30 to 2026-11-01 (results/phase-l5.md, results/phase-l3.md), unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>

@@ -19,7 +19,7 @@
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content">
 <p class="kicker">Phase 8 · the app</p>
-<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine is a shared library with a C interface (<code>include/aether.h</code>), and a one-screen Android app calls it through a small C shim. A debug build was installed on the iQOO 13 and ran Qwen2.5-0.5B-Instruct Q4_0. The reply streamed in token by token and ended at the model's end-of-turn token. Once warm, the app's speed matched the command-line tool within run-to-run spread. This overview covers what was built and measured; the topic pages go deeper: <a href="c-abi.html">the C interface</a> and <a href="app.html">the Android app</a>.</p></div>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>The engine is a shared library with a C interface (<code>include/aether.h</code>), and a one-screen Android app calls it through a small C shim. A debug build was installed on the iQOO 13 and ran Qwen2.5-0.5B-Instruct Q4_0. The reply streamed in token by token and ended at the model's end-of-turn token. Once warm, the app's speed matched the command-line tool within run-to-run spread. Two things came after it: the app has a CPU / GPU / DSP selector (2026-10-30), and it runs LFM3-1.7B on the CPU (2026-11-03 and 04, <a href="../lfm3/index.html">the LFM3 pages</a>). This overview covers what was built and measured; the topic pages go deeper: <a href="c-abi.html">the C interface</a> and <a href="app.html">the Android app</a>.</p></div>
 
 <h1>Phase 8 — on the phone, in an app</h1>
 <p class="lede">Everything so far ran from a shell. Phase 8 puts the engine inside an app: a text box, a reply that appears as it is written, and a background thread so the screen does not freeze. The engine is written in Rust, and Android apps are written in Kotlin. The two need a common language in between, and that language is C.</p>
@@ -38,7 +38,7 @@
 
 <h2 id="why-c">Why a C interface?</h2>
 <p>Kotlin code on Android runs on Android's Java runtime, and the way it calls native code is JNI, the Java Native Interface. JNI calls C functions, using C types. It cannot call Rust directly, because Rust does not promise the layout of its types or the names of its functions, unless you ask it to. C is the one language both sides agree on, so the engine exports a C interface and the app talks to that.</p>
-<p>The interface is small on purpose. <code>include/aether.h</code> declares five functions and two structs. Anything Kotlin needs goes through them, and nothing else is exposed.</p>
+<p>The interface is small on purpose. <code>include/aether.h</code> declares seven functions and two structs. Anything Kotlin needs goes through them, and nothing else is exposed.</p>
 <div class="callout"><span class="lbl">Illustration</span><p>Think of a plug and a socket. Kotlin has one socket shape (JNI, C types), Rust has another, and the C header is the adaptor between them. Neither side has to know the other's internals.</p></div>
 <p><strong>Takeaway: C is the shared language between the Kotlin app and the Rust engine, and the header is the whole contract.</strong></p>
 
@@ -191,11 +191,12 @@ pub fn piece(&amp;self, prev: usize, next: usize) -&gt; Vec&lt;u8&gt; {</code></
   <div class="stat"><b>93.6–100.4</b><span>app decode tok/s once warm <span class="tag m">measured</span></span></div>
   <div class="stat"><b>262 ms</b><span>first prefill after load, against 200 ms once warm <span class="tag m">measured</span></span></div>
 </div>
+<p>The Qwen numbers above are from 2026-10-22, before the CPU / GPU / DSP selector (2026-10-30). The app has since run LFM3-1.7B Q4_K_M on the CPU: 16 prompt tokens in 579 ms, then 462 tokens at 29.8 tok/s, and a process of 1.30 GB PSS (<span class="tag m">measured</span>, <code>results/phase-lfm3.md</code>, "The app"). That is another model on another day, so it is not a comparison with the CLI.</p>
 <p class="note">Conditions: on battery (54 %). Another app was playing a picture-in-picture video during these runs, so the absolute speeds are below the Phase 7 numbers on the same phone. The app and the CLI ran under the same load.</p>
 <ul>
   <li><strong>Once warm, the app matches the CLI.</strong> The app's decode lies between 93.6 and 100.4 tok/s, and the CLI's between 98.0 and 103.9. The ranges overlap, which is the run-to-run spread.</li>
   <li><strong>The first generate is slower.</strong> The model is memory-mapped, so each page is read from storage the first time it is touched. That happens during the first prefill, so the 262 ms includes the reads. This is not a cold-start time for the app.</li>
-  <li><strong>No memory number yet.</strong> The results file has speeds only. The Phase 7 peak memory figures are for the CLI, not for the app.</li>
+  <li><strong>No memory number for Qwen in the app.</strong> The Qwen results file has speeds only. The Phase 7 peak memory figures are for the CLI, not for the app. The LFM3 app run has one: 1.30 GB PSS (below).</li>
 </ul>
 <p><strong>Takeaway: the app does not slow the engine down, and the first reply is slower only because the model's pages are loaded on first use.</strong></p>
 
@@ -203,18 +204,18 @@ pub fn piece(&amp;self, prev: usize, next: usize) -&gt; Vec&lt;u8&gt; {</code></
 <p>These are the gaps the phase leaves. Each is a measurement or a check that has not been done, not a known fault.</p>
 <ul>
   <li><strong>Release build.</strong> The numbers come from a debug APK. The release build is signed with the debug key and has not been measured.</li>
-  <li><strong>Memory.</strong> The app's memory use is not recorded in <code>results/phase-8.md</code>.</li>
+  <li><strong>Memory.</strong> Recorded for LFM3 only (1.30 GB PSS, 2026-11-03 and 04). The Qwen app's memory is not recorded in <code>results/phase-8.md</code>.</li>
   <li><strong>Loading from shared storage.</strong> <code>android/README.md</code> notes that shared storage goes through Android's FUSE layer, and gives an alternative path. The two paths have not been timed against each other.</li>
   <li><strong>End of a reply.</strong> The UTF-8 stream has no flush, as described above.</li>
 </ul>
-<p><strong>Takeaway: the app's speed is measured; its memory, its release build and its load paths are not.</strong></p>
+<p><strong>Takeaway: the app's speed is measured for Qwen (2026-10-22) and for LFM3; its Qwen memory, its release build and its load paths are not.</strong></p>
 
 <h2 id="files">Which files hold the code?</h2>
 <table>
   <thead><tr><th>File</th><th>Job</th></tr></thead>
   <tbody>
     <tr><td><code>src/ffi.rs</code></td><td>The C ABI: opaque handle, <code>guard</code> and <code>catch_unwind</code>, the streaming callback, and a test that drives it the way C does</td></tr>
-    <tr><td><code>include/aether.h</code></td><td>The C header: the five functions, the error codes and the stats struct</td></tr>
+    <tr><td><code>include/aether.h</code></td><td>The C header: the seven functions, the error codes and the stats struct</td></tr>
     <tr><td><code>examples/c/smoke.c</code></td><td>The same calls from plain C, as a check that the header works</td></tr>
     <tr><td><code>android/app/src/main/cpp/aether_jni.c</code></td><td>The JNI shim: converts types, runs the callback, turns errors into exceptions</td></tr>
     <tr><td><code>android/app/src/main/java/dev/aether/chat/Aether.kt</code></td><td>The Kotlin wrapper, and <code>Utf8Stream</code>, which holds back unfinished characters</td></tr>
@@ -240,14 +241,15 @@ pub fn piece(&amp;self, prev: usize, next: usize) -&gt; Vec&lt;u8&gt; {</code></
 <h2 id="takeaway">What you should take away</h2>
 <p>C is the common language. The header is a small, explicit contract, and the code behind it guards every call.</p>
 <p>Text streams as bytes, and the app holds back the unfinished characters until they are complete.</p>
-<p>Once warm, the app runs at the CLI's speed. Its memory, release build and load paths are the next things to measure.</p>
+<p>Once warm, the app runs at the CLI's speed. Its Qwen memory, release build and load paths are the next things to measure; LFM3's memory is recorded.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
 <p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026, on battery, unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
+<!-- sources: results/phase-8.md (app vs CLI, 2026-10-22); results/phase-lfm3.md "The app" (LFM3 Q4_K_M, 16 prompt tokens 579 ms, 462 tokens at 29.8 tok/s, 1.30 GB PSS); IMPLEMENTATION.md section 0 (CPU / GPU / DSP selector 2026-10-30; LFM3 A0-A7); include/aether.h (seven functions). -->
 </html>

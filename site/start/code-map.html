@@ -30,7 +30,7 @@ setTimeout(function () {
 <p class="kicker">Start here · 07</p>
 
 <h1>Code map</h1>
-<p class="lede">The engine is about 45 Rust files in <code>src/</code>. This page lists them in the order a prompt meets them, from the command line to the next token, with each file’s job in one line and the page that explains it.</p>
+<p class="lede">The engine is 49 Rust files in <code>src/</code>, plus a C library for the NPU in <code>dsp/</code> and the GPU’s shaders in <code>shaders/</code>. This page lists them in the order a prompt meets them, from the command line to the next token, with each file’s job in one line and the page that explains it.</p>
 
 <div class="callout guide"><span class="lbl">Before you start</span><p class="js-only">Most sections first set up a problem, then ask you to <strong>guess</strong> the answer before they explain. Guess even if you are unsure: a wrong guess makes the explanation stick better than none. Most sections end with a <strong>check</strong>, folded until you open it, where you also say how sure you are. Your answers stay in this browser; the last section lets you copy them into your notes.</p>
 <p>This page builds on <a href="llm.html">How an LLM makes text</a> (tokens, weights, the forward pass).</p>
@@ -49,7 +49,7 @@ setTimeout(function () {
 
 <h2 id="goal" data-short="The goal" data-step="A map of src/, in the order one prompt passes through it, with a page for each file.">What are we trying to do here?</h2>
 <p>When you read the engine for the first time, the hard part is not any one file but knowing which file to open. A prompt passes through the files in a fixed order: it is read from the command line or the app, the model file is loaded, the text becomes tokens, the tokens go through the layers, and a token comes out and becomes text again.</p>
-<p>The sections below follow that order. Line counts are from 2026-10-29 and include each file’s tests. The library (<code>src/lib.rs</code>) only lists the modules; nothing runs there.</p>
+<p>The sections below follow that order. Line counts are from 2026-11-04 and include each file’s tests. The library (<code>src/lib.rs</code>) only lists the modules; nothing runs there. Files that only list modules (<code>lib.rs</code> and three <code>mod.rs</code> files) are not in the tables.</p>
 
 <h2 id="entry" data-short="Entry points" data-step="The CLI (main.rs) and the app (ffi.rs) both open a Session, which holds the model and its tokenizer.">Where does a run start?</h2>
 <p>There are two ways in: the <code>aether</code> command-line program and the Android app. Both end up in the same place.</p>
@@ -64,9 +64,9 @@ setTimeout(function () {
 <table>
   <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
   <tbody>
-    <tr><td><code>main.rs</code></td><td class="num">252</td><td>The <code>aether</code> CLI: flags, generate or score, print timings</td><td><a href="../phase-2/baseline.html">First speed</a></td></tr>
-    <tr><td><code>ffi.rs</code></td><td class="num">400</td><td>The C interface the app calls: handles, error codes, a callback per token</td><td><a href="../phase-8/c-abi.html">C ABI</a></td></tr>
-    <tr><td><code>session.rs</code></td><td class="num">515</td><td>A loaded model plus its tokenizer: open any file type, generate, stop, speculative decoding</td><td><a href="../phase-8/app.html">The app</a></td></tr>
+    <tr><td><code>main.rs</code></td><td class="num">337</td><td>The <code>aether</code> CLI: flags, generate or score, print timings</td><td><a href="../phase-2/baseline.html">First speed</a></td></tr>
+    <tr><td><code>ffi.rs</code></td><td class="num">469</td><td>The C interface the app calls: handles, error codes, a callback per token</td><td><a href="../phase-8/c-abi.html">C ABI</a></td></tr>
+    <tr><td><code>session.rs</code></td><td class="num">1,010</td><td>A loaded model plus its tokenizer: open any file type, generate, stop, speculative decoding, LFM3’s conv rollback</td><td><a href="../phase-8/app.html">The app</a>, <a href="../lfm3/rollback.html">LFM3 conv rollback</a></td></tr>
   </tbody>
 </table>
 <p><strong>Takeaway: every run goes through <code>Session</code>, whichever program started it.</strong></p>
@@ -78,10 +78,13 @@ setTimeout(function () {
   <tbody>
     <tr><td><code>format/mmap.rs</code></td><td class="num">105</td><td>Maps a file into memory so weights are used in place</td><td><a href="../phase-5/safetensors.html">Weights in place</a></td></tr>
     <tr><td><code>format/safetensors.rs</code>, <code>json.rs</code></td><td class="num">213, 318</td><td>Hugging Face weight files and the JSON they start with</td><td><a href="../phase-5/safetensors.html">Weights in place</a></td></tr>
-    <tr><td><code>format/gguf.rs</code></td><td class="num">263</td><td>llama.cpp’s file: metadata and a tensor table</td><td><a href="../phase-7/gguf.html">GGUF</a></td></tr>
-    <tr><td><code>format/imatrix.rs</code></td><td class="num">304</td><td>Importance matrices for quantizing (llama-imatrix files)</td><td><a href="../beyond/q4km.html">Q4_K_M</a></td></tr>
-    <tr><td><code>model/config.rs</code></td><td class="num">47</td><td>The numbers that fix every shape: layers, heads, sizes</td><td><a href="../phase-5/config.html">One forward pass, two families</a></td></tr>
-    <tr><td><code>model/llama2c.rs</code>, <code>hf.rs</code>, <code>gguf.rs</code></td><td class="num">355, 153, 160</td><td>One loader per source, all producing the same <code>Weights</code></td><td><a href="../phase-2/model-file.html">Inside a model file</a></td></tr>
+    <tr><td><code>format/gguf.rs</code></td><td class="num">394</td><td>llama.cpp’s file: metadata and a tensor table</td><td><a href="../phase-7/gguf.html">GGUF</a></td></tr>
+    <tr><td><code>format/imatrix.rs</code></td><td class="num">357</td><td>Importance matrices for quantizing (llama-imatrix files)</td><td><a href="../beyond/q4km.html">Q4_K_M</a></td></tr>
+    <tr><td><code>format/quantize.rs</code>, <code>src/bin/aether-quantize.rs</code></td><td class="num">304, 42</td><td>Writes a quantized GGUF; for the same input, the same bytes as <code>llama-quantize</code>. The <code>aether-quantize</code> command runs it</td><td><a href="../beyond/q4km.html">Q4_K_M</a></td></tr>
+    <tr><td><code>src/bin/aether-imatrix.rs</code></td><td class="num">36</td><td>The <code>aether-imatrix</code> command: an importance matrix from our own forward pass</td><td><a href="../beyond/q4km.html">Q4_K_M</a></td></tr>
+    <tr><td><code>model/config.rs</code></td><td class="num">118</td><td>The numbers that fix every shape: layers, heads, sizes; LFM3’s conv layers have no head size</td><td><a href="../phase-5/config.html">One forward pass, two families</a>, <a href="../lfm3/index.html">LFM3</a></td></tr>
+    <tr><td><code>model/mod.rs</code></td><td class="num">33</td><td><code>load_any</code>: opens a model by its path, whichever of the three formats it is</td><td><a href="../phase-2/model-file.html">Inside a model file</a></td></tr>
+    <tr><td><code>model/llama2c.rs</code>, <code>hf.rs</code>, <code>gguf.rs</code></td><td class="num">370, 169, 392</td><td>One loader per source, all producing the same <code>Weights</code>; the GGUF loader also reads LFM3’s mixed stack</td><td><a href="../phase-2/model-file.html">Inside a model file</a>, <a href="../lfm3/index.html">LFM3</a></td></tr>
     <tr><td><code>weight.rs</code></td><td class="num">300</td><td>A matrix in any storage format (f32, Q8_0, Q4_0, Q5_0, K-quants), converting and repacking</td><td><a href="../phase-6/blocks.html">Block quantization</a></td></tr>
     <tr><td><code>quant.rs</code></td><td class="num">1,244</td><td>The quantized block layouts and quantizers, byte-identical to llama.cpp</td><td><a href="../phase-6/blocks.html">Block quantization</a></td></tr>
   </tbody>
@@ -101,9 +104,9 @@ setTimeout(function () {
 <table>
   <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
   <tbody>
-    <tr><td><code>chat.rs</code></td><td class="num">39</td><td>Wraps a question in the ChatML template</td><td><a href="../phase-7/chat.html">Chat models</a></td></tr>
+    <tr><td><code>chat.rs</code></td><td class="num">144</td><td>Wraps a question in the chat template: ChatML, and LFM3’s ChatML with thinking on or off</td><td><a href="../phase-7/chat.html">Chat models</a>, <a href="../lfm3/index.html">LFM3</a></td></tr>
     <tr><td><code>tokenizer/llama2c.rs</code></td><td class="num">173</td><td>stories15M’s SentencePiece-style tokenizer</td><td><a href="../phase-2/tokenizer.html">Text to tokens</a></td></tr>
-    <tr><td><code>tokenizer/bytelevel.rs</code></td><td class="num">593</td><td>SmolLM2’s and Qwen’s byte-level BPE</td><td><a href="../phase-5/bytelevel.html">Byte-level BPE</a></td></tr>
+    <tr><td><code>tokenizer/bytelevel.rs</code></td><td class="num">650</td><td>SmolLM2’s, Qwen’s and LFM3’s byte-level BPE</td><td><a href="../phase-5/bytelevel.html">Byte-level BPE</a>, <a href="../lfm3/index.html">LFM3</a></td></tr>
     <tr><td><code>tokenizer/nfc.rs</code>, <code>unicode_tables.rs</code></td><td class="num">144, 4,671</td><td>Unicode normalization, and generated letter and mark tables</td><td><a href="../phase-7/nfc.html">One text, two spellings</a></td></tr>
     <tr><td><code>model/sampler.rs</code></td><td class="num">234</td><td>Greedy, temperature, top-k, top-p; checks draft tokens</td><td><a href="../phase-2/sampling.html">Choosing the next token</a></td></tr>
   </tbody>
@@ -134,13 +137,41 @@ setTimeout(function () {
 <table>
   <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
   <tbody>
-    <tr><td><code>model/transformer.rs</code></td><td class="num">612</td><td>The forward pass: norm, q/k/v, RoPE, attention, MLP, for one token or a batch</td><td><a href="../phase-2/forward.html">The forward pass in code</a></td></tr>
-    <tr><td><code>kernels/mod.rs</code></td><td class="num">878</td><td>The op functions the model calls; picks the code path</td><td><a href="../phase-3/dispatch.html">One API, two machines</a></td></tr>
-    <tr><td><code>kernels/scalar.rs</code></td><td class="num">216</td><td>Plain Rust versions of every op (runs on the PC)</td><td><a href="../phase-2/attention.html">Attention</a></td></tr>
-    <tr><td><code>kernels/neon.rs</code></td><td class="num">559</td><td>f32 NEON kernels: matmul, GEMM tiles, attention</td><td><a href="../phase-3/simd.html">SIMD and NEON</a></td></tr>
+    <tr><td><code>model/transformer.rs</code></td><td class="num">990</td><td>The forward pass: norm, q/k/v, RoPE, attention, MLP, for one token or a batch; LFM3’s mixed conv and attention layers</td><td><a href="../phase-2/forward.html">The forward pass in code</a>, <a href="../lfm3/conv.html">LFM3’s conv layers</a></td></tr>
+    <tr><td><code>kernels/mod.rs</code></td><td class="num">1,039</td><td>The op functions the model calls; picks the code path; LFM3’s conv and sliding-window ops</td><td><a href="../phase-3/dispatch.html">One API, two machines</a>, <a href="../lfm3/attention.html">LFM3 attention</a></td></tr>
+    <tr><td><code>kernels/scalar.rs</code></td><td class="num">223</td><td>Plain Rust versions of every op (runs on the PC)</td><td><a href="../phase-2/attention.html">Attention</a></td></tr>
+    <tr><td><code>kernels/neon.rs</code></td><td class="num">571</td><td>f32 NEON kernels: matmul, GEMM tiles, attention</td><td><a href="../phase-3/simd.html">SIMD and NEON</a></td></tr>
     <tr><td><code>kernels/neon_quant.rs</code></td><td class="num">1,013</td><td>Quantized dot products with <code>sdot</code> and <code>smmla</code></td><td><a href="../phase-6/dot-products.html">Quantized dot products</a></td></tr>
     <tr><td><code>pool.rs</code></td><td class="num">376</td><td>Pinned worker threads that split each op</td><td><a href="../phase-4/pool.html">Threads that stay</a></td></tr>
-    <tr><td><code>kernels/vulkan.rs</code>, <code>model/gpu.rs</code></td><td class="num">763, 473</td><td>The GPU path: Vulkan setup, and a whole decode step on the GPU</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a></td></tr>
+    <tr><td><code>kernels/vulkan.rs</code></td><td class="num">2,041</td><td>The GPU (Adreno) through Vulkan: device setup, buffers and compute kernels</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a></td></tr>
+    <tr><td><code>model/gpu.rs</code></td><td class="num">1,144</td><td>A whole decode step and the prompt pass on the GPU, as Vulkan shaders</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a>, <a href="../beyond/gpu-prompt.html">The prompt on the GPU</a></td></tr>
+    <tr><td><code>kernels/hexagon.rs</code></td><td class="num">988</td><td>The NPU (Hexagon DSP) through FastRPC: opens our DSP library and makes its calls</td><td><a href="../beyond/npu-basics.html">What the NPU is</a></td></tr>
+    <tr><td><code>model/dsp.rs</code></td><td class="num">500</td><td>A whole decode step on the NPU, one call per token; the model is uploaded once</td><td><a href="../beyond/npu-decode.html">One call per token</a></td></tr>
+  </tbody>
+</table>
+<p>Two kinds of file that are not Rust sit beside <code>src/</code>. <code>dsp/</code> holds the NPU’s library, in C, which <code>build.rs</code> builds for the Hexagon DSP. <code>shaders/</code> holds the GPU’s compute shaders, in GLSL; <code>build.rs</code> compiles each one to SPIR-V, the binary form Vulkan runs.</p>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>dsp/aether_dsp.idl</code>, <code>dsp/aether_dsp.c</code></td><td class="num">63, 501</td><td>The calls the CPU makes into the DSP library, and the library that answers them</td><td><a href="../beyond/npu-basics.html">What the NPU is</a></td></tr>
+    <tr><td><code>dsp/model.c</code></td><td class="num">1,186</td><td>A whole decode step on the DSP: every layer and the classifier, one call per token</td><td><a href="../beyond/npu-decode.html">One call per token</a></td></tr>
+    <tr><td><code>dsp/hmx.c</code>, <code>dsp/hmx_tiles.h</code></td><td class="num">205, 117</td><td>Matrix products on HMX, the DSP’s matrix unit, for prompts; weights turned into HMX tiles</td><td><a href="../beyond/npu-prompt.html">How the NPU reads a prompt</a></td></tr>
+    <tr><td><code>dsp/dsp.h</code>, <code>q4_0_hvx.h</code>, <code>qx_hvx.h</code>, <code>f16_hvx.h</code></td><td class="num">102, 107, 171, 53</td><td>Helpers shared by the DSP code: buffers and threads; products on HVX, the vector unit; f16 for the K/V cache</td><td><a href="../beyond/npu-attention.html">Attention through VTCM</a></td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
+  <tbody>
+    <tr><td><code>quant_x.comp</code></td><td class="num">68</td><td>x rounded to 8 bits per 32 values, as llama.cpp’s Q8_0, for the int8 products</td><td><a href="../beyond/gpu-int8.html">Int8 on the GPU</a></td></tr>
+    <tr><td><code>qx_gemv_q8.comp</code>, <code>q4_0_gemm_q8.comp</code>, <code>qx_gemm_q8.comp</code></td><td class="num">119, 90, 139</td><td>Int8 products: decode for a few tokens at once, and prompt products for Q4_0 and for every Q4_K_M format</td><td><a href="../beyond/gpu-int8.html">Int8 on the GPU</a></td></tr>
+    <tr><td><code>attention.comp</code>, <code>attention_merge.comp</code></td><td class="num">66, 28</td><td>Decode attention in two parts: each chunk’s scores and sums, then the merge of the chunks</td><td><a href="../beyond/gpu-flash.html">Flash attention on the GPU</a></td></tr>
+    <tr><td><code>attention_flash.comp</code></td><td class="num">143</td><td>Prompt attention in one pass over the context, with a running max and sum (flash attention)</td><td><a href="../beyond/gpu-flash.html">Flash attention on the GPU</a></td></tr>
+    <tr><td><code>attention_tile.comp</code></td><td class="num">146</td><td>The chunked prompt attention, 32 tokens a workgroup; kept for A/B tests</td><td><a href="../beyond/gpu-flash.html">Flash attention on the GPU</a></td></tr>
+    <tr><td><code>q4_0_gemv.comp</code>, <code>qx_gemv.comp</code></td><td class="num">105, 215</td><td>Decode products: Q4_0, tuned, and every format of a Q4_K_M file</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a></td></tr>
+    <tr><td><code>q4_0_gemm.comp</code>, <code>qx_gemm.comp</code></td><td class="num">95, 132</td><td>Prompt products in f32: Q4_0, and every format of a Q4_K_M file</td><td><a href="../beyond/gpu-prompt.html">The prompt on the GPU</a></td></tr>
+    <tr><td><code>q4_0_gemm_h.comp</code>, <code>q4_0_gemm_ht.comp</code>, <code>qx_gemm_h.comp</code>, <code>to_f16t.comp</code></td><td class="num">70, 71, 110, 28</td><td>Prompt products in fp16 arithmetic, organized like llama.cpp’s Adreno kernel; <code>to_f16t</code> prepares the activations</td><td><a href="../beyond/gpu-prompt.html">The prompt on the GPU</a></td></tr>
+    <tr><td><code>qkv_post.comp</code>, <code>rmsnorm.comp</code>, <code>swiglu.comp</code>, <code>argmax.comp</code></td><td class="num">52, 27, 11, 46</td><td>The small decode steps: biases and RoPE with the K/V store, RMS norm, SwiGLU, and the greedy argmax</td><td><a href="../beyond/gpu-decode.html">Decoding on the GPU</a></td></tr>
+    <tr><td><code>copy.comp</code>, <code>read.comp</code></td><td class="num">12, 24</td><td>The GPU bandwidth tests: copy and read</td><td><a href="../beyond/gpu-basics.html">GPU basics</a></td></tr>
   </tbody>
 </table>
 <p><strong>Takeaway: the model code says what to compute, and the kernel layer decides how, for this machine and this weight format.</strong></p>
@@ -154,20 +185,21 @@ setTimeout(function () {
 </div>
 
 <h2 id="lab" data-short="The lab" data-step="Measurement, scoring and test files: they never run in an answer, but every number on this site comes from them.">What are the other files for?</h2>
-<p>About a third of <code>src/</code> never runs while the engine answers a question. It is the lab: the code that measures the phone, scores the model and checks the results.</p>
+<p>Part of <code>src/</code> never runs while the engine answers a question. It is the lab: the code that measures the phone, scores the model and checks the results.</p>
 <table>
   <thead><tr><th>File</th><th class="num">lines</th><th>Job</th><th>Page</th></tr></thead>
   <tbody>
     <tr><td><code>bench.rs</code></td><td class="num">168</td><td>Warm-up, repeated timing, robust statistics</td><td><a href="../phase-0/measuring-time.html">Measuring time</a></td></tr>
     <tr><td><code>membench.rs</code></td><td class="num">193</td><td>Memory-bandwidth kernels (read, copy, scale, add)</td><td><a href="../phase-1/bandwidth.html">Bandwidth</a></td></tr>
-    <tr><td><code>monitor.rs</code></td><td class="num">347</td><td>Samples clocks, temperatures and battery power during a run</td><td><a href="../phase-7/heat.html">Heat and energy</a></td></tr>
+    <tr><td><code>monitor.rs</code></td><td class="num">348</td><td>Samples clocks, temperatures and battery power during a run</td><td><a href="../phase-7/heat.html">Heat and energy</a></td></tr>
     <tr><td><code>sys/affinity.rs</code>, <code>cpu.rs</code>, <code>sysfs.rs</code></td><td class="num">112, 32, 252</td><td>Pinning threads to cores; reading <code>/sys</code> for clocks, heat and battery</td><td><a href="../phase-1/rust-pinning.html">Pinning</a>, <a href="../phase-1/rust-sysfs.html">/sys</a></td></tr>
-    <tr><td><code>eval.rs</code></td><td class="num">156</td><td>Perplexity and KL divergence</td><td><a href="../phase-6/perplexity.html">Perplexity and KL</a></td></tr>
+    <tr><td><code>eval.rs</code></td><td class="num">163</td><td>Perplexity and KL divergence</td><td><a href="../phase-6/perplexity.html">Perplexity and KL</a>, <a href="../lfm3/accuracy-speed.html">LFM3’s accuracy</a></td></tr>
     <tr><td><code>testutil.rs</code>, <code>model/reference.rs</code></td><td class="num">106, 66</td><td>Finding golden files, reading reference dumps</td><td><a href="right.html">How we know it’s right</a></td></tr>
     <tr><td><code>aligned.rs</code>, <code>tensor.rs</code></td><td class="num">223, 274</td><td>A 64-byte-aligned buffer, and Phase 0’s first tensor type</td><td><a href="../phase-1/alignment.html">Alignment</a>, <a href="../phase-0/tensors.html">Tensors</a></td></tr>
+    <tr><td><code>tools/hf_dump_lfm3.py</code>, <code>hf_ppl_lfm3.py</code>, <code>gen_lfm3_tokenizer.py</code></td><td class="num">76, 39, 52</td><td>LFM3’s references (Python, not Rust): transformers’ layer outputs, the context-2048 perplexity, and the tokenizer’s golden strings</td><td><a href="right.html">How we know it’s right</a>, <a href="../lfm3/accuracy-speed.html">LFM3’s accuracy</a></td></tr>
   </tbody>
 </table>
-<p><strong>Takeaway: a third of the code measures and checks the rest, and every number on this site comes from it.</strong></p>
+<p><strong>Takeaway: some of the code measures and checks the rest, and every number on this site comes from it.</strong></p>
 <div class="quiz" data-quiz="check" data-for="lab" id="c-lab">
   <p>A timed run looks 20 % slower than yesterday. Which file’s output do you read first?</p>
   <ul>
@@ -192,15 +224,16 @@ setTimeout(function () {
 </div>
 
 <h2 id="takeaway" data-short="Takeaway" data-step="Three lines to remember.">What you should take away</h2>
-<p>A prompt enters through <code>main.rs</code> or <code>ffi.rs</code> and goes through <code>Session</code>. Loading ends in one <code>Weights</code> type for every model; the forward pass in <code>transformer.rs</code> calls kernels that choose the code for the machine and format. About a third of the code is the lab that measures and checks the rest.</p>
+<p>A prompt enters through <code>main.rs</code> or <code>ffi.rs</code> and goes through <code>Session</code>. Loading ends in one <code>Weights</code> type for every model; the forward pass in <code>transformer.rs</code> calls kernels that choose the code for the machine and format. Some of the code is the lab that measures and checks the rest.</p>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Line counts are from the engine on 2026-10-29, tests included. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<p class="colophon">Line counts are from the engine on 2026-11-04, tests included. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
+<!-- sources: wc -l on src/**/*.rs (49 files), shaders/*.comp, dsp/* in the Aether-site worktree (committed main, 2026-11-04); job lines from each file's top doc comment and git log -- <file>; LFM3 files from git log --stat b173e6b^..b4fceba plus 8f0e56b (session.rs, transformer.rs, gguf.rs, kernels/vulkan.rs) and the chat.rs / ffi.rs A6 commits -->
 </body>
 </html>

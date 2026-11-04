@@ -44,11 +44,12 @@ setTimeout(function () {
   <a href="#takeaway">What you should take away</a>
 </nav>
 
-<h2 id="goal" data-short="The goal" data-step="Give any language a safe way to load a model, stream a reply and close it, through six C functions.">What are we trying to do here?</h2>
+<h2 id="goal" data-short="The goal" data-step="Give any language a safe way to load a model, stream a reply and close it, through seven C functions.">What are we trying to do here?</h2>
 <p>Until Phase 8 the engine was a Rust library used by a Rust command-line tool. An app needs to call it from another language. The way almost every language can call into another is the <strong>C ABI</strong> (application binary interface): the rules C uses for passing arguments, returning values and naming functions in a compiled library.</p>
 <p>The engine’s C interface is <code>include/aether.h</code> (the header, the contract) and <code>src/ffi.rs</code> (the Rust side). Cargo builds the library a second time as a <code>cdylib</code>, a shared library for C callers: <code>libaether.so</code>.</p>
 <pre><code>int  aether_open(path, cores, max_seq, &amp;session);
-int  aether_open_gpu(path, max_seq, &amp;session);
+int  aether_open_gpu(path, cores, max_seq, &amp;session);
+int  aether_open_dsp(path, dir, max_seq, &amp;session);
 int  aether_generate(session, prompt, chat, ...,
                      on_text, user, &amp;stats);
 int  aether_set_lookup(session, k, ngram);
@@ -116,7 +117,7 @@ pub unsafe extern "C" fn aether_close(
 <ul>
   <li>Closing twice frees the same memory twice, and a pointer from anywhere else frees memory Rust never owned. Rust cannot check either; the <code># Safety</code> section is the contract, and the caller must keep it.</li>
   <li>Null is allowed and does nothing, so cleanup code can close a session it never managed to open.</li>
-  <li>Because C never sees the fields, <code>AetherSession</code> could gain the GPU engine and the lookup settings without changing a line of the app.</li>
+  <li>Because C never sees the fields, <code>AetherSession</code> gained the GPU and DSP engines and the lookup setting behind the same pointer: <code>aether_open_gpu</code>, <code>aether_open_dsp</code> and <code>aether_set_lookup</code>.</li>
 </ul>
 <p><strong>Takeaway: C holds an opaque pointer made by Box::into_raw, and must hand it back exactly once.</strong></p>
 <div class="quiz" data-quiz="check" data-for="handle" id="c-handle">
@@ -238,9 +239,10 @@ pub unsafe extern "C" fn aether_close(
 </main>
 </div>
 <p class="colophon">Phase 8 numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
+<!-- sources: include/aether.h (seven functions: aether_open, aether_open_gpu, aether_open_dsp, aether_generate, aether_set_lookup, aether_last_error, aether_close). -->
 </html>

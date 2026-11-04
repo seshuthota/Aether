@@ -18,11 +18,11 @@
 <div class="layout">
 <nav class="sidenav" aria-label="Notes" data-nav></nav>
 <main id="content" data-no-terms="dispatch">
-<p class="kicker">After Phase 8 · faster decoding and the GPU</p>
-<div class="callout ok"><span class="lbl">Built and verified</span><p>Speculative decoding reproduces llama2.c’s greedy text byte for byte on stories15M, and speculative sampling keeps the sampler’s distribution (200,000 draws). The GPU decode step gives llama.cpp’s perplexity on SmolLM2-135M and Qwen2.5-0.5B. Some of the newest GPU work is verified on the PC’s GPU and still waits for its speed measurement on the phone; the pages tag those numbers.</p></div>
+<p class="kicker">After Phase 8 · faster decoding, the GPU, the NPU and a hybrid model</p>
+<div class="callout ok"><span class="lbl">Built and verified</span><p>Speculative decoding reproduces llama2.c’s greedy text byte for byte on stories15M, and speculative sampling keeps the sampler’s distribution (200,000 draws). The GPU decode step gives llama.cpp’s perplexity on SmolLM2-135M and Qwen2.5-0.5B. The GPU work has been timed on the phone since 2026-10-29 (results/phase-l3.md, steps 7 to 28), and the NPU runs our own C code on the Hexagon DSP (results/phase-l5.md). The pages tag each number with its date.</p></div>
 
-<h1>After Phase 8 — faster decoding and the GPU</h1>
-<p class="lede">By Phase 8 the engine ran in an app at close to the phone’s memory limit. The work since asks two questions. Can one read of the weights produce more than one token? And what is the phone’s GPU good for, when it reads the same memory as the CPU?</p>
+<h1>After Phase 8 — faster decoding, the GPU, the NPU and a hybrid model</h1>
+<p class="lede">By Phase 8 the engine ran in an app at close to the phone’s memory limit. The work since asks two questions. Can one read of the weights produce more than one token? And what is the phone’s GPU good for, when it reads the same memory as the CPU? Two more pieces came after: the phone’s NPU, a Hexagon DSP running our own C code, and LFM3-1.7B, a hybrid model whose layers are not all attention.</p>
 <nav class="toc">
   <a href="#why">Why go further than the plan?</a>
   <a href="#built">What was built?</a>
@@ -33,7 +33,7 @@
 </nav>
 
 <h2 id="why">Why go further than the plan?</h2>
-<p>The plan’s section 13 lists later work: K-quant files, speculative decoding, Vulkan compute on the GPU, and the NPU. Decode had reached about 180 tokens per second for Qwen2.5-0.5B Q4_0, about 50 GB/s of weights <span class="tag c">calculated</span>, close to the memory’s 61–67 GB/s. A faster kernel could not give much more. Getting several tokens per weight read could, and the GPU might do the same work for less energy.</p>
+<p>The plan’s section 13 lists later work: K-quant files, speculative decoding, Vulkan compute on the GPU, and the NPU. A hybrid model came later, with its own plan (<code>plans/lfm3.md</code>). Decode had reached about 180 tokens per second for Qwen2.5-0.5B Q4_0, about 50 GB/s of weights <span class="tag c">calculated</span>, close to the memory’s 61–67 GB/s. A faster kernel could not give much more. Getting several tokens per weight read could, and the GPU might do the same work for less energy.</p>
 <p><strong>Takeaway: once decode is near the memory limit, the next gains come from more tokens per read and from cheaper hardware, not faster kernels.</strong></p>
 
 <h2 id="built">What was built?</h2>
@@ -41,17 +41,21 @@
   <li><strong>Q4_K_M files.</strong> llama.cpp’s most common mix (Q5_0, Q4_K and Q6_K blocks) loads and runs, with perplexity checked against llama.cpp (<code>results/phase-6.md</code>, “Q4_K_M files”). Page: <a href="q4km.html">Q4_K_M files</a>.</li>
   <li><strong>Speculative decoding.</strong> Draft tokens, copied from earlier text (prompt lookup) or proposed by a smaller model, checked in one batched pass. CLI <code>--lookup K</code>, <code>--draft PATH</code>; the app’s “lookup” checkbox.</li>
   <li><strong>Vulkan compute on the Adreno GPU.</strong> A Q4_0 matrix-vector and matrix-matrix shader, then a whole decode step, then the prompt: on the CPU with the KV cache handed to the GPU, or batched on the GPU. CLI <code>--gpu</code>; the app’s “GPU” checkbox.</li>
+  <li><strong>The NPU (Hexagon DSP).</strong> Our own C code, unsigned, called over FastRPC: a whole decode step per call, the weights in on-chip memory (VTCM), and prompts in passes on the matrix unit (HMX). Built with <code>--features hexagon</code>; the app’s CPU / GPU / DSP selector. Source: <code>dsp/aether_dsp.c</code>.</li>
+  <li><strong>LFM3-1.7B, a hybrid model.</strong> Short-convolution layers and attention layers in one stack, with a sliding window in some attention layers. Its speculative decoding rolls the convolution state back. Page: <a href="../lfm3/index.html">LFM3-1.7B</a>.</li>
 </ul>
-<p><strong>Takeaway: three additions, each checked against an outside reference before any speed was measured.</strong></p>
+<p><strong>Takeaway: each addition was checked against an outside reference before any speed was measured.</strong></p>
 
 <h2 id="numbers">What are the headline numbers?</h2>
 <div class="statrow">
-  <div class="stat"><b>+60–75 %</b><span>decode with prompt lookup when the answer copies the prompt, greedy, Qwen2.5-0.5B <span class="tag m">measured</span></span></div>
-  <div class="stat"><b>0.021–0.024 J</b><span>energy per token on the GPU at 102.7 tok/s, against 0.029 J on the CPU at 157.6 <span class="tag m">measured</span></span></div>
-  <div class="stat"><b>19.7193</b><span>GPU perplexity of Qwen2.5-0.5B Q4_0; llama.cpp 19.7283 ± 0.836 <span class="tag m">measured</span></span></div>
-  <div class="stat"><b>7×</b><span>faster prompt in GPU mode when the CPU reads it and hands over the KV cache (345 tokens: ~4 s → ~0.55 s) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>+60–75 %</b><span>decode with prompt lookup when the answer copies the prompt, greedy, Qwen2.5-0.5B (2026-10-29) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>0.021–0.024 J</b><span>energy per token on the GPU at 102.7 tok/s, against 0.029 J on the CPU at 157.6 (2026-10-29) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>19.7193</b><span>GPU perplexity of Qwen2.5-0.5B Q4_0; llama.cpp 19.7283 ± 0.836 (2026-10-29) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>7×</b><span>faster prompt in GPU mode when the CPU reads it and hands over the KV cache (345 tokens: ~4 s → ~0.55 s) (2026-10-29) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>123 tok/s</b><span>NPU decode, Qwen2.5-0.5B Q4_0: 6.75 ms a token of DSP time, against llama.cpp’s NPU backend at 74 tok/s (13.5 ms) and our CPU at 192 tok/s, same comparison (2026-10-30) <span class="tag m">measured</span></span></div>
+  <div class="stat"><b>1608 / 778 tok/s</b><span>NPU prompt at 128 tokens, Q4_0 on the matrix unit: SmolLM2-135M / Qwen2.5-0.5B (llama.cpp’s NPU prefill is about 330 on Qwen) (2026-10-30) <span class="tag m">measured</span></span></div>
 </div>
-<p><strong>Takeaway: lookup pays on repeated text; the GPU is slower than the CPU but spends less energy per token.</strong></p>
+<p><strong>Takeaway: lookup pays on repeated text; the GPU is slower than the CPU but spends less energy per token; the NPU decodes faster than llama.cpp’s NPU backend, but not faster than our CPU.</strong></p>
 
 <h2 id="order">Which page should I read first?</h2>
 <ol>
@@ -61,13 +65,15 @@
   <li><a href="gpu-prompt.html">Who reads the prompt?</a>: the KV-cache handoff from CPU to GPU, a misleading measurement, and a batched GPU pass.</li>
   <li><a href="q4km.html">Q4_K_M files</a>: llama.cpp’s most common mix, K-quant super-blocks, accuracy against llama.cpp, and two speed fixes.</li>
 </ol>
-<p><strong>Takeaway: the speculative and Q4_K_M pages stand alone; the three GPU pages build on each other.</strong></p>
+<p>Then the GPU’s int8 products, and why flash attention changed the prompt pass: <a href="gpu-int8.html">why round the activations to 8 bits on the GPU</a>, and <a href="gpu-flash.html">flash attention: was it the kernel or the batch?</a>. The NPU has four pages: <a href="npu-basics.html">what the NPU is, and how our code gets on it</a>, <a href="npu-decode.html">why decode is one call per token</a>, <a href="npu-prompt.html">how the NPU reads a prompt</a>, and <a href="npu-attention.html">how attention streams through VTCM</a>. <a href="engines.html">CPU, GPU or NPU</a> compares every engine on this phone, and <a href="../lfm3/index.html">LFM3-1.7B</a> is the hybrid model.</p>
+<p><strong>Takeaway: the speculative and Q4_K_M pages stand alone; the GPU pages build on each other.</strong></p>
 
 <h2 id="open">What is still open?</h2>
 <ul>
-  <li>Phone timing of the newest GPU work: stages folded into the matrix products, logits in cached memory, and the batched GPU prompt. All are correct on the PC’s GPU.</li>
+  <li>GPU: the newest GPU work is timed on the phone (results/phase-l3.md, steps 7 and 21 to 28). Still open: splitting a short token group’s positions across workgroups, the next step after 256-token passes (step 27, F6b).</li>
   <li>L.2, an importance-weighted quantizer of our own, only if a model needs it.</li>
-  <li>L.5, the NPU: not started. It would need Qualcomm’s SDK, which conflicts with writing the engine from scratch, so it needs a decision first.</li>
+  <li>NPU: built and measured (results/phase-l5.md). Next for decode: attention over the whole cache in vectors of positions, since decode slows as the position grows (step 4b, 2026-10-30).</li>
+  <li>K-quant decode (branch <code>kquant-decode</code>, K0–K5) is in progress and has no phone numbers yet. For comparison, LFM3’s Q4_K_M decode measured 26.1 tok/s against llama.cpp’s 44.3 (results/phase-lfm3.md A7, 2026-11-03).</li>
 </ul>
 
 <h2 id="files">Which files hold the code?</h2>
@@ -81,15 +87,20 @@
     <tr><td><code>shaders/*.comp</code></td><td>the GPU programs: GEMV, GEMM, RMSNorm, RoPE, attention</td></tr>
     <tr><td><code>examples/vk_*.rs</code></td><td>measurements: bandwidth, GEMV, GEMM, decode profile, perplexity</td></tr>
     <tr><td><code>results/phase-l3.md</code></td><td>every GPU number, with the conditions it was measured under</td></tr>
+    <tr><td><code>src/kernels/hexagon.rs</code></td><td>the NPU’s CPU side: loads the DSP library over FastRPC, shared buffers, one call per invoke</td></tr>
+    <tr><td><code>src/model/dsp.rs</code></td><td><code>DspModel</code>: the decode step, prefill and few-token passes, run on the DSP</td></tr>
+    <tr><td><code>dsp/aether_dsp.c</code></td><td>our library on the DSP: HVX products, the matrix unit (HMX), DMA into VTCM; its calls are in <code>dsp/aether_dsp.idl</code></td></tr>
+    <tr><td><code>results/phase-l5.md</code></td><td>every NPU number, with the conditions it was measured under</td></tr>
   </tbody>
 </table>
 
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October and early November 2026 unless tagged otherwise; each number on this page carries its date. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<!-- sources: results/phase-l3.md steps 7, 21, 24, 25, 27, 28 (GPU); results/phase-l5.md steps 4, 4b, 5b (NPU: 6.75 ms = 123 tok/s, llama.cpp 13.5 ms = 74 tok/s, our CPU 192 tok/s, prefill 1608 / 778 tok/s at 128); results/phase-lfm3.md A7 (26.1 vs 44.3 tok/s); IMPLEMENTATION.md section 0 (DSP lookup +6–28 %, LFM3 summary) -->
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 </body>
 </html>

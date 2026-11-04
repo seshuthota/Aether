@@ -130,7 +130,7 @@ for (t, &amp;a) in scores.iter().enumerate() {
 
 <h2 id="lesson">What changed in the record?</h2>
 <p>Scalar attention went from 110.6 to 87.0 between depth 0 and 512 in the A/B, a 21 % drop, not the 51 % that the single table suggested. The 62.8 did not reproduce, so <code>results/phase-7.md</code> now says so next to it, and the claim that attention cost half the decode time at depth 512 was withdrawn. The cause of that one slow run is not established. The memory bus frequency is a likely suspect, but the shell cannot read it.</p>
-<p>llama.cpp still loses less with depth (134.9 → 117.5). The next step on record is to split attention across positions as well as heads, since 14 heads over 6 threads leaves some threads idle.</p>
+<p>On 2026-10-22, llama.cpp still lost less with depth (134.9 → 117.5). The next step on record was to split attention across positions as well as heads, since 14 heads over 6 threads leaves some threads idle. On 2026-10-29 the engine's decode work became items of one K/V head and one 64-position chunk (flash-decoding, <a href="../phase-6/index.html">Phase 6</a>). On 2026-10-31, same session, Q4_0 at depth 512 ran at 159 tok/s against llama.cpp's 123 (<span class="tag m">measured</span>, <code>results/phase-7.md</code>). The loss with depth is now smaller in ours: 180 → 159 against llama.cpp's 153 → 123.</p>
 <div class="callout"><span class="lbl">The habit to keep</span><p>A speed comparison on a phone needs: the two versions run alternately in a balanced order, several rounds, a median, a temperature gate before each run, and the conditions written down. And a number that cannot be reproduced gets corrected in the record, not quietly replaced.</p></div>
 <p><strong>Takeaway: a number that does not reproduce is corrected in the record, not quietly replaced.</strong></p>
 
@@ -156,9 +156,10 @@ for (t, &amp;a) in scores.iter().enumerate() {
 </main>
 </div>
 <p class="colophon">Measured numbers come from the iQOO 13 (SM8750) in October 2026, on battery, and are in <code>results/</code> in the repo. Teal is measured, blue is calculated, amber is an assumption or an illustration.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/widgets.js?v=30"></script>
 </body>
+<!-- sources: results/phase-7.md (attention A/B 2026-10-22; same-session table 2026-10-31); results/phase-6.md (flash-decoding 2026-10-29). -->
 </html>

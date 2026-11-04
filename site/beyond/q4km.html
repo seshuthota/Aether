@@ -178,8 +178,9 @@ setTimeout(function () {
   <li><strong>Q5_0 repacked four rows at a time.</strong> At load, the nibbles are laid out as for Q4_0’s four-row blocks, and the fifth bits are stored inverted and arranged so each byte feeds one vector the kernel builds. An inverted fifth bit is the sign bit of q − 16, so <code>(nibble &lt;&lt; 3) | (bit &lt;&lt; 7)</code>, read as a signed byte, is exactly 8 × (q − 16): a shift, a mask and one bit-select per 16 weights. The factor 8 is divided out exactly when the integer sum becomes a float, so the results are bit-identical.</li>
   <li><strong><code>smmla</code> for Q4_K and Q6_K</strong> in prefill. Each group of four rows is unpacked once per matrix product into 8-bit values with per-row scales, and every token of the prompt reuses it, instead of each token unpacking it again.</li>
 </ul>
+<p>The table below is from 2026-10-29: one round each, cores 2–7, on battery, llama.cpp in the same run.</p>
 <table>
-  <thead><tr><th>Qwen2.5-0.5B Q4_K_M, tok/s</th><th>prefill, 512</th><th>decode, empty cache</th></tr></thead>
+  <thead><tr><th>Qwen2.5-0.5B Q4_K_M, tok/s (2026-10-29)</th><th>prefill, 512</th><th>decode, empty cache</th></tr></thead>
   <tbody>
     <tr><td>ours, before</td><td>164.2 <span class="tag m">measured</span></td><td>75.2 <span class="tag m">measured</span></td></tr>
     <tr><td>ours, Q5_0 repacked</td><td>199.4 <span class="tag m">measured</span></td><td>96.6 <span class="tag m">measured</span></td></tr>
@@ -188,6 +189,15 @@ setTimeout(function () {
   </tbody>
 </table>
 <p>With the repack, decode is 13 % faster than llama.cpp’s on this phone, and with <code>smmla</code> prefill is about twice llama.cpp’s. The <code>smmla</code> row comes from a cycle-count run, because the timed A/B was spoiled by a clock change mid-run; its perplexity changed only in the summation order (16.7354 against 16.7088).</p>
+<p>The same comparison was run again on 2026-10-31: cores 2–7, on battery, screen on, two rounds in opposite orders (<span class="tag m">measured</span>, results/phase-7.md). Qwen2.5-0.5B Q4_K_M, tok/s, round 1 / round 2:</p>
+<table>
+  <thead><tr><th>Qwen2.5-0.5B Q4_K_M (2026-10-31)</th><th>pp64</th><th>pp512</th><th>tg64, depth 0</th></tr></thead>
+  <tbody>
+    <tr><td>ours</td><td class="num">551 / 557</td><td class="num">516 / 512</td><td class="num">112 / 112</td></tr>
+    <tr><td>llama.cpp</td><td class="num">167 / 146</td><td class="num">155 / 139</td><td class="num">91 / 86</td></tr>
+  </tbody>
+</table>
+<p>Ours is ahead in every cell of both rounds. The results file says this llama.cpp build has no repacked K-quant path, which is why the prefill gap is the larger one. The 2026-10-29 table above and these rows are different sessions; compare within a table, not across them.</p>
 <p><strong>Takeaway: Q4_K_M was slow because of per-weight bit work, not bytes; repacking at load and reusing unpacked rows made it faster than llama.cpp’s here.</strong></p>
 <div class="quiz" data-quiz="check" data-for="speed" id="c-speed">
   <p>Why does unpacking a group of rows once per matrix product help prefill but not decode?</p>
@@ -220,9 +230,10 @@ setTimeout(function () {
 <nav class="pager" data-pager></nav>
 </main>
 </div>
-<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise; llama.cpp’s perplexities were run on the PC. Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
-<script src="../js/pages.js?v=34"></script>
-<script src="../js/glossary.js?v=33"></script>
+<!-- sources: results/phase-6.md “Q4_K_M files: Q5_0, Q4_K, Q6_K” (accuracy table, 2026-10-29: PPL 20.7201 / 20.7784, 21.6167 / 21.6071, 16.7088 / 16.7657; KLD 0.051455 / 0.053319, 0.087297 / 0.087117, 0.031828 / 0.033112; speed table: pp512 164.2, tg 75.2, repacked 199.4 / 96.6, llama.cpp 152.8 / 85.7, smmla 331); results/phase-7.md same-session table (2026-10-31: Q4_K_M ours pp64 551 / 557, pp512 516 / 512, tg64 112 / 112; llama.cpp 167 / 146, 155 / 139, 91 / 86); IMPLEMENTATION.md section 0 (2026-10-31 same-session figures) -->
+<p class="colophon">Numbers were measured on the iQOO 13 (SM8750) in October 2026 unless tagged otherwise (the same-session rounds are 2026-10-31); llama.cpp’s perplexities were run on the PC.</p> Teal is measured, blue is calculated, amber is an assumption or a published claim we have not checked on this phone.</p>
+<script src="../js/pages.js?v=35"></script>
+<script src="../js/glossary.js?v=34"></script>
 <script src="../js/site.js?v=30"></script>
 <script src="../js/learn.js?v=30" onerror="document.documentElement.classList.remove('js')"></script>
 </body>
