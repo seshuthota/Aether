@@ -1,0 +1,5 @@
+testdata/wikitext/wikitext-2-raw/wiki.test.raw: 294644 tokens (tokenized in 100 ms), weights q4_k 1091.4 MB
+[1]13.7917,
+Final estimate: PPL = 13.7917 +/- 1.29664  (1023 tokens scored in 2606.6 s)
+PPL(base f32) = 13.5848, PPL(Q)/PPL(base) = 1.015232
+Mean KLD: 0.052408   Same top p: 88.759 %

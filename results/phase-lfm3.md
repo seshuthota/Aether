@@ -143,9 +143,30 @@ vs 10.3223, 21.1917 vs 21.1367, 25.6230 vs 25.5943). BF16 is the first four
 chunks (the f32 PC path is slower); its chunks are 10.0984/13.7166/14.3846/
 ... against llama.cpp's 10.0955/13.6860/14.3638/... .
 
-At context 2048 (one chunk, 1023 scored) the engine's Q4_K_M PPL is
-13.7917 ± 1.29664 against llama.cpp's 13.9561 ± 1.31213: the first run where
-the sliding window and the full layers see different prefixes.
+At context 2048 (one chunk, 1023 scored) the sliding window and the full
+layers see different prefixes, and the engine's Q4_K_M PPL, 13.7917
+± 1.29664 (phone: 13.7811), is 1.2 % below llama.cpp's 13.9561 ± 1.31213:
+ten times the gap at context 512. To see whose number is off, the same
+chunk at full precision, against HF transformers (f32, eager,
+`tools/hf_ppl_lfm3.py`, 2026-11-04):
+
+| ctx 2048, 1023 scored | PPL | KL against BF16 | same top |
+| --- | ---: | ---: | ---: |
+| HF transformers, f32 | 13.5848 | | |
+| engine, BF16 file | **13.5848** | | |
+| llama.cpp, BF16 file | 13.5986 | | |
+| engine, Q4_K_M | 13.7917 | 0.052408 | 88.759 % |
+| llama.cpp, Q4_K_M | 13.9561 | 0.055758 | 88.172 % |
+
+The engine's BF16 run is HF's PPL to the fourth decimal past 512
+positions, so the sliding ring, the window edge and the full layers'
+RoPE are right at depth. The Q4_K_M gap is between two quantized paths,
+not an error: each engine rounds the activations differently for the
+K-quant dots (ours to Q8_0 per 32 values, llama.cpp to Q8_K per 256), and
+ours ends up slightly closer to BF16 (KL each against its own BF16 run;
+the two BF16 runs differ by 0.1 %). Raw: `aether-ppl-ctx2048-BF16.txt`,
+`aether-kl-ctx2048-Q4_K_M.txt`, `phone-aether-ppl-ctx2048-Q4_K_M.txt`,
+`pc-ppl-ctx2048-{BF16,Q4_K_M}.txt`, `pc-kl-ctx2048-Q4_K_M.txt`.
 
 The same 20-chunk engine PPL on the phone (cores 2-7) gives Q4_K_M
 24.8822 ± 1.11875, Q8_0 23.5744 ± 1.05532 and QAD-Q4_0 27.1489 ± 1.24542,
@@ -174,16 +195,93 @@ gave 0.058283 / 93.333 %; KL is chunk-size dependent. The full PC KL took
 
 ## A7. Phone measurements
 
-The phone came back for the evening session. The full A7 matrix is still
-open; one arm was stopped for time and is kept in
-`results/phase-lfm3/raw/a7/r1-ours-LFM3-1.7B-Q4_K_M.txt`:
+`scripts/lfm3-a7.sh`, 2026-11-03 19:40-20:09, commit `991d9d2`, cores
+2-7 (6 threads), on battery (82 -> 78 %), screen on, cooled to 45 C before
+each run, llama.cpp `b12061` in the same session. The order is reversed
+in round 2 (r1: ours, llama; r2: llama, ours). Raw:
+`results/phase-lfm3/raw/a7/`.
+
+tok/s, round 1 / round 2:
 
 | arm | pp64 | pp128 | pp512 | tg64@0 | tg64@256 | tg64@512 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| aether Q4_K_M, cores 2-7 | 147.5 | 158.4 | 164.9 | 30.7 | 29.6 | 28.2 |
+| aether Q4_K_M | 160.5* / 114.7 | 174.6* / 123.1 | 159.2* / 131.7 | 29.8* / 26.2 | 17.0* / 26.1 | 25.9* / 26.0 |
+| llama.cpp Q4_K_M | 132.6 / 133.2 | 129.2 / 127.6 | 130.1 / 130.3 | 44.2 / 44.3 | | |
+| aether QAD-Q4_0 | 194.9 / 197.5 | 218.3 / 189.6 | 200.1 / 178.5 | 44.9 / 42.9 | 42.9 / 41.1 | 39.1 / 40.6 |
+| llama.cpp QAD-Q4_0 | 204.6 / 208.7 | 198.8 / 168.2 | 195.0 / 195.8 | 50.9 / 49.6 | | |
 
-Conditions: battery 48 %, caps 2.4/2.438 GHz, screen on, peak 88 °C,
-average power 1.14 W over the 51 s monitor. The matching llama.cpp arm,
-the reversed round, QAD-Q4_0 and the two sustained runs remain. The phone
-then dropped off wireless adb again, so the app UI/memory check (installed
-APK + 1.1 GB model pushed) is also still open.
+\* The first arm ran with higher caps (`cpu0` / `cpu6` 2.75 / 2.65 GHz;
+every other arm 1.79 / 1.96 GHz) and throttled during tg64@256 (p95
+105 ms a token). Compare round 2 for Q4_K_M. The earlier evening arm
+(05d7ed4, caps 2.4 / 2.44 GHz: pp512 164.9, tg64@0 30.7) is in git
+history, not in the table.
+
+- **Prompts**: level with llama.cpp. Q4_K_M round 2 is 0.86-1.01x,
+  QAD-Q4_0 0.91-1.13x.
+- **Decode is behind**, by far the most in Q4_K_M: 26.1 against 44.3 tok/s
+  (0.59x); QAD-Q4_0 42.9 against 49.6 (0.86x). Against the bandwidth
+  ceiling (file bytes x tok/s): Q4_K_M 1.09 GB x 26.1 = 28.5 GB/s for ours,
+  48.3 GB/s for llama.cpp; QAD-Q4_0 1.04 GB x 42.9 = 44.7 GB/s against
+  51.7 GB/s. llama.cpp's Q4_K_M decode is at the bandwidth of a Q4_0 file,
+  ours is not: our Q4_K/Q6_K decode kernels are the cause, not the
+  hybrid stack. Qwen2.5-0.5B's Q4_K_M (where we led llama.cpp by 22 %,
+  phase-6) is mostly Q5_0, because its 896-wide rows are not a multiple
+  of 256; LFM3 is the first file that runs on the K-quant GEMVs (see
+  the profile below).
+- **Depth**: decode falls 1-13 % from depth 0 to 512 (sliding window and
+  six full layers), as expected for a model whose KV traffic is small next
+  to its weights.
+- **Memory**: peak RSS 1.13-1.19 GB; `MemAvailable` 5.4-6.7 GB at the start.
+
+Sustained decode, 2 minutes (`sustain-*.txt`):
+
+| file | first 11 s | last 11 s | average | max temp | power | J / token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Q4_K_M | 26.3 | 21.3 | 22.9 tok/s | 86.1 C | 3.70 W | 0.162 |
+| QAD-Q4_0 | 40.5 | 34.1 | 35.7 tok/s | 88.4 C | 4.92 W | 0.138 |
+
+Both lose 16-19 % in the first minute and then hold. The SoC sits near
+88 C during every LFM3 run: a 1.1 GB model decoding is a thermal load on
+this phone, which the 0.5B models never were. The power figures come
+from two different sources (current x voltage for Q4_K_M, the charge
+counter over 42 s for QAD-Q4_0), and the short-run monitor's averages
+(0.5-4.4 W) vary too much between arms to use. The J / token figures are
+rough.
+
+### Where decode time goes
+
+`simpleperf record -e cpu-cycles:u`, 300 greedy tokens of Q4_K_M, cores
+2-7, 2026-11-04 (caps 2.75 / 2.65 GHz, 30.6 tok/s; `raw/a7/simpleperf.txt`):
+
+| symbol | cycles |
+| --- | ---: |
+| `dot4_q4_k_q8_0` | 54.1 % |
+| `dot4_q6_k_q8_0` | 32.9 % |
+| thread pool (spin / run) | 8.3 % |
+| `quant_rows` (activation to Q8_0) | 1.7 % |
+| attention (all three paths) | 0.9 % |
+| `short_conv_step` | 0.07 % |
+
+87 % of decode is the two K-quant GEMVs; the conv layers are nearly free
+next to them, as the plan expected, and so is attention at this depth. The
+kernels are compute-bound, not bandwidth-bound: the activation is Q8_0, so
+every 32-value sub-block of a Q4_K / Q6_K row ends in its own
+`vcvtq_f32_s32` and float FMA with its own scale (Q6_K also a
+`vmulq_n_s32` / `vmlaq_n_s32` by the sub-block scale), where an activation
+quantized per 256-value super-block (llama.cpp's Q8_K, with block sums for
+the `dmin` term) lets the sub-blocks accumulate in int32 and convert once
+per super-block. That kernel work is its own step, after this plan.
+
+### The app
+
+Debug APK built and installed (`scripts/android-native.sh`,
+`gradlew installDebug`), the Q4_K_M file in the app's shared folder, CPU,
+cores 2-7, chat on: "Why is the sky blue?" streams a reasoning span, then
+`</think>`, then the answer. 16 prompt tokens in 579 ms, 462 tokens at
+29.8 tok/s; with lookup on, 441 tokens at 27.7 tok/s (the app samples at
+temperature 0.7, so few drafts are accepted). The app process is at
+1.30 GB PSS / 1.42 GB RSS (`dumpsys meminfo`), 145 MB of it native heap
+(the KV cache, `MAX_SEQ = 2048`, and buffers). The app shows the reasoning
+as plain text: the opening `<think>` is part of the prompt, so the reply
+starts inside the span and only `</think>` appears. Splitting the reply
+there (reasoning dimmed or folded) is an app change for later.

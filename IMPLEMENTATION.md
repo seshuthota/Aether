@@ -77,10 +77,16 @@ LFM3 tokenizer, kernels, sliding ring, conv rollback) are committed. A5's engine
 (llama.cpp 0.117968 / 83.392 %). The phone runs the
 same three files at 24.8822 / 23.5744 / 27.1489; 122 phone tests pass.
 A6's LFM3 chat template and thinking filter match the HF template, and the C ABI asks the
-model for its template; the app APK builds. A7 is **partly done**: one aether Q4_K_M arm (pp64/128/512 147.5/158.4/164.9 tok/s,
-tg64@0 30.7 tok/s, 88 °C peak, 1.14 W) is in `results/phase-lfm3/raw/a7/`; the matching
-llama.cpp arm, the QAD file, the reversed round, the sustained runs and the app UI/memory
-check still need the phone. Do not merge into `main` until A7 passes.
+model for its template; the app APK builds. Speculative decoding rolls the conv state back
+(tested: bit-identical with the restore, 0.31 relative error without it; LFM3 lookup gives
+its plain greedy text). A7's same-session rounds against llama.cpp are measured
+(`results/phase-lfm3.md` A7): prompts level, decode behind (Q4_K_M 26.1 vs 44.3 tok/s,
+QAD-Q4_0 42.9 vs 49.6), sustained 22.9 / 35.7 tok/s at ~88 °C. The profile puts 87 % of
+Q4_K_M decode in the Q4_K / Q6_K GEMVs (compute-bound on their per-32 Q8_0 activation
+scales; a Q8_K-style activation is the follow-up), the conv layers at 0.07 %. The app runs
+LFM3 (29.8 tok/s, 1.30 GB PSS). At context 2048 the engine's BF16 PPL equals HF's
+(13.5848) and its Q4_K_M KL is 0.0524 against llama.cpp's 0.0558. 123 phone tests pass.
+All A0–A7 checks are done; ready to merge.
 
 ### Next steps (2026-10-30)
 
