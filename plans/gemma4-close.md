@@ -42,7 +42,8 @@ groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 | C0 | Probe written (`dsp_maps_gemma_sized_buffers`, `--ignored`); runs on the phone |
 | C3 | Done on `hexagon-sim`: `dsp/gemma_hvx.h`, 52 golden cases, worst 1.9e-7 of the largest value |
 | C1, C2, C4–C7 | Wait for C0 (it decides the weight layout); C2's streamed attention and VTCM sizing need the phone anyway |
-| D, A | Need the phone |
+| D (PC part) | Done: `aether_open_gpu` with cores falls back to the GPU prompt for Gemma (the app always passes cores), `aether_prompt_on_cpu` says which, the app's status line uses it; `c_abi_gpu_gemma4` passes on the PC; the APK builds |
+| D (phone), A | Need the phone |
 
 ## 1. Why the GPU and DSP refuse today: every assumption Gemma 4 breaks
 

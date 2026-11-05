@@ -522,8 +522,24 @@ impl GpuSession {
     /// is not built (`f32_gemm`): ~280 MB and ~2.5 s of loading less for
     /// Qwen2.5-0.5B Q4_0 on the phone.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
+        Self::open_hybrid_or_gpu(path, max_seq, cores, false)
+    }
+
+    /// [`GpuSession::open_hybrid`] where the model allows it, else (Gemma 4:
+    /// its GPU path has no CPU prefill yet) [`GpuSession::open`], the prompt
+    /// on the GPU. For callers that prefer the CPU's prompt but take the
+    /// GPU's (the C ABI, the app); `cpu` tells which they got.
+    pub fn open_prefer_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
+        Self::open_hybrid_or_gpu(path, max_seq, cores, true)
+    }
+
+    fn open_hybrid_or_gpu(path: &Path, max_seq: usize, cores: &[usize], fall_back: bool) -> io::Result<GpuSession> {
         let (config, weights, _) = gguf::load(path, max_seq)?;
         if !config.uniform() {
+            if fall_back {
+                drop(weights);
+                return GpuSession::open(path, max_seq);
+            }
             return Err(io::Error::other("Gemma 4 on the GPU runs its prompt on the GPU; a CPU prefill (cores) is not supported yet"));
         }
         let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;

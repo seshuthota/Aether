@@ -245,7 +245,9 @@ pub unsafe extern "C" fn aether_generate(
 /// Loads a Q4_0 or Q4_K_M `.gguf` for decoding on the GPU (Vulkan). With
 /// `cores` (as in `aether_open`), a second copy of the model on those CPU
 /// cores runs each prompt as one batch and hands its KV cache to the GPU;
-/// with null or "", the prompt runs on the GPU, batched as well.
+/// with null or "", the prompt runs on the GPU, batched as well. Gemma 4
+/// has no CPU prompt on this path yet: it runs its prompt on the GPU even
+/// with `cores` (`aether_prompt_on_cpu` tells which).
 /// `max_seq` as in `aether_open`. Fails with `AETHER_ERR_LOAD` when the
 /// library was built without the `vulkan` feature, there is no usable GPU,
 /// or a matrix is in a format the GPU does not read (other than Q4_0,
@@ -272,7 +274,7 @@ pub unsafe extern "C" fn aether_open_gpu(path: *const c_char, cores: *const c_ch
         };
         #[cfg(feature = "vulkan")]
         let opened = match &cores {
-            Some(c) => crate::session::GpuSession::open_hybrid(Path::new(path), max_seq as usize, c),
+            Some(c) => crate::session::GpuSession::open_prefer_hybrid(Path::new(path), max_seq as usize, c),
             None => crate::session::GpuSession::open(Path::new(path), max_seq as usize),
         };
         #[cfg(feature = "vulkan")]
@@ -374,6 +376,31 @@ pub unsafe extern "C" fn aether_set_lookup(session: *mut AetherSession, k: u32, 
     })
 }
 
+/// Whether `session` runs its prompts on the CPU: 1 for an `aether_open`
+/// session and for a GPU one opened with `cores` whose model takes a CPU
+/// prompt; 0 where the GPU or the DSP runs the prompt (a GPU session of
+/// Gemma 4 does even with `cores`); `AETHER_ERR_ARGUMENT` for null.
+///
+/// # Safety
+/// `session` must come from `aether_open` and not be closed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aether_prompt_on_cpu(session: *const AetherSession) -> c_int {
+    guard(|| {
+        if session.is_null() {
+            set_error("session is null");
+            return AETHER_ERR_ARGUMENT;
+        }
+        // SAFETY: a live handle from aether_open (caller's contract).
+        match unsafe { &(*session).engine } {
+            Engine::Cpu(_) => 1,
+            #[cfg(feature = "vulkan")]
+            Engine::Gpu(g) => g.cpu.is_some().into(),
+            #[cfg(feature = "hexagon")]
+            Engine::Dsp(_) => 0,
+        }
+    })
+}
+
 /// Frees a session. Null is allowed (does nothing).
 ///
 /// # Safety
@@ -455,6 +482,7 @@ mod tests {
                     assert!(!cfg!(all(feature = "vulkan", target_os = "android")), "{:?}", CStr::from_ptr(aether_last_error()));
                     return;
                 }
+                assert_eq!(aether_prompt_on_cpu(s), (!cores.is_null()).into());
                 let (mut out, mut stats) = (Vec::<u8>::new(), AetherStats::default());
                 let prompt = CString::new("The capital of France is").unwrap();
                 assert_eq!(aether_generate(s, prompt.as_ptr(), 0, 0.0, 0.9, 16, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
@@ -465,5 +493,31 @@ mod tests {
         }
         assert!(texts[0].starts_with(" the capital of the"), "{}", texts[0]);
         assert!(texts[1].starts_with(" the capital of the"), "{}", texts[1]);
+    }
+
+    /// Gemma 4 on the GPU through the C ABI as the app opens it, with
+    /// `cores`: its GPU path has no CPU prompt yet, so the session runs the
+    /// prompt on the GPU (`aether_prompt_on_cpu` 0) instead of failing. In
+    /// chat mode, greedy, it answers as the CPU path and llama.cpp do
+    /// (results/phase-gemma4.md) and stops at the end of its turn.
+    #[test]
+    fn c_abi_gpu_gemma4() {
+        let Some(model) = golden("gguf/gemma-4-E2B-it-Q4_0.gguf") else { return };
+        let path = CString::new(model.to_str().unwrap()).unwrap();
+        let mut s: *mut AetherSession = std::ptr::null_mut();
+        unsafe {
+            if aether_open_gpu(path.as_ptr(), c"0-1".as_ptr(), 128, &mut s) != AETHER_OK {
+                assert!(!cfg!(all(feature = "vulkan", target_os = "android")), "{:?}", CStr::from_ptr(aether_last_error()));
+                return;
+            }
+            assert_eq!(aether_prompt_on_cpu(s), 0);
+            let (mut out, mut stats) = (Vec::<u8>::new(), AetherStats::default());
+            let prompt = CString::new("What is 2+2? Answer in one sentence.").unwrap();
+            assert_eq!(aether_generate(s, prompt.as_ptr(), 1, 0.0, 0.9, 32, 1, collect, &mut out as *mut _ as *mut c_void, &mut stats), AETHER_OK);
+            aether_close(s);
+            let text = String::from_utf8(out).unwrap();
+            assert_eq!(text.trim(), "Two plus two equals four.", "{text:?}");
+            assert!(stats.decode_tokens < 32, "did not stop at the end of the turn");
+        }
     }
 }
