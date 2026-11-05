@@ -382,10 +382,17 @@ new engine repo `$P/aether-infer`.
 - `cargo test --release --features vulkan,hexagon -- --skip gemma4_matches_transformers --test-threads=1`:
   158 passed, 1 ignored (as in `Aether-next` at `dd16acc`).
 - `vk_ppl` on Qwen2.5-0.5B Q4_0, 4 chunks: batch 15.8560, decode 15.8023.
-- `git log --oneline | wc -l` about 310; `git log -- site videos results` empty.
+- `git log --oneline | wc -l`: 205 (done 2026-11-05). Of the 310 commits on
+  `gemma4-devices`, 208 touch a kept path; filter-repo drops the ones that
+  touched only the site, films, notes or results, then the second pass drops
+  the few that touched only `__pycache__` or the site scripts; plus the
+  `CLAUDE.md` commit. `git log -- site videos results` empty.
 
 **REVIEW 1** (learning-track session): the filter's keep list, the log,
-the test output and the new `CLAUDE.md`. A1–A3 run from a session started
+the test output and the new `CLAUDE.md`. **Passed 2026-11-05:** every kept
+tree is identical to `gemma4-devices` at `dd16acc` (only `.gitignore` gains
+`/tools/.venv`), no dropped path is tracked, no remote, symlinks resolve,
+160 tests = 158 + 1 ignored + the BF16 test. A1–A3 run from a session started
 in `$P/Aether`; A4 on, from a new session started in `$P/aether-infer`.
 
 **A4. Steps L1–L5 of section 8**, one commit each, in `aether-infer` on
