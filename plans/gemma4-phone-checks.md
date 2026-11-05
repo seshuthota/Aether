@@ -8,6 +8,14 @@ work) and the PC-verified GPU, DSP-kernel and app work on top.
 Order matters: the CPU checks gate the first merge. C0 is quick and decides
 the DSP's design, so it runs early even though the DSP work comes later.
 
+> **Session 2026-11-05/06 (iQOO 13, Wi-Fi adb):** steps 1-9 done, step 10
+> partial (the APK is installed with the model; the device was locked). The
+> numbers are in `results/phase-gemma4.md`, "Phone", and the raw files in
+> `results/phase-gemma4/raw/phone/`. Two findings change the plan's
+> assumptions: the phone's older llama.cpp builds (OpenCL, Hexagon) cannot
+> load Gemma 4, and C0 passes at 36.6 GB/s, so C1-C5 keep one weights
+> buffer. The runner needed a fix for this adb (it recreates symlinks).
+
 | # | What | Plan step | Rough time | Gates |
 | --- | --- | --- | --- | --- |
 | 0 | Setup, push the GGUFs | — | 15–40 min (6 GB) | — |

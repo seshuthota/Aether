@@ -1,0 +1,42 @@
+# 2026-11-06T00:29:20+05:30
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 67
+# temperature: 354
+# Capacity level: -1
+# max cpu zone (mC) 46900
+# simpleperf record -e cpu-cycles:u -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_0.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --chunks 1 -c 2-7
+[1]24.5256,
+Final estimate: PPL = 24.5256 +/- 6.41311  (255 tokens scored in 4.8 s)
+simpleperf I cmd_record.cpp:840] Recorded for 6.88911 seconds. Start post processing.
+simpleperf I cmd_record.cpp:941] Samples recorded: 102,788. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_0.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --chunks 1 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 102788
+Event count: 59023805403
+
+Overhead  Symbol
+53.31%    aether::kernels::neon_quant::mmla4_q4_0x4::<4>
+13.42%    aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>::{closure#1}>
+8.37%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+6.71%     aether::kernels::neon_quant::mmla4_q8_0x4::<4>
+2.79%     aether::kernels::quant_rows_mmla
+1.88%     <aether::tokenizer::spm_bpe::Tokenizer>::bpe
+1.47%     aether::kernels::neon::gelu_tanh
+1.19%     aether::kernels::neon::gemm_rows
+1.19%     aether::kernels::neon_quant::quantize_q8_0
+1.02%     <aether::weight::Weight>::repack
+0.87%     <aether::pool::ThreadPool>::run
+0.53%     exp
+0.50%     aether::kernels::neon_quant::interleave_pairs::{closure#0}
+0.40%     <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+0.39%     <aether::tokenizer::spm_bpe::Tokenizer>::bpe::{closure#3}
+0.39%     aether::kernels::neon::softcap
+0.38%     <aether::model::transformer::Transformer>::batch_impl::<aether::model::transformer::NoTrace>::{closure#10}
+0.36%     aether::kernels::scalar::rmsnorm
+0.34%     __memcpy_aarch64_nt
+0.31%     scudo::HybridMutex::tryLock()
+0.29%     <aether::model::transformer::Transformer>::batch_impl::<aether::model::transformer::NoTrace>::{closure#3}

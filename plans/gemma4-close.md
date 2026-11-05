@@ -39,7 +39,7 @@ groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 | B4, B5 (prompt pass) | Done on the PC (`33a9499`) and on the phone (2026-11-05): Q4_0 decode 43.6074 / KL 0.34282, prompt pass 24.4536 / 0.33855 (equal), Q4_K_M 138.0870 / 0.16511, window flat across 512, peak PSS 3.41 GB |
 | B5 (lookup) | Not started: Gemma's `few` is 1, so lookup decodes plainly |
 | B6 | Done on the phone (2026-11-05): numbers as on the PC, to 1e-4; peak PSS 3.41 GB |
-| B7 | The phone shows 18.6–20.2 tok/s decode and ≈ 30 tok/s prompt pass (1.6×) in `vk_gemma`; the second copy's decision needs step 8's cooled, alternating numbers |
+| B7 | Decided by step 8 on the phone: the Adreno does 19.2 tok/s decode and 31-47 tok/s prompt pass against the CPU's 36.4 and 124-157, so the f16/int8 second copy would not close a 2-4× gap; not built. llama.cpp's OpenCL cannot load Gemma 4, so there is no GPU-to-GPU reference |
 | C0 | **Done on the phone (2026-11-05)**: 1.6 GB + 192 MB mapped at once, read at 36.6 GB/s, checksum equal to the CPU's → one weights buffer for C1, C2, C4, C5, as Qwen |
 | C3 | Done on `hexagon-sim`: `dsp/gemma_hvx.h`, 52 golden cases, worst 1.9e-7 of the largest value |
 | C1, C2, C4–C7 | C0 decided the weight layout (one buffer); C2's streamed attention and VTCM sizing still need the phone |

@@ -1,0 +1,42 @@
+# 2026-11-06T00:31:50+05:30
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 67
+# temperature: 355
+# Capacity level: -1
+# max cpu zone (mC) 48800
+# simpleperf record -e cpu-cycles:u -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf -i 'The history of the printing press' -t 0 -n 300 -c 2-7
+1. How did the printing press specifically contribute to the Renaissance and the Scientific
+prefill: 7 tokens in 183.5 ms (38.1 tok/s) | decode: 293 tokens in 11792.7 ms (24.8 tok/s) | peak RSS 1647240 kB
+simpleperf I cmd_record.cpp:840] Recorded for 15.4149 seconds. Start post processing.
+simpleperf I cmd_record.cpp:941] Samples recorded: 255,366. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf -i The history of the printing press -t 0 -n 300 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 255366
+Event count: 125254661969
+
+Overhead  Symbol
+51.67%    aether::kernels::neon_quant::dot4_q4_k_q8_k_x4
+16.87%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+10.72%    aether::kernels::neon_quant::dot4_q6_k_q8_k_x4
+8.20%     aether::kernels::neon::gemv
+3.32%     aether::kernels::quant_rows
+2.89%     aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#1}>
+1.21%     <aether::pool::ThreadPool>::run
+0.71%     aether::kernels::quant_rows_mmla
+0.53%     aether::quant::quantize_q8_k
+0.53%     aether::kernels::neon_quant::mmla4_k::<4>
+0.45%     <aether::weight::Weight>::repack
+0.34%     __memcpy_aarch64_nt
+0.33%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.26%     <aether::model::transformer::Transformer>::forward
+0.20%     aether::kernels::neon::gelu_tanh
+0.18%     scudo::HybridMutex::tryLock()
+0.12%     __memset_aarch64_nt
+0.12%     <aether::model::sampler::Sampler>::sample
+0.11%     aether::kernels::neon::softcap
+0.10%     __aarch64_cas4_acq
+0.09%     aether::kernels::scalar::rmsnorm

@@ -22,7 +22,7 @@ after its check passes.
 | G4 | done: every layer vs HF within 1.0e-5, batched and one-token, past the 512 window; Q4_0 greedy vs llama-completion splits only at near-ties (≤ 0.019 logits) |
 | G5 | PPL on the PC (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp) and on the phone (Q4_0 57.5076, Q4_K_M 185.6800); llama.cpp's phone CPU is 57.4303, i.e. ours is +0.135 %, which the results file splits and flags for investigation; greedy text on the phone splits only at near-ties (gaps 0.106 / 0.047); KL within llama.cpp's bars on the PC and the GPU |
 | G6 | template, stops, hidden reasoning, C ABI default done; template and the C ABI's GPU Gemma path checked on the phone (`c_abi_gpu_gemma4`); app not tried |
-| G7 | step 8 next: `bench_suite` against `llama-bench` (CPU, current build, cooled) |
+| G7 | Done (2026-11-06, cooled, two rounds): ours 157/154/124 tok/s pp 64/128/512 and 36.4 / 30.0 tg at depth 0 / 512, against llama.cpp's 88/93/85 and 29.4 / 24.3; the Adreno does 38-47 pp and 19.2 / 8.5 tg, i.e. behind the CPU on every size |
 
 ## 1. Why this model, and what we compare against
 

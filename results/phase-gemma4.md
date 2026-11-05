@@ -426,6 +426,10 @@ the same top token at all 12 positions — the PC's picture, no jump at 512.
 
 ### Greedy text (step 5's last piece, Q4_0, phone CPU)
 
+The four prompts the PC's `raw/greedy-Q4_0-pc.txt` was made from are in
+`raw/prompts/` now (the PC session kept them only in a scratch file, which
+is why this check could not be repeated before).
+
 | Prompt | Ours (phone) vs ours (PC) | Split | Decode-path gap |
 | --- | --- | --- | --- |
 | story | differs | pos 68: " gentle" vs " sound" | 0.106 (the PC's own gap there: 0.019, the other way) |
@@ -438,23 +442,102 @@ phone (Q4_0 rounds activations to int8, differently per ISA), so both
 splits ride a gap smaller than the shift itself: near-ties, as the
 checklist requires.
 
-**The one gap to investigate.** Ours 57.5076 against llama.cpp's phone
-57.4303 is +0.135 %, past the 0.06 % run-to-run spread the checklist asks
-for. On the same phone it splits into +0.082 % for main's build (the
-existing NEON / i8mm rounding; the PC's own CPU number is 57.4248) and
-+0.052 % for the NEON GELU / soft-cap (inside the spread). The GPU, which
-does not round activations, matches the PC to 1e-4, so the candidate is
-our CPU path's int8 activation quantization against llama.cpp's; that is
-where the investigation starts, not the new kernels.
+**The Q4_0 PPL gap, read as two ISA shifts.** Ours 57.5076 against
+llama.cpp's phone 57.4303 is +0.135 %, past the 0.06 % run-to-run spread
+the checklist asks for. Per chunk, neither engine drifts; each sits at a
+constant offset from its own PC number, in opposite directions
+(`raw/phone/`, the 20-chunk runs):
+
+| | mean phone − PC, per chunk | range of the 20 | aggregate |
+| --- | --- | --- | --- |
+| ours | **+0.113** | +0.054 … +0.220 | 57.4248 → 57.5076 (+0.14 %) |
+| llama.cpp | **−0.110** | −0.232 … −0.002 | 57.4593 → 57.4303 (−0.05 %) |
+
+So the cross-engine gap on the phone is the sum of two same-model ISA
+shifts: our x86 and NEON / i8mm paths round differently (int8 activations,
+summation order), and so do llama.cpp's AVX-VNNI and NEON ones, with the
+opposite sign. The 0.06 % bound was llama.cpp's spread between runs on one
+machine, which says nothing about a comparison across ISAs. Within a
+machine each engine reproduces itself — our GPU path, which does not round
+activations, matches our PC to 1e-4 on the same base file — and main's
+build on the phone is 57.4775, i.e. most of our shift is not the NEON
+GELU / soft-cap (that adds +0.030). Read the bound as same-ISA.
+
+### Speed (step 8)
+
+CPU, Q4_0, 6 threads on cores 2-7, cooled to <= 45 C on the cpu zones before
+every run, two rounds in opposite orders (`raw/phone/*-ours-r1.txt`,
+`*-ours-r2.txt`, `*-llama-l1.txt`, `*-llama-l2.txt`):
+
+| tok/s | pp64 | pp128 | pp512 | tg64 @ d0 | tg64 @ d512 |
+| --- | --- | --- | --- | --- | --- |
+| aether, round 1 | **157.1** | **153.5** | **123.8** | **36.4** | **30.0** |
+| aether, round 2 | 139.4 | 136.5 | 110.5 | 35.8 | 28.1 |
+| llama.cpp `d02b4c0d6`, round 1 | 87.6 | 92.8 | 84.8 | 29.4 | 24.3 |
+| llama.cpp, round 2 | 90.0 | 92.5 | 82.2 | 29.8 | 24.5 |
+
+Ours is 1.3-1.8x llama.cpp's prefill and 1.2x its decode, same session,
+same file, both on the CPU (its `-lm none` keeps the weights resident as
+`--mmap 0` used to; this llama.cpp renamed the flag). Our round 2 trailed
+round 1 by 12 % after two llama.cpp runs and 25 minutes of heat; the
+`--monitor` block of each file has the temperatures (the SoC touched
+88 C during a round).
+
+GPU, same file and sizes, one cooled run (`*-ours-gpu-r1.txt`):
+
+| tok/s | pp64 | pp128 | pp512 | tg64 @ d0 | tg64 @ d512 |
+| --- | --- | --- | --- | --- | --- |
+| aether, Adreno 830 | 38.4 | 47.1 | 31.2 | 19.2 | 8.5 |
+
+Peak RSS 3.15 GB; at depth 512 the per-token median is 60 ms but the p95 is
+314 ms. **The Adreno is behind the CPU on this model on every size** -
+1.9x at decode, 2.6-4x at prefill - so B7's second copy (f16/int8 prompt
+matrices, +1.5 GB) would not close that gap and is not worth building now;
+llama.cpp's OpenCL build cannot load Gemma 4, so there is no GPU-to-GPU
+reference to compare against.
+
+### Profile (step 9)
+
+simpleperf, `cpu-cycles:u`, cores 2-7, 300 decode positions at a 7-token
+prompt and a 512-token prefill (`raw/phone/profile-*.txt`; the
+`perf.data` and binaries are not committed). Shares of cycles:
+
+| | Q4_0 decode | Q4_K_M decode | Q4_0 prefill | Q4_K_M prefill |
+| --- | --- | --- | --- | --- |
+| weights GEMV (4-bit) | 51.5 % `gemv4_q4_0x4` | 51.7 % `dot4_q4_k_q8_k_x4` | 53.3 % `mmla4_q4_0x4` | 62.5 % `mmla4_k` |
+| weights GEMV (other) | 16.4 % `gemv4_q8_0x4` | 10.7 % `dot4_q6_k_q8_k_x4` | 6.7 % `mmla4_q8_0x4` | 3.0 % `gemm_rows` |
+| thread pool wait | **16.3 %** | **16.9 %** | 8.4 % | 6.4 % |
+| activation quantizing | 4.4 % `quant_rows` | 3.3 % | 2.8 % `quant_rows_mmla` | 4.9 % |
+| attention | 3.7 % `attention_group` | 2.9 % | 13.4 % | 10.5 % |
+| f32 GEMV (norms, PLE row) | 2.6 % `gemv` | 8.2 % | - | - |
+
+The order for A3 that this gives: the matrix products are half the time and
+are already the mmla4 path; the **thread pool's wait/wake costs ~16 % of
+decode** (the same share as a third of the weight streaming) and is the
+cheapest first target; attention is only material in prefill (10-13 %); the
+int8 activation quantization is 3-5 %. The per-token tok/s printed under
+`simpleperf` is not comparable to step 8: sampling runs at ~13 kHz.
+
+### The app (step 10, partial)
+
+`scripts/android-native.sh` built `libaether.so` (2.15 MB, Vulkan + Hexagon)
+and the JNI shim; `./gradlew assembleDebug` needed `android/local.properties`
+with `sdk.dir` (it is gitignored, so a fresh worktree has none) and the APK
+installed with `adb install -r`. Gemma 4 Q4_0 is in the app's files
+(`run-as dev.aether.chat`). **The phone is locked**, so the three chat
+checks of the checklist (CPU status line, GPU, the DSP's refusal) need the
+user to unlock it; the C ABI's Gemma-on-GPU path is already covered by
+`c_abi_gpu_gemma4`, which passed in step 3.
 
 ## Not done
 
-- **Speed (G7, step 8), the profile (step 9) and the app (step 10).**
+- **The app's three chat checks** (step 10): the device lock needs the user.
 - **S0's GPU and NPU references for Gemma 4.** The phone's OpenCL and
   Hexagon builds cannot load the model; only its CPU backend (cross-built
   at `d02b4c0d6`) runs it, and that is the reference quoted above. A
   current OpenCL / HTP build for the phone would settle B7 and C7.
-- **The Q4_0 PPL gap above** (+0.135 % against llama.cpp on the phone; the
-  plan asks for a larger gap to be investigated, not accepted).
+- **The 0.06 % bound's wording.** It is a same-ISA spread; a cross-ISA
+  comparison needs its own bound (the table above is the evidence).
 - **Merge to main.**
-- G8 optimisation and the G3 tiled attention variant for 256/512.
+- G8 optimisation (A3 now has its order: the thread pool's wait path first)
+  and the G3 tiled attention variant for 256/512.
