@@ -11,18 +11,18 @@ Implementation goes on a new branch `gemma4` in `../Aether-next` (it holds the
 two GGUFs). One commit per step, each with its check; a step is merged only
 after its check passes.
 
-## Status (2026-11-05, PC only; the phone was off adb)
+## Status (2026-11-05, PC and the phone)
 
 | Step | State |
 | --- | --- |
 | G0 | done: versions, hashes, llama.cpp PPL/KL baselines, the embed-scale question (`results/phase-gemma4.md`) |
-| G1 | done: shapes for both files, Q5_K exact, table kept mapped (tested); RSS after load not measured separately (peak RSS of a PPL run is below the file size) |
+| G1 | done: shapes for both files, Q5_K exact, table kept mapped (tested); peak RSS of a 20-chunk PPL run 2.52 GB on the phone and 2.69 / 2.67 GB on the PC, below the files' 2.84 / 3.11 GB |
 | G2 | done: 440/440 strings equal HF `tokenizers` |
-| G3 | scalar kernels done against numpy; NEON GELU / soft-cap written, uncommitted, need the phone's golden test; no tiled 256/512 attention variant yet (G8) |
+| G3 | done: scalar and NEON kernels against numpy, `gemma_elementwise_matches_numpy` passes on the phone (NEON GELU-tanh × up, soft-cap, plain RMSNorm) with the other 17 kernel tests; no tiled 256/512 attention variant yet (G8) |
 | G4 | done: every layer vs HF within 1.0e-5, batched and one-token, past the 512 window; Q4_0 greedy vs llama-completion splits only at near-ties (≤ 0.019 logits) |
-| G5 | PPL done (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp); KL over 8 chunks within llama.cpp's error bars; phone PPL not done |
-| G6 | template, stops, hidden reasoning, C ABI default done; app not tried |
-| G7 | not started (no phone) |
+| G5 | PPL done on the PC (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp) and on the phone (Q4_0 57.5076, Q4_K_M 185.6800, 20 × 512); llama.cpp's own phone CPU number still owed (S0); KL over 8 chunks within llama.cpp's error bars (PC) |
+| G6 | template, stops, hidden reasoning, C ABI default done; template and the C ABI's GPU Gemma path checked on the phone (`c_abi_gpu_gemma4`); app not tried |
+| G7 | not started: `bench_suite` against `llama-bench`, cooled (phone step 8) |
 
 ## 1. Why this model, and what we compare against
 

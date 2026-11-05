@@ -38,10 +38,10 @@ groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 | B3 | Done (`49b90aa`) |
 | B4, B5 (prompt pass) | Done on the PC (`33a9499`): Q4_0 decode and prompt pass, Q4_K_M decode, PPL/KL at llama.cpp's (`results/phase-gemma4.md`, GPU) |
 | B5 (lookup) | Not started: Gemma's `few` is 1, so lookup decodes plainly |
-| B6, B7 | Need the phone. B7 also decides the f16/int8 second copy for prompt speed |
-| C0 | Probe written (`dsp_maps_gemma_sized_buffers`, `--ignored`); runs on the phone |
+| B6, B7 | The phone is here; not run yet (phone steps 6 and 8). B7 also decides the f16/int8 second copy for prompt speed |
+| C0 | **Done on the phone (2026-11-05)**: 1.6 GB + 192 MB mapped at once, read at 36.6 GB/s, checksum equal to the CPU's → one weights buffer for C1, C2, C4, C5, as Qwen |
 | C3 | Done on `hexagon-sim`: `dsp/gemma_hvx.h`, 52 golden cases, worst 1.9e-7 of the largest value |
-| C1, C2, C4–C7 | Wait for C0 (it decides the weight layout); C2's streamed attention and VTCM sizing need the phone anyway |
+| C1, C2, C4–C7 | C0 decided the weight layout (one buffer); C2's streamed attention and VTCM sizing still need the phone |
 | D (PC part) | Done: `aether_open_gpu` with cores falls back to the GPU prompt for Gemma (the app always passes cores), `aether_prompt_on_cpu` says which, the app's status line uses it; `c_abi_gpu_gemma4` passes on the PC; the APK builds |
 | D (phone), A | Need the phone |
 

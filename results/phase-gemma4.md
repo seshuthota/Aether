@@ -337,13 +337,67 @@ numpy goldens the CPU and GPU kernels pass
 the DSP read every word. C1, C2, C4 and C5 wait for its answer, which
 decides how the weights are laid out.
 
+## Phone (iQOO 13, Snapdragon 8 Elite, 2026-11-05)
+
+Steps 1–4 of `plans/gemma4-phone-checks.md`, and step 5 except the greedy
+text. The phone was on Wi-Fi adb; tests ran one at a time
+(`--test-threads=1`). 157 tests in the build with `vulkan,hexagon`; the
+first run needed a runner fix (this adb recreates symlinks instead of
+following them, and `testdata/` mixes symlinks with real directories).
+
+| Check | Result |
+| --- | --- |
+| Kernel goldens (`--lib kernels::`) | 18/18, `gemma_elementwise_matches_numpy` included: NEON GELU-tanh × up, NEON soft-cap, plain RMSNorm |
+| `gemma4` filter | 5/5: `gemma4_loads`; `gemma4_matches_hf_tokenizers_on_corpus` (440 strings); `gemma4_template_matches_hf`; `c_abi_gpu_gemma4` — Q4_0 on the **Adreno** through the C ABI, answers "Two plus two equals four." and stops; `gemma4_matches_transformers` skips itself (hostdata is not pushed) |
+| `spm_bpe chat::` | 5/5, the three chat templates and `think_filter_hides_split_spans` included |
+| The whole suite (`--features vulkan,hexagon`) | **157 passed, 1 ignored, 0 failed**, 258 s |
+| C0 (`dsp_maps_gemma_sized_buffers`, `--ignored`) | **Passes**: 1.6 GB + 192 MB mapped at once and read at 36.6 / 36.7 GB/s, checksum equal to the CPU's → C1, C2, C4, C5 use one weights buffer, as Qwen does |
+| DSP refuses Gemma | still returns its message, no crash (in the suite) |
+
+### CPU accuracy (wikitext-2 test, 20 × 512, cores 2–7)
+
+| File | aether, phone | aether, PC | llama.cpp, PC |
+| --- | --- | --- | --- |
+| Q4_0 | **57.5076** ± 3.334 | 57.4248 ± 3.327 | 57.4593 ± 3.330 |
+| Q4_K_M | **185.6800** ± 13.94 | 186.1763 ± 13.98 | 185.1681 ± 13.88 |
+
+Peak RSS (VmHWM): **2.52 GB** for both files, below the files' 2.84 /
+3.11 GB (the PC's 2.69 / 2.67 GB). Scored in 295 s and 235 s; an earlier
+Q4_0 run without the RSS sampler took 172 s.
+
+The Q4_0 gap to the PC (+0.14 %) splits, on the phone, in the same 20 × 512
+run:
+- **main's build** (GELU and soft-cap through the scalar `tanh`):
+  **57.4775** — +0.09 % from the existing NEON / i8mm kernels against x86;
+- **the NEON GELU / soft-cap on top**: +0.030 more, +0.05 %.
+
+llama.cpp's PC run-to-run spread on Q4_0 was 0.06 %; whether the 0.09 %
+part is inside its phone spread is what S0 (step 7) answers with its own
+CPU run on this phone. Q4_K_M, whose mean is carried by rare tokens, is
++0.28 % from llama.cpp's PC number and −0.27 % from ours, well inside the
+±13.9 error bar.
+
+### Existing models, main against `gemma4-devices` (phone, 4 × 512, cores 2–7)
+
+| File | main | `gemma4-devices` |
+| --- | --- | --- |
+| Qwen2.5-0.5B Q4_0 | 15.8323 | **15.8323** |
+| LFM3-1.7B Q4_K_M | 15.1754 | **15.1754** |
+
+To the digit. Neither model runs the changed kernels (GELU is Gemma's;
+LFM3 and Qwen use SwiGLU), so this is the regression check and it holds.
+Peak RSS 0.68 GB (Qwen) and 1.64 GB (LFM3), equal in both builds to
+1.1 MB.
+
 ## Not done
 
-- **G7, the phone.** adb did not see the phone all session. To do: the
-  kernel goldens on NEON (including the uncommitted GELU / soft-cap and
-  the head-256/512 attention paths), the Gemma tests, Q4_0 PPL once,
-  `bench_suite` against `llama-bench` cooled to 45 °C, peak RSS, the app.
-- **Merge to main: not done.** The CPU code that runs on the phone (NEON
-  and i8mm matmuls and attention at head sizes 256 and 512) has not run
-  there yet.
+- **Speed (G7, step 8) and the app (step 10).** Not run this session.
+- **The greedy text on the phone.** The four prompts of
+  `raw/greedy-Q4_0-pc.txt` are not in the tree (only the outputs), and the
+  comparison is against `llama-completion --temp 0` on the phone.
+- **S0 (step 7), llama.cpp's CPU / GPU / NPU on Gemma 4.** It supplies the
+  phone's own references for step 5's PPL and the greedy text, and B6/B7's
+  numbers.
+- **Merge to main.** The CPU code now runs on the phone, but the merge
+  waits for the greedy text above.
 - G8 optimisation and the G3 tiled attention variant for 256/512.
