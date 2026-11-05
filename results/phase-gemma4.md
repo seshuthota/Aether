@@ -272,6 +272,37 @@ of every matrix (f16 or int8 layout); for Gemma that is +1.5 GB of device
 memory, beyond B6's budget. Whether it is worth it is B7's question, on
 the Adreno.
 
+### Q4_K_M on the GPU, and S4 (F32 per-layer matrices in Q8_0)
+
+No GPU shader reads an F32 matrix, so `GemmaGpu` loads Q4_K_M's 70 F32
+per-layer matrices (`inp_gate`, `proj`) as Q8_0 (`Weights::ple_to_q8_0`,
+llama.cpp's Q8_0 quantizer). The plan's gate runs the CPU path with that
+conversion (`aether --ple-q8`). All rows are 20 chunks against llama.cpp's
+BF16 base file:
+
+| | PPL | Mean KL | Same top |
+| --- | --- | --- | --- |
+| CPU, F32 matrices (S2) | 186.1763 ± 13.98 | 0.175124 | 83.980 % |
+| CPU, Q8_0 matrices (`--ple-q8`) | 187.7939 ± 14.10 | 0.181863 | 83.725 % |
+| **GPU** (Q8_0 matrices) | 188.6380 ± 14.18 | **0.163587** | 84.490 % |
+| llama.cpp CPU | 185.1681 ± 13.88 | 0.178324 ± 0.005288 | 84.000 % |
+
+The gate as written fails narrowly on the CPU: KL rises by 0.0067, 1.3×
+the KL error bar (PPL stays well inside its error bar). That CPU run
+measures more than the conversion, though. Our CPU Q8_0 product rounds
+the activations to 8 bits too (as llama.cpp's does), while the GPU keeps
+them in f32. The GPU, the configuration that ships, has a KL below the
+CPU's F32 run and below llama.cpp's. Its PPL is 1.3 % above the CPU's,
+well inside the error bar. So the conversion stays. If KL ever matters at
+this level, the alternative is an f16 product for these matrices (plan
+risk 3). (Raw: `raw/aether-klbase-Q4_K_M-pleq8-pc.txt`,
+`raw/gpu-pc-Q4_K_M-decode.txt`.)
+
+The GPU's greedy continuation on Q4_K_M: " a young girl named Lily. Lily
+had eyes the color of the deep ocean and a spirit as bright as the summer
+sun". Decode is 6–8 tok/s on the iGPU; upload takes 8.2 s (the K-quant
+repacking).
+
 ## DSP
 
 Refuses Gemma 4 with a message (plan part C).
