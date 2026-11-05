@@ -24,9 +24,22 @@ adb push "$BIN" "$REMOTE_BIN" >/dev/null
 
 # Golden files and models for on-device tests. --sync copies only files that
 # changed since the last push, so after the first run this costs almost nothing.
+#
+# testdata/ mixes real directories and files with symlinks into sibling
+# worktrees, and this adb (37) recreates a symlink instead of following it; it
+# then fails over the phone's regular file ("remote symlink failed: File
+# exists" / ": Permission denied"). So the push goes through a hardlink farm
+# of the resolved files: find -L follows the symlinks, ln -L links the real
+# inode, so the farm holds regular files only and costs no extra space.
 TESTDATA="$(dirname "$0")/../testdata"
 if [ -d "$TESTDATA" ]; then
-  adb push --sync "$TESTDATA/." "$REMOTE_DIR/testdata/" >/dev/null
+  MIRROR="${XDG_CACHE_HOME:-$HOME/.cache}/aether-testdata-sync"
+  rm -rf "$MIRROR"
+  ( cd "$TESTDATA" && find -L . -type f -print0 | while IFS= read -r -d '' f; do
+      mkdir -p "$MIRROR/$(dirname "$f")"
+      ln -L "$f" "$MIRROR/$f" 2>/dev/null || { echo "adb-run: cannot hardlink $f into $MIRROR; the cache and testdata must share a filesystem" >&2; exit 1; }
+    done )
+  adb push --sync "$MIRROR/." "$REMOTE_DIR/testdata/" >/dev/null
 fi
 
 # Keep the screen on for the run: with it off the vendor lowers the clock caps
@@ -35,9 +48,12 @@ fi
 # then press left Shift (does nothing) every minute so the screen timeout
 # restarts; the key event runs on core 3. No phone setting is changed.
 # AETHER_SCREEN_OFF=1 skips this, for runs that measure the screen-off state.
+# The keepalive's output goes to /dev/null: a background process that keeps the
+# caller's stdout open holds the pipe, and `cargo test | tail` would then wait
+# for the keepalive's 60 s sleep before it saw end of file.
 if [ -z "${AETHER_SCREEN_OFF:-}" ]; then
   adb shell input keyevent KEYCODE_WAKEUP
-  ( while :; do sleep 60; adb shell taskset 8 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) &
+  ( while :; do sleep 60; adb shell taskset 8 input keyevent KEYCODE_SHIFT_LEFT >/dev/null 2>&1; done ) >/dev/null 2>&1 &
   KEEPALIVE=$!
   trap 'kill $KEEPALIVE 2>/dev/null' EXIT
 fi
