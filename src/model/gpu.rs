@@ -573,10 +573,10 @@ impl GpuModel {
 
         let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 12)?;
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
-        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
+        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 28)?;
         let attn_tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28)?;
         let attn_flash = Kernel::new(gpu, crate::spirv!("attention_flash"), 5, 24)?;
-        let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
+        let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 12)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
         let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
         // In decode, wo and down add their products to the residual stream
@@ -913,10 +913,10 @@ impl GpuModel {
                 if n > 1 && !few && !self.attn_per_token {
                     r.dispatch(&b.attn_tile, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, nt]), [c.n_heads as u32, chunks, nt.div_ceil(32)]);
                 } else {
-                    r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+                    r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, 0]), [c.n_heads as u32, chunks, nt]);
                 }
                 end(r, "attention");
-                r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
+                r.dispatch(&b.merge, &push(&[hs as u32, chunks, 0]), [c.n_heads as u32, nt, 1]);
                 end(r, "attention merge");
             }
             product(r, std::slice::from_ref(&b.o), &b.mm[1], &b.few[1], &[&ly.wo], 0, h(l, 1, |f| &f.t_xb2), (1, q8_b(1)));

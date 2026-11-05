@@ -1992,11 +1992,11 @@ mod tests {
             } else {
                 let parts = prts.as_mut().unwrap();
                 let tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28).unwrap();
-                let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8).unwrap();
+                let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 12).unwrap();
                 let tb = tile.bind(gpu, &[&qb, &kb, &vb, parts, &params]).unwrap();
                 let mb = merge.bind(gpu, &[parts, &out, &params]).unwrap();
                 let tp = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, qstride as u32, nt as u32]);
-                let mp = push_u32(&[hs as u32, chunks as u32]);
+                let mp = push_u32(&[hs as u32, chunks as u32, 0]);
                 gpu.record(|r| {
                     r.dispatch(&tb, &tp, [nh as u32, chunks as u32, nt.div_ceil(32) as u32]);
                     r.barrier();
@@ -2029,6 +2029,77 @@ mod tests {
         let Some((worst, cases)) = prompt_attention_matches(&gpu, false) else { return };
         println!("attention chunked: {cases} cases vs numpy, worst {worst:.2e} of max |v|");
         assert!(cases >= 60, "only {cases} golden cases");
+    }
+
+    /// `attention.comp` + `attention_merge.comp` as decode and the
+    /// per-token prompt path dispatch them (workgroup per head, chunk and
+    /// token), on every causal golden, head sizes 17 to 512, and on the
+    /// sliding-window goldens (`window_attention_<hs>_n<n>_p<pos>_w<w>`: one
+    /// head at position `pos`, seeing `pos − w + 1 ..= pos`). The keys and
+    /// values are read as f32 here, so the bound of the prompt shaders
+    /// (f16 in shared memory) holds with room.
+    #[test]
+    fn attention_per_token_matches_reference() {
+        let Ok(gpu) = Gpu::new() else { return };
+        let Some(root) = crate::testutil::golden("kernels") else { return };
+        let attn = Kernel::new(&gpu, crate::spirv!("attention"), 5, 28).unwrap();
+        let merge = Kernel::new(&gpu, crate::spirv!("attention_merge"), 3, 12).unwrap();
+        let mut dirs: Vec<_> = std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).collect();
+        dirs.sort();
+        let (mut worst, mut tested, mut windows) = (0.0f32, 0, 0);
+        for dir in &dirs {
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            // (heads, kv heads, head size, first position, tokens, window)
+            let case = if let Some(rest) = name.strip_prefix("attention_causal_") {
+                let (shape, tail) = rest.split_once("_p").unwrap();
+                let (pos0, nt) = tail.split_once("_t").unwrap();
+                let d: Vec<usize> = shape.split('x').map(|s| s.parse().unwrap()).collect();
+                (d[0], d[1], d[2], pos0.parse::<usize>().unwrap(), nt.parse::<usize>().unwrap(), 0)
+            } else if let Some(rest) = name.strip_prefix("window_attention_") {
+                let f: Vec<&str> = rest.split('_').collect();
+                (1, 1, f[0].parse().unwrap(), f[2][1..].parse().unwrap(), 1, f[3][1..].parse().unwrap())
+            } else {
+                continue;
+            };
+            let (nh, nkv, hs, pos0, nt, window) = case;
+            let (_, q) = crate::testutil::read_npy(&dir.join("q.npy"));
+            let (_, k) = crate::testutil::read_npy(&dir.join("k.npy"));
+            let (_, v) = crate::testutil::read_npy(&dir.join("v.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out.npy"));
+            let chunks = (pos0 + nt).div_ceil(64);
+            let buf = |data: &[f32]| {
+                let mut b = gpu.buffer(data.len().max(1) * 4).unwrap();
+                b.as_mut_slice::<f32>().copy_from_slice(data);
+                b
+            };
+            let (qb, kb, vb) = (buf(&q), buf(&k), buf(&v));
+            // NaN in parts fails the test if the merge reads a chunk the
+            // attention did not write (the window's skipped chunks).
+            let parts = buf(&vec![f32::NAN; nt * nh * chunks * (hs + 2)]);
+            let out = buf(&vec![f32::NAN; nt * nh * hs]);
+            let mut params = gpu.buffer(4).unwrap();
+            params.as_mut_slice::<u32>()[0] = pos0 as u32;
+            let ab = attn.bind(&gpu, &[&qb, &kb, &vb, &parts, &params]).unwrap();
+            let mb = merge.bind(&gpu, &[&parts, &out, &params]).unwrap();
+            let ap = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, (nh * hs) as u32, window as u32]);
+            let mp = push_u32(&[hs as u32, chunks as u32, window as u32]);
+            let cmds = gpu
+                .record(|r| {
+                    r.dispatch(&ab, &ap, [nh as u32, chunks as u32, nt as u32]);
+                    r.barrier();
+                    r.dispatch(&mb, &mp, [nh as u32, nt as u32, 1]);
+                })
+                .unwrap();
+            gpu.submit(&cmds, false).unwrap();
+            let (abs, _) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            let vmax = v.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            assert!(abs <= 4.0 * 2f32.powi(-11) * vmax, "{name}: abs {abs:.2e}, {:.2e} of max |v|", abs / vmax);
+            worst = worst.max(abs / vmax);
+            tested += 1;
+            windows += usize::from(window > 0);
+        }
+        println!("attention per token: {tested} cases ({windows} windowed) vs numpy, worst {worst:.2e} of max |v|");
+        assert!(tested >= 100 && windows >= 16, "only {tested} cases, {windows} windowed");
     }
 
     #[test]
