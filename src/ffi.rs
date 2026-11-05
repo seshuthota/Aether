@@ -202,7 +202,7 @@ pub unsafe extern "C" fn aether_generate(
         let (tok, seq_len) = match engine {
             Engine::Cpu(s) => (&s.text, s.model.config.seq_len),
             #[cfg(feature = "vulkan")]
-            Engine::Gpu(g) => (&g.text, g.model.config.seq_len),
+            Engine::Gpu(g) => (&g.text, g.model.config().seq_len),
             #[cfg(feature = "hexagon")]
             Engine::Dsp(d) => (&d.text, d.model.config.seq_len),
         };

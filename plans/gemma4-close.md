@@ -25,6 +25,22 @@ Order: **A** (CPU, needs the phone) can run in parallel with **S** (shared
 groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 (app) comes last.
 
+### Status (2026-11-05, branch `gemma4-devices`)
+
+| Step | State |
+| --- | --- |
+| S1 | Not needed as a new type: the GPU reads each layer's shapes from `Config`'s per-layer accessors (`head_dim_of`, `q_dim`, `kv_dim_of`, `hidden_of`, `kv_source_of`, `window`, `rope`), which the CPU already uses |
+| S2 | Done (`7e67efa`): Q4_K_M PPL(base) 161.2919 = llama.cpp's, KL 0.1751 vs 0.1783 ± 0.0053 |
+| S3 | Done by reuse: `transformer::ple_inputs` is `pub(crate)` and the GPU calls it per token |
+| S4 | `Weights::ple_to_q8_0` and `--ple-q8` written; gate run pending |
+| B1 | Done (`4f91d07`): attention at head size 256 / 512 and the window, decode and prompt alike |
+| B2 | Option (c): the prompt pass uses B1's attention + merge pair |
+| B3 | Done (`49b90aa`) |
+| B4, B5 (prompt pass) | Done on the PC: decode and prompt pass equal llama.cpp's PPL/KL (`results/phase-gemma4.md`, GPU) |
+| B5 (lookup) | Not started: Gemma's `few` is 1, so lookup decodes plainly |
+| B6, B7 | Need the phone. B7 also decides the f16/int8 second copy for prompt speed |
+| C, D, A | Not started (need the phone; C1–C3 can use the simulator) |
+
 ## 1. Why the GPU and DSP refuse today: every assumption Gemma 4 breaks
 
 | Assumption in the code | Where | Gemma 4 E2B |

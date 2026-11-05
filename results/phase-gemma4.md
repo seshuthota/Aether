@@ -234,10 +234,47 @@ time" (batched prompt pass, then decode):
 
 The phone (NEON / i8mm paths) has not been compared yet.
 
-## GPU and DSP
+## GPU (PC, plans/gemma4-close.md B1–B5)
 
-Both refuse Gemma 4 with a message. Per-layer shapes, shared KV and the
-per-layer embeddings are CPU-only; those backends are a later plan.
+`model::gpu::GemmaGpu`, separate from the uniform `GpuModel` (which is
+unchanged). Run on the PC's Intel iGPU (RPL-P, Vulkan); the phone is still
+owed (B6, B7). Q4_0, against llama.cpp's BF16 base file (S2),
+`examples/vk_gemma.rs`:
+
+| Chunk | GPU decode PPL / KL | GPU prompt pass PPL / KL | llama.cpp CPU PPL / KL |
+| --- | --- | --- | --- |
+| 1 | 24.4536 / 0.33855 | 24.4536 / 0.33855 | 24.5617 / 0.33477 |
+| 2 | 41.5999 / 0.32370 | | 41.7681 / 0.32419 |
+| 3 | 36.2937 / 0.35110 | | 36.4231 / 0.35142 |
+| 4 | 43.6075 / 0.34282 | | 43.8254 / 0.34330 |
+
+Same top token after 4 chunks: 79.902 %, as llama.cpp's. Our CPU path
+gives 43.6083 after 4 chunks. The greedy continuation of "Once upon a
+time, …" equals llama.cpp's and the CPU's. `aether --gpu --chat` answers
+"What is 2+2? Answer in one sentence." with "Two plus two equals four.",
+as the CPU does. (Raw: `raw/gpu-pc-Q4_0-{decode,batch}.txt`.)
+
+Qwen2.5-0.5B Q4_0 through `vk_ppl` (4 chunks) is unchanged: batch
+15.8560, decode 15.8023.
+
+**The watchdog.** The first prompt pass was recorded as one command
+buffer. On this iGPU it runs for tens of seconds, and i915 stopped it
+partway through layer 25's gate/up product without an error (the kernel
+log: "Fence expiration time out"). The rows past 11,264 kept layer 24's
+values. Found by comparing the pass with decode layer by layer. The pass is
+now one submission per layer, plus one for the classifier.
+
+**Speed on this iGPU** (not the phone): decode 8–10 tok/s; the prompt
+pass ~31 s for a 21-token prompt. The prompt products use `qx_gemm.comp`
+(f32), which runs at ~11 GFLOP/s here (gate/up ≈ 420 ms a layer for a
+64-token tile). The uniform path's fast prompt products read a second copy
+of every matrix (f16 or int8 layout); for Gemma that is +1.5 GB of device
+memory, beyond B6's budget. Whether it is worth it is B7's question, on
+the Adreno.
+
+## DSP
+
+Refuses Gemma 4 with a message (plan part C).
 
 ## Not done
 

@@ -68,6 +68,8 @@
 //!   --kl-base FILE  instead of --kl: KL against the log-probabilities
 //!                 llama-perplexity --kl-divergence-base saved (its own
 //!                 reference run, 16 bits a value), on that file's tokens
+//!   --ple-q8      with --kl-base: Gemma 4's F32 per-layer matrices in Q8_0,
+//!                 as the GPU loads them (the accuracy gate on that)
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -96,12 +98,13 @@ fn main() {
     let (mut temp_set, mut top_p_set, mut top_k_set) = (false, false, false);
     let mut base_path: Option<PathBuf> = None;
     let mut kl_base: Option<PathBuf> = None;
+    let mut ple_q8 = false;
     let (mut lookup, mut ngram, mut fixed) = (0usize, 2usize, false);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" || flag == "--no-think" || flag == "--think" || flag == "--hide-think" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" || flag == "--no-think" || flag == "--think" || flag == "--hide-think" || flag == "--ple-q8" {
             match flag.as_str() {
                 "--lookup-fixed" => fixed = true,
                 "--kl" => kl = true,
@@ -111,6 +114,7 @@ fn main() {
                 "--no-think" => thinking = Some(false),
                 "--think" => thinking = Some(true),
                 "--hide-think" => hide_think = true,
+                "--ple-q8" => ple_q8 = true,
                 _ => gpu = true,
             }
             continue;
@@ -153,7 +157,7 @@ fn main() {
 
     if let Some(file) = ppl_file {
         if let Some(kb) = kl_base {
-            return score_vs_base(&model_path, &tok_path, &file, format, chunks, &kb, cores);
+            return score_vs_base(&model_path, &tok_path, &file, format, chunks, &kb, ple_q8, cores);
         }
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
@@ -165,10 +169,8 @@ fn main() {
         return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram, fixed));
     }
     if gpu {
-        if chat {
-            prompt = aether::chat::chatml(system.as_deref().unwrap_or(aether::chat::QWEN_DEFAULT_SYSTEM), &prompt);
-        }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
+        let chat = chat.then_some((system.as_deref(), thinking));
+        return generate_gpu(&model_path, &prompt, chat, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -261,7 +263,8 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
 /// llama.cpp saved with `--kl-divergence-base` (`eval::BaseFile`), on the
 /// tokens in that file. FILE must tokenize to the same tokens: checked, so
 /// a tokenizer difference cannot hide in the comparison.
-fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format, chunks: usize, base_path: &Path, cores: Option<Vec<usize>>) {
+#[allow(clippy::too_many_arguments)]
+fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format, chunks: usize, base_path: &Path, ple_q8: bool, cores: Option<Vec<usize>>) {
     let mut base = aether::eval::BaseFile::open(base_path).unwrap_or_else(|e| fail(base_path, e));
     let ctx = base.n_ctx;
     let Session { mut model, text, .. } = Session::open_imatrix(model_path, Some(tok_path), ctx, format, None, cores.as_deref()).unwrap_or_else(|e| fail(model_path, e));
@@ -276,6 +279,10 @@ fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format
         std::process::exit(1);
     }
     assert_eq!(base.n_vocab, model.config.vocab_size, "vocabulary size");
+    if ple_q8 {
+        let c = model.config.clone();
+        model.weights.ple_to_q8_0(&c);
+    }
     eprintln!("{}: {} chunks of {ctx}, tokens equal to the base file's; weights {} {:.1} MB", base_path.display(), n / ctx, model.weights.format_name(), model.weights.bytes() as f64 / 1e6);
     let t1 = Instant::now();
     let s = aether::eval::perplexity_vs_base(&mut base, text.chunk_bos(), chunks, |c, first| model.forward_batch_logits(c, 0, first).to_vec(), |i, s| eprint!("[{i}]{:.4},", s.ppl()))
@@ -289,7 +296,10 @@ fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram, fixed): (usize, usize, bool)) {
+/// `--gpu`. `chat`: the prompt goes into the model family's chat template
+/// (with the system turn and the thinking switch), as on the CPU.
+#[allow(clippy::too_many_arguments)]
+fn generate_gpu(path: &Path, prompt: &str, chat: Option<(Option<&str>, Option<bool>)>, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram, fixed): (usize, usize, bool)) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
@@ -297,6 +307,14 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     let mut s = s.unwrap_or_else(|e| fail(path, e));
     s.lookup_fixed = fixed;
     eprintln!("GPU: {}", s.gpu.info.name);
+    let rendered;
+    let prompt = match chat {
+        Some((system, thinking)) => {
+            rendered = s.text.chat_prompt(system, prompt, thinking.unwrap_or(s.text.thinks_by_default()));
+            rendered.as_str()
+        }
+        None => prompt,
+    };
     let mut out = std::io::stdout().lock();
     let t = s.text.encode(prompt);
     let _ = out.write_all(&s.text.first_piece(t[0]));
@@ -363,7 +381,8 @@ fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize, bool)
 }
 
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize, bool)) {
+#[allow(clippy::too_many_arguments)]
+fn generate_gpu(_: &Path, _: &str, _: Option<(Option<&str>, Option<bool>)>, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize, bool)) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

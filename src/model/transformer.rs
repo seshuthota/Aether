@@ -161,6 +161,25 @@ pub struct Weights {
 }
 
 impl Weights {
+    /// The per-layer blocks' F32 matrices (Q4_K_M's `inp_gate` / `proj`) in
+    /// Q8_0, as the GPU loads them: its shaders read no F32 matrix, and Q8_0
+    /// takes 29 MB where F32 takes 110. Quantized with the Q8_0 quantizer
+    /// that matches llama.cpp's byte for byte; any other format is kept.
+    /// `aether --ple-q8` runs the CPU path the same way, for the gate on
+    /// accuracy (plans/gemma4-close.md, S4).
+    pub fn ple_to_q8_0(&mut self, c: &Config) {
+        for l in &mut self.layers {
+            if let Some(p) = &mut l.ple {
+                for (w, cols) in [(&mut p.inp_gate, c.dim), (&mut p.proj, c.ple_dim)] {
+                    if let Weight::F32(_) = w {
+                        let f = std::mem::replace(w, Weight::Q8_0(crate::weight::Store::Owned(Vec::new())));
+                        *w = f.convert(cols, Format::Q8_0);
+                    }
+                }
+            }
+        }
+    }
+
     /// Converts every matrix (not the norms) to `format`, as llama.cpp's
     /// `llama-quantize --pure` does: the embedding/classifier included.
     /// With an importance matrix, each matrix it has an entry for is
@@ -520,7 +539,7 @@ fn activate(c: &Config, gate: &mut [f32], up: &[f32]) {
 /// the scaled embedding `e` (llama.cpp's `project_per_layer_inputs`):
 /// `(norm(proj · e / √dim) + table[token] · √ple_dim) / √2`, the norm per
 /// layer's slice with the shared gain.
-fn ple_inputs(pool: Option<&ThreadPool>, c: &Config, p: &PleTable, token: usize, e: &[f32], out: &mut [f32]) {
+pub(crate) fn ple_inputs(pool: Option<&ThreadPool>, c: &Config, p: &PleTable, token: usize, e: &[f32], out: &mut [f32]) {
     k::linear_on(pool, out, e, &p.proj);
     ple_finish(c, p, token, out);
 }

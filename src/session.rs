@@ -488,7 +488,7 @@ impl Drafter {
 #[cfg(feature = "vulkan")]
 pub struct GpuSession {
     // Declared before `gpu`: its buffers must be freed while the device lives.
-    pub model: crate::model::gpu::GpuModel,
+    pub model: crate::model::gpu::GpuNet,
     pub gpu: crate::kernels::vulkan::Gpu,
     pub text: Text,
     /// With [`GpuSession::open_hybrid`]: the CPU model that runs the
@@ -508,7 +508,7 @@ impl GpuSession {
         let (config, weights, g) = gguf::load(path, max_seq)?;
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
-        let model = crate::model::gpu::GpuModel::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
+        let model = crate::model::gpu::GpuNet::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
         Ok(GpuSession { model, gpu, text, cpu: None, lookup_fixed: false })
     }
 
@@ -522,8 +522,11 @@ impl GpuSession {
     /// is not built (`f32_gemm`): ~280 MB and ~2.5 s of loading less for
     /// Qwen2.5-0.5B Q4_0 on the phone.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
-        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
         let (config, weights, _) = gguf::load(path, max_seq)?;
+        if !config.uniform() {
+            return Err(io::Error::other("Gemma 4 on the GPU runs its prompt on the GPU; a CPU prefill (cores) is not supported yet"));
+        }
+        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
         let mut cpu = Transformer::new(config, weights);
         cpu.set_pool(ThreadPool::new(cores)?);
         s.cpu = Some(cpu);
@@ -535,7 +538,7 @@ impl GpuSession {
     /// copied to the GPU), otherwise batched on the GPU
     /// ([`crate::model::gpu::GpuModel::forward_batch`]).
     pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
-        let steps = steps.min(self.model.config.seq_len);
+        let steps = steps.min(self.model.config().seq_len);
         let tokens = self.text.encode(prompt);
         let np = tokens.len().min(steps);
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
@@ -572,10 +575,10 @@ impl GpuSession {
         if let Some(cpu) = &mut self.cpu {
             let logits = cpu.forward_batch(tokens, 0).to_vec();
             let (k, v) = cpu.kv_cache();
-            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len());
+            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len()).expect("KV cache to the GPU");
             return logits;
         }
-        let b = self.model.batch;
+        let b = self.model.batch();
         let mut logits = Vec::new();
         for (i, part) in tokens.chunks(b).enumerate() {
             logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
@@ -591,8 +594,8 @@ impl GpuSession {
     /// GPU has int8 dot products). Greedy text is plain GPU decoding's up
     /// to near ties; sampled text keeps the sampler's distribution.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
-        let steps = steps.min(self.model.config.seq_len);
-        let k = k.min(self.model.few.saturating_sub(1));
+        let steps = steps.min(self.model.config().seq_len);
+        let k = k.min(self.model.few().saturating_sub(1));
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
         let mut len = DraftLen::new(k);
@@ -602,7 +605,7 @@ impl GpuSession {
         stats.prefill = t0.elapsed();
         stats.prefill_tokens = np;
         let t1 = Instant::now();
-        let vocab = self.model.config.vocab_size;
+        let vocab = self.model.config().vocab_size;
         // `pos`: positions in the cache; `next` is certain but not yet in it.
         let mut pos = np;
         if np == hist.len() {

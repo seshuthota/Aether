@@ -22,6 +22,10 @@
 //! per 64 tokens. The activation buffers hold `batch` rows; decoding uses
 //! the first.
 
+mod gemma;
+
+pub use gemma::GemmaGpu;
+
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
 use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ, MatQ4_0, MatQ4_0T, MatQT, Recorder, Result, groups_for};
@@ -1101,6 +1105,85 @@ impl GpuModel {
     /// the model was made with `profile`.
     pub fn profile(&self, gpu: &Gpu) -> Result<Vec<(&'static str, f64)>> {
         Ok(per_stage(&self.stages, &gpu.stamps(&self.step)?))
+    }
+}
+
+/// The model a GPU session runs: the uniform path ([`GpuModel`]: one head
+/// size, SwiGLU, tuned and fused) or Gemma 4's per-layer path
+/// ([`GemmaGpu`]), chosen by the config.
+pub enum GpuNet {
+    Uniform(GpuModel),
+    Gemma(GemmaGpu),
+}
+
+impl GpuNet {
+    pub fn with(gpu: &Gpu, config: Config, weights: Weights, opt: Options) -> Result<GpuNet> {
+        Ok(if config.uniform() { GpuNet::Uniform(GpuModel::with(gpu, config, weights, opt)?) } else { GpuNet::Gemma(GemmaGpu::with(gpu, config, weights, opt)?) })
+    }
+
+    pub fn config(&self) -> &Config {
+        match self {
+            GpuNet::Uniform(m) => &m.config,
+            GpuNet::Gemma(m) => &m.config,
+        }
+    }
+
+    /// Tokens per prompt pass.
+    pub fn batch(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.batch,
+            GpuNet::Gemma(m) => m.batch,
+        }
+    }
+
+    /// Tokens a few-token pass takes (1 for Gemma 4: no such pass yet, so
+    /// prompt lookup decodes one token at a time).
+    pub fn few(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.few,
+            GpuNet::Gemma(_) => 1,
+        }
+    }
+
+    pub fn forward(&mut self, gpu: &Gpu, token: usize, pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward(gpu, token, pos),
+            GpuNet::Gemma(m) => m.forward(gpu, token, pos),
+        }
+    }
+
+    pub fn greedy(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.greedy(),
+            GpuNet::Gemma(m) => m.greedy(),
+        }
+    }
+
+    pub fn forward_batch(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward_batch(gpu, tokens, pos),
+            GpuNet::Gemma(m) => m.forward_batch(gpu, tokens, pos),
+        }
+    }
+
+    pub fn forward_few(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward_few(gpu, tokens, pos),
+            GpuNet::Gemma(m) if tokens.len() == 1 => m.forward(gpu, tokens[0], pos),
+            GpuNet::Gemma(_) => Err("Gemma 4 on the GPU has no few-token pass yet".into()),
+        }
+    }
+
+    /// See [`GpuModel::load_kv`]; Gemma 4's cache layout (full-length
+    /// sliding layers, shared layers) differs from the CPU's (rings).
+    pub fn load_kv(&mut self, keys: &[f32], values: &[f32], seq_len: usize, n: usize) -> Result<()> {
+        match self {
+            GpuNet::Uniform(m) => {
+                m.load_kv(keys, values, seq_len, n);
+                Ok(())
+            }
+            GpuNet::Gemma(_) => Err("Gemma 4 on the GPU runs its prompt on the GPU (no CPU prefill yet)".into()),
+        }
     }
 }
 

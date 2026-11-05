@@ -1,0 +1,6 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on Intel(R) Graphics (RPL-P) | upload + record 631 ms, prompt batch 128
+# greedy: " a young girl named Lily. Lily had a heart as bright as the summer sun, and her laughter was like the tink"
+# 40 positions in 3892.7 ms: 10.3 tok/s
+[1]24.4536 kld 0.33855,
+Final estimate: PPL = 24.4536 +/- 6.38895  (255 tokens scored, 271.5 s, prompt pass, batches of 128)
+PPL(base file) = 45.3102   Mean KLD: 0.338552   Same top p: 82.353 %
