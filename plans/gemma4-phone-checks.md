@@ -77,6 +77,13 @@ cargo test --release --target aarch64-linux-android --lib -- spm_bpe chat::
 cargo test --release --target aarch64-linux-android --features vulkan,hexagon
 ```
 
+**Memory:** on the PC (23 GB) the suite run in parallel was OOM-killed:
+several Gemma tests load a 3 GB model at once. It passed one test at a
+time (`-- --test-threads=1`: 158 passed, 1 ignored, 14 min; the BF16
+`gemma4_matches_transformers` alone, 12 min). The phone has less memory:
+if the parallel run is killed (signal 9), rerun with `--test-threads=1`
+before suspecting the code.
+
 Expect the previous count (123) plus the new tests, all passing. New since
 `main` and worth a look in the output:
 - `c_abi_gpu_gemma4`: Gemma 4 Q4_0 on the **Adreno** through the C ABI,
