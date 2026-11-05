@@ -389,15 +389,72 @@ LFM3 and Qwen use SwiGLU), so this is the regression check and it holds.
 Peak RSS 0.68 GB (Qwen) and 1.64 GB (LFM3), equal in both builds to
 1.1 MB.
 
+### GPU (Adreno 830, B6)
+
+`examples/vk_gemma.rs` against the same BF16 base file as the PC:
+
+| Run | phone | PC (iGPU) |
+| --- | --- | --- |
+| Q4_0 decode, 4 chunks | **43.6074 / KL 0.342819** | 43.6075 / 0.34282 |
+| Q4_0 prompt pass, 1 chunk | **24.4536 / KL 0.338553** | 24.4536 / 0.33855 |
+| Q4_K_M decode, 4 chunks | **138.0870 / KL 0.165109** | 138.0871 / 0.16511 |
+
+Same top token at every chunk (79.902 % / 84.706 %; llama.cpp's CPU
+79.902 %). The prompt pass equals the decode step (24.4536 both), as on
+the PC. The phone is 2× the PC's iGPU for decode (134 s vs 274 s for
+4 chunks), and the prompt pass is 12.7 s per chunk against 271.5 s.
+`vk_gemma`'s own 40-position loop: 18.6–20.2 tok/s decode, ≈ 30 tok/s
+prompt pass (1.6×). Peak PSS 3.41 GB while decoding, host side included.
+
+Past the window (`gemma_window`, 640 tokens): decode vs prompt pass
+1.8–3.6e-6 of the largest logit, GPU vs CPU 9.3e-3–2.6e-2 flat across 512,
+the same top token at all 12 positions — the PC's picture, no jump at 512.
+
+### llama.cpp on the phone (S0, partial)
+
+- The two builds already there (`llama-ocl`, `llama-hex`, llama.cpp
+  `d00685831`) **cannot load Gemma 4**: after "cannot properly format
+  tensor name", `missing tensor 'blk.15.attn_k.weight'`. They predate the
+  model, so their Gemma references do not exist; the plan's fallback says
+  their accuracy reference is llama.cpp's CPU numbers, stated as such.
+- A current llama.cpp (`d02b4c0d6`) cross-built here for Android (static,
+  CPU, `armv8.7-a+dotprod+i8mm`) runs it: **PPL 57.4303 ± 3.328**
+  (20 × 512, cores 2-7).
+- Its greedy text on the phone reproduces the PC's llama.cpp text at the
+  same splits (story char 246, long 355); `fact` ends at `<eos>`, `code`
+  is identical but for a leading newline that `--no-display-prompt` adds.
+
+### Greedy text (step 5's last piece, Q4_0, phone CPU)
+
+| Prompt | Ours (phone) vs ours (PC) | Split | Decode-path gap |
+| --- | --- | --- | --- |
+| story | differs | pos 68: " gentle" vs " sound" | 0.106 (the PC's own gap there: 0.019, the other way) |
+| fact | same | — | — |
+| code | same | — | — |
+| long | differs | pos 629: "The" vs "Mercury" | 0.047 |
+
+At the story split our logits move by 0.03–0.15 between the PC and the
+phone (Q4_0 rounds activations to int8, differently per ISA), so both
+splits ride a gap smaller than the shift itself: near-ties, as the
+checklist requires.
+
+**The one gap to investigate.** Ours 57.5076 against llama.cpp's phone
+57.4303 is +0.135 %, past the 0.06 % run-to-run spread the checklist asks
+for. On the same phone it splits into +0.082 % for main's build (the
+existing NEON / i8mm rounding; the PC's own CPU number is 57.4248) and
++0.052 % for the NEON GELU / soft-cap (inside the spread). The GPU, which
+does not round activations, matches the PC to 1e-4, so the candidate is
+our CPU path's int8 activation quantization against llama.cpp's; that is
+where the investigation starts, not the new kernels.
+
 ## Not done
 
-- **Speed (G7, step 8) and the app (step 10).** Not run this session.
-- **The greedy text on the phone.** The four prompts of
-  `raw/greedy-Q4_0-pc.txt` are not in the tree (only the outputs), and the
-  comparison is against `llama-completion --temp 0` on the phone.
-- **S0 (step 7), llama.cpp's CPU / GPU / NPU on Gemma 4.** It supplies the
-  phone's own references for step 5's PPL and the greedy text, and B6/B7's
-  numbers.
-- **Merge to main.** The CPU code now runs on the phone, but the merge
-  waits for the greedy text above.
+- **Speed (G7, step 8), the profile (step 9) and the app (step 10).**
+- **S0's GPU and NPU references for Gemma 4.** The phone's OpenCL and
+  Hexagon builds cannot load the model; only its CPU backend (cross-built
+  at `d02b4c0d6`) runs it, and that is the reference quoted above. A
+  current OpenCL / HTP build for the phone would settle B7 and C7.
+- **The Q4_0 PPL gap above** (+0.135 % against llama.cpp on the phone; the
+  plan asks for a larger gap to be investigated, not accepted).
+- **Merge to main.**
 - G8 optimisation and the G3 tiled attention variant for 256/512.

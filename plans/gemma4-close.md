@@ -36,9 +36,10 @@ groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 | B1 | Done (`4f91d07`): attention at head size 256 / 512 and the window, decode and prompt alike |
 | B2 | Option (c): the prompt pass uses B1's attention + merge pair |
 | B3 | Done (`49b90aa`) |
-| B4, B5 (prompt pass) | Done on the PC (`33a9499`): Q4_0 decode and prompt pass, Q4_K_M decode, PPL/KL at llama.cpp's (`results/phase-gemma4.md`, GPU) |
+| B4, B5 (prompt pass) | Done on the PC (`33a9499`) and on the phone (2026-11-05): Q4_0 decode 43.6074 / KL 0.34282, prompt pass 24.4536 / 0.33855 (equal), Q4_K_M 138.0870 / 0.16511, window flat across 512, peak PSS 3.41 GB |
 | B5 (lookup) | Not started: Gemma's `few` is 1, so lookup decodes plainly |
-| B6, B7 | The phone is here; not run yet (phone steps 6 and 8). B7 also decides the f16/int8 second copy for prompt speed |
+| B6 | Done on the phone (2026-11-05): numbers as on the PC, to 1e-4; peak PSS 3.41 GB |
+| B7 | The phone shows 18.6–20.2 tok/s decode and ≈ 30 tok/s prompt pass (1.6×) in `vk_gemma`; the second copy's decision needs step 8's cooled, alternating numbers |
 | C0 | **Done on the phone (2026-11-05)**: 1.6 GB + 192 MB mapped at once, read at 36.6 GB/s, checksum equal to the CPU's → one weights buffer for C1, C2, C4, C5, as Qwen |
 | C3 | Done on `hexagon-sim`: `dsp/gemma_hvx.h`, 52 golden cases, worst 1.9e-7 of the largest value |
 | C1, C2, C4–C7 | C0 decided the weight layout (one buffer); C2's streamed attention and VTCM sizing still need the phone |

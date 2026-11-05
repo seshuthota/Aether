@@ -20,9 +20,9 @@ after its check passes.
 | G2 | done: 440/440 strings equal HF `tokenizers` |
 | G3 | done: scalar and NEON kernels against numpy, `gemma_elementwise_matches_numpy` passes on the phone (NEON GELU-tanh × up, soft-cap, plain RMSNorm) with the other 17 kernel tests; no tiled 256/512 attention variant yet (G8) |
 | G4 | done: every layer vs HF within 1.0e-5, batched and one-token, past the 512 window; Q4_0 greedy vs llama-completion splits only at near-ties (≤ 0.019 logits) |
-| G5 | PPL done on the PC (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp) and on the phone (Q4_0 57.5076, Q4_K_M 185.6800, 20 × 512); llama.cpp's own phone CPU number still owed (S0); KL over 8 chunks within llama.cpp's error bars (PC) |
+| G5 | PPL on the PC (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp) and on the phone (Q4_0 57.5076, Q4_K_M 185.6800); llama.cpp's phone CPU is 57.4303, i.e. ours is +0.135 %, which the results file splits and flags for investigation; greedy text on the phone splits only at near-ties (gaps 0.106 / 0.047); KL within llama.cpp's bars on the PC and the GPU |
 | G6 | template, stops, hidden reasoning, C ABI default done; template and the C ABI's GPU Gemma path checked on the phone (`c_abi_gpu_gemma4`); app not tried |
-| G7 | not started: `bench_suite` against `llama-bench`, cooled (phone step 8) |
+| G7 | step 8 next: `bench_suite` against `llama-bench` (CPU, current build, cooled) |
 
 ## 1. Why this model, and what we compare against
 
