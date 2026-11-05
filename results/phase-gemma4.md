@@ -254,6 +254,15 @@ time, …" equals llama.cpp's and the CPU's. `aether --gpu --chat` answers
 "What is 2+2? Answer in one sentence." with "Two plus two equals four.",
 as the CPU does. (Raw: `raw/gpu-pc-Q4_0-{decode,batch}.txt`.)
 
+**Past the window** (`examples/gemma_window.rs`, 640 wikitext tokens,
+`raw/gpu-pc-Q4_0-window.txt`): logits at 12 positions from 0 to 639,
+around the sliding window's 512. GPU decode against the GPU prompt pass:
+1.7–3.5e-6 of the largest logit everywhere. GPU decode against the CPU
+path: 1.1–2.7e-2, flat across 512 (the CPU rounds activations to 8 bits
+before its products, the GPU does not), with the same top token at all 12
+positions. A window off by one, or a shared layer reading the wrong
+cache, would show as a jump from 512 on.
+
 Qwen2.5-0.5B Q4_0 through `vk_ppl` (4 chunks) is unchanged: batch
 15.8560, decode 15.8023.
 
