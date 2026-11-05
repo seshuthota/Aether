@@ -39,7 +39,10 @@ groundwork, PC). Then **B** (GPU) and **C** (DSP), in either order. **D**
 | B4, B5 (prompt pass) | Done on the PC (`33a9499`): Q4_0 decode and prompt pass, Q4_K_M decode, PPL/KL at llama.cpp's (`results/phase-gemma4.md`, GPU) |
 | B5 (lookup) | Not started: Gemma's `few` is 1, so lookup decodes plainly |
 | B6, B7 | Need the phone. B7 also decides the f16/int8 second copy for prompt speed |
-| C, D, A | Not started (need the phone; C1–C3 can use the simulator) |
+| C0 | Probe written (`dsp_maps_gemma_sized_buffers`, `--ignored`); runs on the phone |
+| C3 | Done on `hexagon-sim`: `dsp/gemma_hvx.h`, 52 golden cases, worst 1.9e-7 of the largest value |
+| C1, C2, C4–C7 | Wait for C0 (it decides the weight layout); C2's streamed attention and VTCM sizing need the phone anyway |
+| D, A | Need the phone |
 
 ## 1. Why the GPU and DSP refuse today: every assumption Gemma 4 breaks
 

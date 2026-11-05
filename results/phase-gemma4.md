@@ -305,7 +305,28 @@ repacking).
 
 ## DSP
 
-Refuses Gemma 4 with a message (plan part C).
+Still refuses Gemma 4 with a message. Done without the phone:
+
+**C3, the element-wise steps on HVX** (`dsp/gemma_hvx.h`): GELU-tanh × up
+(as g · σ(2z), the CPU's NEON identity, on the decode step's `vexp` /
+`vrecip`, now in `dsp/vmath_hvx.h`), soft-cap, RMSNorm with and without
+gain, the per-head q/k/v norm with RoPE on the first pairs and q × √hs,
+and the post-norm add with a scale. On `hexagon-sim` (v79) against the
+numpy goldens the CPU and GPU kernels pass
+(`sim_gemma_elementwise_matches_numpy`):
+
+| Kernel | Cases | Worst error / largest value | Bound |
+| --- | --- | --- | --- |
+| GELU × up | 21 | 1.64e-7 | 1e-6 |
+| soft-cap 30 | 21 | 1.91e-7 | 1e-6 |
+| RMSNorm, no gain (hs 256, 512) | 2 | 7.49e-8 | 1e-5 |
+| q/k norm + RoPE + q√hs, v norm | 6 (2 head sizes × q, k, v) | 1.17e-7 | 1e-5 |
+| post-norm add × scale | 2 | 1.70e-7 | 1e-5 |
+
+**C0's probe** is ready for the phone: `dsp_maps_gemma_sized_buffers`
+(ignored by default) maps 1.6 GB + 192 MB of shared buffers at once and has
+the DSP read every word. C1, C2, C4 and C5 wait for its answer, which
+decides how the weights are laid out.
 
 ## Not done
 
