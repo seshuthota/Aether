@@ -65,6 +65,9 @@
 //!   --base PATH   the reference model for --kl (default: MODEL as f32;
 //!                 give the HF directory or f32 GGUF when MODEL is a
 //!                 quantized GGUF)
+//!   --kl-base FILE  instead of --kl: KL against the log-probabilities
+//!                 llama-perplexity --kl-divergence-base saved (its own
+//!                 reference run, 16 bits a value), on that file's tokens
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -92,6 +95,7 @@ fn main() {
     let mut hide_think = false;
     let (mut temp_set, mut top_p_set, mut top_k_set) = (false, false, false);
     let mut base_path: Option<PathBuf> = None;
+    let mut kl_base: Option<PathBuf> = None;
     let (mut lookup, mut ngram, mut fixed) = (0usize, 2usize, false);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut gpu, mut times, mut dsp) = (false, false, false);
@@ -127,6 +131,7 @@ fn main() {
             "--ngram" => ngram = val.parse().unwrap_or_else(|_| usage()),
             "--system" => system = Some(val),
             "--base" => base_path = Some(val.into()),
+            "--kl-base" => kl_base = Some(val.into()),
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
@@ -147,6 +152,9 @@ fn main() {
     let imatrix = imatrix.as_ref();
 
     if let Some(file) = ppl_file {
+        if let Some(kb) = kl_base {
+            return score_vs_base(&model_path, &tok_path, &file, format, chunks, &kb, cores);
+        }
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
     }
@@ -247,6 +255,35 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
         println!("PPL(base f32) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
         println!("Mean KLD: {:.6}   Same top p: {:.3} %", s.mean_kld(), s.same_top_pct());
     }
+}
+
+/// `--ppl FILE --kl-base BASE`: perplexity and KL against the log-probs
+/// llama.cpp saved with `--kl-divergence-base` (`eval::BaseFile`), on the
+/// tokens in that file. FILE must tokenize to the same tokens: checked, so
+/// a tokenizer difference cannot hide in the comparison.
+fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format, chunks: usize, base_path: &Path, cores: Option<Vec<usize>>) {
+    let mut base = aether::eval::BaseFile::open(base_path).unwrap_or_else(|e| fail(base_path, e));
+    let ctx = base.n_ctx;
+    let Session { mut model, text, .. } = Session::open_imatrix(model_path, Some(tok_path), ctx, format, None, cores.as_deref()).unwrap_or_else(|e| fail(model_path, e));
+    let n = base.n_chunk.min(chunks) * ctx;
+    let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
+    let ours = text.encode(&raw);
+    // Our encode starts with BOS where the family adds one; llama.cpp's
+    // tokens for perplexity do too, so the streams line up from 0.
+    if ours.len() < n || ours[..n] != base.tokens[..n] {
+        let at = ours.iter().zip(&base.tokens[..n]).position(|(a, b)| a != b).unwrap_or(ours.len().min(n));
+        eprintln!("{}: our tokens differ from the base file's at {at}", file.display());
+        std::process::exit(1);
+    }
+    assert_eq!(base.n_vocab, model.config.vocab_size, "vocabulary size");
+    eprintln!("{}: {} chunks of {ctx}, tokens equal to the base file's; weights {} {:.1} MB", base_path.display(), n / ctx, model.weights.format_name(), model.weights.bytes() as f64 / 1e6);
+    let t1 = Instant::now();
+    let s = aether::eval::perplexity_vs_base(&mut base, text.chunk_bos(), chunks, |c, first| model.forward_batch_logits(c, 0, first).to_vec(), |i, s| eprint!("[{i}]{:.4},", s.ppl()))
+        .unwrap_or_else(|e| fail(base_path, e));
+    eprintln!();
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored in {:.1} s)", s.ppl(), s.ppl_err(), s.count, t1.elapsed().as_secs_f64());
+    println!("PPL(base file) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
+    println!("Mean KLD: {:.6}   Same top p: {:.3} %", s.mean_kld(), s.same_top_pct());
 }
 
 /// `--gpu`: every position, prompt included, through the GPU decode step

@@ -1,0 +1,25 @@
+hostdata/gemma4/kl-base-bf16.bin: 20 chunks of 512, tokens equal to the base file's; weights q4_k 1491.6 MB
+[1]52.8189,[2]118.8855,[3]106.8855,[4]138.5170,[5]150.6147,[6]155.3804,[7]174.3076,[8]188.3462,[9]203.9337,[10]208.3987,[11]212.9471,[12]221.8581,[13]226.3408,[14]215.0396,[15]207.4895,[16]215.9882,[17]195.1333,[18]198.6753,[19]191.3351,[20]186.1763,
+	Command being timed: "target/release/aether testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --kl-base hostdata/gemma4/kl-base-bf16.bin -c 0-15"
+	User time (seconds): 37644.43
+	System time (seconds): 114.41
+	Percent of CPU this job got: 1455%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 43:15.04
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 2537012
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 13620
+	Minor (reclaiming a frame) page faults: 5410919
+	Voluntary context switches: 85206
+	Involuntary context switches: 5774000
+	Swaps: 0
+	File system inputs: 8296048
+	File system outputs: 176
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

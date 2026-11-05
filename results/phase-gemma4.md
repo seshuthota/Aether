@@ -179,6 +179,29 @@ difference: our KL is 0.7 error bars lower.
 Each run took 70–76 min and peaked at 16 GB (two models in memory, the
 base in f32).
 
+### KL against llama.cpp's own base file (S2)
+
+`aether --ppl FILE --kl-base FILE` reads the log-probabilities llama.cpp
+saved with `--kl-divergence-base` from its BF16 run (`eval::BaseFile`), so
+both engines are scored against the same numbers. Our tokens are checked
+against the file's first: all 10,240 equal llama.cpp's. Q4_K_M, all
+20 chunks (`raw/aether-klbase-Q4_K_M-pc.txt`, cores 0–15, 43 min, peak
+RSS 2.54 GB):
+
+| | aether | llama.cpp (`raw/llama-kl-Q4_K_M.txt`) |
+| --- | --- | --- |
+| PPL(base) from the file | 161.2919 | 161.291854 |
+| PPL(Q4_K_M) | 186.1763 | 185.1681 ± 13.88 |
+| Mean KL | 0.175124 | 0.178324 ± 0.005288 |
+| Same top token | 83.980 % | 84.000 ± 0.513 % |
+
+The base PPL equals llama.cpp's, so the file is read as llama.cpp reads
+it. The file keeps only log-probabilities within 16 of the top one and
+stores the rest at that floor, which is why its PPL (161.29) is below the
+BF16 run's own 184.23. Our KL is 0.6 error bars below llama.cpp's and the
+same top token agrees to 0.02 %. The PPL is our plain Q4_K_M PPL, 0.5 %
+above llama.cpp's (as in the table above).
+
 ## G6. Chat
 
 - `chat::gemma4` renders the four prompts HF `apply_chat_template` gives
@@ -225,5 +248,4 @@ per-layer embeddings are CPU-only; those backends are a later plan.
 - **Merge to main: not done.** The CPU code that runs on the phone (NEON
   and i8mm matmuls and attention at head sizes 256 and 512) has not run
   there yet.
-- The 20-chunk KL (8 chunks above).
 - G8 optimisation and the G3 tiled attention variant for 256/512.
