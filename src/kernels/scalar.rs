@@ -164,6 +164,23 @@ pub fn swiglu(gate: &mut [f32], up: &[f32]) {
     }
 }
 
+/// GELU (tanh approximation) times `up` (see [`super::gelu_tanh`]).
+pub fn gelu_tanh(gate: &mut [f32], up: &[f32]) {
+    assert_eq!(gate.len(), up.len());
+    const C: f32 = 0.797_884_6; // √(2/π)
+    for (g, &u) in gate.iter_mut().zip(up) {
+        let x = *g;
+        *g = 0.5 * x * (1.0 + (C * x * (1.0 + 0.044715 * x * x)).tanh()) * u;
+    }
+}
+
+/// `x = cap · tanh(x / cap)` (see [`super::softcap`]).
+pub fn softcap(x: &mut [f32], cap: f32) {
+    for v in x {
+        *v = cap * (*v / cap).tanh();
+    }
+}
+
 /// Element-wise `x += y` (residual connections).
 pub fn add_inplace(x: &mut [f32], y: &[f32]) {
     assert_eq!(x.len(), y.len());

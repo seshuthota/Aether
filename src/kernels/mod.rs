@@ -41,14 +41,14 @@ pub fn rmsnorm_heads_plain(x: &mut [f32], head_size: usize, eps: f32) {
 
 /// `gate_i = gelu(gate_i) * up_i`, GELU's tanh approximation
 /// (`gelu_pytorch_tanh`, ggml's `ggml_gelu`):
-/// `0.5 x (1 + tanh(√(2/π) (x + 0.044715 x³)))`.
+/// `0.5 x (1 + tanh(√(2/π) (x + 0.044715 x³)))`; NEON with a polynomial
+/// `exp` on aarch64.
+#[inline]
 pub fn gelu_tanh(gate: &mut [f32], up: &[f32]) {
-    assert_eq!(gate.len(), up.len());
-    const C: f32 = 0.797_884_6; // √(2/π)
-    for (g, &u) in gate.iter_mut().zip(up) {
-        let x = *g;
-        *g = 0.5 * x * (1.0 + (C * x * (1.0 + 0.044715 * x * x)).tanh()) * u;
-    }
+    #[cfg(target_arch = "aarch64")]
+    neon::gelu_tanh(gate, up);
+    #[cfg(not(target_arch = "aarch64"))]
+    scalar::gelu_tanh(gate, up);
 }
 
 /// `x *= s`.
@@ -58,11 +58,14 @@ pub fn scale_inplace(x: &mut [f32], s: f32) {
     }
 }
 
-/// `x = cap · tanh(x / cap)` (Gemma's final logit soft-cap).
+/// `x = cap · tanh(x / cap)` (Gemma's final logit soft-cap); NEON with a
+/// polynomial `exp` on aarch64.
+#[inline]
 pub fn softcap(x: &mut [f32], cap: f32) {
-    for v in x {
-        *v = cap * (*v / cap).tanh();
-    }
+    #[cfg(target_arch = "aarch64")]
+    neon::softcap(x, cap);
+    #[cfg(not(target_arch = "aarch64"))]
+    scalar::softcap(x, cap);
 }
 
 /// Multiply head `h` of `x` by `sigmoid(gates[h])` (LFM3's output gate).
