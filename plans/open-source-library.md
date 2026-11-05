@@ -344,6 +344,27 @@ new engine repo `$P/aether-infer`.
    a second pass with `--invert-paths` for the dropped ones.
 4. `git remote remove origin` if filter-repo left one. The GitHub repo
    comes later, private first, only when the user says so.
+5. Write `CLAUDE.md` for the engine repo; the filter leaves the learning
+   one behind. Take from `$P/Aether/CLAUDE.md` what concerns the engine:
+   - the project in one paragraph;
+   - the target phone and its cores, and the commands (`cargo test` on
+     the host and on the phone, the runner, `--release`, `black_box` in
+     benchmarks);
+   - correctness from external references only, never a second
+     implementation as an oracle;
+   - engine code written from scratch, no code copied from llama.cpp or
+     any engine (section 1);
+   - mobile constraints drive design;
+   - one phone, `scripts/adb-run.sh` serializes, check the temperature;
+   - the PC memory budget (`--test-threads=1`, the BF16 test alone);
+   - no `cargo fmt` until R1's rustfmt commit, comments in the
+     surrounding style;
+   - current state: Gemma 4 pending the phone (`plans/gemma4-phone-checks.md`),
+     and this plan for the restructure (its path in the learning repo).
+
+   Leave out the learning track, the site, films and two-track wording. The
+   agent continues in `$P/aether-infer` from A4 on, a new session started
+   there.
 
 **A2. Data and local config, without moving anything yet.**
 - `testdata/` and `hostdata/` in `aether-infer`: **symlinks** to the real
@@ -364,7 +385,8 @@ new engine repo `$P/aether-infer`.
 - `git log --oneline | wc -l` about 310; `git log -- site videos results` empty.
 
 **REVIEW 1** (learning-track session): the filter's keep list, the log,
-and the test output.
+the test output and the new `CLAUDE.md`. A1–A3 run from a session started
+in `$P/Aether`; A4 on, from a new session started in `$P/aether-infer`.
 
 **A4. Steps L1–L5 of section 8**, one commit each, in `aether-infer` on
 `main`:
