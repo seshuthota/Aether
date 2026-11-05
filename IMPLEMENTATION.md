@@ -13,7 +13,17 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started · `(phone)`
 
 ---
 
-## 0. Where the engine is today (2026-10-31)
+## 0. Where the engine is today (2026-11-05)
+
+**Since 2026-10-31**, in the paragraphs at the end of this section: LFM3-1.7B, the first
+hybrid conv/attention model (merged 2026-11-04); K-quant decode (merged 2026-11-05); Gemma 4
+E2B, verified on the PC and waiting for the phone on branch `gemma4`. Open work:
+
+- Gemma 4's phone checks, then the merge (`plans/gemma4-phone-checks.md` on `gemma4`).
+- A smaller KV cache, f16 then Q8_0 (`plans/kv-cache.md`, written, not started).
+- Optimization (Gemma 4 G8, GPU prefill).
+
+The text below is the state of 2026-10-31.
 
 Everything in the plan is built and verified: Phases 0–8 and the later phases of section 13
 (K-quants, importance matrices, i8mm, flash-decoding, speculative decoding, Vulkan on the
@@ -96,6 +106,18 @@ matmuls (K2) and rows repacked four at a time for decode (K3), with Q6_K's loads
 Q4_K_M decode 28.8 → 48.6 tok/s on the phone, against llama.cpp's 45.7–46.1 at the same caps
 (2.00/2.25 GHz); prompts at 89–98 % of llama.cpp's. Q6_K `token_embd` reads at the DRAM
 ceiling. PC PPL / KL match llama.cpp's (Q4_K_M 24.9094 vs 24.8278). K4 kept the 4-byte layout.
+
+**Gemma 4 E2B (branch `gemma4`, 2026-11-05, `results/phase-gemma4.md`).** Per-layer embeddings
+(a 1.3 GB table kept mapped, one row read per token), layers 15–34 sharing the KV cache of layers
+13/14, head sizes 256 / 512, GELU-tanh, logit soft-cap, its SentencePiece-style BPE tokenizer
+and chat template. On the PC:
+
+- the BF16 file matches transformers on every layer within 1.0e-5;
+- PPL is 57.4248 vs llama.cpp's 57.4593 (Q4_0) and 186.18 vs 185.17 (Q4_K_M), with KL inside
+  llama.cpp's error bars;
+- every existing model gives PPL and greedy text equal to `main`.
+
+The phone was off adb, so nothing has run there yet; GPU and DSP refuse the model.
 
 ### Next steps (2026-10-30)
 
