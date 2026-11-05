@@ -238,6 +238,38 @@ def main():
         q, k, v = f32(256), f32(n, 256), f32(n, 256)
         save(root, f"window_attention_256_n{n}_p{pos}_w{window}", q=q, k=k, v=v, window=np.array(window, np.float32),
              out=attention_window_ref(q, k, v, pos, window))
+    # Gemma 4 on the GPU (appended last): the per-head step after q/k/v
+    # (RMSNorm with gain for q and k, without for v; RoPE on the first
+    # `pairs` pairs, element i with i + hs/2; q × √hs), for one token of
+    # 8 query heads and 1 K/V head, the (sin, cos) table from numpy; and the
+    # post-norm-and-add, x = (x + w ⊙ rmsnorm(t)) · scale, for 3 tokens.
+    for hs, pairs, theta, pos in ((256, 128, 1e4, 37), (512, 64, 1e6, 600)):
+        nq = 8
+        q, k, v = f32(nq, hs, scale=2.0), f32(1, hs, scale=2.0), f32(1, hs, scale=2.0)
+        qn, kn = f32(hs, scale=0.5) + 1.0, f32(hs, scale=0.5) + 1.0
+        ang = pos * theta ** (-2.0 * np.arange(hs // 2) / hs)
+        rot = np.stack([np.sin(ang), np.cos(ang)], axis=1).astype(np.float32)
+
+        def norm(x, g):
+            x = x.astype(np.float64)
+            y = x / np.sqrt((x * x).mean(axis=-1, keepdims=True) + 1e-6)
+            return y if g is None else y * g.astype(np.float64)
+
+        def rope(x):
+            x = x.copy()
+            s_, c_ = rot[:pairs, 0].astype(np.float64), rot[:pairs, 1].astype(np.float64)
+            a, b = x[..., :pairs].copy(), x[..., hs // 2:hs // 2 + pairs].copy()
+            x[..., :pairs] = a * c_ - b * s_
+            x[..., hs // 2:hs // 2 + pairs] = a * s_ + b * c_
+            return x
+
+        save(root, f"qknorm_{hs}_{pairs}", q=q, k=k, v=v, qn=qn, kn=kn, rot=rot,
+             q_out=rope(norm(q, qn)) * np.sqrt(hs), k_out=rope(norm(k, kn)), v_out=norm(v, None))
+    for n in (1536, 300):
+        x, t, w = f32(3, n), f32(3, n, scale=4.0), f32(n, scale=0.5) + 1.0
+        t64 = t.astype(np.float64)
+        y = t64 / np.sqrt((t64 * t64).mean(axis=1, keepdims=True) + 1e-6) * w.astype(np.float64)
+        save(root, f"normadd_{n}", x=x, t=t, w=w, scale=np.array([0.7], np.float32), out=(x.astype(np.float64) + y) * 0.7)
     print(f"wrote {len(list(root.iterdir()))} cases to {root}")
 
 
