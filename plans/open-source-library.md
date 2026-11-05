@@ -72,25 +72,39 @@ measured numbers published.
 
 ## 2. Repository split (decided)
 
-- **The engine:** a new public repo, **`github.com/seshuthota/aether-llm`**
-  (the name is free on GitHub). It holds the library, C API, CLI tools,
-  shaders, DSP code, the Android library, tests, reference generators,
-  docs and benchmark summaries.
-- **The learning journal:** this repo, `seshuthota/Aether`, **unchanged**:
-  site, films, notes, plans, raw results, `CLAUDE.md`, and the user's own
-  learning code (`src/neon_array.rs` and the like). Nothing is moved out
-  of it; it keeps its full history and the site keeps deploying.
+One name everywhere: **`aether-infer`** (free on GitHub and crates.io on
+2026-11-05).
 
-**Low hassle by design:** no file moves happen in this repo. The engine
-repo is made from this repo's history with `git filter-repo`, keeping
-only the engine's paths and moving them into the new layout in the same
-pass. Its 310 commits keep their messages, which tell the from-scratch
-story and carry the verification numbers. Afterwards:
-- the implementation track works in a clone of `aether-llm` instead of
-  `../Aether-impl`;
-- this repo's engine code stays as a frozen snapshot, and its site pages
-  link to the engine repo's code;
-- the learning track keeps working here as it does now.
+- **The engine:** a new directory **`~/Documents/hermes-projects/aether-infer`**,
+  its own git repo, later `github.com/seshuthota/aether-infer`. It holds the
+  library, C API, CLI tools, shaders, DSP code, the Android library, tests,
+  reference generators, docs and benchmark summaries. **All engine work
+  happens there from now on,** by the implementing agent, in that one
+  directory: no more worktrees.
+- **The learning journal:** this repo, `seshuthota/Aether`: site, films,
+  notes, plans, raw results, `IMPLEMENTATION.md` (as history), `CLAUDE.md`,
+  and the user's own learning code (`src/neon_array.rs`,
+  `src/scalar_array.rs`, `src/neon_mul_arrays.rs` and their lines in
+  `src/lib.rs`). Its history stays as it is and the site keeps deploying.
+
+**How the engine repo is made:** with `git filter-repo` from this repo's
+history, keeping only the engine's paths. Its 310 commits keep their
+messages, which tell the from-scratch story and carry the verification
+numbers. At first the paths stay **exactly as today** (`src/`,
+`examples/`…), so tonight's phone fixes can be carried over as patches.
+The workspace layout (section 3) is one commit there after the phone run
+(R1).
+
+**Once the engine repo has everything (section 11, phase C):**
+- the engine code is deleted from this repo in one commit;
+- this repo's learning code becomes a small crate of its own, which can
+  depend on `aether-infer` by path to compare against the engine;
+- the worktrees `../Aether-impl` and `../Aether-next` are removed, after
+  their data and untracked notes are moved (section 11);
+- the site's links to engine code point at the engine repo.
+
+From then on there are two directories, `Aether` (learning) and
+`aether-infer` (engine).
 
 ## 3. Layout of the engine repo
 
@@ -231,11 +245,11 @@ stays 0.x while it settles.
 
 ## 8. Steps, and what can start now
 
-**Now, before the phone run (additive, no file moves).** On a new branch
-`library` off `gemma4-devices`, in its own worktree (`../Aether-lib`), so
-tonight's run in `../Aether-next` is untouched. These steps add files and a
-layer on top; they do not rename or reformat what the phone checks
-exercise, so tonight's fixes merge in without conflicts.
+**Now, before the phone run (additive, no file moves).** In the new
+`aether-infer` directory (section 11, phase A), while tonight's run uses
+`../Aether-next` as written. These steps add files and a layer on top;
+they do not rename or reformat what the phone checks exercise, so
+tonight's fixes apply as patches without conflicts.
 
 | Step | What | Check |
 | --- | --- | --- |
@@ -249,11 +263,11 @@ exercise, so tonight's fixes merge in without conflicts.
 
 | Step | What | Check |
 | --- | --- | --- |
-| R1 | Make `aether-llm` with `git filter-repo`: engine paths only, moved into the workspace layout (section 3); then the rustfmt commit | PPL and greedy text identical on all backends (vk_ppl, dsp_ppl, `--ppl`), all tests pass, the app runs |
+| R1 | In `aether-infer`: tonight's fixes applied, then the workspace layout (section 3) as one move commit, then the rustfmt commit | PPL and greedy text identical on all backends (vk_ppl, dsp_ppl, `--ppl`), all tests pass, the app runs |
 | R2 | The CLI and the C ABI rebuilt on the L2 API; the old session types and modules become `pub(crate)`; panics and prints out of library paths | The same checks; C ABI tests |
 | R3 | Experiments to `bench/`; docs/ (backends, architecture, benchmarks) | Examples build in CI |
 | R4 | Android AAR + sample app | The app builds from the AAR alone |
-| R5 | Tag v0.1.0, publish the crate `aether-infer`, release notes with measured numbers; link `aether-llm` from this repo's README and site | A stranger's quick start works in a clean container |
+| R5 | Make the GitHub repo public, tag v0.1.0, publish the crate `aether-infer`, release notes with measured numbers; link it from this repo's README and site | A stranger's quick start works in a clean container |
 
 R1 is mostly mechanical (an hour or two); R2 is the bulk. Both are
 engineering rather than new inference concepts, so they fit between
@@ -261,18 +275,20 @@ learning phases.
 
 ## 9. Decisions (taken 2026-11-05)
 
-1. **Repos:** a new engine repo, `seshuthota/aether-llm`, made with
-   filtered history; this repo stays the learning journal, unchanged.
+1. **Repos:** a new engine repo, `aether-infer`, made with filtered
+   history in its own directory; this repo stays the learning journal and
+   loses its engine code once the move is done. No more worktrees.
 2. **License:** MIT OR Apache-2.0 (section 7).
-3. **Names:** the project stays "Aether"; the GitHub repo is `aether-llm`.
-   On crates.io both `aether` and `aether-llm` are taken (`aether-llm` by
-   another project's "Aether AI agent framework", which would confuse
-   people). The crate is **`aether-infer`** (free on 2026-11-05), with
-   `[lib] name = "aether"` so code still reads `use aether::Model`.
-   `aether-lm` and `aether-edge` were also free.
+3. **Names:** the project stays "Aether". The directory, the GitHub repo
+   and the crate are **`aether-infer`** (`aether` and `aether-llm` are
+   taken on crates.io; `aether-llm` by another project's "Aether AI agent
+   framework"). The library keeps `[lib] name = "aether"` so code reads
+   `use aether::Model`.
 4. **Formatting:** rustfmt in the engine repo from the split on (section 5).
 5. **No copied code** from llama.cpp or any engine; compatible formats and
    interfaces only (section 1).
+6. **Who does what:** the user's implementing agent carries out section 11;
+   the learning-track session reviews at the checkpoints marked there.
 
 ## 10. Risks
 
@@ -285,3 +301,155 @@ learning phases.
   State it, and keep CPU / GPU as the portable paths.
 - **The learning goal:** the restructure must not stall the phases. It is
   scheduled work with its own checks, done between phases.
+
+## 11. Handoff: the steps for the implementing agent
+
+Directories: `P=~/Documents/hermes-projects`. Learning repo `$P/Aether`
+(branch `main`); tonight's phone work in `$P/Aether-next` (branch
+`gemma4-devices`); the impl worktree `$P/Aether-impl` (branch `impl`); the
+new engine repo `$P/aether-infer`.
+
+**Rules that hold throughout:**
+- Never touch the user's uncommitted files in `$P/Aether`: `src/lib.rs`
+  (two added lines), `src/neon_array.rs`, `src/neon_mul_arrays.rs`,
+  `src/scalar_array.rs`, `videos/phase-3-neon-add/`, `plans/site-update.md`.
+- Never `git add` the uncommitted NEON GELU / soft-cap changes in
+  `$P/Aether-next` (`src/kernels/{neon,mod,scalar}.rs`). They are owed a
+  phone check first (gemma4-phone-checks.md step 1).
+- Nothing is deleted until its replacement is verified. Nothing is pushed
+  to GitHub without the user saying so.
+- PC memory: the full test suite runs with `--test-threads=1`, the BF16
+  test alone, and never beside another Gemma job.
+- Commits end with the user's attribution lines; no `perf.data`, binaries,
+  `.venv` or `__pycache__`.
+
+### Phase A: now (before the phone run)
+
+**A1. Create the repo.**
+1. Install the tool in a venv of its own (`python3 -m venv
+   $P/.filter-venv && $P/.filter-venv/bin/pip install git-filter-repo`).
+2. `git clone --no-local --branch gemma4-devices --single-branch
+   $P/Aether $P/aether-infer`; in it, `git branch -m main`.
+3. Filter, keeping these paths with **their names unchanged**:
+   - `src/ examples/ shaders/ dsp/ include/ android/ tools/ scripts/`
+   - `build.rs Cargo.toml Cargo.lock .cargo/config.toml.example .gitignore`
+     `testdata/.gitkeep`
+   - the engine plans: `plans/gemma4.md plans/gemma4-close.md`
+     `plans/gemma4-phone-checks.md plans/kv-cache.md`
+     `plans/flash-attention.md plans/kquant-decode.md plans/lfm3.md`
+
+   Then drop `tools/__pycache__/` and the site's scripts
+   (`scripts/check-guided-pages.py scripts/serve-site.sh`
+   `scripts/test-guided-fallback.mjs`). `--path` for each kept path, then
+   a second pass with `--invert-paths` for the dropped ones.
+4. `git remote remove origin` if filter-repo left one. The GitHub repo
+   comes later, private first, only when the user says so.
+
+**A2. Data and local config, without moving anything yet.**
+- `testdata/` and `hostdata/` in `aether-infer`: **symlinks** to the real
+  directories, as `Aether-next` has today. Map them first with
+  `find $P/Aether-next/{testdata,hostdata} $P/Aether-impl/{testdata,hostdata} -maxdepth 1`
+  (the Gemma GGUFs and BF16 files are real in `Aether-next`; the rest is
+  real in `Aether-impl`).
+- Copy `.cargo/config.toml` from `Aether-next`; it is machine-specific and
+  gitignored.
+- `tools/.venv`: a symlink to `Aether-impl`'s for now, never committed.
+
+**A3. Check the repo is the engine, whole.**
+- `cargo build --release --features vulkan,hexagon`, and
+  `cargo build --release --target aarch64-linux-android --features vulkan,hexagon --tests`.
+- `cargo test --release --features vulkan,hexagon -- --skip gemma4_matches_transformers --test-threads=1`:
+  158 passed, 1 ignored (as in `Aether-next` at `dd16acc`).
+- `vk_ppl` on Qwen2.5-0.5B Q4_0, 4 chunks: batch 15.8560, decode 15.8023.
+- `git log --oneline | wc -l` about 310; `git log -- site videos results` empty.
+
+**REVIEW 1** (learning-track session): the filter's keep list, the log,
+and the test output.
+
+**A4. Steps L1–L5 of section 8**, one commit each, in `aether-infer` on
+`main`:
+- **L1:** `LICENSE-MIT`, `LICENSE-APACHE`, `license = "MIT OR Apache-2.0"`
+  and `name = "aether-infer"` with `[lib] name = "aether"` in
+  `Cargo.toml`, plus README, CONTRIBUTING, CHANGELOG and the Unicode
+  notice. Check that every example, test and binary still builds (`use
+  aether::…` stays valid).
+- **L2:** the `Model` / `Backend` / `Session` / `Error` API as a new module
+  over the existing sessions.
+- **L3:** the examples.
+- **L4:** the CI workflow (it runs only once the repo is on GitHub; test it
+  with `act`, or by reading it, until then).
+- **L5:** `rustfmt.toml`, tried but not applied.
+
+**REVIEW 2:** the API (L2) before the examples build on it, and L1's
+README / CONTRIBUTING text.
+
+### Phase B: the phone run (the user, in `$P/Aether-next`)
+
+As in `plans/gemma4-phone-checks.md`, unchanged. Fixes and the NEON
+kernels are committed on `gemma4-devices` there as usual.
+
+### Phase C: after the phone run
+
+**C1. Carry tonight's commits over.** `git -C $P/Aether-next format-patch
+dd16acc..gemma4-devices -o /tmp/phone-patches`, then `git am` them in
+`aether-infer`. The paths are unchanged, so they apply; drop any patch
+that touches only `results/` or `site/`. Those results go to the
+learning repo instead: merge `gemma4-devices` into `Aether`'s `main` as
+the checklist says.
+
+**C2. R1: the move.**
+1. One commit that moves files into the workspace layout (section 3),
+   with no logic change.
+2. One rustfmt commit.
+3. Checks: the A3 list, plus the app built from the new paths
+   (`scripts/android-native.sh`, `./gradlew assembleDebug`).
+
+**REVIEW 3:** the layout and the move's checks.
+
+**C3. Consolidate data into `aether-infer`** (real directories, not
+symlinks):
+- the `testdata/` and `hostdata/` contents from `Aether-impl` and
+  `Aether-next`;
+- `tools/.venv`, recreated from `tools/requirements.txt` (venvs hold
+  absolute paths, so copying one breaks it).
+
+Check: the A3 tests pass with the worktrees renamed away temporarily (for
+example `mv Aether-impl Aether-impl.off`). That proves nothing still
+points into them.
+
+**C4. Move the untracked notes worth keeping** from `Aether-impl` into
+the learning repo:
+- `review-k0-k3.md`, `handoff-no-phone.md`, `handoff-phone-results.md`
+  into `$P/Aether/notes/impl-track/`;
+- `results/phase-kquant/raw/phone/*-profile/` into the same path under
+  `$P/Aether/results/` (gitignored if large).
+
+Ask the user before committing them.
+
+**C5. Remove the worktrees:** `git -C $P/Aether worktree remove` for
+`Aether-impl` and `Aether-next` (after C3 and C4, and after `git status`
+there shows nothing else uncommitted), then delete the merged branches
+`impl`, `gemma4`, `gemma4-devices` in `$P/Aether`.
+
+**C6. Clean the learning repo** (with the user, since it is their code):
+1. One commit deleting the engine paths from `$P/Aether`: those of A1's
+   keep list, except the plans, which stay here as history.
+2. `Cargo.toml` becomes a small learning crate. `src/lib.rs` keeps only
+   the user's modules (`neon_array`, `scalar_array`, and later ones),
+   with `aether-infer = { path = "../aether-infer/crates/aether" }` if
+   the exercises compare against the engine.
+3. The user's uncommitted files stay as they are unless the user says
+   otherwise.
+4. Update `CLAUDE.md`: the engine lives in `../aether-infer`; drop the
+   worktree and two-track wording, and keep the learning-track rules.
+5. Update the memory notes (two-track workflow, PC memory budget paths).
+6. Point the site's links to engine code at the engine repo.
+
+**REVIEW 4:** the learning repo after the cleanup, the site pages still
+building, and the user's code untouched.
+
+### Phase D: R2–R5 in `aether-infer`
+
+As in section 8. **REVIEW 5** before the repo goes public: README claims
+against `results/`, the license files, the legal checks of section 7, and
+a quick start run from a clean container.
