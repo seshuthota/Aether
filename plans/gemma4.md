@@ -11,6 +11,19 @@ Implementation goes on a new branch `gemma4` in `../Aether-next` (it holds the
 two GGUFs). One commit per step, each with its check; a step is merged only
 after its check passes.
 
+## Status (2026-11-05, PC only; the phone was off adb)
+
+| Step | State |
+| --- | --- |
+| G0 | done: versions, hashes, llama.cpp PPL/KL baselines, the embed-scale question (`results/phase-gemma4.md`) |
+| G1 | done: shapes for both files, Q5_K exact, table kept mapped (tested); RSS after load not measured separately (peak RSS of a PPL run is below the file size) |
+| G2 | done: 440/440 strings equal HF `tokenizers` |
+| G3 | scalar kernels done against numpy; NEON GELU / soft-cap written, uncommitted, need the phone's golden test; no tiled 256/512 attention variant yet (G8) |
+| G4 | done: every layer vs HF within 1.0e-5, batched and one-token, past the 512 window; Q4_0 greedy vs llama-completion splits only at near-ties (≤ 0.019 logits) |
+| G5 | PPL done (Q4_0 0.06 %, Q4_K_M 0.5 % from llama.cpp); KL over 8 chunks within llama.cpp's error bars; phone PPL not done |
+| G6 | template, stops, hidden reasoning, C ABI default done; app not tried |
+| G7 | not started (no phone) |
+
 ## 1. Why this model, and what we compare against
 
 - **A production app runs it on this phone.** The user's run: 28.1 tok/s

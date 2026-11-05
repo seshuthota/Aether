@@ -1,0 +1,14 @@
+0.00.949.329 W load: control-looking token:    212 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.949.365 W load: control-looking token:     50 '<|tool_response>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.953.571 W load: '</s>' is a normal token here, removing it from EOG list
+0.00.994.413 I cmn          init: llama threadpool init, n_threads = 5
+0.04.196.844 I 
+0.04.196.914 I system_info: n_threads = 5 (n_threads_batch = 5) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.04.197.108 I perplexity: saving all logits to hostdata/gemma4/kl-base-bf16.bin
+0.04.197.112 I perplexity: tokenizing the input ..
+0.04.919.560 I perplexity: tokenization took 722.44 ms
+0.04.919.696 I perplexity: calculating perplexity over 20 chunks, n_ctx=512, batch_size=2048, n_seq=4
+0.39.109.294 I perplexity: 34.11 seconds per pass - ETA 2.83 minutes
+[1]47.7158,[2]103.1924,[3]95.5139,[4]128.2030,[5]143.4871,[6]153.1936,[7]171.1871,[8]183.1428,[9]200.3701,[10]205.3898,[11]211.8415,[12]220.0769,[13]226.2131,[14]213.3722,[15]206.4541,[16]213.5554,[17]191.4780,[18]194.8928,[19]186.8187,[20]184.2324,
+5.02.281.851 I Final estimate: PPL = 184.2324 +/- 13.98465
+
