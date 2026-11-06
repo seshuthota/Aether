@@ -1,0 +1,8 @@
+43800
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  Dock powered: false
+  level: 54
+  Capacity level: -1
+ examples/dsp_gemma testdata/gguf/gemma-4-E2B-it-Q4_0.gguf split gprompts/code.txt gprompts/greedy-code-dsp.txt gprompts/greedy-code-cpu.txt

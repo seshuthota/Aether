@@ -1,0 +1,15 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on the DSP, 6 threads, 640 tokens of wikitext, prompt batch 128
+# each run against the CPU path: largest logit difference / largest logit, same top token
+position | decode, DDR | decode, streamed | few-token pass | HMX prompt pass
+       0 | 1.82e-2 true | 1.82e-2 true | 1.82e-2 true | 2.64e-2 true
+     100 | 1.29e-2 true | 1.29e-2 true | 1.29e-2 true | 9.13e-3 true
+     255 | 1.58e-2 true | 1.57e-2 true | 1.57e-2 true | 1.33e-2 true
+     500 | 1.91e-2 true | 2.16e-2 true | 2.16e-2 true | 1.67e-2 true
+     510 | 2.23e-2 true | 2.18e-2 true | 2.18e-2 true | 1.68e-2 true
+     511 | 2.67e-2 true | 2.17e-2 true | 2.17e-2 true | 2.31e-2 true
+     512 | 2.04e-2 true | 2.68e-2 true | 2.68e-2 true | 1.65e-2 true
+     513 | 1.76e-2 true | 1.72e-2 true | 1.72e-2 true | 1.95e-2 true
+     520 | 1.74e-2 true | 1.45e-2 true | 1.45e-2 true | 1.45e-2 true
+     600 | 2.49e-2 true | 2.55e-2 true | 2.55e-2 true | 2.04e-2 true
+     620 | 1.40e-2 true | 1.40e-2 true | 1.40e-2 true | 1.39e-2 true
+     639 | 1.99e-2 true | 1.45e-2 true | 1.45e-2 true | 1.53e-2 true

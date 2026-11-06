@@ -1,0 +1,8 @@
+36500
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  Dock powered: false
+  level: 59
+  Capacity level: -1
+ examples/dsp_ppl testdata/gguf/smollm2-135m-q4_0.gguf 20 512 6 0x1f

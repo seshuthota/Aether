@@ -1,0 +1,27 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 128 | upload 1015 ms
+#   q/k/v                      1458.4 us/token   4.8%
+#   q/k/v norm + RoPE + cache    266.4 us/token   0.9%
+#   attention + quantize        786.0 us/token   2.6%
+#   wo                         1294.7 us/token   4.2%
+#   post-attn norm + add, ffn norm   1105.5 us/token   3.6%
+#   gate/up                    9418.0 us/token  30.9%
+#   GELU + quantize            1333.1 us/token   4.4%
+#   down                       4968.5 us/token  16.3%
+#   post-FFN norm + add        1017.8 us/token   3.3%
+#   per-layer gate              230.9 us/token   0.8%
+#   per-layer GELU              253.3 us/token   0.8%
+#   per-layer proj              189.3 us/token   0.6%
+#   per-layer norm + add, next norm   1117.7 us/token   3.7%
+#   final norm + classifier    6565.8 us/token  21.5%
+#   soft-cap                    204.4 us/token   0.7%
+#   argmax                      239.3 us/token   0.8%
+#   thread start                 53.5 us/token   0.2%
+# greedy: The capital of France is Paris.<turn|><turn|>
+<eos><turn|>
+<eos><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|>
+# 58 positions in 2199.7 ms: 26.4 tok/s (30.50 ms per token on the DSP)
+# prefill   32 tokens:    465.5 ms on the DSP,    68.7 tok/s (median of 5)
+# prefill   64 tokens:    528.5 ms on the DSP,   121.1 tok/s (median of 5)
+# prefill  128 tokens:    663.1 ms on the DSP,   193.0 tok/s (median of 5)
+# prefill  128 tokens:    663.5 ms on the DSP,   192.9 tok/s (median of 5)
+Final estimate: PPL = 24.4521 +/- 6.38841  (255 tokens scored, 4.7 s, 108.2 tok/s through the DSP)

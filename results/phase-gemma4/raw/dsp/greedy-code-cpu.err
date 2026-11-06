@@ -1,0 +1,2 @@
+weights: q4_0, 1531.8 MB
+prefill: 19 tokens in 212.5 ms (89.4 tok/s) | decode: 127 tokens in 4037.6 ms (31.5 tok/s) | peak RSS 1712956 kB

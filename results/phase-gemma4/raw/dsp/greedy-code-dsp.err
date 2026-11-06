@@ -1,0 +1,2 @@
+DSP: Hexagon
+prefill (DSP): 19 tokens in 442.5 ms (42.9 tok/s) | decode: 127 tokens in 5200.2 ms (24.4 tok/s) | peak RSS 1675616 kB

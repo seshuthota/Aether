@@ -1,0 +1,8 @@
+46500
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  Dock powered: false
+  level: 55
+  Capacity level: -1
+ examples/dsp_gemma testdata/gguf/gemma-4-E2B-it-Q4_0.gguf window testdata/wikitext/wikitext-2-raw/wiki.test.raw

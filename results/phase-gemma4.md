@@ -314,7 +314,8 @@ repacking).
 
 ## DSP
 
-Still refuses Gemma 4 with a message. Done without the phone:
+Refused Gemma 4 until 2026-11-06 (C1–C7 on the phone: "DSP on the phone"
+below). Done without the phone:
 
 **C3, the element-wise steps on HVX** (`dsp/gemma_hvx.h`): GELU-tanh × up
 (as g · σ(2z), the CPU's NEON identity, on the decode step's `vexp` /
@@ -528,6 +529,89 @@ installed with `adb install -r`. Gemma 4 Q4_0 is in the app's files
 checks of the checklist (CPU status line, GPU, the DSP's refusal) need the
 user to unlock it; the C ABI's Gemma-on-GPU path is already covered by
 `c_abi_gpu_gemma4`, which passed in step 3.
+
+### DSP on the phone (C1–C7, 2026-11-06)
+
+`aether-infer` branch `gemma4-dsp` (2db3b3f plus the `split` mode of
+`dsp_gemma`), the checklist `plans/gemma4-dsp-phone-checks.md`, raw files
+in `raw/dsp/`. 6 DSP threads, on battery.
+
+**Existing models unchanged** (wikitext-2, 20 × 512, against REVIEW 3's
+digits, `results/release/README.md`): SmolLM2 Q4_0 decode 27.7234, Qwen
+Q4_0 decode 19.7275, Qwen Q4_K_M HMX batch 128 16.7155, each to the digit
+with the same greedy text.
+
+**Accuracy against llama.cpp's BF16 base file** (`dsp_gemma`):
+
+| Run | PPL | KL | same top | reference |
+| --- | --- | --- | --- | --- |
+| Q4_0 decode, attention from DDR, chunk 1 | 24.4392 | 0.331835 | 83.53 % | GPU 24.4536 / 0.33855; llama.cpp CPU 24.5617 / 0.33477 |
+| Q4_0 decode, streamed (default), chunk 1 | 24.6625 | 0.332917 | 83.14 % | |
+| Q4_0 few-token pass, chunk 1 | 24.6625 | 0.332917 | 83.14 % | the streamed decode, to the digit |
+| Q4_0 HMX prompt pass, chunk 1 | 24.4521 | 0.338651 | 82.35 % | GPU's prompt pass 24.4536 / 0.338553 |
+| Q4_0 decode from DDR, 4 chunks | 43.7280 | 0.342967 | 79.71 % | GPU 43.6075 / 0.34282; llama.cpp 43.8254 / 0.34330 |
+| Q4_K_M decode, streamed, 4 chunks | 139.3306 | 0.171054 | 85.10 % | GPU 138.0871 / 0.16511 |
+
+Every run sits with the GPU and llama.cpp. Streamed and DDR attention
+differ only in summation order; through Q8_0 activations that moves chunk
+1's PPL by 0.9 % and KL by 0.001 (the PPL error bar is ± 6.4), not the
+1e-4 the checklist guessed. Q4_K_M's KL is 0.006 above the GPU's: the DSP
+rounds activations to Q8_0 before every product, as our CPU's `--ple-q8`
+run does (0.1819 over 20 chunks), while the GPU keeps them in f32.
+Q4_K_M's 1754 MB weights buffer mapped (C0 proved 1.6 GB + 192 MB);
+its upload takes 31 s (the K-quant repacking), Q4_0's 0.9 s.
+
+**Past the window** (`dsp_gemma … window`, 640 tokens): the largest logit
+difference against the CPU path, over the largest logit, at 12 positions:
+decode from DDR 1.3–2.7e-2, decode streamed and the few-token pass
+1.3–2.7e-2 (equal to each other), the HMX prompt pass 0.9–2.6e-2. Flat
+across 512, the same top token as the CPU at all 12: the GPU's picture.
+
+**Greedy text** (`aether run -dev dsp --temp 0 -n 128`, the four prompts
+of `raw/prompts/`, against `aether run` on the phone's CPU): `fact` the
+same. The other three split, each at a near-tie measured with
+`dsp_gemma … split` (the two tokens' logits over the shared prefix):
+
+| Prompt | Split (DSP / CPU text) | CPU decode | DSP decode | DSP HMX prompt |
+| --- | --- | --- | --- | --- |
+| story, token 24 | " hair" / " a" | −0.159 | −0.126 | −0.030 |
+| code, token 112 | " +" / "):" | −0.479 | −0.031 | +0.097 |
+| long, token 630 | "Mercury" / "The" | +0.934 | +0.977 | +0.606 |
+
+(A − B, the DSP text's token minus the CPU's.) The DSP's mixed prompt
+pass + decode takes the side its HMX pass leans to inside gaps of 0.03–0.5,
+the size of the paths' own logit shifts above (2.7e-2 × a largest logit
+near 30). `long` is the CPU's run choosing against every path's decode;
+the DSP gives the PC's text there. `--lookup 4` on `code` gives plain
+decoding's text exactly.
+
+**Memory**: peak PSS 2.05 GB decoding Q4_0 with the base file open (VmHWM
+2.18 GB); the GPU's was 3.41 GB.
+
+**Speed** (Q4_0, cooled below 44 °C on zone0 before each run, two rounds;
+tok/s):
+
+| | pp32 | pp64 | pp128 | tg64 @ d0 | tg64 @ d512 | tg64 @ d2048 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DSP, round 1 | 68.8 | 122.2 | 192.9 | 24.9 | 21.8 | 21.4 |
+| DSP, round 2 | | | | 24.1 | 21.0 | 20.5 |
+| our CPU (step 8, round 1) | | 157.1 | 153.5 | 36.4 | 30.0 | |
+| llama.cpp CPU (step 8, round 1) | | 87.6 | 92.8 | 29.4 | 24.3 | |
+| our GPU (step 8) | | 38.4 | 47.1 | 19.2 | 8.5 | |
+
+(Round 2's prefill: 192.4 at 128.) The DSP's prompt pass at 128 tokens is
+the fastest of the four (1.26× our CPU, 2.1× llama.cpp's CPU); its decode
+is 0.7× our CPU's and 0.8× llama.cpp's CPU, 1.3× the GPU. llama.cpp's
+Hexagon build cannot load Gemma 4, so there is no DSP-to-DSP reference.
+
+Where decode's 33 ms go (`raw/dsp/speed-depth-r1.txt`): gate/up 31.6 %,
+the final norm + classifier 22.0 % (7.3 ms: 262,144 rows), down 16.5 %,
+q/k/v 4.9 %, wo 4.3 %, the norm/add steps 3–4 % each, attention 2.3 %. So
+the classifier is the first target, then the FFN products.
+
+**C6's decision**: the few-token pass costs 1.09–1.11× a decode step for
+2 tokens, 1.5× for 4, 2.8× for 8 (11.6 ms a token). Lookup stays opt-in:
+it pays only where drafts are accepted (code, repeats).
 
 ## Not done
 

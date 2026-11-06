@@ -1,0 +1,8 @@
+43800
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  Dock powered: false
+  level: 52
+  Capacity level: -1
+ examples/dsp_ppl testdata/gguf/gemma-4-E2B-it-Q4_0.gguf 1 512 6 0x1f 128

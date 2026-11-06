@@ -1,0 +1,17 @@
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 144 ms
+#   attn norm + quantize        185.3 us/token   2.8%
+#   q/k/v                       284.6 us/token   4.3%
+#   bias + RoPE + KV store      254.2 us/token   3.8%
+#   attention + quantize        236.8 us/token   3.5%
+#   wo                          240.2 us/token   3.6%
+#   ffn norm + quantize         178.6 us/token   2.7%
+#   gate/up                    2115.9 us/token  31.6%
+#   SwiGLU + quantize           475.5 us/token   7.1%
+#   down                       1146.9 us/token  17.2%
+#   final norm + quantize         8.0 us/token   0.1%
+#   classifier                 1352.0 us/token  20.2%
+#   argmax                      160.3 us/token   2.4%
+#   thread start                 48.1 us/token   0.7%
+# greedy: The capital of France is Paris. It is the largest city in France and the second largest city in the European Union. It is also the capital of the department of the same name. The capital of the United Kingdom is London. It is the largest city in the United Kingdom and the second largest city in the United Kingdom
+# 64 positions in 530.5 ms: 120.6 tok/s (6.68 ms per token on the DSP)
+Final estimate: PPL = 19.7275 +/- 0.83552  (5100 tokens scored, 98.2 s, 104.0 tok/s through the DSP)

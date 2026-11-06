@@ -1,0 +1,32 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 901 ms
+#   q/k/v                      1603.7 us/token   4.8%
+#   q/k/v norm + RoPE + cache    264.3 us/token   0.8%
+#   attention + quantize        765.5 us/token   2.3%
+#   wo                         1429.7 us/token   4.3%
+#   post-attn norm + add, ffn norm   1113.2 us/token   3.4%
+#   gate/up                   10441.0 us/token  31.6%
+#   GELU + quantize            1334.5 us/token   4.0%
+#   down                       5465.4 us/token  16.5%
+#   post-FFN norm + add        1024.9 us/token   3.1%
+#   per-layer gate              248.3 us/token   0.8%
+#   per-layer GELU              257.7 us/token   0.8%
+#   per-layer proj              201.9 us/token   0.6%
+#   per-layer norm + add, next norm   1129.5 us/token   3.4%
+#   final norm + classifier    7265.2 us/token  22.0%
+#   soft-cap                    225.7 us/token   0.7%
+#   argmax                      243.0 us/token   0.7%
+#   thread start                 53.9 us/token   0.2%
+# greedy: The capital of France is Paris.<turn|><turn|>
+<eos><turn|>
+<eos><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|><turn|>
+# 64 positions in 2616.0 ms: 24.5 tok/s (33.07 ms per token on the DSP)
+# decode step: 33788 us on the DSP (median of 5)
+# few-token pass, 1 tokens:  34463 us on the DSP, 1.02x one decode step, 34463 us per token
+# few-token pass, 2 tokens:  36929 us on the DSP, 1.09x one decode step, 18464 us per token
+# few-token pass, 3 tokens:  41616 us on the DSP, 1.23x one decode step, 13872 us per token
+# few-token pass, 4 tokens:  50117 us on the DSP, 1.48x one decode step, 12529 us per token
+# few-token pass, 5 tokens:  59077 us on the DSP, 1.75x one decode step, 11815 us per token
+# few-token pass, 6 tokens:  69395 us on the DSP, 2.05x one decode step, 11566 us per token
+# few-token pass, 7 tokens:  82570 us on the DSP, 2.44x one decode step, 11796 us per token
+# few-token pass, 8 tokens:  92816 us on the DSP, 2.75x one decode step, 11602 us per token
+Final estimate: PPL = 24.6625 +/- 6.44981  (255 tokens scored, 8.6 s, 59.6 tok/s through the DSP)

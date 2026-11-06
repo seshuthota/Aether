@@ -1,0 +1,22 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf on the DSP, 6 threads, stream true | upload 31201 ms, prompt batch 128 (HMX: true)
+#   q/k/v                              2031.5 us/token   4.1%
+#   q/k/v norm + RoPE + cache           293.0 us/token   0.6%
+#   attention + quantize               1145.5 us/token   2.3%
+#   wo                                 1800.0 us/token   3.6%
+#   post-attn norm + add, ffn norm     1166.7 us/token   2.4%
+#   gate/up                           12597.7 us/token  25.5%
+#   GELU + quantize                    1391.8 us/token   2.8%
+#   down                              20001.8 us/token  40.5%
+#   post-FFN norm + add                1156.0 us/token   2.3%
+#   per-layer gate                      515.1 us/token   1.0%
+#   per-layer GELU                      307.6 us/token   0.6%
+#   per-layer proj                      379.9 us/token   0.8%
+#   per-layer norm + add, next norm    1198.1 us/token   2.4%
+#   final norm + classifier            4840.4 us/token   9.8%
+#   soft-cap                            230.5 us/token   0.5%
+#   argmax                              321.6 us/token   0.7%
+#   thread start                         56.1 us/token   0.1%
+# greedy: " a young girl named Lily. Lily had eyes the color of the deep ocean and a spirit as bright as the summer sun"
+# 40 positions in 2437.8 ms: 16.4 tok/s (49.44 ms per token on the DSP)
+Final estimate: PPL = 139.3306 +/- 24.33838  (1020 tokens scored, 125.1 s, decode)
+PPL(base file) = 110.7449   Mean KLD: 0.171054   Same top p: 85.098 %

@@ -1,0 +1,4 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf split at token 630 (prompt 604 tokens): A "Mercury" | B "The"
+CPU decode       A   23.7092  B   22.7756  A - B +0.9336  top 178430 "Mercury"
+DSP decode       A   23.4389  B   22.4623  A - B +0.9767  top 178430 "Mercury"
+DSP HMX prompt   A   22.9262  B   22.3199  A - B +0.6063  top 178430 "Mercury"

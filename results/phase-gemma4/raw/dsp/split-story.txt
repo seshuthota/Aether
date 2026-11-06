@@ -1,0 +1,4 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf split at token 24 (prompt 16 tokens): A " hair" | B " a"
+CPU decode       A   17.9845  B   18.1435  A - B -0.1590  top 496 " a"
+DSP decode       A   18.2586  B   18.3845  A - B -0.1260  top 496 " a"
+DSP HMX prompt   A   18.2496  B   18.2791  A - B -0.0295  top 496 " a"

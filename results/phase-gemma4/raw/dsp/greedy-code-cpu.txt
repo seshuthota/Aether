@@ -1,0 +1,17 @@
+    if n <= 1:
+        return n
+    else:
+        return fibonacci(n-1) + fibonacci(n-2)
+
+def fibonacci_iterative(n):
+    """Return the n-th Fibonacci number using an iterative approach."""
+    if n <= 1:
+        return n
+    
+    a, b = 0, 1
+    for _ in range(2, n):
+        a, b = b, a + b
+    return b
+
+# Example usage:
+# print(fibonacci(10))  # Output:

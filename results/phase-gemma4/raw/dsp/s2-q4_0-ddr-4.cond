@@ -1,0 +1,8 @@
+39900
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  Dock powered: false
+  level: 57
+  Capacity level: -1
+AETHER_DSP_STREAM=0 examples/dsp_gemma testdata/gguf/gemma-4-E2B-it-Q4_0.gguf hostdata/gemma4/kl-base-bf16.bin 4 decode

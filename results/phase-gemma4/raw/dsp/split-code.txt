@@ -1,0 +1,4 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf split at token 112 (prompt 19 tokens): A " +" | B "):"
+CPU decode       A   18.0806  B   18.5594  A - B -0.4788  top 1473 "):"
+DSP decode       A   18.7009  B   18.7322  A - B -0.0313  top 1473 "):"
+DSP HMX prompt   A   18.5324  B   18.4355  A - B +0.0969  top 900 " +"
