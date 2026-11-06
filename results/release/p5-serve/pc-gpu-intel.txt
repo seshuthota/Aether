@@ -1,0 +1,53 @@
+chat completions, greedy:
+  ok    stream = plain: 'Why is the sky blue? Answer in two sente'
+  parts at char 83: 'Why is the sky blue? Answer in two sente'
+  ok    prompt_tokens 40 = llama-server's 40
+  ok    stream = plain: 'Write a haiku about a phone that runs a '
+  same: 'Write a haiku about a phone that runs a '
+  ok    prompt_tokens 42 = llama-server's 42
+  ok    finish_reason as llama-server's
+  ok    stream = plain: 'List three prime numbers greater than 50'
+  same: 'List three prime numbers greater than 50'
+  ok    prompt_tokens 39 = llama-server's 39
+  ok    finish_reason as llama-server's
+  ok    stream = plain: 'Translate to French: The cat sleeps on t'
+  same: 'Translate to French: The cat sleeps on t'
+  ok    prompt_tokens 42 = llama-server's 42
+  ok    finish_reason as llama-server's
+  ok    stream = plain: 'What is 17 times 23? Show the steps.'
+  parts at char 38: 'What is 17 times 23? Show the steps.'
+  ok    prompt_tokens 43 = llama-server's 43
+  ok    stream = plain: 'Name the planets of the solar system in '
+  same: 'Name the planets of the solar system in '
+  ok    prompt_tokens 39 = llama-server's 39
+  ok    finish_reason as llama-server's
+  greedy text equal to llama-server's on 4 of 6 chat prompts
+text completions, greedy:
+  parts at char 34: 'The capital of France is'
+  ok    streamed text = plain: 'The capital of France is'
+  same: 'Once upon a time, in a small village,'
+  ok    streamed text = plain: 'Once upon a time, in a small village,'
+  same: 'def fibonacci(n):'
+  ok    streamed text = plain: 'def fibonacci(n):'
+  greedy text equal to llama-server's on 2 of 3 text prompts
+JSON shape:
+  ok    chat stream: data: lines, ending in [DONE]
+  ok    text stream: data: lines, ending in [DONE]
+  ok    chat: same keys as llama-server's
+  ok    text: same keys as llama-server's
+  ok    chat stream: same chunk keys as llama-server's
+  ok    text stream: same chunk keys as llama-server's
+  /v1/models: aether ['data', 'object']; llama-server ['data', 'models', 'object']
+  /health: aether ['status']; llama-server ['status']
+multi-turn chat (prefix reuse):
+  ok    second turn reused 51 of 66 prompt tokens
+concurrency (2 clients at once):
+  ok    same greedy text as one at a time
+errors:
+  ok    n: 400 naming it
+  ok    tools: 400 naming it
+  ok    response_format: 400 naming it
+  ok    logprobs: 400 naming it
+  ok    a prompt longer than the context: 400
+
+0 failure(s)
