@@ -1,0 +1,28 @@
+# 2026-11-06T00:20:34+05:30
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 69
+# temperature: 401
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 46500
+# mScreenState=ON
+# aether bench_suite, cores 2-7, pp 64,128,512, tg 64, depths 0,512, reps 3
+# bench_suite testdata/gguf/gemma-4-E2B-it-Q4_0.gguf | q4_0 | weights 1531.8 MB | backend cpu | cores [2, 3, 4, 5, 6, 7] (6 threads) | load 818 ms
+test,tok_per_s,ms
+pp64,139.4,459.1
+pp128,136.5,937.7
+pp512,110.5,4634.5
+tg64@d0,35.8,1787.9
+# tg64@d0 per token: median 27.74 ms, p95 29.41 ms (192 samples)
+tg64@d512,28.1,2278.3
+# tg64@d512 per token: median 34.08 ms, p95 37.41 ms (192 samples)
+ttft_pp64,2.1,483.8
+# peak RSS 1703600 kB
+# monitor: 91 samples over 44.72 s, max temp 88.0 °C, energy 106.61 J, avg power 2.38 W

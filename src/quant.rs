@@ -269,6 +269,24 @@ pub struct BlockQ6_K {
     pub d: u16,
 }
 
+/// Q4_K with a fifth bit per weight (ggml's `block_q5_K`). Only read row by
+/// row (Gemma 4's per-layer embedding table in Q4_K_M files), never
+/// multiplied, so it has no kernels.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(non_camel_case_types)] // ggml's name
+pub struct BlockQ5_K {
+    pub d: u16,
+    pub dmin: u16,
+    /// As [`BlockQ4_K::scales`].
+    pub scales: [u8; 12],
+    /// Bit `j` of `qh[l]` is the fifth bit of element `32j + l`.
+    pub qh: [u8; QK_K / 8],
+    /// As [`BlockQ4_K::qs`]: the low four bits.
+    pub qs: [u8; QK_K / 2],
+}
+
+const _: () = assert!(std::mem::size_of::<BlockQ5_K>() == 176);
 const _: () = assert!(std::mem::size_of::<BlockQ4_K>() == 144);
 const _: () = assert!(std::mem::size_of::<BlockQ6_K>() == 210);
 const _: () = assert!(std::mem::size_of::<BlockQ8_K>() == 292);
@@ -375,6 +393,24 @@ pub fn dequantize_q4_k(blocks: &[BlockQ4_K], out: &mut [f32]) {
             let (d1, m1) = (d * sc as f32, dmin * m as f32);
             for l in 32 * j..32 * (j + 1) {
                 o[l] = d1 * q[l] as f32 - m1;
+            }
+        }
+    }
+}
+
+/// ggml's `dequantize_row_q5_K`: Q4_K's scales and mins, values 0..=31.
+pub fn dequantize_q5_k(blocks: &[BlockQ5_K], out: &mut [f32]) {
+    assert_eq!(out.len(), blocks.len() * QK_K);
+    for (blk, o) in blocks.iter().zip(out.as_chunks_mut::<QK_K>().0.iter_mut()) {
+        let (d, dmin) = (f16_to_f32(blk.d), f16_to_f32(blk.dmin));
+        for j in 0..QK_K / 32 {
+            let (sc, m) = q4_k_scale_min(&blk.scales, j);
+            let (d1, m1) = (d * sc as f32, dmin * m as f32);
+            let (c, half) = (j / 2, j % 2);
+            for l in 0..32 {
+                let lo = (blk.qs[32 * c + l] >> (4 * half)) & 0x0F;
+                let hi = (blk.qh[l] >> j) & 1;
+                o[32 * j + l] = d1 * (lo | (hi << 4)) as f32 - m1;
             }
         }
     }
@@ -1382,6 +1418,22 @@ mod tests {
                 check::<BlockQ4_K>(dir, "q4_k", &w, n, &qw, n / QK_K, quantize_q4_k_row);
                 check::<BlockQ6_K>(dir, "q6_k", &w, n, &qw, n / QK_K, quantize_q6_k_row);
             }
+        }
+    }
+
+    /// Q5_K: random blocks decode to exactly gguf's values.
+    #[test]
+    fn q5_k_matches_gguf() {
+        let Some(root) = golden("quant_q5k") else { return };
+        let mut dirs: Vec<_> = std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).collect();
+        dirs.sort();
+        assert!(!dirs.is_empty());
+        for dir in dirs {
+            let blocks: Vec<BlockQ5_K> = blocks_from_bytes(&std::fs::read(dir.join("w_q5_k.bin")).unwrap());
+            let want = read_npy(&dir.join("deq_q5_k.npy")).1;
+            let mut ours = vec![0.0; blocks.len() * QK_K];
+            dequantize_q5_k(&blocks, &mut ours);
+            assert_eq!(ours, want, "{}", dir.display());
         }
     }
 

@@ -1,0 +1,22 @@
+# 2026-11-06T00:22:48+05:30
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 68
+# temperature: 400
+# Capacity level: -1
+# max cpu zone (mC) 46900
+# bench_suite --backend gpu, pp 64,128,512, tg 64, depths 0,512, reps 3
+# bench_suite testdata/gguf/gemma-4-E2B-it-Q4_0.gguf | q4_0 | weights 1531.8 MB | backend gpu | cores [] (1 threads) | load 2166 ms
+test,tok_per_s,ms
+pp64,38.4,1665.1
+pp128,47.1,2720.1
+pp512,31.2,16424.3
+tg64@d0,19.2,3336.5
+# tg64@d0 per token: median 53.39 ms, p95 57.59 ms (192 samples)
+tg64@d512,8.5,7525.1
+# tg64@d512 per token: median 60.37 ms, p95 314.20 ms (192 samples)
+ttft_pp64,0.6,1653.1
+# peak RSS 3149500 kB
+# monitor: 323 samples over 160.76 s, max temp 56.3 °C, energy 188.08 J, avg power 1.17 W

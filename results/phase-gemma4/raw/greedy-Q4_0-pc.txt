@@ -1,0 +1,20 @@
+## story (16 prompt tokens): first difference at char 246 of 584/589
+llama.cpp: ' a young girl named Lily. Lily had a heart as bright as the summer sun, and her laughter was like the tinkling of sea shells. She lived in a little cottage with a garden bursting with colorful flowers, and every morning, she would wake up to the gentle rhythm of the waves calling her name.\n\nOne day, while exploring the rocky shore, Lily found a mysterious, glowing seashell. It was unlike any she had ever seen. As she held it, a soft melody filled her heart, and she felt a strange pull, as if it was leading her to a hidden treasure.\n\nDriven by curiosity, Lily followed the melody'
+aether:    ' a young girl named Lily. Lily had a heart as bright as the summer sun, and her laughter was like the tinkling of sea shells. She lived in a little cottage with a garden bursting with colorful flowers, and every morning, she would wake up to the sound of the waves calling her name.\n\nOne day, while exploring the rocky shore, Lily found a shimmering object nestled in the sand. It was a seashell, unlike any she had ever seen. It glowed with an inner light, and when she held it, she felt a strange warmth spread through her, a feeling of wonder and adventure.\n\nLily took the seashell home'
+
+## fact (11 prompt tokens): first difference at char 74 of 88/74
+llama.cpp: ' generally considered to be the airplane, the telephone, and the computer. [end of text]'
+aether:    ' generally considered to be the airplane, the telephone, and the computer.'
+
+## code (19 prompt tokens): SAME
+llama.cpp: '    if n <= 1:\n        return n\n    else:\n        return fibonacci(n-1) + fibonacci(n-2)\n\ndef fibonacci_iterative(n):\n    """Return the n-th Fibonacci number using an iterative approach."""\n    if n <= 1:\n        return n\n    \n    a, b = 0, 1\n    for _ in range(2, n):\n        a, b = b, a + b\n    return b\n\n# Example usage:\n# print(fibonacci(10))  # Output:'
+aether:    '    if n <= 1:\n        return n\n    else:\n        return fibonacci(n-1) + fibonacci(n-2)\n\ndef fibonacci_iterative(n):\n    """Return the n-th Fibonacci number using an iterative approach."""\n    if n <= 1:\n        return n\n    \n    a, b = 0, 1\n    for _ in range(2, n):\n        a, b = b, a + b\n    return b\n\n# Example usage:\n# print(fibonacci(10))  # Output:'
+
+## long (604 prompt tokens): first difference at char 112 of 387/361
+llama.cpp: '2008.\n\n***\n\n**Summary of Career Highlights**\n\n* **Theatre:** Performed in Simon Stephens\' *Mercury Fur* (2005) at the Drum Theatre and Menier Chocolate Factory.\n* **Television:** Appeared in *Judge John Deed* (2002) as "Addem Armitage" and *The Bill* (2003) as "Connor Price" (recurring role).\n* **Film:** Appeared in *Daylight Robbery* (2008) and *Donkey Punch* (2008).\n* **Notable Work'
+aether:    '2008.\n\n***\n\n**Summary of Career Highlights**\n\n* **Theatre:** Performed in Simon Stephens\' *Mercury Fur* (2005) and *Citizenship* (2006).\n* **Television:** Appeared in *Judge John Deed* (2002) as "Addem Armitage" and *The Bill* (2003) as "Connor Price" (recurring role).\n* **Film:** Appeared in *Daylight Robbery* (2008) and *Donkey Punch* (2008).\n\n***\n\n**Career'
+
+## Where the texts split (our logits on llama.cpp's text, Q4_0, PC)
+
+story pos 68: ours " sound" 16.755, llama.cpp " gentle" 16.736, gap 0.019
+long  pos 638: ours " and" 25.689, llama.cpp " at" 25.679, gap 0.010

@@ -1,0 +1,1 @@
+Final estimate: PPL = 57.4248 +/- 3.32703  (5100 tokens scored in 1950.3 s)

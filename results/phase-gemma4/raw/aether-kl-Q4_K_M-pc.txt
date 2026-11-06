@@ -1,0 +1,3 @@
+Final estimate: PPL = 188.3462 +/- 22.69707  (2040 tokens scored in 4556.8 s)
+PPL(base f32) = 183.4660, PPL(Q)/PPL(base) = 1.026600
+Mean KLD: 0.181374   Same top p: 82.990 %

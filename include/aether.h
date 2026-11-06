@@ -43,7 +43,9 @@ int aether_open(const char *path, const char *cores, uint32_t max_seq, AetherSes
  * aether_open: if given, a second copy of the model on those CPU cores runs
  * each prompt as one batch and hands its KV cache to the GPU (the CPU runs
  * prompts faster than the GPU on the phone; twice the memory); NULL / ""
- * runs the prompt on the GPU, batched as well. Fails with AETHER_ERR_LOAD if the library was built
+ * runs the prompt on the GPU, batched as well. Gemma 4 runs its prompt on
+ * the GPU even with cores (aether_prompt_on_cpu tells which). Fails with
+ * AETHER_ERR_LOAD if the library was built
  * without the vulkan feature, there is no usable GPU, or a matrix is in a
  * format the GPU does not read (other than Q4_0, Q5_0, Q8_0, Q4_K, Q6_K). */
 int aether_open_gpu(const char *path, const char *cores, uint32_t max_seq, AetherSession **out);
@@ -70,6 +72,11 @@ int aether_generate(AetherSession *session, const char *prompt, int chat,
  * The DSP checks up to 7 drafts per pass; a GPU session ignores it (slower
  * there). */
 int aether_set_lookup(AetherSession *session, uint32_t k, uint32_t ngram);
+
+/* 1 if the session's prompts run on the CPU (aether_open, or aether_open_gpu
+ * with cores for a model that takes a CPU prompt), 0 if on the GPU or the
+ * DSP, AETHER_ERR_ARGUMENT for NULL. */
+int aether_prompt_on_cpu(const AetherSession *session);
 
 /* Message for the last error on this thread; valid until the next call. */
 const char *aether_last_error(void);

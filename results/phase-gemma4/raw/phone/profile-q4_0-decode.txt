@@ -1,0 +1,42 @@
+# 2026-11-06T00:30:59+05:30
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 67
+# temperature: 353
+# Capacity level: -1
+# max cpu zone (mC) 46900
+# simpleperf record -e cpu-cycles:u -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_0.gguf -i 'The history of the printing press' -t 0 -n 300 -c 2-7
+In summary, the printing press was a transformative technology that democrat
+prefill: 7 tokens in 77.3 ms (90.5 tok/s) | decode: 293 tokens in 17998.8 ms (16.3 tok/s) | peak RSS 1657432 kB
+simpleperf I cmd_record.cpp:840] Recorded for 20.1538 seconds. Start post processing.
+simpleperf I cmd_record.cpp:941] Samples recorded: 262,656. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_0.gguf -i The history of the printing press -t 0 -n 300 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 262656
+Event count: 105708545355
+
+Overhead  Symbol
+51.48%    aether::kernels::neon_quant::gemv4_q4_0x4
+16.43%    aether::kernels::neon_quant::gemv4_q8_0x4
+16.25%    std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+4.42%     aether::kernels::quant_rows
+3.65%     aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#1}>
+2.64%     aether::kernels::neon::gemv
+0.94%     <aether::pool::ThreadPool>::run
+0.56%     <aether::weight::Weight>::repack
+0.53%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.44%     aether::kernels::neon_quant::mmla4_q4_0x4::<4>
+0.29%     <aether::model::transformer::Transformer>::forward
+0.25%     aether::kernels::neon::gelu_tanh
+0.22%     __memcpy_aarch64_nt
+0.20%     aether::kernels::neon_quant::quantize_q8_0
+0.17%     scudo::HybridMutex::tryLock()
+0.15%     <aether::model::sampler::Sampler>::sample
+0.13%     aether::kernels::neon::softcap
+0.10%     aether::kernels::scalar::rmsnorm
+0.09%     <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+0.09%     scudo::HybridMutex::unlock()
+0.07%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::quarantineOrDeallocateChunk(scudo::Options const&, void*, scudo::Chunk::UnpackedHeader*, unsigned long)

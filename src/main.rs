@@ -21,9 +21,12 @@
 //!             matrix (a GGUF from llama-imatrix), as llama-quantize
 //!             --pure --imatrix does
 //!   --chat    wrap the prompt in the chat template: Qwen/SmolLM2 ChatML,
-//!             or LFM3's ChatML with a starting <think> (reasoning on)
+//!             LFM3's ChatML with a starting <think> (reasoning on), or
+//!             Gemma 4's turns (reasoning off)
 //!   --no-think  LFM3: start the assistant turn with an empty think block
-//!   --hide-think  keep a <think>...</think> span out of the printed reply
+//!   --think   Gemma 4: put <|think|> in the system turn (reasoning on)
+//!   --hide-think  keep a <think>...</think> span (Gemma 4:
+//!             <|channel>...<channel|>) out of the printed reply
 //!   --lookup K  greedy decoding with prompt lookup: up to K draft tokens
 //!             copied from the last earlier match of the last --ngram N
 //!             tokens (default 2), checked in one batched pass; with -t > 0
@@ -62,6 +65,11 @@
 //!   --base PATH   the reference model for --kl (default: MODEL as f32;
 //!                 give the HF directory or f32 GGUF when MODEL is a
 //!                 quantized GGUF)
+//!   --kl-base FILE  instead of --kl: KL against the log-probabilities
+//!                 llama-perplexity --kl-divergence-base saved (its own
+//!                 reference run, 16 bits a value), on that file's tokens
+//!   --ple-q8      with --kl-base: Gemma 4's F32 per-layer matrices in Q8_0,
+//!                 as the GPU loads them (the accuracy gate on that)
 //!
 //! After the text, a timing line goes to stderr: prefill (the whole prompt
 //! in one batched pass) and decode (one forward pass per token), measured
@@ -85,25 +93,28 @@ fn main() {
     let (mut ppl_file, mut ctx, mut chunks, mut kl) = (None::<PathBuf>, 512usize, usize::MAX, false);
     let mut chat = false;
     let mut system: Option<String> = None;
-    let mut thinking = true;
+    let mut thinking = None::<bool>;
     let mut hide_think = false;
     let (mut temp_set, mut top_p_set, mut top_k_set) = (false, false, false);
     let mut base_path: Option<PathBuf> = None;
+    let mut kl_base: Option<PathBuf> = None;
+    let mut ple_q8 = false;
     let (mut lookup, mut ngram, mut fixed) = (0usize, 2usize, false);
     let (mut draft_path, mut draft_k) = (None::<PathBuf>, 4usize);
     let (mut gpu, mut times, mut dsp) = (false, false, false);
     let (mut temp, mut top_p, mut top_k, mut seed, mut steps, mut prompt) = (1.0f32, 0.9f32, 0usize, 0u64, 256usize, String::new());
     while let Some(flag) = args.next() {
-        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" || flag == "--no-think" || flag == "--think" || flag == "--hide-think" {
+        if flag == "--kl" || flag == "--chat" || flag == "--gpu" || flag == "--times" || flag == "--dsp" || flag == "--lookup-fixed" || flag == "--no-think" || flag == "--think" || flag == "--hide-think" || flag == "--ple-q8" {
             match flag.as_str() {
                 "--lookup-fixed" => fixed = true,
                 "--kl" => kl = true,
                 "--chat" => chat = true,
                 "--times" => times = true,
                 "--dsp" => dsp = true,
-                "--no-think" => thinking = false,
-                "--think" => thinking = true,
+                "--no-think" => thinking = Some(false),
+                "--think" => thinking = Some(true),
                 "--hide-think" => hide_think = true,
+                "--ple-q8" => ple_q8 = true,
                 _ => gpu = true,
             }
             continue;
@@ -124,6 +135,7 @@ fn main() {
             "--ngram" => ngram = val.parse().unwrap_or_else(|_| usage()),
             "--system" => system = Some(val),
             "--base" => base_path = Some(val.into()),
+            "--kl-base" => kl_base = Some(val.into()),
             "--ctx" => ctx = val.parse().unwrap_or_else(|_| usage()),
             "--chunks" => chunks = val.parse().unwrap_or_else(|_| usage()),
             "-q" => format = Format::parse(&val).unwrap_or_else(|| usage()),
@@ -144,6 +156,9 @@ fn main() {
     let imatrix = imatrix.as_ref();
 
     if let Some(file) = ppl_file {
+        if let Some(kb) = kl_base {
+            return score_vs_base(&model_path, &tok_path, &file, format, chunks, &kb, ple_q8, cores);
+        }
         let base = kl.then(|| base_path.unwrap_or_else(|| model_path.clone()));
         return score(&model_path, &tok_path, &file, format, imatrix, ctx, chunks, base, cores);
     }
@@ -154,10 +169,8 @@ fn main() {
         return generate_dsp(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, (lookup, ngram, fixed));
     }
     if gpu {
-        if chat {
-            prompt = aether::chat::chatml(system.as_deref().unwrap_or(aether::chat::QWEN_DEFAULT_SYSTEM), &prompt);
-        }
-        return generate_gpu(&model_path, &prompt, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
+        let chat = chat.then_some((system.as_deref(), thinking));
+        return generate_gpu(&model_path, &prompt, chat, Sampler::new(temp, top_p, top_k, seed), steps, cores.as_deref(), times, (lookup, ngram, fixed));
     }
     let mut session = Session::open_imatrix(&model_path, Some(&tok_path), steps, format, imatrix, cores.as_deref()).unwrap_or_else(|e| fail(&model_path, e));
     eprintln!("weights: {}, {:.1} MB", session.model.weights.format_name(), session.model.weights.bytes() as f64 / 1e6);
@@ -169,10 +182,12 @@ fn main() {
     }
     let mut sampler = Sampler::new(temp, top_p, top_k, seed);
     if chat {
+        let thinking = thinking.unwrap_or(session.text.thinks_by_default());
         prompt = session.text.chat_prompt(system.as_deref(), &prompt, thinking);
     }
     let mut out = std::io::stdout().lock();
-    let mut filter = aether::chat::ThinkFilter::new(hide_think);
+    let (open, close) = session.text.think_tags();
+    let mut filter = aether::chat::ThinkFilter::tags(hide_think, open, close);
     let mut write = |piece: &[u8]| {
         let shown = filter.feed(piece);
         out.write_all(&shown).and_then(|_| out.flush()).is_ok()
@@ -244,10 +259,47 @@ fn score(model_path: &Path, tok_path: &Path, file: &Path, format: Format, imatri
     }
 }
 
+/// `--ppl FILE --kl-base BASE`: perplexity and KL against the log-probs
+/// llama.cpp saved with `--kl-divergence-base` (`eval::BaseFile`), on the
+/// tokens in that file. FILE must tokenize to the same tokens: checked, so
+/// a tokenizer difference cannot hide in the comparison.
+#[allow(clippy::too_many_arguments)]
+fn score_vs_base(model_path: &Path, tok_path: &Path, file: &Path, format: Format, chunks: usize, base_path: &Path, ple_q8: bool, cores: Option<Vec<usize>>) {
+    let mut base = aether::eval::BaseFile::open(base_path).unwrap_or_else(|e| fail(base_path, e));
+    let ctx = base.n_ctx;
+    let Session { mut model, text, .. } = Session::open_imatrix(model_path, Some(tok_path), ctx, format, None, cores.as_deref()).unwrap_or_else(|e| fail(model_path, e));
+    let n = base.n_chunk.min(chunks) * ctx;
+    let raw = std::fs::read_to_string(file).unwrap_or_else(|e| fail(file, e));
+    let ours = text.encode(&raw);
+    // Our encode starts with BOS where the family adds one; llama.cpp's
+    // tokens for perplexity do too, so the streams line up from 0.
+    if ours.len() < n || ours[..n] != base.tokens[..n] {
+        let at = ours.iter().zip(&base.tokens[..n]).position(|(a, b)| a != b).unwrap_or(ours.len().min(n));
+        eprintln!("{}: our tokens differ from the base file's at {at}", file.display());
+        std::process::exit(1);
+    }
+    assert_eq!(base.n_vocab, model.config.vocab_size, "vocabulary size");
+    if ple_q8 {
+        let c = model.config.clone();
+        model.weights.ple_to_q8_0(&c);
+    }
+    eprintln!("{}: {} chunks of {ctx}, tokens equal to the base file's; weights {} {:.1} MB", base_path.display(), n / ctx, model.weights.format_name(), model.weights.bytes() as f64 / 1e6);
+    let t1 = Instant::now();
+    let s = aether::eval::perplexity_vs_base(&mut base, text.chunk_bos(), chunks, |c, first| model.forward_batch_logits(c, 0, first).to_vec(), |i, s| eprint!("[{i}]{:.4},", s.ppl()))
+        .unwrap_or_else(|e| fail(base_path, e));
+    eprintln!();
+    println!("Final estimate: PPL = {:.4} +/- {:.5}  ({} tokens scored in {:.1} s)", s.ppl(), s.ppl_err(), s.count, t1.elapsed().as_secs_f64());
+    println!("PPL(base file) = {:.4}, PPL(Q)/PPL(base) = {:.6}", s.ppl_base(), s.ppl() / s.ppl_base());
+    println!("Mean KLD: {:.6}   Same top p: {:.3} %", s.mean_kld(), s.same_top_pct());
+}
+
 /// `--gpu`: every position, prompt included, through the GPU decode step
 /// (`session::GpuSession`); sampling on the CPU.
 #[cfg(feature = "vulkan")]
-fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram, fixed): (usize, usize, bool)) {
+/// `--gpu`. `chat`: the prompt goes into the model family's chat template
+/// (with the system turn and the thinking switch), as on the CPU.
+#[allow(clippy::too_many_arguments)]
+fn generate_gpu(path: &Path, prompt: &str, chat: Option<(Option<&str>, Option<bool>)>, mut sampler: Sampler, steps: usize, cores: Option<&[usize]>, times: bool, (lookup, ngram, fixed): (usize, usize, bool)) {
     let s = match cores {
         Some(c) => aether::session::GpuSession::open_hybrid(path, steps, c),
         None => aether::session::GpuSession::open(path, steps),
@@ -255,6 +307,14 @@ fn generate_gpu(path: &Path, prompt: &str, mut sampler: Sampler, steps: usize, c
     let mut s = s.unwrap_or_else(|e| fail(path, e));
     s.lookup_fixed = fixed;
     eprintln!("GPU: {}", s.gpu.info.name);
+    let rendered;
+    let prompt = match chat {
+        Some((system, thinking)) => {
+            rendered = s.text.chat_prompt(system, prompt, thinking.unwrap_or(s.text.thinks_by_default()));
+            rendered.as_str()
+        }
+        None => prompt,
+    };
     let mut out = std::io::stdout().lock();
     let t = s.text.encode(prompt);
     let _ = out.write_all(&s.text.first_piece(t[0]));
@@ -321,7 +381,8 @@ fn generate_dsp(_: &Path, _: &str, _: Sampler, _: usize, _: (usize, usize, bool)
 }
 
 #[cfg(not(feature = "vulkan"))]
-fn generate_gpu(_: &Path, _: &str, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize, bool)) {
+#[allow(clippy::too_many_arguments)]
+fn generate_gpu(_: &Path, _: &str, _: Option<(Option<&str>, Option<bool>)>, _: Sampler, _: usize, _: Option<&[usize]>, _: bool, _: (usize, usize, bool)) {
     eprintln!("--gpu needs a build with --features vulkan");
     std::process::exit(2)
 }

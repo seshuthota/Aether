@@ -730,6 +730,97 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Gemma 4's element-wise steps on HVX (`dsp/gemma_hvx.h`, plan step
+    /// C3) on the Hexagon simulator, against the numpy goldens of
+    /// tools/gen_kernels.py that the CPU's and GPU's kernels pass: GELU-tanh
+    /// × up, soft-cap 30, RMSNorm without gain per head (head sizes 256 and
+    /// 512; the DSP's heads are whole vectors), q/k norm with gain + RoPE on
+    /// the first pairs + q × √hs and v's plain norm, and the post-norm add
+    /// with a scale. Bounds as the CPU's: 1e-6 of the largest value for the
+    /// element-wise steps, 1e-5 for the norms (their sums run in another
+    /// order).
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn sim_gemma_elementwise_matches_numpy() {
+        let Some(root) = crate::testutil::golden("kernels") else { return };
+        let Some(run) = sim_program("gemma_ew") else { return };
+        let dir = std::env::temp_dir().join(format!("aether-sim-{}-gemma_ew", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let arr = |d: &Path, n: &str| crate::testutil::read_npy(&d.join(format!("{n}.npy"))).1;
+        // Rows of n floats, each padded with zeros to whole vectors.
+        let padded = |v: &[f32], n: usize| -> Vec<u8> { v.chunks(n).flat_map(|r| r.iter().copied().chain(std::iter::repeat(0.0).take(n.div_ceil(32) * 32 - n))).flat_map(f32::to_le_bytes).collect() };
+        let unpad = |b: &[u8], n: usize| -> Vec<f32> {
+            let f: Vec<f32> = b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
+            f.chunks(n.div_ceil(32) * 32).flat_map(|r| r[..n].to_vec()).collect()
+        };
+        let file = |name: &str, bytes: &[u8]| {
+            let p = dir.join(name);
+            std::fs::write(&p, bytes).unwrap();
+            p.to_str().unwrap().to_string()
+        };
+        let out = dir.join("out.bin");
+        let o = out.to_str().unwrap().to_string();
+        let cases = |prefix: &str| {
+            let mut v: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with(prefix)).collect();
+            v.sort();
+            v
+        };
+        let mut n_cases = 0;
+        let mut check = |d: &Path, got: &[f32], want: &[f32], bound: f32| {
+            let (_, rel) = crate::testutil::max_errors(got, want);
+            assert!(rel < bound, "{}: rel {rel:.2e}", d.display());
+            n_cases += 1;
+        };
+        for d in cases("gelu_") {
+            let (g, u, want) = (arr(&d, "gate"), arr(&d, "up"), arr(&d, "out"));
+            let n = g.len();
+            run(&["gelu", &file("g.bin", &padded(&g, n)), &file("u.bin", &padded(&u, n)), &o, &n.to_string()]);
+            check(&d, &unpad(&std::fs::read(&out).unwrap(), n), &want, 1e-6);
+        }
+        for d in cases("softcap_") {
+            let (x, want) = (arr(&d, "x"), arr(&d, "out"));
+            let n = x.len();
+            run(&["softcap", &file("x.bin", &padded(&x, n)), &o, &n.to_string(), "30"]);
+            check(&d, &unpad(&std::fs::read(&out).unwrap(), n), &want, 1e-6);
+        }
+        for d in cases("plainnorm_") {
+            let name = d.file_name().unwrap().to_str().unwrap().to_string();
+            let hs: usize = name.rsplit('x').next().unwrap().parse().unwrap();
+            if hs % 32 != 0 {
+                continue;
+            }
+            let (x, want) = (arr(&d, "x"), arr(&d, "out"));
+            run(&["norm", &file("x.bin", &padded(&x, hs)), &o, &(x.len() / hs).to_string(), &hs.to_string(), "1e-6"]);
+            check(&d, &unpad(&std::fs::read(&out).unwrap(), hs), &want, 1e-5);
+        }
+        for d in cases("qknorm_") {
+            let name = d.file_name().unwrap().to_str().unwrap().to_string();
+            let mut it = name.trim_start_matches("qknorm_").split('_');
+            let (hs, pairs): (usize, usize) = (it.next().unwrap().parse().unwrap(), it.next().unwrap().parse().unwrap());
+            let q = arr(&d, "q");
+            let nq = q.len() / hs;
+            let bytes = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+            let args = [file("q.bin", &bytes(&q)), file("k.bin", &bytes(&arr(&d, "k"))), file("v.bin", &bytes(&arr(&d, "v"))), file("qn.bin", &bytes(&arr(&d, "qn"))), file("kn.bin", &bytes(&arr(&d, "kn"))), file("rot.bin", &bytes(&arr(&d, "rot")))];
+            let mut a: Vec<&str> = vec!["qknorm"];
+            a.extend(args.iter().map(|s| s.as_str()));
+            let (nq_s, hs_s, pairs_s) = (nq.to_string(), hs.to_string(), pairs.to_string());
+            a.extend([o.as_str(), &nq_s, &hs_s, &pairs_s, "1e-6"]);
+            run(&a);
+            let got: Vec<f32> = std::fs::read(&out).unwrap().as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
+            check(&d, &got[..nq * hs], &arr(&d, "q_out"), 1e-5);
+            check(&d, &got[nq * hs..(nq + 1) * hs], &arr(&d, "k_out"), 1e-5);
+            check(&d, &got[(nq + 1) * hs..], &arr(&d, "v_out"), 1e-5);
+        }
+        for d in cases("normadd_") {
+            let (x, t, w, want) = (arr(&d, "x"), arr(&d, "t"), arr(&d, "w"), arr(&d, "out"));
+            let (n, scale) = (w.len(), arr(&d, "scale")[0]);
+            run(&["normadd", &file("x.bin", &padded(&x, n)), &file("t.bin", &padded(&t, n)), &file("w.bin", &padded(&w, n)), &o, &(x.len() / n).to_string(), &n.to_string(), &scale.to_string(), "1e-6"]);
+            check(&d, &unpad(&std::fs::read(&out).unwrap(), n), &want, 1e-5);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(n_cases >= 40, "only {n_cases} cases");
+    }
+
     /// HMX weight tiles (`dsp/hmx_tiles.h`) for Q4_0, Q5_0, Q8_0, Q4_K and
     /// Q6_K against llama.cpp's gguf-py dequantizer, cast to float16 with
     /// numpy. The simulator does not run HMX; this checks the tiles the
@@ -881,6 +972,35 @@ mod tests {
                 let (_, check) = d.read_bw(&buf, bytes, threads, 3, prefetch).unwrap();
                 assert_eq!(check, sum.wrapping_mul(3), "{threads} threads, prefetch {prefetch}");
             }
+        }
+    }
+
+    /// Plan step C0 (plans/gemma4-close.md): Gemma 4's device weights are
+    /// ~1.5 GB against Qwen's ~0.4 GB, and the DSP's address space is 32
+    /// bits. Two shared buffers mapped at once, as `model_load` needs them:
+    /// 1.6 GB of weights and 192 MB of state. The DSP reads every word of
+    /// both (`read_bw`), and its checksum must equal the CPU's. Prints the
+    /// read bandwidth over the big one. Ignored by default (it allocates
+    /// 1.8 GB): `cargo test --release --target aarch64-linux-android
+    /// --features hexagon --lib dsp_maps_gemma_sized_buffers -- --ignored`.
+    #[test]
+    #[ignore]
+    fn dsp_maps_gemma_sized_buffers() {
+        let Some(d) = dsp() else { return };
+        let sizes = [1600usize << 20, 192 << 20];
+        let mut bufs = Vec::new();
+        for &bytes in &sizes {
+            let mut b = d.shared(bytes).unwrap_or_else(|e| panic!("allocating and mapping {} MB: {e}", bytes >> 20));
+            for (i, w) in b.as_mut_slice::<u32>().iter_mut().enumerate() {
+                *w = (i as u32).wrapping_mul(2_654_435_761);
+            }
+            bufs.push(b);
+        }
+        for (b, &bytes) in bufs.iter().zip(&sizes) {
+            let sum = b.as_slice::<u32>()[..bytes / 4].iter().fold(0u32, |s, &w| s.wrapping_add(w));
+            let (us, check) = d.read_bw(b, bytes, 4, 1, true).unwrap_or_else(|e| panic!("the DSP reading {} MB: {e}", bytes >> 20));
+            assert_eq!(check, sum, "{} MB: the DSP read other words than the CPU wrote", bytes >> 20);
+            println!("{} MB mapped and read on the DSP: {:.1} GB/s", bytes >> 20, bytes as f64 / us as f64 / 1e3);
         }
     }
 

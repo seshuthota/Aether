@@ -1,0 +1,14 @@
+0.00.770.388 W load: control-looking token:    212 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.770.437 W load: control-looking token:     50 '<|tool_response>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.770.451 W load: control-looking token:      1 '<eos>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.776.670 W load: '</s>' is a normal token here, removing it from EOG list
+0.03.542.824 I cmn          init: llama threadpool init, n_threads = 5
+0.03.671.441 I 
+0.03.673.536 I system_info: n_threads = 5 (n_threads_batch = 5) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.03.673.556 I perplexity: tokenizing the input ..
+0.04.584.088 I perplexity: tokenization took 910.523 ms
+0.04.584.316 I perplexity: calculating perplexity over 20 chunks, n_ctx=512, batch_size=2048, n_seq=4
+0.28.882.981 I perplexity: 24.30 seconds per pass - ETA 2.02 minutes
+[1]53.0172,[2]120.0683,[3]107.9746,[4]138.8426,[5]150.6685,[6]154.0848,[7]173.3102,[8]186.6781,[9]203.0643,[10]208.2376,[11]212.0423,[12]220.8454,[13]225.4137,[14]214.9703,[15]207.4981,[16]216.3165,[17]194.8853,[18]197.8263,[19]189.9342,[20]185.1681,
+1.51.023.741 I Final estimate: PPL = 185.1681 +/- 13.87906
+

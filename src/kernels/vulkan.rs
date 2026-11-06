@@ -1992,11 +1992,11 @@ mod tests {
             } else {
                 let parts = prts.as_mut().unwrap();
                 let tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28).unwrap();
-                let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8).unwrap();
+                let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 12).unwrap();
                 let tb = tile.bind(gpu, &[&qb, &kb, &vb, parts, &params]).unwrap();
                 let mb = merge.bind(gpu, &[parts, &out, &params]).unwrap();
                 let tp = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, qstride as u32, nt as u32]);
-                let mp = push_u32(&[hs as u32, chunks as u32]);
+                let mp = push_u32(&[hs as u32, chunks as u32, 0]);
                 gpu.record(|r| {
                     r.dispatch(&tb, &tp, [nh as u32, chunks as u32, nt.div_ceil(32) as u32]);
                     r.barrier();
@@ -2029,6 +2029,182 @@ mod tests {
         let Some((worst, cases)) = prompt_attention_matches(&gpu, false) else { return };
         println!("attention chunked: {cases} cases vs numpy, worst {worst:.2e} of max |v|");
         assert!(cases >= 60, "only {cases} golden cases");
+    }
+
+    /// `attention.comp` + `attention_merge.comp` as decode and the
+    /// per-token prompt path dispatch them (workgroup per head, chunk and
+    /// token), on every causal golden, head sizes 17 to 512, and on the
+    /// sliding-window goldens (`window_attention_<hs>_n<n>_p<pos>_w<w>`: one
+    /// head at position `pos`, seeing `pos − w + 1 ..= pos`). The keys and
+    /// values are read as f32 here, so the bound of the prompt shaders
+    /// (f16 in shared memory) holds with room.
+    #[test]
+    fn attention_per_token_matches_reference() {
+        let Ok(gpu) = Gpu::new() else { return };
+        let Some(root) = crate::testutil::golden("kernels") else { return };
+        let attn = Kernel::new(&gpu, crate::spirv!("attention"), 5, 28).unwrap();
+        let merge = Kernel::new(&gpu, crate::spirv!("attention_merge"), 3, 12).unwrap();
+        let mut dirs: Vec<_> = std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).collect();
+        dirs.sort();
+        let (mut worst, mut tested, mut windows) = (0.0f32, 0, 0);
+        for dir in &dirs {
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            // (heads, kv heads, head size, first position, tokens, window)
+            let case = if let Some(rest) = name.strip_prefix("attention_causal_") {
+                let (shape, tail) = rest.split_once("_p").unwrap();
+                let (pos0, nt) = tail.split_once("_t").unwrap();
+                let d: Vec<usize> = shape.split('x').map(|s| s.parse().unwrap()).collect();
+                (d[0], d[1], d[2], pos0.parse::<usize>().unwrap(), nt.parse::<usize>().unwrap(), 0)
+            } else if let Some(rest) = name.strip_prefix("window_attention_") {
+                let f: Vec<&str> = rest.split('_').collect();
+                (1, 1, f[0].parse().unwrap(), f[2][1..].parse().unwrap(), 1, f[3][1..].parse().unwrap())
+            } else {
+                continue;
+            };
+            let (nh, nkv, hs, pos0, nt, window) = case;
+            let (_, q) = crate::testutil::read_npy(&dir.join("q.npy"));
+            let (_, k) = crate::testutil::read_npy(&dir.join("k.npy"));
+            let (_, v) = crate::testutil::read_npy(&dir.join("v.npy"));
+            let (_, want) = crate::testutil::read_npy(&dir.join("out.npy"));
+            let chunks = (pos0 + nt).div_ceil(64);
+            let buf = |data: &[f32]| {
+                let mut b = gpu.buffer(data.len().max(1) * 4).unwrap();
+                b.as_mut_slice::<f32>().copy_from_slice(data);
+                b
+            };
+            let (qb, kb, vb) = (buf(&q), buf(&k), buf(&v));
+            // NaN in parts fails the test if the merge reads a chunk the
+            // attention did not write (the window's skipped chunks).
+            let parts = buf(&vec![f32::NAN; nt * nh * chunks * (hs + 2)]);
+            let out = buf(&vec![f32::NAN; nt * nh * hs]);
+            let mut params = gpu.buffer(4).unwrap();
+            params.as_mut_slice::<u32>()[0] = pos0 as u32;
+            let ab = attn.bind(&gpu, &[&qb, &kb, &vb, &parts, &params]).unwrap();
+            let mb = merge.bind(&gpu, &[&parts, &out, &params]).unwrap();
+            let ap = push_u32(&[nh as u32, nkv as u32, hs as u32, chunks as u32, 0, (nh * hs) as u32, window as u32]);
+            let mp = push_u32(&[hs as u32, chunks as u32, window as u32]);
+            let cmds = gpu
+                .record(|r| {
+                    r.dispatch(&ab, &ap, [nh as u32, chunks as u32, nt as u32]);
+                    r.barrier();
+                    r.dispatch(&mb, &mp, [nh as u32, nt as u32, 1]);
+                })
+                .unwrap();
+            gpu.submit(&cmds, false).unwrap();
+            let (abs, _) = crate::testutil::max_errors(out.as_slice::<f32>(), &want);
+            let vmax = v.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            assert!(abs <= 4.0 * 2f32.powi(-11) * vmax, "{name}: abs {abs:.2e}, {:.2e} of max |v|", abs / vmax);
+            worst = worst.max(abs / vmax);
+            tested += 1;
+            windows += usize::from(window > 0);
+        }
+        println!("attention per token: {tested} cases ({windows} windowed) vs numpy, worst {worst:.2e} of max |v|");
+        assert!(tested >= 100 && windows >= 16, "only {tested} cases, {windows} windowed");
+    }
+
+    /// Gemma 4's element-wise shaders against numpy (tools/gen_kernels.py):
+    /// `geglu` on the `gelu_` cases, `softcap` on `softcap_`, `qkv_norm`
+    /// (per-head norms, partial RoPE from numpy's table, q × √hs, k and v
+    /// stored at the position) on `qknorm_` and its v path without a gain on
+    /// `plainnorm_`, and `norm_add` on `normadd_`. Relative bounds as the CPU
+    /// kernels' (`gemma_elementwise_matches_numpy`), 1e-5 where a norm sums
+    /// a head first.
+    #[test]
+    fn gemma_shaders_match_numpy() {
+        let Ok(gpu) = Gpu::new() else { return };
+        let Some(root) = crate::testutil::golden("kernels") else { return };
+        let arr = |d: &std::path::Path, n: &str| crate::testutil::read_npy(&d.join(format!("{n}.npy"))).1;
+        let buf = |data: &[f32]| {
+            let mut b = gpu.buffer(data.len().max(1) * 4).unwrap();
+            b.as_mut_slice::<f32>().copy_from_slice(data);
+            b
+        };
+        let run = |b: &Bound, p: &[u8], g: [u32; 3]| gpu.submit(&gpu.record(|r| r.dispatch(b, p, g)).unwrap(), false).unwrap();
+        let cases = |prefix: &str| -> Vec<std::path::PathBuf> {
+            let mut v: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with(prefix)).collect();
+            v.sort();
+            v
+        };
+        let mut n = 0;
+        let geglu = Kernel::new(&gpu, crate::spirv!("geglu"), 3, 16).unwrap();
+        for d in cases("gelu_") {
+            let (g, u, want) = (arr(&d, "gate"), arr(&d, "up"), arr(&d, "out"));
+            let (gb, ub, ob) = (buf(&g), buf(&u), buf(&vec![f32::NAN; g.len()]));
+            let len = g.len() as u32;
+            run(&geglu.bind(&gpu, &[&gb, &ub, &ob]).unwrap(), &push_u32(&[len, len, len, len]), [len.div_ceil(256), 1, 1]);
+            let (_, rel) = crate::testutil::max_errors(ob.as_slice::<f32>(), &want);
+            assert!(rel < 1e-6, "{}: rel {rel:.2e}", d.display());
+            n += 1;
+        }
+        let softcap = Kernel::new(&gpu, crate::spirv!("softcap"), 1, 8).unwrap();
+        for d in cases("softcap_") {
+            let (x, want) = (arr(&d, "x"), arr(&d, "out"));
+            let xb = buf(&x);
+            let p: Vec<u8> = [(x.len() as u32).to_le_bytes(), 30f32.to_le_bytes()].concat();
+            run(&softcap.bind(&gpu, &[&xb]).unwrap(), &p, [(x.len() as u32).div_ceil(256), 1, 1]);
+            let (_, rel) = crate::testutil::max_errors(xb.as_slice::<f32>(), &want);
+            assert!(rel < 1e-6, "{}: rel {rel:.2e}", d.display());
+            n += 1;
+        }
+        let qkv_norm = Kernel::new(&gpu, crate::spirv!("qkv_norm"), 6, 48).unwrap();
+        // One token: q (n_q heads), k, v (one head each) in a row; the cache
+        // holds `pos + 1` positions, the token's at `pos`.
+        let norm_case = |q: &[f32], k: &[f32], v: &[f32], qn: &[f32], kn: &[f32], rot: &[f32], hs: usize, pairs: usize, pos: usize, vnorm: bool| {
+            let n_q = q.len() / hs;
+            let row: Vec<f32> = [q, k, v].concat();
+            let (qkv, qnb, knb) = (buf(&row), buf(qn), buf(kn));
+            let (kc, vc) = (buf(&vec![f32::NAN; (pos + 1) * hs]), buf(&vec![f32::NAN; (pos + 1) * hs]));
+            let mut params = gpu.buffer((4 + rot.len()) * 4).unwrap();
+            params.as_mut_slice::<u32>()[0] = pos as u32;
+            params.as_mut_slice::<f32>()[4..].copy_from_slice(rot);
+            let b = qkv_norm.bind(&gpu, &[&qkv, &qnb, &knb, &kc, &vc, &params]).unwrap();
+            let mut p = push_u32(&[hs as u32, n_q as u32, 1, row.len() as u32, 0, 0, (rot.len() / 2) as u32, pairs as u32, 1, vnorm as u32]);
+            p.extend(((hs as f32).sqrt()).to_le_bytes());
+            p.extend(1e-6f32.to_le_bytes());
+            run(&b, &p, [1, n_q as u32 + 2, 1]);
+            let at = pos * hs;
+            (qkv.as_slice::<f32>()[..n_q * hs].to_vec(), kc.as_slice::<f32>()[at..at + hs].to_vec(), vc.as_slice::<f32>()[at..at + hs].to_vec())
+        };
+        for d in cases("qknorm_") {
+            let name = d.file_name().unwrap().to_str().unwrap().to_string();
+            let f: Vec<usize> = name["qknorm_".len()..].split('_').map(|x| x.parse().unwrap()).collect();
+            let (hs, pairs) = (f[0], f[1]);
+            let pos = if hs == 256 { 37 } else { 600 };
+            let (q, k, v) = norm_case(&arr(&d, "q"), &arr(&d, "k"), &arr(&d, "v"), &arr(&d, "qn"), &arr(&d, "kn"), &arr(&d, "rot"), hs, pairs, pos, true);
+            for (what, got, want) in [("q", q, arr(&d, "q_out")), ("k", k, arr(&d, "k_out")), ("v", v, arr(&d, "v_out"))] {
+                let (_, rel) = crate::testutil::max_errors(&got, &want);
+                assert!(rel < 1e-5, "{name} {what}: rel {rel:.2e}");
+            }
+            n += 1;
+        }
+        // The v path alone (no gain), on each head of the plain-norm cases.
+        for d in cases("plainnorm_") {
+            let name = d.file_name().unwrap().to_str().unwrap().to_string();
+            let hs: usize = name.rsplit('x').next().unwrap().parse().unwrap();
+            if hs % 2 == 1 {
+                continue; // RoPE pairs need an even head; 17 is the CPU's odd case
+            }
+            let (x, want) = (arr(&d, "x"), arr(&d, "out"));
+            for (h, (xh, wh)) in x.chunks(hs).zip(want.chunks(hs)).enumerate() {
+                let ones = vec![1.0; hs];
+                let (_, _, v) = norm_case(&vec![0.0; hs], &vec![0.0; hs], xh, &ones, &ones, &vec![0.0; hs], hs, 0, 0, true);
+                let (_, rel) = crate::testutil::max_errors(&v, wh);
+                assert!(rel < 1e-5, "{name} head {h}: rel {rel:.2e}");
+            }
+            n += 1;
+        }
+        let norm_add = Kernel::new(&gpu, crate::spirv!("norm_add"), 3, 12).unwrap();
+        for d in cases("normadd_") {
+            let (x, t, w, sc, want) = (arr(&d, "x"), arr(&d, "t"), arr(&d, "w"), arr(&d, "scale")[0], arr(&d, "out"));
+            let (xb, tb, wb) = (buf(&x), buf(&t), buf(&w));
+            let p: Vec<u8> = [(w.len() as u32).to_le_bytes(), 1e-6f32.to_le_bytes(), sc.to_le_bytes()].concat();
+            run(&norm_add.bind(&gpu, &[&xb, &tb, &wb]).unwrap(), &p, [(x.len() / w.len()) as u32, 1, 1]);
+            let (_, rel) = crate::testutil::max_errors(xb.as_slice::<f32>(), &want);
+            assert!(rel < 1e-5, "{}: rel {rel:.2e}", d.display());
+            n += 1;
+        }
+        println!("Gemma shaders: {n} cases vs numpy");
+        assert!(n >= 20, "only {n} cases");
     }
 
     #[test]

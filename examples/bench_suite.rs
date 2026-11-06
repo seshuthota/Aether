@@ -74,7 +74,7 @@ enum Engine {
     Cpu(Box<Transformer>),
     // The model before the device: its buffers are freed while the device lives.
     #[cfg(feature = "vulkan")]
-    Gpu(Box<aether::model::gpu::GpuModel>, aether::kernels::vulkan::Gpu),
+    Gpu(Box<aether::model::gpu::GpuNet>, aether::kernels::vulkan::Gpu),
     #[cfg(feature = "hexagon")]
     Dsp(Box<aether::model::dsp::DspModel>, aether::kernels::hexagon::Dsp),
 }
@@ -87,7 +87,8 @@ impl Engine {
             #[cfg(feature = "vulkan")]
             "gpu" => {
                 let gpu = aether::kernels::vulkan::Gpu::new().unwrap();
-                let m = aether::model::gpu::GpuModel::new(&gpu, config, weights, false).unwrap_or_else(|e| panic!("{e}"));
+                // GpuNet: the uniform path, or Gemma 4's (model::gpu::GemmaGpu).
+                let m = aether::model::gpu::GpuNet::with(&gpu, config, weights, aether::model::gpu::Options::default()).unwrap_or_else(|e| panic!("{e}"));
                 Engine::Gpu(Box::new(m), gpu)
             }
             #[cfg(feature = "hexagon")]
@@ -105,7 +106,7 @@ impl Engine {
         match self {
             Engine::Cpu(m) => &m.config,
             #[cfg(feature = "vulkan")]
-            Engine::Gpu(m, _) => &m.config,
+            Engine::Gpu(m, _) => m.config(),
             #[cfg(feature = "hexagon")]
             Engine::Dsp(m, _) => &m.config,
         }
@@ -118,8 +119,9 @@ impl Engine {
             Engine::Cpu(m) => aether::kernels::argmax(m.forward_batch(tokens, pos)),
             #[cfg(feature = "vulkan")]
             Engine::Gpu(m, gpu) => {
-                for (i, c) in tokens.chunks(m.batch).enumerate() {
-                    m.forward_batch(gpu, c, pos + i * m.batch).unwrap();
+                let b = m.batch();
+                for (i, c) in tokens.chunks(b).enumerate() {
+                    m.forward_batch(gpu, c, pos + i * b).unwrap();
                 }
                 m.greedy()
             }

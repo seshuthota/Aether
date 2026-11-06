@@ -1,0 +1,28 @@
+# 2026-11-06T00:17:31+05:30
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 69
+# temperature: 396
+# Capacity level: -1
+# cpu0 cap 1785600 kHz
+# cpu6 cap 1958400 kHz
+# max cpu zone (mC) 46500
+# mScreenState=ON
+# llama-bench, 6 threads, cores 2-7, -r 3
+| model                          |       size |     params | backend    | threads | cpu_mask   |         lm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | ---------- | ---------: | --------------: | -------------------: |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |            pp64 |         90.01 ± 0.62 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |           pp128 |         92.49 ± 1.23 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |           pp512 |         82.21 ± 3.55 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |            tg64 |         29.76 ± 0.08 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |     pp64 @ d512 |         49.18 ± 0.30 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |    pp128 @ d512 |         64.97 ± 1.24 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |    pp512 @ d512 |         71.20 ± 0.79 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 | 0xfc       |       none |     tg64 @ d512 |         24.51 ± 0.05 |
+
+build: d02b4c0d6 (12061)

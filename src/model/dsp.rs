@@ -161,6 +161,9 @@ impl DspModel {
         if c.layers.iter().any(|l| matches!(l, crate::model::config::LayerKind::Conv { .. })) {
             return Err("LFM3's hybrid conv/attention stack is CPU-only; the DSP path is a later plan".into());
         }
+        if !c.uniform() {
+            return Err("per-layer shapes, shared KV and per-layer embeddings (Gemma 4) are CPU-only; the DSP path is a later plan".into());
+        }
         let (dim, kv_dim, hid, vocab) = (c.dim, c.kv_dim(), c.hidden_dim, c.vocab_size);
         let nl = weights.layers.len();
 
@@ -180,9 +183,10 @@ impl DspModel {
         };
         for (l, lw) in weights.layers.iter().enumerate() {
             let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
+            let (wk, wv) = a.kv().ok_or_else(|| format!("layer {l} has no K/V"))?;
             let o = &mut desc[d::LAYER0 + l * d::L_N..][..d::L_N];
             let what = format!("layer {l}'s matrices");
-            runs(&mut o[d::L_QKV..], 3, place(&mut wl, &mut mats, &[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], dim, &what)?);
+            runs(&mut o[d::L_QKV..], 3, place(&mut wl, &mut mats, &[(&a.wq, dim), (wk, kv_dim), (wv, kv_dim)], dim, &what)?);
             runs(&mut o[d::L_WO..], 1, place(&mut wl, &mut mats, &[(&a.wo, dim)], dim, &what)?);
             runs(&mut o[d::L_GU..], 2, place(&mut wl, &mut mats, &[(&lw.w_gate, hid), (&lw.w_up, hid)], dim, &what)?);
             runs(&mut o[d::L_WDOWN..], 1, place(&mut wl, &mut mats, &[(&lw.w_down, dim)], hid, &what)?);

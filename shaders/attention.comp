@@ -7,7 +7,13 @@
 // Written to `parts[h][c]` as (m, l, out[0..hs]); attention_merge.comp
 // combines the chunks. The dispatch covers every chunk the cache can hold
 // (it is recorded once); chunks past the current position return at once.
-// hs must be at most 64.
+// Thread d sums output elements d, d + 64, ... (one for hs <= 64, four or
+// eight for Gemma 4's 256 / 512).
+//
+// With `window` > 0 (a sliding-window layer) a token at position p sees
+// only p − window + 1 .. p: chunks wholly before that return at once (the
+// merge skips them too), and earlier positions in the first chunk score
+// −∞.
 //
 // For a batch (a prompt), workgroup (h, c, t) does token t, at position
 // pos + t, with its query `qstride` floats after token t − 1's and its
@@ -19,7 +25,7 @@ layout(std430, binding = 1) readonly buffer Kc { float kc[]; };
 layout(std430, binding = 2) readonly buffer Vc { float vc[]; };
 layout(std430, binding = 3) writeonly buffer Pt { float parts[]; };
 layout(std430, binding = 4) readonly buffer Pm { uint pos; };
-layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; uint qstride; };
+layout(push_constant) uniform P { uint n_heads; uint n_kv; uint hs; uint chunks; uint layer_off; uint qstride; uint window; };
 
 shared float red[64];
 shared float p[64];
@@ -29,10 +35,12 @@ void main() {
     uint at = pos + tok, qo = tok * qstride + h * hs;
     uint t0 = 64 * c;
     if (t0 > at) return;
+    uint lo = window > 0 && at + 1 > window ? at + 1 - window : 0;
+    if (t0 + 64 <= lo) return;
     uint n = min(64, at + 1 - t0);
     uint kv_dim = n_kv * hs, kvo = layer_off + (h / (n_heads / n_kv)) * hs;
     float s = -1.0 / 0.0;
-    if (id < n) {
+    if (id < n && t0 + id >= lo) {
         s = 0.0;
         for (uint d = 0; d < hs; d++) s += q[qo + d] * kc[kvo + (t0 + id) * kv_dim + d];
         s /= sqrt(float(hs));
@@ -54,10 +62,10 @@ void main() {
         barrier();
     }
     uint base = ((tok * n_heads + h) * chunks + c) * (hs + 2);
-    if (id < hs) {
+    for (uint d = id; d < hs; d += 64) {
         float acc = 0.0;
-        for (uint t = 0; t < n; t++) acc += p[t] * vc[kvo + (t0 + t) * kv_dim + id];
-        parts[base + 2 + id] = acc;
+        for (uint t = 0; t < n; t++) acc += p[t] * vc[kvo + (t0 + t) * kv_dim + d];
+        parts[base + 2 + d] = acc;
     }
     if (id == 0) {
         parts[base] = mx;

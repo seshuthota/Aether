@@ -1,0 +1,6 @@
+# testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf on Intel(R) Graphics (RPL-P) | upload + record 2211 ms, prompt batch 128
+# greedy: " a young girl named Lily. Lily had eyes the color of the deep ocean and a spirit as bright as the summer sun"
+# 40 positions in 5102.5 ms: 7.8 tok/s
+[1]51.0348 kld 0.14970,[2]118.3242 kld 0.15319,[3]106.4365 kld 0.16283,[4]138.0871 kld 0.16511,[5]151.5931 kld 0.16753,[6]156.1999 kld 0.16678,[7]175.7170 kld 0.16739,[8]189.4664 kld 0.17153,[9]206.0793 kld 0.16845,[10]211.3541 kld 0.16518,[11]215.8067 kld 0.16382,[12]224.4304 kld 0.16682,[13]229.3641 kld 0.16650,[14]218.0176 kld 0.16369,[15]210.6544 kld 0.16382,[16]219.4383 kld 0.16437,[17]197.9575 kld 0.16124,[18]201.4095 kld 0.16312,[19]193.7461 kld 0.16310,[20]188.6380 kld 0.16359,
+Final estimate: PPL = 188.6380 +/- 14.17779  (5100 tokens scored, 1364.9 s, decode)
+PPL(base file) = 161.2919   Mean KLD: 0.163587   Same top p: 84.490 %

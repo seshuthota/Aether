@@ -157,7 +157,7 @@ class MainActivity : Activity() {
                     loaded = key
                     val ms = (System.nanoTime() - t0) / 1e6
                     val on = when (where) {
-                        "GPU" -> "GPU, prompt on CPU $coreList"
+                        "GPU" -> if (session!!.promptOnCpu) "GPU, prompt on CPU $coreList" else "GPU"
                         "DSP" -> "Hexagon DSP"
                         else -> "CPU $coreList"
                     }

@@ -6,7 +6,7 @@
 
 use crate::aligned::AlignedBuf;
 use crate::format::mmap::Mmap;
-use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ4_Kx4, BlockQ5_0, BlockQ5_0x4, BlockQ6_K, BlockQ6_Kx4, BlockQ8_0, BlockQ8_0x4, QK, QK_K};
+use crate::quant::{self, BlockQ4_0, BlockQ4_0x4, BlockQ4_K, BlockQ4_Kx4, BlockQ5_0, BlockQ5_0x4, BlockQ5_K, BlockQ6_K, BlockQ6_Kx4, BlockQ8_0, BlockQ8_0x4, QK, QK_K};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -127,6 +127,47 @@ pub enum Weight {
     Q4_Kx4(Vec<BlockQ4_Kx4>),
     #[allow(non_camel_case_types)]
     Q6_Kx4(Vec<BlockQ6_Kx4>),
+}
+
+/// A table only ever read one row at a time (Gemma 4's per-layer embedding
+/// table, 1.3–1.6 GB): it stays in the mapped file and is never repacked,
+/// converted or widened, so only the rows looked up are paged in.
+pub enum Rows {
+    Q4_0(Mapped<BlockQ4_0>),
+    Q8_0(Mapped<BlockQ8_0>),
+    #[allow(non_camel_case_types)] // ggml's names
+    Q5_K(Mapped<BlockQ5_K>),
+    /// bf16 bits (the top half of an f32).
+    BF16(Mapped<u16>),
+    F32(Mapped<f32>),
+}
+
+impl Rows {
+    /// Row `i` (of `out.len()` columns) as f32.
+    pub fn row_f32(&self, i: usize, out: &mut [f32]) {
+        let cols = out.len();
+        match self {
+            Rows::Q4_0(b) => quant::dequantize_q4_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
+            Rows::Q8_0(b) => quant::dequantize_q8_0(&b[i * cols / QK..(i + 1) * cols / QK], out),
+            Rows::Q5_K(b) => quant::dequantize_q5_k(&b[i * cols / QK_K..(i + 1) * cols / QK_K], out),
+            Rows::BF16(b) => {
+                for (o, &h) in out.iter_mut().zip(&b[i * cols..(i + 1) * cols]) {
+                    *o = f32::from_bits((h as u32) << 16);
+                }
+            }
+            Rows::F32(f) => out.copy_from_slice(&f[i * cols..(i + 1) * cols]),
+        }
+    }
+
+    pub fn format_name(&self) -> &'static str {
+        match self {
+            Rows::Q4_0(_) => "q4_0",
+            Rows::Q8_0(_) => "q8_0",
+            Rows::Q5_K(_) => "q5_k",
+            Rows::BF16(_) => "bf16",
+            Rows::F32(_) => "f32",
+        }
+    }
 }
 
 impl From<AlignedBuf> for Weight {

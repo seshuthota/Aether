@@ -31,18 +31,45 @@ pub fn lfm3(system: Option<&str>, user: &str, thinking: bool) -> String {
     s
 }
 
-/// Hides a `<think>...</think>` span from a streamed reply. Pieces may split
-/// the tags, so it keeps the last few bytes until it knows whether they start
-/// a tag.
+/// Gemma 4's template (in the GGUF; checked against HF
+/// `apply_chat_template`): an optional system turn, the user turn and an
+/// open model turn. Thinking is switched on by `<|think|>` at the top of the
+/// system turn (one is opened for it if there is no system message). The
+/// BOS is not part of the text: the tokenizer adds it.
+pub fn gemma4(system: Option<&str>, user: &str, thinking: bool) -> String {
+    let mut s = String::new();
+    let system = system.filter(|s| !s.is_empty());
+    if thinking || system.is_some() {
+        s.push_str("<|turn>system\n");
+        if thinking {
+            s.push_str("<|think|>\n");
+        }
+        s.push_str(system.unwrap_or(""));
+        s.push_str("<turn|>\n");
+    }
+    s.push_str(&format!("<|turn>user\n{user}<turn|>\n<|turn>model\n"));
+    s
+}
+
+/// Hides a `<think>...</think>` span (Gemma 4: `<|channel>...<channel|>`)
+/// from a streamed reply. Pieces may split the tags, so it keeps the last
+/// few bytes until it knows whether they start a tag.
 pub struct ThinkFilter {
     hide: bool,
     buf: Vec<u8>,
     hiding: bool,
+    open: &'static [u8],
+    close: &'static [u8],
 }
 
 impl ThinkFilter {
     pub fn new(hide: bool) -> ThinkFilter {
-        ThinkFilter { hide, buf: Vec::new(), hiding: false }
+        ThinkFilter::tags(hide, b"<think>", b"</think>")
+    }
+
+    /// A filter for the span between `open` and `close`.
+    pub fn tags(hide: bool, open: &'static [u8], close: &'static [u8]) -> ThinkFilter {
+        ThinkFilter { hide, buf: Vec::new(), hiding: false, open, close }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
@@ -53,22 +80,22 @@ impl ThinkFilter {
         let mut out = Vec::new();
         loop {
             if self.hiding {
-                match find(&self.buf, b"</think>") {
+                match find(&self.buf, self.close) {
                     Some(p) => {
-                        self.buf.drain(..p + 8);
+                        self.buf.drain(..p + self.close.len());
                         self.hiding = false;
                     }
                     None => break,
                 }
             } else {
-                match find(&self.buf, b"<think>") {
+                match find(&self.buf, self.open) {
                     Some(p) => {
                         out.extend_from_slice(&self.buf[..p]);
-                        self.buf.drain(..p + 7);
+                        self.buf.drain(..p + self.open.len());
                         self.hiding = true;
                     }
                     None => {
-                        let keep = (b"<think>".len() - 1).min(self.buf.len());
+                        let keep = (self.open.len() - 1).min(self.buf.len());
                         let emit = self.buf.len() - keep;
                         out.extend_from_slice(&self.buf[..emit]);
                         self.buf.drain(..emit);
@@ -99,6 +126,18 @@ mod tests {
     use crate::testutil::golden;
     use crate::tokenizer::bytelevel::Tokenizer;
 
+    /// The four prompts HF `apply_chat_template` (transformers 5.20.2,
+    /// `google/gemma-4-E2B-it`, `add_generation_prompt=True`) renders, less
+    /// the `<bos>` the tokenizer adds.
+    #[test]
+    fn gemma4_template_matches_hf() {
+        let (sys, q) = ("You are terse.", "What is 2+2?");
+        assert_eq!(gemma4(None, q, false), "<|turn>user\nWhat is 2+2?<turn|>\n<|turn>model\n");
+        assert_eq!(gemma4(Some(sys), q, false), "<|turn>system\nYou are terse.<turn|>\n<|turn>user\nWhat is 2+2?<turn|>\n<|turn>model\n");
+        assert_eq!(gemma4(None, q, true), "<|turn>system\n<|think|>\n<turn|>\n<|turn>user\nWhat is 2+2?<turn|>\n<|turn>model\n");
+        assert_eq!(gemma4(Some(sys), q, true), "<|turn>system\n<|think|>\nYou are terse.<turn|>\n<|turn>user\nWhat is 2+2?<turn|>\n<|turn>model\n");
+    }
+
     #[test]
     fn think_filter_hides_split_spans() {
         let mut f = ThinkFilter::new(true);
@@ -109,6 +148,13 @@ mod tests {
         out.extend(f.finish());
         assert_eq!(out, b"ac");
         assert_eq!(ThinkFilter::new(false).feed(b"x"), b"x");
+        let mut g = ThinkFilter::tags(true, b"<|channel>", b"<channel|>");
+        let mut out = Vec::new();
+        for piece in [b"<|chan".as_slice(), b"nel>thought\nhm<chan", b"nel|>4"] {
+            out.extend(g.feed(piece));
+        }
+        out.extend(g.finish());
+        assert_eq!(out, b"4");
     }
 
     /// LFM3's template: BOS, optional system, and `<think>` (or an empty

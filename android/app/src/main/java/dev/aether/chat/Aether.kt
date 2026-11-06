@@ -35,6 +35,16 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         nativeSetLookup(handle, k, ngram)
     }
 
+    /**
+     * Whether prompts run on the CPU: a CPU session, or a GPU one opened with cores for a
+     * model that takes a CPU prompt (not Gemma 4: its GPU prompt runs on the GPU).
+     */
+    val promptOnCpu: Boolean
+        get() {
+            check(handle != 0L) { "session is closed" }
+            return nativePromptOnCpu(handle)
+        }
+
     override fun close() {
         nativeClose(handle)
         handle = 0
@@ -51,7 +61,8 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         /**
          * Loads a Q4_0 or Q4_K_M .gguf to decode on the GPU (Vulkan). With [cores] (like "2-7"),
          * a CPU copy of the model runs each prompt in one batch; with "" the GPU runs the
-         * prompt, batched as well.
+         * prompt, batched as well. Gemma 4 runs its prompt on the GPU either way
+         * ([promptOnCpu] tells which).
          */
         fun openGpu(path: String, cores: String, maxSeq: Int) = Aether(nativeOpenGpu(path.toByteArray(), cores.toByteArray(), maxSeq))
 
@@ -74,6 +85,8 @@ class Aether private constructor(private var handle: Long) : AutoCloseable {
         ): DoubleArray
 
         @JvmStatic private external fun nativeSetLookup(handle: Long, k: Int, ngram: Int)
+
+        @JvmStatic private external fun nativePromptOnCpu(handle: Long): Boolean
 
         @JvmStatic private external fun nativeClose(handle: Long)
     }

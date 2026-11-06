@@ -118,6 +118,13 @@ Java_dev_aether_chat_Aether_nativeSetLookup(JNIEnv *env, jclass cls, jlong handl
     if (aether_set_lookup((AetherSession *)(intptr_t)handle, (uint32_t)k, (uint32_t)ngram) != AETHER_OK) throw_error(env);
 }
 
+JNIEXPORT jboolean JNICALL
+Java_dev_aether_chat_Aether_nativePromptOnCpu(JNIEnv *env, jclass cls, jlong handle) {
+    (void)env;
+    (void)cls;
+    return aether_prompt_on_cpu((const AetherSession *)(intptr_t)handle) == 1;
+}
+
 JNIEXPORT void JNICALL
 Java_dev_aether_chat_Aether_nativeClose(JNIEnv *env, jclass cls, jlong handle) {
     (void)env;

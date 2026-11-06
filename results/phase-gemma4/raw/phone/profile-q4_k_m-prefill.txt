@@ -1,0 +1,42 @@
+# 2026-11-06T00:30:08+05:30
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 67
+# temperature: 354
+# Capacity level: -1
+# max cpu zone (mC) 46100
+# simpleperf record -e cpu-cycles:u -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --chunks 1 -c 2-7
+[1]50.5233,
+Final estimate: PPL = 50.5233 +/- 16.08813  (255 tokens scored in 13.5 s)
+simpleperf I cmd_record.cpp:840] Recorded for 20.8848 seconds. Start post processing.
+simpleperf I cmd_record.cpp:941] Samples recorded: 209,481. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf.data -- ./aether-cli testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf --ppl testdata/wikitext/wikitext-2-raw/wiki.test.raw --chunks 1 -c 2-7
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0)
+Samples: 209481
+Event count: 78918140239
+
+Overhead  Symbol
+62.53%    aether::kernels::neon_quant::mmla4_k::<4>
+10.53%    aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_batch::{closure#1}::{closure#0}, aether::model::transformer::attention_batch::{closure#1}::{closure#1}>::{closure#1}>
+6.37%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+4.85%     aether::kernels::quant_rows_mmla
+3.00%     aether::kernels::neon::gemm_rows
+1.61%     aether::kernels::neon::gelu_tanh
+1.44%     <aether::tokenizer::spm_bpe::Tokenizer>::bpe
+1.23%     <aether::weight::Weight>::repack
+0.80%     aether::kernels::neon_quant::quantize_q8_0
+0.68%     <aether::pool::ThreadPool>::run
+0.54%     __memset_aarch64_nt
+0.51%     __memcpy_aarch64_nt
+0.40%     exp
+0.38%     scudo::HybridMutex::tryLock()
+0.34%     aether::kernels::neon_quant::interleave_pairs::{closure#0}
+0.32%     <aether::model::transformer::Transformer>::batch_impl::<aether::model::transformer::NoTrace>::{closure#10}
+0.29%     <aether::tokenizer::spm_bpe::Tokenizer>::bpe::{closure#3}
+0.29%     <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+0.28%     aether::kernels::scalar::rmsnorm
+0.26%     aether::kernels::neon::softcap
+0.23%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::allocate(unsigned long, scudo::Chunk::Origin, unsigned long, bool)

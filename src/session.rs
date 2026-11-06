@@ -9,7 +9,7 @@ use crate::kernels::argmax;
 use crate::model::sampler::Sampler;
 use crate::model::{Transformer, gguf, hf, llama2c};
 use crate::pool::ThreadPool;
-use crate::tokenizer::{bytelevel, llama2c as l2c_tok};
+use crate::tokenizer::{bytelevel, llama2c as l2c_tok, spm_bpe};
 use crate::weight::Format;
 use std::io;
 use std::path::Path;
@@ -23,13 +23,23 @@ pub enum Text {
     /// Hugging Face byte-level BPE (SmolLM2, Qwen2, LFM3): no BOS added;
     /// stops at end-of-text or the chat end-of-turn token.
     Hf { tok: Box<bytelevel::Tokenizer>, start: usize, stops: Vec<usize>, lfm3: bool },
+    /// Gemma 4's SentencePiece-style BPE: BOS always first (llama.cpp
+    /// forces it); stops at EOS or the end-of-turn `<turn|>`.
+    Gemma4 { tok: Box<spm_bpe::Tokenizer>, bos: usize, stops: Vec<usize> },
 }
 
 impl Text {
     /// The tokenizer and stop tokens a GGUF file's metadata describes.
     pub fn from_gguf(g: &crate::format::gguf::Gguf) -> io::Result<Text> {
-        let tok = bytelevel::Tokenizer::from_gguf(g)?;
         let id = |k: &str| g.get(k).and_then(Value::as_u64).map(|v| v as usize);
+        if g.get("tokenizer.ggml.model").and_then(Value::as_str) == Some("gemma4") {
+            let tok = spm_bpe::Tokenizer::from_gguf(g)?;
+            let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
+            stops.extend(tok.token_id("<turn|>"));
+            let bos = id("tokenizer.ggml.bos_token_id").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no BOS token"))?;
+            return Ok(Text::Gemma4 { tok: Box::new(tok), bos, stops });
+        }
+        let tok = bytelevel::Tokenizer::from_gguf(g)?;
         let mut stops: Vec<usize> = id("tokenizer.ggml.eos_token_id").into_iter().collect();
         stops.extend(tok.token_id("<|im_end|>"));
         stops.extend(tok.token_id("<|endoftext|>"));
@@ -45,6 +55,7 @@ impl Text {
                 let ids = tok.encode(prompt);
                 if ids.is_empty() { vec![*start] } else { ids }
             }
+            Text::Gemma4 { tok, bos, .. } => std::iter::once(*bos).chain(tok.encode(prompt)).collect(),
         }
     }
 
@@ -58,6 +69,7 @@ impl Text {
                 if p.len() == 1 && !(p[0].is_ascii_graphic() || p[0].is_ascii_whitespace()) { Vec::new() } else { p }
             }
             Text::Hf { tok, .. } => tok.token_bytes(next),
+            Text::Gemma4 { tok, .. } => tok.token_bytes(next),
         }
     }
 
@@ -67,22 +79,25 @@ impl Text {
         match self {
             Text::Llama2c(_) => Vec::new(),
             Text::Hf { tok, .. } => tok.token_bytes(id),
+            Text::Gemma4 { tok, bos, .. } => if id == *bos { Vec::new() } else { tok.token_bytes(id) },
         }
     }
 
     /// The token llama.cpp puts at the start of each perplexity chunk, if
-    /// the tokenizer adds one: BOS for llama2.c, none for SmolLM2 / Qwen2.
+    /// the tokenizer adds one: BOS for llama2.c and Gemma 4, none for
+    /// SmolLM2 / Qwen2.
     pub fn chunk_bos(&self) -> Option<usize> {
         match self {
             Text::Llama2c(_) => Some(l2c_tok::BOS),
             Text::Hf { .. } => None,
+            Text::Gemma4 { bos, .. } => Some(*bos),
         }
     }
 
     pub fn is_stop(&self, id: usize) -> bool {
         match self {
             Text::Llama2c(_) => id == l2c_tok::BOS,
-            Text::Hf { stops, .. } => stops.contains(&id),
+            Text::Hf { stops, .. } | Text::Gemma4 { stops, .. } => stops.contains(&id),
         }
     }
 
@@ -90,11 +105,26 @@ impl Text {
         matches!(self, Text::Hf { lfm3: true, .. })
     }
 
+    /// Whether this family's chat template reasons by default (LFM3 does;
+    /// Gemma 4's `enable_thinking` is off unless asked).
+    pub fn thinks_by_default(&self) -> bool {
+        !matches!(self, Text::Gemma4 { .. })
+    }
+
+    /// The tags around a reasoning span in a reply.
+    pub fn think_tags(&self) -> (&'static [u8], &'static [u8]) {
+        match self {
+            Text::Gemma4 { .. } => (b"<|channel>", b"<channel|>"),
+            _ => (b"<think>", b"</think>"),
+        }
+    }
+
     /// The prompt for a one-turn chat, in this model family's template.
     pub fn chat_prompt(&self, system: Option<&str>, user: &str, thinking: bool) -> String {
         match self {
             Text::Llama2c(_) => user.to_string(),
             Text::Hf { lfm3: true, .. } => crate::chat::lfm3(system, user, thinking),
+            Text::Gemma4 { .. } => crate::chat::gemma4(system, user, thinking),
             Text::Hf { .. } => crate::chat::chatml(system.unwrap_or(crate::chat::QWEN_DEFAULT_SYSTEM), user),
         }
     }
@@ -458,7 +488,7 @@ impl Drafter {
 #[cfg(feature = "vulkan")]
 pub struct GpuSession {
     // Declared before `gpu`: its buffers must be freed while the device lives.
-    pub model: crate::model::gpu::GpuModel,
+    pub model: crate::model::gpu::GpuNet,
     pub gpu: crate::kernels::vulkan::Gpu,
     pub text: Text,
     /// With [`GpuSession::open_hybrid`]: the CPU model that runs the
@@ -478,7 +508,7 @@ impl GpuSession {
         let (config, weights, g) = gguf::load(path, max_seq)?;
         let text = Text::from_gguf(&g)?;
         let gpu = crate::kernels::vulkan::Gpu::new().map_err(io::Error::other)?;
-        let model = crate::model::gpu::GpuModel::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
+        let model = crate::model::gpu::GpuNet::with(&gpu, config, weights, opt).map_err(io::Error::other)?;
         Ok(GpuSession { model, gpu, text, cpu: None, lookup_fixed: false })
     }
 
@@ -492,8 +522,27 @@ impl GpuSession {
     /// is not built (`f32_gemm`): ~280 MB and ~2.5 s of loading less for
     /// Qwen2.5-0.5B Q4_0 on the phone.
     pub fn open_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
-        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
+        Self::open_hybrid_or_gpu(path, max_seq, cores, false)
+    }
+
+    /// [`GpuSession::open_hybrid`] where the model allows it, else (Gemma 4:
+    /// its GPU path has no CPU prefill yet) [`GpuSession::open`], the prompt
+    /// on the GPU. For callers that prefer the CPU's prompt but take the
+    /// GPU's (the C ABI, the app); `cpu` tells which they got.
+    pub fn open_prefer_hybrid(path: &Path, max_seq: usize, cores: &[usize]) -> io::Result<GpuSession> {
+        Self::open_hybrid_or_gpu(path, max_seq, cores, true)
+    }
+
+    fn open_hybrid_or_gpu(path: &Path, max_seq: usize, cores: &[usize], fall_back: bool) -> io::Result<GpuSession> {
         let (config, weights, _) = gguf::load(path, max_seq)?;
+        if !config.uniform() {
+            if fall_back {
+                drop(weights);
+                return GpuSession::open(path, max_seq);
+            }
+            return Err(io::Error::other("Gemma 4 on the GPU runs its prompt on the GPU; a CPU prefill (cores) is not supported yet"));
+        }
+        let mut s = GpuSession::open_with(path, max_seq, crate::model::gpu::Options { f32_gemm: true, ..Default::default() })?;
         let mut cpu = Transformer::new(config, weights);
         cpu.set_pool(ThreadPool::new(cores)?);
         s.cpu = Some(cpu);
@@ -505,7 +554,7 @@ impl GpuSession {
     /// copied to the GPU), otherwise batched on the GPU
     /// ([`crate::model::gpu::GpuModel::forward_batch`]).
     pub fn generate(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, mut emit: impl FnMut(&[u8]) -> bool) -> Stats {
-        let steps = steps.min(self.model.config.seq_len);
+        let steps = steps.min(self.model.config().seq_len);
         let tokens = self.text.encode(prompt);
         let np = tokens.len().min(steps);
         let mut stats = Stats { prefill_tokens: np, ..Stats::default() };
@@ -542,10 +591,10 @@ impl GpuSession {
         if let Some(cpu) = &mut self.cpu {
             let logits = cpu.forward_batch(tokens, 0).to_vec();
             let (k, v) = cpu.kv_cache();
-            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len());
+            self.model.load_kv(k, v, cpu.config.seq_len, tokens.len()).expect("KV cache to the GPU");
             return logits;
         }
-        let b = self.model.batch;
+        let b = self.model.batch();
         let mut logits = Vec::new();
         for (i, part) in tokens.chunks(b).enumerate() {
             logits = self.model.forward_batch(&self.gpu, part, i * b).expect("GPU prompt pass").to_vec();
@@ -561,8 +610,8 @@ impl GpuSession {
     /// GPU has int8 dot products). Greedy text is plain GPU decoding's up
     /// to near ties; sampled text keeps the sampler's distribution.
     pub fn generate_lookup(&mut self, prompt: &str, sampler: &mut Sampler, steps: usize, k: usize, ngram: usize, mut emit: impl FnMut(&[u8]) -> bool) -> (Stats, Lookup) {
-        let steps = steps.min(self.model.config.seq_len);
-        let k = k.min(self.model.few.saturating_sub(1));
+        let steps = steps.min(self.model.config().seq_len);
+        let k = k.min(self.model.few().saturating_sub(1));
         let mut hist = self.text.encode(prompt);
         let (mut stats, mut look) = (Stats::default(), Lookup::default());
         let mut len = DraftLen::new(k);
@@ -572,7 +621,7 @@ impl GpuSession {
         stats.prefill = t0.elapsed();
         stats.prefill_tokens = np;
         let t1 = Instant::now();
-        let vocab = self.model.config.vocab_size;
+        let vocab = self.model.config().vocab_size;
         // `pos`: positions in the cache; `next` is certain but not yet in it.
         let mut pos = np;
         if np == hist.len() {

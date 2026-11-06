@@ -531,6 +531,54 @@ pub fn swiglu(gate: &mut [f32], up: &[f32]) {
     super::scalar::swiglu(&mut gate[n4..], &up[n4..]);
 }
 
+/// GELU (tanh approximation) times `up`, four lanes at a time (see
+/// [`super::gelu_tanh`]). `0.5 (1 + tanh(z)) = sigmoid(2z)`, so this is
+/// `x · sigmoid(2z) · u` with `sigmoid` as in [`swiglu`]. The last 0–3
+/// values go through the scalar version.
+#[inline(never)] // keep a separate symbol so profiles attribute time per kernel
+pub fn gelu_tanh(gate: &mut [f32], up: &[f32]) {
+    assert_eq!(gate.len(), up.len());
+    let n4 = gate.len() / 4 * 4;
+    const C2: f32 = 2.0 * 0.797_884_6; // 2 √(2/π)
+    // SAFETY: vector accesses stay below n4 <= both lengths.
+    unsafe {
+        let (g, u) = (gate.as_mut_ptr(), up.as_ptr());
+        let one = vdupq_n_f32(1.0);
+        for i in (0..n4).step_by(4) {
+            let x = vld1q_f32(g.add(i));
+            let z = vmulq_n_f32(vmulq_f32(x, vfmaq_n_f32(one, vmulq_f32(x, x), 0.044715)), C2);
+            let e = exp_neg(vnegq_f32(vabsq_f32(z)));
+            let num = vbslq_f32(vcgeq_f32(z, vdupq_n_f32(0.0)), one, e);
+            let sig = vdivq_f32(num, vaddq_f32(one, e));
+            vst1q_f32(g.add(i), vmulq_f32(vmulq_f32(x, sig), vld1q_f32(u.add(i))));
+        }
+    }
+    super::scalar::gelu_tanh(&mut gate[n4..], &up[n4..]);
+}
+
+/// `x = cap · tanh(x / cap)` in place, four lanes at a time (see
+/// [`super::softcap`]): `tanh(v) = sign(v) (1 − e) / (1 + e)` with
+/// `e = e^(−2|v|)` from [`exp_neg`]. The last 0–3 values go through the
+/// scalar version.
+#[inline(never)]
+pub fn softcap(x: &mut [f32], cap: f32) {
+    let n4 = x.len() / 4 * 4;
+    // SAFETY: vector accesses stay below n4 <= x.len().
+    unsafe {
+        let p = x.as_mut_ptr();
+        let one = vdupq_n_f32(1.0);
+        for i in (0..n4).step_by(4) {
+            let v = vld1q_f32(p.add(i));
+            let e = exp_neg(vmulq_n_f32(vabsq_f32(v), -2.0 / cap));
+            let t = vdivq_f32(vsubq_f32(one, e), vaddq_f32(one, e));
+            // sign(v) · t: copy v's sign bit onto t (t >= 0).
+            let signed = vbslq_f32(vdupq_n_u32(0x8000_0000), v, t);
+            vst1q_f32(p.add(i), vmulq_n_f32(signed, cap));
+        }
+    }
+    super::scalar::softcap(&mut x[n4..], cap);
+}
+
 /// Softmax in place, four lanes at a time: max, then `e^(x - max)` with
 /// [`exp_neg`] and their sum, then a division by the sum. The last 0-3
 /// values go through the same vector code, padded with -inf (whose `e^x` is

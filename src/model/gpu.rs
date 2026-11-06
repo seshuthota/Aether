@@ -22,6 +22,10 @@
 //! per 64 tokens. The activation buffers hold `batch` rows; decoding uses
 //! the first.
 
+mod gemma;
+
+pub use gemma::GemmaGpu;
+
 use super::transformer::Weights;
 use super::{Config, RopeLayout};
 use crate::kernels::vulkan::{Bound, Buffer, Commands, Gpu, Kernel, MatQ, MatQ4_0, MatQ4_0T, MatQT, Recorder, Result, groups_for};
@@ -499,6 +503,9 @@ impl GpuModel {
         if c.layers.iter().any(|l| matches!(l, crate::model::config::LayerKind::Conv { .. })) {
             return Err("LFM3's hybrid conv/attention stack is CPU-only; the GPU path is a later plan".into());
         }
+        if !c.uniform() {
+            return Err("per-layer shapes, shared KV and per-layer embeddings (Gemma 4) are CPU-only; the GPU path is a later plan".into());
+        }
         assert!(hs <= 64, "the attention shaders need head_size <= 64");
         // Flash attention has no parts and no merge, so its batch does not
         // shrink with the context; the two older prompt shaders' still does.
@@ -516,12 +523,13 @@ impl GpuModel {
         let mut layers = Vec::new();
         for (l, lw) in weights.layers.iter().enumerate() {
             let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
+            let (wk, wv) = a.kv().ok_or_else(|| format!("layer {l} has no K/V"))?;
             let bias = |b: &Option<crate::aligned::AlignedBuf>, n: usize| match b {
                 Some(b) => f32buf(b),
                 None => zeros(n),
             };
             layers.push(Layer {
-                wqkv: parts(gpu, &[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
+                wqkv: parts(gpu, &[(&a.wq, dim), (wk, kv_dim), (wv, kv_dim)], &format!("layer {l} wq/wk/wv"), |ws| Mat::new(gpu, ws, "wq/wk/wv"))?,
                 wo: mat(&a.wo, dim, "wo")?,
                 w_gate_up: parts(gpu, &[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", |ws| Mat::new(gpu, ws, "w_gate/w_up"))?,
                 w_down: mat(&lw.w_down, dim, "w_down")?,
@@ -569,10 +577,10 @@ impl GpuModel {
 
         let rms = Kernel::new(gpu, crate::spirv!("rmsnorm"), 3, 12)?;
         let post = Kernel::new(gpu, crate::spirv!("qkv_post"), 9, 24)?;
-        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 24)?;
+        let attn = Kernel::new(gpu, crate::spirv!("attention"), 5, 28)?;
         let attn_tile = Kernel::new(gpu, crate::spirv!("attention_tile"), 5, 28)?;
         let attn_flash = Kernel::new(gpu, crate::spirv!("attention_flash"), 5, 24)?;
-        let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 8)?;
+        let merge = Kernel::new(gpu, crate::spirv!("attention_merge"), 3, 12)?;
         let swiglu = Kernel::new(gpu, crate::spirv!("swiglu"), 2, 4)?;
         let argmax = Kernel::new(gpu, crate::spirv!("argmax"), 3, 8)?;
         // In decode, wo and down add their products to the residual stream
@@ -737,9 +745,10 @@ impl GpuModel {
             let mut mm = Vec::new();
             for (l, lw) in weights.layers.iter().enumerate() {
                 let a = lw.attention().ok_or_else(|| format!("layer {l} is not attention"))?;
+            let (wk, wv) = a.kv().ok_or_else(|| format!("layer {l} has no K/V"))?;
                 let mut h = |ws: &[(&Weight, usize)], what: &str, accum: bool, out: &Buffer| h_parts(gpu, &mut ks, int8, pure, ws, &format!("layer {l} {what}"), accum, &xt, out);
                 mm.push([
-                    h(&[(&a.wq, dim), (&a.wk, kv_dim), (&a.wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
+                    h(&[(&a.wq, dim), (wk, kv_dim), (wv, kv_dim)], "wq/wk/wv", false, &qkv)?,
                     h(&[(&a.wo, dim)], "wo", true, &x)?,
                     h(&[(&lw.w_gate, hid), (&lw.w_up, hid)], "w_gate/w_up", false, &hb12)?,
                     h(&[(&lw.w_down, dim)], "w_down", true, &x)?,
@@ -908,10 +917,10 @@ impl GpuModel {
                 if n > 1 && !few && !self.attn_per_token {
                     r.dispatch(&b.attn_tile, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, nt]), [c.n_heads as u32, chunks, nt.div_ceil(32)]);
                 } else {
-                    r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim]), [c.n_heads as u32, chunks, nt]);
+                    r.dispatch(&b.attn, &push(&[c.n_heads as u32, c.n_kv_heads as u32, hs as u32, chunks, layer_off, qkv_dim, 0]), [c.n_heads as u32, chunks, nt]);
                 }
                 end(r, "attention");
-                r.dispatch(&b.merge, &push(&[hs as u32, chunks]), [c.n_heads as u32, nt, 1]);
+                r.dispatch(&b.merge, &push(&[hs as u32, chunks, 0]), [c.n_heads as u32, nt, 1]);
                 end(r, "attention merge");
             }
             product(r, std::slice::from_ref(&b.o), &b.mm[1], &b.few[1], &[&ly.wo], 0, h(l, 1, |f| &f.t_xb2), (1, q8_b(1)));
@@ -1096,6 +1105,85 @@ impl GpuModel {
     /// the model was made with `profile`.
     pub fn profile(&self, gpu: &Gpu) -> Result<Vec<(&'static str, f64)>> {
         Ok(per_stage(&self.stages, &gpu.stamps(&self.step)?))
+    }
+}
+
+/// The model a GPU session runs: the uniform path ([`GpuModel`]: one head
+/// size, SwiGLU, tuned and fused) or Gemma 4's per-layer path
+/// ([`GemmaGpu`]), chosen by the config.
+pub enum GpuNet {
+    Uniform(GpuModel),
+    Gemma(GemmaGpu),
+}
+
+impl GpuNet {
+    pub fn with(gpu: &Gpu, config: Config, weights: Weights, opt: Options) -> Result<GpuNet> {
+        Ok(if config.uniform() { GpuNet::Uniform(GpuModel::with(gpu, config, weights, opt)?) } else { GpuNet::Gemma(GemmaGpu::with(gpu, config, weights, opt)?) })
+    }
+
+    pub fn config(&self) -> &Config {
+        match self {
+            GpuNet::Uniform(m) => &m.config,
+            GpuNet::Gemma(m) => &m.config,
+        }
+    }
+
+    /// Tokens per prompt pass.
+    pub fn batch(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.batch,
+            GpuNet::Gemma(m) => m.batch,
+        }
+    }
+
+    /// Tokens a few-token pass takes (1 for Gemma 4: no such pass yet, so
+    /// prompt lookup decodes one token at a time).
+    pub fn few(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.few,
+            GpuNet::Gemma(_) => 1,
+        }
+    }
+
+    pub fn forward(&mut self, gpu: &Gpu, token: usize, pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward(gpu, token, pos),
+            GpuNet::Gemma(m) => m.forward(gpu, token, pos),
+        }
+    }
+
+    pub fn greedy(&self) -> usize {
+        match self {
+            GpuNet::Uniform(m) => m.greedy(),
+            GpuNet::Gemma(m) => m.greedy(),
+        }
+    }
+
+    pub fn forward_batch(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward_batch(gpu, tokens, pos),
+            GpuNet::Gemma(m) => m.forward_batch(gpu, tokens, pos),
+        }
+    }
+
+    pub fn forward_few(&mut self, gpu: &Gpu, tokens: &[usize], pos: usize) -> Result<&[f32]> {
+        match self {
+            GpuNet::Uniform(m) => m.forward_few(gpu, tokens, pos),
+            GpuNet::Gemma(m) if tokens.len() == 1 => m.forward(gpu, tokens[0], pos),
+            GpuNet::Gemma(_) => Err("Gemma 4 on the GPU has no few-token pass yet".into()),
+        }
+    }
+
+    /// See [`GpuModel::load_kv`]; Gemma 4's cache layout (full-length
+    /// sliding layers, shared layers) differs from the CPU's (rings).
+    pub fn load_kv(&mut self, keys: &[f32], values: &[f32], seq_len: usize, n: usize) -> Result<()> {
+        match self {
+            GpuNet::Uniform(m) => {
+                m.load_kv(keys, values, seq_len, n);
+                Ok(())
+            }
+            GpuNet::Gemma(_) => Err("Gemma 4 on the GPU runs its prompt on the GPU (no CPU prefill yet)".into()),
+        }
     }
 }
 

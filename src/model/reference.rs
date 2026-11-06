@@ -45,7 +45,7 @@ pub fn check_against_transformers(t: &mut Transformer, acts: &str, label: &str) 
     let mut logits = t.forward_batch_traced(&prompt, 0, &mut obs).to_vec();
     let mut worst: BTreeMap<String, f32> = BTreeMap::new();
     for ((name, layer, pos), ours) in &obs.0 {
-        if matches!(name.as_str(), "q" | "k" | "attn" | "swiglu") {
+        if matches!(name.as_str(), "q" | "k" | "attn" | "swiglu" | "ple" | "ple_out" | "layer_out") {
             continue;
         }
         let key = if *layer < 0 { name.clone() } else { format!("L{layer}.{name}") };
