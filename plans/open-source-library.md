@@ -6,6 +6,29 @@ Section 8 says which steps start now (additive, no file moves) and which
 wait for the Gemma merge (plans/gemma4-phone-checks.md), so the moves do
 not collide with the phone work.
 
+## Progress (2026-11-06)
+
+`../aether-infer` at `cf7872f`, all local, nothing pushed:
+
+| Step | State |
+| --- | --- |
+| A1–A4, L1–L5 | Done; REVIEW 1 and REVIEW 2 passed |
+| C1 | Done: the three phone sessions' commits carried over (plans only; their results are in this repo) |
+| `gemma4-devices` → this repo's `main` | Merged (`66fbe23`), cleanly; no branch or worktree deleted |
+| R1 | Done: workspace layout, then the rustfmt commit |
+| R2 | Done: the CLI generates through the API (output byte-identical to before on 13 runs), the C ABI runs on it and gains `aether_version` / `tokenize` / `detokenize` / `eval` / `vocab_size` and `AETHER_ERR_BACKEND`, the engine's modules are `pub(crate)` (an `internals` feature opens them for the CLI's tools and `bench/`), GPU / DSP decode errors return instead of aborting, `Session::eval` refuses gaps and step-backs on LFM3 / Gemma 4, `Sampler` checks its input |
+| R2 extras | clippy `-D warnings` clean (host and Android target) and CI runs `cargo fmt --check`; the 10 model files that linked into `Aether-impl` are hard links; torch in `tools/.venv`; 9 host-only tests that had skipped silently since R1 run again |
+| R3 | Done: `docs/` (getting started, backends, architecture, C API, benchmarks), issue templates, a Rust and a C logits example |
+| R4 | On the PC: `android/aether` builds the AAR and the app builds from it (also from the `.aar` file alone); not run on the phone |
+| Review of R2–R4 | Passed (2026-11-06), with the `Sampler` / CLAUDE.md / this file fixes since applied |
+| **Owed, phone** | REVIEW 3: `dsp_ppl` on the new paths, the app and the AAR on the phone; Gemma 4's remaining phone items (`plans/gemma4-phone-checks.md`) |
+| Then | C3–C6 (data into `aether-infer`, notes, remove the worktrees, clean this repo, with the user), REVIEW 4, R5 and REVIEW 5 |
+
+Checks on the PC at that point: the full suite with `vulkan,hexagon` (160
+passed, 1 ignored, plus the C ABI's 4) and the Gemma 4 BF16 test alone;
+`vk_ppl` on Qwen2.5-0.5B Q4_0, 4 chunks: batch 15.8560, decode 15.8023,
+as in A3.
+
 ## 0. Where it stands
 
 **Already true:**
