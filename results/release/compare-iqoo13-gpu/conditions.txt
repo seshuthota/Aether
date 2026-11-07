@@ -24,3 +24,12 @@ round 2, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
   end 44 -> 53 °C
 round 2, llama.cpp, qwen2.5-0.5b-q4_k_m (start 43 °C)
   end 43 -> 51 °C
+round 3 added 2026-11-07T06:04:25Z for the wide decode ranges (aether md5 e11a8e1e unchanged)
+round 3, llama.cpp, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 63 °C
+round 3, aether, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 52 °C
+round 3, llama.cpp, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 63 °C
+round 3, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 55 °C

@@ -6,9 +6,10 @@ Section 8 says which steps start now (additive, no file moves) and which
 wait for the Gemma merge (plans/gemma4-phone-checks.md), so the moves do
 not collide with the phone work.
 
-## Progress (2026-11-06)
+## Progress (2026-11-07)
 
-`../aether-infer` at `cf7872f`, all local, nothing pushed:
+`../aether-infer` at `e5e0bbf`, all local, nothing pushed (details:
+`aether-infer/plans/HANDOFF-2026-11-07.md`):
 
 | Step | State |
 | --- | --- |
@@ -19,10 +20,11 @@ not collide with the phone work.
 | R2 | Done: the CLI generates through the API (output byte-identical to before on 13 runs), the C ABI runs on it and gains `aether_version` / `tokenize` / `detokenize` / `eval` / `vocab_size` and `AETHER_ERR_BACKEND`, the engine's modules are `pub(crate)` (an `internals` feature opens them for the CLI's tools and `bench/`), GPU / DSP decode errors return instead of aborting, `Session::eval` refuses gaps and step-backs on LFM3 / Gemma 4, `Sampler` checks its input |
 | R2 extras | clippy `-D warnings` clean (host and Android target) and CI runs `cargo fmt --check`; the 10 model files that linked into `Aether-impl` are hard links; torch in `tools/.venv`; 9 host-only tests that had skipped silently since R1 run again |
 | R3 | Done: `docs/` (getting started, backends, architecture, C API, benchmarks), issue templates, a Rust and a C logits example |
-| R4 | On the PC: `android/aether` builds the AAR and the app builds from it (also from the `.aar` file alone); not run on the phone |
+| R4 | Done: `android/aether` builds the AAR and the app builds from it (also from the `.aar` file alone); on the phone (2026-11-06) the app replies on CPU, GPU and DSP, and the `vulkan`-only build (the release AAR's features) on CPU and GPU |
 | Review of R2–R4 | Passed (2026-11-06), with the `Sampler` / CLAUDE.md / this file fixes since applied |
-| **Owed, phone** | REVIEW 3: `dsp_ppl` on the new paths, the app and the AAR on the phone; Gemma 4's remaining phone items (`plans/gemma4-phone-checks.md`) |
-| Then | C3–C6 (data into `aether-infer`, notes, remove the worktrees, clean this repo, with the user), REVIEW 4, R5 and REVIEW 5 |
+| REVIEW 3 | Passed on the phone 2026-11-06: `dsp_ppl` (wikitext-2, 20 × 512) equal to the recorded digits on all 5 files, the app as in R4 (`results/release/README.md`, `d91d5b6`). Gemma 4's phone items are done; its DSP path is checked but waits on branch `gemma4-dsp` |
+| C3 | Done (2026-11-07): `testdata/` and `hostdata/` in `aether-infer` are real files, `tools/.venv` is its own. Checked with `Aether-impl` and `Aether-next` renamed away: host and Android builds with `vulkan,hexagon`, the suite 188 passed / 1 ignored (the BF16 test left out, as A3), `vk_ppl` batch 15.8560, decode 15.8023. Only `scripts/kquant-phone.sh` still defaults to `../Aether-impl` (`IMPL=` overrides it) |
+| Then | C4–C6 (notes, remove the worktrees, clean this repo, with the user), REVIEW 4, R5 and REVIEW 5 |
 
 Checks on the PC at that point: the full suite with `vulkan,hexagon` (160
 passed, 1 ignored, plus the C ABI's 4) and the Gemma 4 BF16 test alone;

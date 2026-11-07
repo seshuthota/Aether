@@ -1,0 +1,47 @@
+date: 2026-11-07T06:21:07Z, start 44 °C, aether main e5e0bbf, llama.cpp d02b4c0d6, -t 6
+target-phone/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 37.2 MB/s (22924536 bytes in 0.587s)
+######## qwen2.5-0.5b-q4_0
+== run: greedy text, 32 tokens, qwen2.5-0.5b-q4_0.gguf
+  diverges: The capital of France is (the first 58 of 167 characters equal)
+    llama.cpp: ...the world and the most populous city in the world. It is als
+    aether:    ...France and the second largest in Europe. It is also the capi
+  diverges: Once upon a time (the first 56 of 158 characters equal)
+    llama.cpp: ...amount of money. He handed the bank clerk the amount of mone
+    aether:    ...money. He went in with a 5000 rupee note and withdrew 1000
+  same:     def fibonacci(n):
+  diverges: The three primary colors are (the first 156 of 167 characters equal)
+    llama.cpp: ...to create a
+    aether:    ...in a certain
+== perplexity: -c 512 --chunks 8
+  llama.cpp: Final estimate: PPL = 18.5542 +/- 1.23931
+  aether:    Final estimate: PPL = 18.5571 +/- 1.23992
+== bench: -p 64 -n 16 -r 2 -t 6
+  | model | backend | threads | test | llama.cpp t/s | aether t/s | aether / llama.cpp |
+  | --- | --- | ---: | ---: | ---: | ---: | ---: |
+  | qwen2.5-0.5b-q4_0.gguf | CPU | 6 | pp64 | 721.5 (716.7–726.3) | 664.7 (654.6–674.7) | 0.92× |
+  | qwen2.5-0.5b-q4_0.gguf | CPU | 6 | tg16 | 182.7 (181.2–184.2) | 177.5 (177.4–177.5) | 0.97× |
+  
+  Median tokens per second (min–max over every repetition of every round).
+greedy texts: 1 of 4 equal
+######## qwen2.5-0.5b-q4_k_m
+== run: greedy text, 32 tokens, qwen2.5-0.5b-q4_k_m.gguf
+  diverges: The capital of France is (the first 87 of 167 characters equal)
+    llama.cpp: ...city in the world. It is located in the south of France, on 
+    aether:    ...in the world. It is located on the left bank of the Seine Ri
+  same:     Once upon a time
+  same:     def fibonacci(n):
+  diverges: The three primary colors are (the first 80 of 169 characters equal)
+    llama.cpp: ...way that creates a new color, what is the probability that t
+    aether:    ...certain ratio, you get a color that is a shade of gray. If y
+== perplexity: -c 512 --chunks 8
+  llama.cpp: Final estimate: PPL = 15.5057 +/- 1.00063
+  aether:    Final estimate: PPL = 15.5163 +/- 1.00161
+== bench: -p 64 -n 16 -r 2 -t 6
+  | model | backend | threads | test | llama.cpp t/s | aether t/s | aether / llama.cpp |
+  | --- | --- | ---: | ---: | ---: | ---: | ---: |
+  | qwen2.5-0.5b-q4_k_m.gguf | CPU | 6 | pp64 | 158.2 (156.8–159.6) | 549.9 (545.3–554.5) | 3.48× |
+  | qwen2.5-0.5b-q4_k_m.gguf | CPU | 6 | tg16 | 94.7 (94.4–94.9) | 117.7 (112.5–123.0) | 1.24× |
+  
+  Median tokens per second (min–max over every repetition of every round).
+greedy texts: 2 of 4 equal
+end 64 °C

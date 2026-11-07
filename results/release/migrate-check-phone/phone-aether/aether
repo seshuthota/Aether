@@ -1,0 +1,3 @@
+#!/bin/bash
+# Runs main's aether (pushed as aether-main) on the phone with these arguments.
+exec adb shell "/data/local/tmp/aether/aether-main $(printf '%q ' "$@")"

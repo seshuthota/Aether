@@ -1,0 +1,3 @@
+#!/bin/bash
+# Runs llama-bench on the phone with these arguments (quoted for the phone's shell).
+exec adb shell "cd /data/local/tmp/llama-android && LD_LIBRARY_PATH=. ./llama-bench $(printf '%q ' "$@") </dev/null"

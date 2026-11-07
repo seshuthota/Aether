@@ -69,6 +69,63 @@ rounds, the last on 2026-11-07 (one cell cut off overnight was redone):
 `compare-iqoo13-gpu/table.md`. Scripts: `round2.sh`, `gpu-resume.sh`.
 Summary and caveats: `aether-infer/plans/HANDOFF-2026-11-07.md` section 5.
 
+## Update 2026-11-07 (later): LFM3 re-run, a third Adreno round, the GPU prompt path
+
+Same binaries as the matrix (aether md5 `e11a8e1e`, llama.cpp `d02b4c0d6` /
+`d00685831`), same args, cool-down below 45 °C. Script:
+`rerun-2026-11-07.sh`.
+
+**LFM3-1.7B Q4_K_M on the CPU**, alone, two new rounds in opposite order
+(`compare-iqoo13-cpu-lfm3/`). Both engines are steady now (aether decode
+45.0–47.5 tok/s across every repetition, against 14.8–34.7 in the
+disturbed round 2), and the picture changes: decode is level or slightly
+ours (tg128 45.7 vs 41.6; at depth 512 37.1 vs 36.9), and llama.cpp leads
+the prompt by 5–29 % (pp64 154.7 vs 120.1, pp512 139.1 vs 132.6; 4–10 % at
+depth 512). `compare-iqoo13-cpu/table.md` now takes its LFM3 rows from
+this run (the other models' rows are unchanged); the table with the
+2026-11-06 LFM3 cells is kept as `table-2026-11-06.md`, and those JSON
+files stay in `compare-iqoo13-cpu/`.
+
+**Adreno, round 3** (llama.cpp first, as odd rounds), for the wide decode
+ranges. Round 3 was the quiet one: decode ranges are tight on both
+engines (aether Q4_0 91–94 tok/s, llama.cpp 62–64), while round 1 was low
+for both. Median tg128 per round, depth 0:
+
+| | round 1 | round 2 | round 3 |
+| --- | --- | --- | --- |
+| aether Q4_0 | 70.5 | 77.3 | 92.8 |
+| llama.cpp Q4_0 | 27.1 | 59.4 | 63.5 |
+| aether Q4_K_M | 55.2 | 70.6 | 73.3 |
+| llama.cpp Q4_K_M | 10.6 | 10.2 | 2.5 (2–9) |
+
+Aether is ahead in every round; over all three rounds tg128 is 91.0 vs
+59.4 (Q4_0) and 72.1 vs 9.8 (Q4_K_M). `compare-iqoo13-gpu/table.md` covers
+the three rounds; the two-round table is `table-rounds12.md`.
+
+**Which prompt path `aether bench -dev gpu` measures**: the whole-GPU one.
+`-dev gpu` is `Backend::Gpu` (only `--cpu-prompt` makes it
+`GpuWithCpuPrompt`), a multi-token `Session::eval` runs
+`GpuModel::forward_batch`, and every aether GPU row in the JSON says
+`Vulkan`, `n_batch` 256, `n_gpu_layers` 99. The 267 tok/s that looked
+inconsistent is step 7 of `results/phase-l3.md` (the f32 shader); the later
+steps there (f16 and int8 products, tiled prompt attention, 256-token
+passes) reach 1307 / 989 tok/s at pp512 in `vk_pp` (Q4_0 / Q4_K_M), the
+bench's 1315 / 959. The GPU prompt rows need no relabel.
+
+**P3: `bench/migrate-check.sh` on the phone** (`migrate-check-phone/`:
+`run.sh`, the adb wrappers it passes as `LLAMA` / `AETHER`, `output.txt`).
+aether at `main` `e5e0bbf` against llama.cpp `d02b4c0d6`, `-t 6`, no
+f32 file on the phone, so no quantize step:
+
+| | greedy text, 32 tokens | perplexity, 8 × 512 (llama.cpp / aether) | pp64 / tg16 (llama.cpp / aether) |
+| --- | --- | --- | --- |
+| Qwen Q4_0 | 1 of 4 equal, the rest part after 56–156 characters | 18.5542 / 18.5571 | 721 / 665, 183 / 178 |
+| Qwen Q4_K_M | 2 of 4 equal, the rest part after 80–87 characters | 15.5057 / 15.5163 | 158 / 550, 95 / 118 |
+
+Perplexity within 0.07 %. The greedy splits are near-ties, as on the PC
+(5 of 8 equal there, parting after 56–142 characters): the two engines'
+arithmetic differs in the last bits.
+
 ## Left for the next phone session (as of 2026-11-06; items 1-2 since done, see above)
 
 1. **Matrix round 2** (opposite order) for the four CPU models, then
