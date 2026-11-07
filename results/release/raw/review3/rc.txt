@@ -1,0 +1,6 @@
+smol-q4_0 rc=0
+qwen-q4_0 rc=0
+smol-q4_0-prefill rc=0
+smol-q4km-hmx rc=0
+qwen-q4km-hmx rc=0
+done

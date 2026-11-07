@@ -1,0 +1,17 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 54 ms
+#   attn norm + quantize        140.6 us/token   5.3%
+#   q/k/v                       223.3 us/token   8.4%
+#   bias + RoPE + KV store      278.3 us/token  10.5%
+#   attention + quantize        227.7 us/token   8.6%
+#   wo                          142.8 us/token   5.4%
+#   ffn norm + quantize         142.8 us/token   5.4%
+#   gate/up                     580.8 us/token  21.8%
+#   SwiGLU + quantize           214.6 us/token   8.1%
+#   down                        331.1 us/token  12.4%
+#   final norm + quantize         4.7 us/token   0.2%
+#   classifier                  281.9 us/token  10.6%
+#   argmax                       46.2 us/token   1.7%
+#   thread start                 45.4 us/token   1.7%
+# greedy: The capital of France is the capital of the country. The capital is the seat of the government, the seat of the government is the capital. The capital is the seat of the government. The capital is the seat of the government. The capital is the seat of the government. The capital is the seat of the government
+# 64 positions in 209.1 ms: 306.1 tok/s (2.65 ms per token on the DSP)
+Final estimate: PPL = 27.7234 +/- 1.17484  (5100 tokens scored, 42.2 s, 242.2 tok/s through the DSP)

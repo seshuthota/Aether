@@ -1,0 +1,26 @@
+date: 2026-11-06T18:59:46Z
+host: Linux curious 7.0.0-42-generic #42~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Mon Oct 19 14:43:01 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+llama-bench: adb shell LD_LIBRARY_PATH=/data/local/tmp/llama-ocl/lib /data/local/tmp/llama-ocl/bin/llama-bench -ngl 99 --mmap 0
+aether: adb shell /data/local/tmp/aether/aether bench -dev gpu
+args: -p 64,256,512 -n 128 -d 0,512 -r 5
+rounds: 2, cooled below 45 °C before each run
+model: /data/local/tmp/aether/testdata/gguf/qwen2.5-0.5b-q4_0.gguf
+model: /data/local/tmp/aether/testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf
+round 1, llama.cpp, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 49 °C
+round 1, aether, qwen2.5-0.5b-q4_0 (start 41 °C)
+  end 41 -> 44 °C
+round 1, llama.cpp, qwen2.5-0.5b-q4_k_m (start 43 °C)
+resumed 2026-11-07T04:26:52Z: round 1 llama.cpp q4_k_m was cut off mid-run (partial JSON discarded) and is redone
+round 1, llama.cpp, qwen2.5-0.5b-q4_k_m (start 37 °C)
+  end 37 -> 53 °C
+round 1, aether, qwen2.5-0.5b-q4_k_m (start 43 °C)
+  end 43 -> 49 °C
+round 2, aether, qwen2.5-0.5b-q4_0 (start 43 °C)
+  end 43 -> 48 °C
+round 2, llama.cpp, qwen2.5-0.5b-q4_0 (start 43 °C)
+  end 43 -> 55 °C
+round 2, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 53 °C
+round 2, llama.cpp, qwen2.5-0.5b-q4_k_m (start 43 °C)
+  end 43 -> 51 °C

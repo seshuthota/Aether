@@ -1,0 +1,46 @@
+date: 2026-11-06T14:42:25Z
+host: Linux curious 7.0.0-42-generic #42~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Mon Oct 19 14:43:01 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+llama-bench: adb shell /data/local/tmp/llama-android/llama-bench -t 6 --cpu-mask 0xfc
+aether: adb shell /data/local/tmp/aether/aether bench -t 6 -C 0xfc
+args: -p 64,256,512 -n 128 -d 0,512 -r 5
+rounds: 2, cooled below 45 °C before each run
+model: /data/local/tmp/aether/testdata/gguf/qwen2.5-0.5b-q4_0.gguf
+model: /data/local/tmp/aether/testdata/gguf/qwen2.5-0.5b-q4_k_m.gguf
+model: /data/local/tmp/aether/testdata/gguf/LFM3-1.7B-Q4_K_M.gguf
+model: /data/local/tmp/aether/testdata/gguf/gemma-4-E2B-it-Q4_K_M.gguf
+round 1, llama.cpp, qwen2.5-0.5b-q4_0 (start 43 °C)
+  end 43 -> 71 °C
+round 1, aether, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 71 °C
+round 1, llama.cpp, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 71 °C
+round 1, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 60 °C
+round 1, llama.cpp, LFM3-1.7B-Q4_K_M (start 44 °C)
+  end 44 -> 58 °C
+round 1, aether, LFM3-1.7B-Q4_K_M (start 44 °C)
+  end 44 -> 61 °C
+round 1, llama.cpp, gemma-4-E2B-it-Q4_K_M (start 44 °C)
+  end 44 -> 55 °C
+round 1, aether, gemma-4-E2B-it-Q4_K_M (start 44 °C)
+  end 44 -> 69 °C
+round 2, aether, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 63 °C
+round 2, llama.cpp, qwen2.5-0.5b-q4_0 (start 0 °C)
+round 2 resumed 2026-11-06T17:47:42Z after a phone break (llama-bench md5 1116ba37, aether md5 e11a8e1e, both unchanged)
+round 2, aether, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 73 °C
+round 2, llama.cpp, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 73 °C
+round 2, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 54 °C
+round 2, llama.cpp, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 48 °C
+round 2, aether, LFM3-1.7B-Q4_K_M (start 43 °C)
+  end 43 -> 69 °C
+round 2, llama.cpp, LFM3-1.7B-Q4_K_M (start 44 °C)
+  end 44 -> 69 °C
+round 2, aether, gemma-4-E2B-it-Q4_K_M (start 44 °C)
+  end 44 -> 67 °C
+round 2, llama.cpp, gemma-4-E2B-it-Q4_K_M (start 43 °C)
+  end 43 -> 45 °C
