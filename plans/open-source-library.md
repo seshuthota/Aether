@@ -28,7 +28,9 @@ not collide with the phone work.
 | C5 | Done (2026-11-07): `Aether-impl` and `Aether-next` removed (their untracked files checked identical to the copies, their data present in `aether-infer`), branches `impl`, `gemma4`, `gemma4-devices` deleted (all merged); in `aether-infer`, the merged `p2-cli` / `p4-library` worktrees and branches too |
 | C6 | Done (2026-11-07): engine paths deleted here (the plans stay); `Cargo.toml` is the learning crate `aether-learn`, depending on `../aether-infer` with `internals`; the user's modules and uncommitted files untouched; `CLAUDE.md` rewritten; the site's home page says where the engine's paths now are (the pages name them as text, no links) |
 | Merges | `gemma4-dsp` and `p5-serve` into `aether-infer`'s `main` (2026-11-07) |
-| Then | REVIEW 4, R5 (private GitHub repo first, seshu's decision 2026-11-07) and REVIEW 5 |
+| REVIEW 4 | Passed (2026-11-07): `scripts/check-guided-pages.py` 93 pages, 0 problems; 1,101 local links and resources on the site resolve (only `_template.html`'s `../` paths, by design); no GitHub link points at a deleted path; the learning crate's tests pass on the PC and the phone; the Pages deploy of the C6 commit succeeded |
+| GitHub | `seshuthota/aether-infer` created **private** and pushed (2026-11-07); CI green after one fix (a sysfs test that needs cpufreq, which runners lack). `Aether` pushed (it was ~150 commits behind) |
+| Then | R5 and REVIEW 5, when seshu decides to go public (not planned for now) |
 
 Checks on the PC at that point: the full suite with `vulkan,hexagon` (160
 passed, 1 ignored, plus the C ABI's 4) and the Gemma 4 BF16 test alone;
