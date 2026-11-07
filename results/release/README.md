@@ -142,3 +142,41 @@ arithmetic differs in the last bits.
 
 The driver used: `bench/compare.sh` with `TEMP_CMD` reading the
 `cpu*` thermal zones and `COOL_C=45`.
+
+## Update 2026-11-07 (evening): round 4 on the Adreno, and the screen
+
+**Adreno round 4** (aether first; aether at `main` `a309a74` pushed as
+`aether-r4`, md5 `0e1ea1fb`; llama.cpp `llama-ocl` unchanged; script
+`gpu-round4.sh`, table `compare-iqoo13-gpu/table-round4.md`, kept apart
+from the three-round `table.md` because the aether binary differs). The
+prompt rows repeat rounds 1–3 within a few per cent (Q4_0 pp512 1284,
+Q4_K_M 966). Decode did not settle: Q4_0 tg128 95.7 (93–102), Q4_K_M
+tg128 75.7, but Q4_K_M tg128 @ d512 43.6 (34–52) against 68.3 before, and
+a re-run of that cell minutes later at 43 °C gave 38.8 ± 8.8 at depth 0.
+llama.cpp's OpenCL Q4_K_M fell to 5.6 tok/s decode and 47–65 prompt.
+
+**The cause: the screen.** `compare.sh` and the round scripts call
+`adb shell` directly, without `scripts/adb-run.sh`'s keep-awake, so the
+screen times out (30 s) early in a run. With it off the phone lowers its
+CPU caps (on battery: cpu0 1.79 / cpu7 1.02 GHz, against 2.00 / 2.25 GHz
+on; read from `scaling_max_freq`), and the GPU decode step is mostly CPU
+submit and wait (`phase-lfm3-devices.md`'s B7 profile). Anything else that
+wakes the screen mid-run (a person, another session's `adb-run.sh`) moves
+the clocks again. Same cell, aether Qwen Q4_K_M on the GPU, alternating,
+each from below 45 °C (`screen-check/out.txt`):
+
+| pass | screen held on: tg128 / @ d512 | screen off: tg128 / @ d512 |
+| --- | --- | --- |
+| 1 | 88.1 ± 8.4 / 82.5 ± 3.8 | 79.0 ± 1.7 / 71.7 ± 1.0 |
+| 2 | 80.3 ± 4.4 / 84.8 ± 11.1 | 51.1 ± 13.6 / 37.6 ± 5.2 |
+
+So every matrix number so far (CPU and Adreno, both engines) was taken
+with the screen state unheld, mostly off. Both engines ran under the same
+conditions in each round, so the comparisons are not biased toward one
+engine, but the absolute numbers are on the lowered caps for an unknown
+part of each run, and the swings between rounds (LFM3 round 2, Adreno
+round 1) fit the screen flipping. Fix (engine `6ec88a6`): `compare.sh`
+takes `WAKE_CMD` (held during every run) and `STATE_CMD` (caps and
+screen recorded before and after each run); `docs/benchmarks.md` asks for
+the screen held on. The matrix needs re-running that way before its
+numbers are published.

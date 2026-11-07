@@ -1,0 +1,25 @@
+target-phone/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 423.5 MB/s (11214408 bytes in 0.025s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2068 skipped.
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 1 | upload 19809 ms
+#   q/k/v                      3033.9 us/token   8.5%
+#   short conv                  111.4 us/token   0.3%
+#   q/k/v norm + RoPE + cache    211.8 us/token   0.6%
+#   attention + quantize        718.3 us/token   2.0%
+#   wo                         1357.9 us/token   3.8%
+#   post-attn norm + add, ffn norm   1038.0 us/token   2.9%
+#   gate/up                    9124.4 us/token  25.6%
+#   GELU + quantize             747.5 us/token   2.1%
+#   down                      12077.0 us/token  33.8%
+#   post-FFN norm + add         978.9 us/token   2.7%
+#   per-layer gate                0.0 us/token   0.0%
+#   per-layer GELU                0.0 us/token   0.0%
+#   per-layer proj                0.0 us/token   0.0%
+#   per-layer norm + add, next norm    865.6 us/token   2.4%
+#   final norm + classifier    5246.8 us/token  14.7%
+#   soft-cap                      0.9 us/token   0.0%
+#   argmax                      118.9 us/token   0.3%
+#   thread start                 54.3 us/token   0.2%
+# greedy: The capital of France is Paris, and the capital of Japan is Tokyo. The capital of Brazil is Brasília, and the capital of Australia is Canberra. The capital of the United States is Washington, D.C. The capital of Canada is Ottawa. The capital of Germany is Berlin. The capital of Italy is Rome
+# 64 positions in 2436.2 ms: 26.3 tok/s (35.69 ms per token on the DSP)
+Final estimate: PPL = 13.7980 +/- 1.29790  (1023 tokens scored, 81.5 s, 25.1 tok/s through the DSP)
+[1]13.7980,

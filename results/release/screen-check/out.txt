@@ -1,0 +1,16 @@
+== pass 1 screen on, start 43 °C, mWakefulness=Awake
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 |        tg128 | 88.13 ± 8.37 |
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 | tg128 @ d512 | 82.45 ± 3.76 |
+   end 54 °C, mWakefulness=Awake
+== pass 1 screen off, start 44 °C, mWakefulness=Asleep
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 |        tg128 | 78.98 ± 1.70 |
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 | tg128 @ d512 | 71.70 ± 1.01 |
+   end 52 °C, mWakefulness=Awake
+== pass 2 screen on, start 44 °C, mWakefulness=Awake
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 |        tg128 |  80.31 ± 4.44 |
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 | tg128 @ d512 | 84.78 ± 11.06 |
+   end 58 °C, mWakefulness=Awake
+== pass 2 screen off, start 44 °C, mWakefulness=Asleep
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 |        tg128 | 51.09 ± 13.61 |
+| qwen2 0.5B Q4_K - Medium | 373.71 MiB | 494.03 M | Vulkan  |       8 | tg128 @ d512 |  37.55 ± 5.19 |
+   end 49 °C, mWakefulness=Awake

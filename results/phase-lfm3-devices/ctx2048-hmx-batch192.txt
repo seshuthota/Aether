@@ -1,0 +1,29 @@
+target-phone/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 397.8 MB/s (11214408 bytes in 0.027s)
+/home/curious/.cache/aether-testdata-sync/./: 1513 files pushed, 555 skipped. 15.4 MB/s (155017204 bytes in 9.617s)
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on the DSP, 6 threads, DMA mask 0x1f, batch 192 | upload 18294 ms
+#   q/k/v                      2737.7 us/token   8.4%
+#   short conv                  107.2 us/token   0.3%
+#   q/k/v norm + RoPE + cache    210.1 us/token   0.6%
+#   attention + quantize        718.7 us/token   2.2%
+#   wo                         1237.8 us/token   3.8%
+#   post-attn norm + add, ffn norm   1020.8 us/token   3.1%
+#   gate/up                    8205.3 us/token  25.1%
+#   GELU + quantize             745.7 us/token   2.3%
+#   down                      10938.4 us/token  33.5%
+#   post-FFN norm + add         972.1 us/token   3.0%
+#   per-layer gate                0.0 us/token   0.0%
+#   per-layer GELU                0.0 us/token   0.0%
+#   per-layer proj                0.0 us/token   0.0%
+#   per-layer norm + add, next norm    865.1 us/token   2.6%
+#   final norm + classifier    4732.7 us/token  14.5%
+#   soft-cap                      0.9 us/token   0.0%
+#   argmax                      118.4 us/token   0.4%
+#   thread start                 54.6 us/token   0.2%
+# greedy: The capital of France is Paris, and the capital of Japan is Tokyo. The capital of Brazil is Brasília, and the capital of Australia is Canberra. The capital of the United States is Washington, D.C. The capital of Canada is Ottawa. The capital of the United Kingdom is London. The capital of Germany
+# 59 positions in 2052.8 ms: 28.7 tok/s (32.67 ms per token on the DSP)
+# prefill   32 tokens:    358.0 ms on the DSP,    89.4 tok/s (median of 5)
+# prefill   64 tokens:    390.2 ms on the DSP,   164.0 tok/s (median of 5)
+# prefill  128 tokens:    446.1 ms on the DSP,   286.9 tok/s (median of 5)
+# prefill  192 tokens:    511.2 ms on the DSP,   375.6 tok/s (median of 5)
+Final estimate: PPL = 13.8022 +/- 1.29796  (1023 tokens scored, 7.7 s, 267.0 tok/s through the DSP)
+[1]13.8022,

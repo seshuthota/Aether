@@ -1,0 +1,5 @@
+engine a309a74, dsp_ppl md5 c5cea72e
+hmx-batch192: start 39 °C, 2026-11-07T14:48:03Z
+  rc=0 end 54 °C
+decode: start 44 °C, 2026-11-07T14:49:18Z
+  rc=0 end 59 °C

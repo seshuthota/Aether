@@ -33,3 +33,12 @@ round 3, llama.cpp, qwen2.5-0.5b-q4_k_m (start 44 °C)
   end 44 -> 63 °C
 round 3, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
   end 44 -> 55 °C
+round 4 added 2026-11-07T14:51:46Z (aether md5 0e1ea1fb)
+round 4, aether, qwen2.5-0.5b-q4_0 (start 44 °C)
+  end 44 -> 53 °C
+round 4, llama.cpp, qwen2.5-0.5b-q4_0 (start 43 °C)
+  end 43 -> 64 °C
+round 4, aether, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 46 °C
+round 4, llama.cpp, qwen2.5-0.5b-q4_k_m (start 44 °C)
+  end 44 -> 46 °C
