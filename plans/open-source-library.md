@@ -24,7 +24,11 @@ not collide with the phone work.
 | Review of R2–R4 | Passed (2026-11-06), with the `Sampler` / CLAUDE.md / this file fixes since applied |
 | REVIEW 3 | Passed on the phone 2026-11-06: `dsp_ppl` (wikitext-2, 20 × 512) equal to the recorded digits on all 5 files, the app as in R4 (`results/release/README.md`, `d91d5b6`). Gemma 4's phone items are done; its DSP path is checked but waits on branch `gemma4-dsp` |
 | C3 | Done (2026-11-07): `testdata/` and `hostdata/` in `aether-infer` are real files, `tools/.venv` is its own. Checked with `Aether-impl` and `Aether-next` renamed away: host and Android builds with `vulkan,hexagon`, the suite 188 passed / 1 ignored (the BF16 test left out, as A3), `vk_ppl` batch 15.8560, decode 15.8023. Only `scripts/kquant-phone.sh` still defaults to `../Aether-impl` (`IMPL=` overrides it) |
-| Then | C4–C6 (notes, remove the worktrees, clean this repo, with the user), REVIEW 4, R5 and REVIEW 5 |
+| C4 | Done (2026-11-07): the impl track's three notes in `notes/impl-track/`; the k-quant simpleperf captures (perf.data + binaries, 77 MB) kept on disk, gitignored |
+| C5 | Done (2026-11-07): `Aether-impl` and `Aether-next` removed (their untracked files checked identical to the copies, their data present in `aether-infer`), branches `impl`, `gemma4`, `gemma4-devices` deleted (all merged); in `aether-infer`, the merged `p2-cli` / `p4-library` worktrees and branches too |
+| C6 | Done (2026-11-07): engine paths deleted here (the plans stay); `Cargo.toml` is the learning crate `aether-learn`, depending on `../aether-infer` with `internals`; the user's modules and uncommitted files untouched; `CLAUDE.md` rewritten; the site's home page says where the engine's paths now are (the pages name them as text, no links) |
+| Merges | `gemma4-dsp` and `p5-serve` into `aether-infer`'s `main` (2026-11-07) |
+| Then | REVIEW 4, R5 (private GitHub repo first, seshu's decision 2026-11-07) and REVIEW 5 |
 
 Checks on the PC at that point: the full suite with `vulkan,hexagon` (160
 passed, 1 ignored, plus the C ABI's 4) and the Gemma 4 BF16 test alone;

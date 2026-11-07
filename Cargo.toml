@@ -1,85 +1,15 @@
 [package]
-name = "aether"
+name = "aether-learn"
 version = "0.1.0"
 edition = "2024"
+publish = false
+description = "The learning journal's own code: exercises written while studying the engine"
 
-[lib]
-# rlib for the aether binary, examples and tests; cdylib = libaether.so for
-# C callers (include/aether.h) such as the Android app's JNI shim.
-crate-type = ["rlib", "cdylib"]
-
+# The engine itself lives in ../aether-infer (its own repository since
+# 2026-11-07). Exercises can compare against it: `use aether::…` is the
+# engine, with its internals (kernels, bench, membench) opened.
 [dependencies]
-libc = "0.2.191"
+aether = { path = "../aether-infer/crates/aether", package = "aether-infer", features = ["internals"] }
 
 [profile.release]
 debug = true        # keep symbols so simpleperf can show function names
-lto = "fat"         # optimize across the whole program
-codegen-units = 1   # one unit: slower build, better optimization
-
-# The Vulkan compute path (Adreno GPU, IMPLEMENTATION.md L.3) is optional:
-# `--features vulkan`. `ash` is only Vulkan's C API as Rust declarations
-# (it loads libvulkan.so at run time); the kernels are ours, in shaders/.
-[features]
-vulkan = ["dep:ash"]
-# The Hexagon DSP (NPU) through FastRPC; needs the Hexagon SDK to build (build.rs).
-hexagon = []
-
-[dependencies.ash]
-version = "0.38"
-optional = true
-
-[[example]]
-name = "dsp_hello"
-required-features = ["hexagon"]
-
-[[example]]
-name = "dsp_bandwidth"
-required-features = ["hexagon"]
-
-[[example]]
-name = "dsp_gemv"
-required-features = ["hexagon"]
-
-[[example]]
-name = "dsp_ppl"
-required-features = ["hexagon"]
-
-[[example]]
-name = "dsp_gemm"
-required-features = ["hexagon"]
-
-[[example]]
-name = "vk_bandwidth"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_gemv"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_gemv_n"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_gemm"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_ppl"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_pp"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_few"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_decode"
-required-features = ["vulkan"]
-
-[[example]]
-name = "vk_prefill"
-required-features = ["vulkan"]
