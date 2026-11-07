@@ -17,3 +17,6 @@
 __pycache__/
 nohup.out
 /3b1b-explainer-skill.zip
+
+# simpleperf captures (perf.data + the profiled binary), kept locally only
+/results/phase-kquant/raw/phone/*-profile/
