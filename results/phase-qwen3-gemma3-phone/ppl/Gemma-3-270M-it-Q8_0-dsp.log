@@ -1,0 +1,31 @@
+== Gemma-3-270M-it-Q8_0.gguf dsp, start 46500 mC, 2026-11-11T05:58:20Z
+   Compiling aether-bench v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 10.60s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_gemma testdata/gguf/Gemma-3-270M-it-Q8_0.gguf /data/local/tmp/aether/kl-Gemma-3-270M-it-Q8_0.kld 5 batch`
+target/aarch64-linux-android/release/examples/dsp_gemma: 1 file pushed, 0 skipped. 405.1 MB/s (13391912 bytes in 0.032s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+# testdata/gguf/Gemma-3-270M-it-Q8_0.gguf on the DSP, 6 threads, stream true | upload 158 ms, prompt batch 128 (HMX: true)
+#   q/k/v                               359.8 us/token   5.6%
+#   short conv                            0.0 us/token   0.0%
+#   q/k/v norm + RoPE + cache           177.2 us/token   2.7%
+#   attention + quantize                192.5 us/token   3.0%
+#   wo                                  256.8 us/token   4.0%
+#   post-attn norm + add, ffn norm      243.5 us/token   3.8%
+#   gate/up                             870.2 us/token  13.5%
+#   GELU + quantize                     167.5 us/token   2.6%
+#   down                                497.2 us/token   7.7%
+#   post-FFN norm + add                 222.2 us/token   3.4%
+#   per-layer gate                        0.0 us/token   0.0%
+#   per-layer GELU                        0.0 us/token   0.0%
+#   per-layer proj                        0.0 us/token   0.0%
+#   per-layer norm + add, next norm     205.5 us/token   3.2%
+#   final norm + classifier            2971.0 us/token  46.1%
+#   soft-cap                              0.5 us/token   0.0%
+#   argmax                              234.7 us/token   3.6%
+#   thread start                         48.6 us/token   0.8%
+# greedy: " a kind and gentle soul named Elara. Elara loved to sing, and she sang songs of the sea, of"
+# 40 positions in 318.0 ms: 125.8 tok/s (6.44 ms per token on the DSP)
+[1]25.1149 kld 0.00328,[2]45.1555 kld 0.00347,[3]46.4208 kld 0.00440,[4]49.2444 kld 0.00418,[5]48.0167 kld 0.00403,Final estimate: PPL = 48.0167 +/- 5.80813  (1275 tokens scored, 5.7 s, batch)
+PPL(base file) = 44.7858   Mean KLD: 0.004028   Same top p: 96.941 %
+
+== exit 0, end 51100 mC

@@ -1,0 +1,19 @@
+== Qwen3-0.6B-Q8_0.gguf cpu, start 56900 mC, 2026-11-11T06:04:04Z
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/aether perplexity -m testdata/gguf/Qwen3-0.6B-Q8_0.gguf -f testdata/wikitext/wikitext-2-raw/wiki.test.raw -c 512 --chunks 5 -t 6 --kl-divergence-base /data/local/tmp/aether/kl-Qwen3-0.6B-Q8_0.kld --kl-divergence`
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 63.7 MB/s (41360672 bytes in 0.619s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+perplexity: calculating perplexity and KL over 5 chunks, n_ctx=512 (from /data/local/tmp/aether/kl-Qwen3-0.6B-Q8_0.kld), weights q8_0 633.5 MB, 6 threads
+[1]12.8893,[2]18.1582,[3]18.2883,[4]19.2728,[5]19.5405,====== Perplexity statistics ======
+Mean PPL(Q)                   :  19.540478 ±   1.873114
+Mean PPL(base)                :  19.186966
+Mean PPL(Q)/PPL(base)         :   1.018425
+
+====== KL divergence statistics ======
+Mean    KLD:   0.001624
+
+====== Token probability statistics ======
+Same top p: 97.725 %
+
+perplexity: 1275 tokens scored in 8.8 s
+== exit 0, end 61100 mC

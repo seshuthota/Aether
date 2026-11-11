@@ -1,0 +1,13 @@
+== Gemma-3-270M-it-Q8_0.gguf gpu, start 46100 mC, 2026-11-11T05:57:48Z
+   Compiling aether-bench v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 9.72s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/examples/vk_gemma testdata/gguf/Gemma-3-270M-it-Q8_0.gguf /data/local/tmp/aether/kl-Gemma-3-270M-it-Q8_0.kld 5 batch`
+target/aarch64-linux-android/release/examples/vk_gemma: 1 file pushed, 0 skipped. 132.3 MB/s (13180352 bytes in 0.095s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+# testdata/gguf/Gemma-3-270M-it-Q8_0.gguf on Adreno (TM) 830 | upload + record 575 ms, prompt batch 128
+# greedy: " a kind and gentle soul named Elara. Elara loved to sing, and she sang songs of the sea, of"
+# 40 positions in 487.5 ms: 82.0 tok/s
+[1]25.1153 kld 0.00327,[2]45.1550 kld 0.00347,[3]46.4102 kld 0.00442,[4]49.2378 kld 0.00419,[5]48.0097 kld 0.00403,Final estimate: PPL = 48.0097 +/- 5.80721  (1275 tokens scored, 11.0 s, prompt pass, batches of 128)
+PPL(base file) = 44.7858   Mean KLD: 0.004027   Same top p: 96.784 %
+
+== exit 0, end 46900 mC

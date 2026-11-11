@@ -1,0 +1,24 @@
+date: 2026-11-09T17:58:04Z
+host: Linux curious 7.0.0-42-generic #42~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Mon Oct 19 14:43:01 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+llama-bench: /tmp/llama-bench-phone.sh -C 0xfc
+aether: /tmp/aether-phone.sh bench -C 0xfc
+args: -p 64,256,512 -n 128 -d 0,512 -r 5 -t 6
+rounds: 2, cooled below 42 °C before each run
+wake: /tmp/phone-cmd.sh adb shell 'input keyevent KEYCODE_WAKEUP; input keyevent 82'
+model: /data/local/tmp/Llama-3.2-1B-Instruct-Q8_0.gguf
+round 1, llama.cpp, Llama-3.2-1B-Instruct-Q8_0 (start 41 °C)
+  before: 2400000 2438400 mWakefulness=Asleep 
+  after: 1785600 1958400 mWakefulness=Awake 
+  end 41 -> 75 °C
+round 1, aether, Llama-3.2-1B-Instruct-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake 
+  after: 1555200 1689600 mWakefulness=Awake 
+  end 41 -> 73 °C
+round 2, aether, Llama-3.2-1B-Instruct-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake 
+  after: 1555200 1401600 mWakefulness=Awake 
+  end 41 -> 74 °C
+round 2, llama.cpp, Llama-3.2-1B-Instruct-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake 
+  after: 1785600 1689600 mWakefulness=Awake 
+  end 41 -> 74 °C

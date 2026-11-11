@@ -1,0 +1,75 @@
+date: 2026-11-11T06:09:25Z
+host: Linux curious 7.0.0-42-generic #42~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Mon Oct 19 14:43:01 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+llama-bench: /tmp/llama-bench-phone.sh -C 0xfc
+aether: /tmp/aether-phone-e.sh bench -C 0xfc
+args: -p 64,256,512 -n 128 -d 0,512 -r 5 -t 6
+rounds: 2, cooled below 42 °C before each run
+wake: /tmp/phone-cmd.sh adb shell 'input keyevent KEYCODE_WAKEUP; input keyevent 82'
+model: /data/local/tmp/aether/testdata/gguf/Gemma-3-270M-it-Q8_0.gguf
+model: /data/local/tmp/aether/testdata/gguf/Gemma-3-1B-it-Q8_0.gguf
+model: /data/local/tmp/aether/testdata/gguf/Qwen3-0.6B-Q8_0.gguf
+model: /data/local/tmp/aether/testdata/gguf/Qwen3-1.7B-Q8_0.gguf
+round 1, llama.cpp, Gemma-3-270M-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 86 Capacity level: -1 
+  after: 1996800 2246400 mWakefulness=Awake AC powered: false level: 86 Capacity level: -1 
+  end 41 -> 66 °C
+round 1, aether, Gemma-3-270M-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 86 Capacity level: -1 
+  after: 1996800 2246400 mWakefulness=Awake AC powered: false level: 86 Capacity level: -1 
+  end 41 -> 72 °C
+round 1, llama.cpp, Gemma-3-1B-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 85 Capacity level: -1 
+  after: 1785600 1958400 mWakefulness=Awake AC powered: false level: 85 Capacity level: -1 
+  end 41 -> 73 °C
+round 1, aether, Gemma-3-1B-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 85 Capacity level: -1 
+  after: 1555200 1689600 mWakefulness=Awake AC powered: false level: 84 Capacity level: -1 
+  end 41 -> 74 °C
+round 1, llama.cpp, Qwen3-0.6B-Q8_0 (start 41 °C)
+  before: 1785600 1958400 mWakefulness=Awake AC powered: false level: 84 Capacity level: -1 
+  after: 1785600 1958400 mWakefulness=Awake AC powered: false level: 83 Capacity level: -1 
+  end 41 -> 65 °C
+round 1, aether, Qwen3-0.6B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 83 Capacity level: -1 
+  after: 1785600 1689600 mWakefulness=Awake AC powered: false level: 82 Capacity level: -1 
+  end 41 -> 68 °C
+round 1, llama.cpp, Qwen3-1.7B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 82 Capacity level: -1 
+  after: 1555200 1401600 mWakefulness=Awake AC powered: false level: 81 Capacity level: -1 
+  end 41 -> 69 °C
+round 1, aether, Qwen3-1.7B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 81 Capacity level: -1 
+  after: 1555200 1401600 mWakefulness=Awake AC powered: false level: 79 Capacity level: -1 
+  end 41 -> 74 °C
+round 2, aether, Gemma-3-270M-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 79 Capacity level: -1 
+  after: 1996800 2246400 mWakefulness=Awake AC powered: false level: 78 Capacity level: -1 
+  end 41 -> 68 °C
+round 2, llama.cpp, Gemma-3-270M-it-Q8_0 (start 41 °C)
+  before: 1785600 1958400 mWakefulness=Awake AC powered: false level: 78 Capacity level: -1 
+  after: 1785600 1958400 mWakefulness=Awake AC powered: false level: 78 Capacity level: -1 
+  end 41 -> 65 °C
+round 2, aether, Gemma-3-1B-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 78 Capacity level: -1 
+  after: 1555200 1689600 mWakefulness=Awake AC powered: false level: 77 Capacity level: -1 
+  end 41 -> 73 °C
+round 2, llama.cpp, Gemma-3-1B-it-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 77 Capacity level: -1 
+  after: 1785600 1958400 mWakefulness=Awake AC powered: false level: 76 Capacity level: -1 
+  end 41 -> 70 °C
+round 2, aether, Qwen3-0.6B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 76 Capacity level: -1 
+  after: 1785600 1689600 mWakefulness=Awake AC powered: false level: 75 Capacity level: -1 
+  end 41 -> 67 °C
+round 2, llama.cpp, Qwen3-0.6B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 75 Capacity level: -1 
+  after: 1785600 1958400 mWakefulness=Awake AC powered: false level: 75 Capacity level: -1 
+  end 41 -> 67 °C
+round 2, aether, Qwen3-1.7B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 75 Capacity level: -1 
+  after: 1363200 1401600 mWakefulness=Awake AC powered: false level: 73 Capacity level: -1 
+  end 41 -> 71 °C
+round 2, llama.cpp, Qwen3-1.7B-Q8_0 (start 41 °C)
+  before: 1996800 2246400 mWakefulness=Awake AC powered: false level: 72 Capacity level: -1 
+  after: 1555200 1401600 mWakefulness=Awake AC powered: false level: 71 Capacity level: -1 
+  end 41 -> 71 °C

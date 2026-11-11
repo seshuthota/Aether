@@ -1,0 +1,14 @@
+== Gemma-3-270M-it-Q8_0.gguf llama, start 44200 mC, 2026-11-11T05:55:09Z
+0.00.446.436 W load: control-looking token:    212 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.01.682.013 I cmn          init: llama threadpool init, n_threads = 6
+0.01.721.762 I 
+0.01.721.885 I system_info: n_threads = 6 (n_threads_batch = 6) / 8 | CPU : NEON = 1 | ARM_FMA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | REPACK = 1 | 
+0.01.721.966 I perplexity: saving all logits to /data/local/tmp/aether/kl-Gemma-3-270M-it-Q8_0.kld
+0.01.721.980 I perplexity: tokenizing the input ..
+0.02.796.712 I perplexity: tokenization took 1074.71 ms
+0.02.797.647 I perplexity: calculating perplexity over 5 chunks, n_ctx=512, batch_size=2048, n_seq=4
+0.05 minutes
+0.05.568.789 I perplexity: 2.72 seconds per pass - ETA [1]25.4655,[2]45.8916,[3]46.7379,[4]49.5711,[5]48.2027,
+0.07.384.702 I Final estimate: PPL = 48.2027 +/- 5.84333
+
+== exit 0, end 54600 mC

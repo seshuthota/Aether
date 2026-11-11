@@ -1,0 +1,30 @@
+== Gemma-3-1B-it-Q8_0.gguf dsp, start 49900 mC, 2026-11-11T06:02:19Z
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.01s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_gemma testdata/gguf/Gemma-3-1B-it-Q8_0.gguf /data/local/tmp/aether/kl-Gemma-3-1B-it-Q8_0.kld 5 batch`
+target/aarch64-linux-android/release/examples/dsp_gemma: 1 file pushed, 0 skipped. 488.8 MB/s (13391912 bytes in 0.026s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+# testdata/gguf/Gemma-3-1B-it-Q8_0.gguf on the DSP, 6 threads, stream true | upload 707 ms, prompt batch 128 (HMX: true)
+#   q/k/v                               936.7 us/token   4.3%
+#   short conv                            0.0 us/token   0.0%
+#   q/k/v norm + RoPE + cache           264.5 us/token   1.2%
+#   attention + quantize                297.7 us/token   1.4%
+#   wo                                  622.2 us/token   2.8%
+#   post-attn norm + add, ffn norm      633.5 us/token   2.9%
+#   gate/up                            7520.5 us/token  34.3%
+#   GELU + quantize                     723.0 us/token   3.3%
+#   down                               4044.1 us/token  18.4%
+#   post-FFN norm + add                 583.4 us/token   2.7%
+#   per-layer gate                        0.0 us/token   0.0%
+#   per-layer GELU                        0.0 us/token   0.0%
+#   per-layer proj                        0.0 us/token   0.0%
+#   per-layer norm + add, next norm     528.4 us/token   2.4%
+#   final norm + classifier            5507.6 us/token  25.1%
+#   soft-cap                              0.5 us/token   0.0%
+#   argmax                              237.2 us/token   1.1%
+#   thread start                         52.3 us/token   0.2%
+# greedy: " a young woman named Elara. She was known for her beautiful singing voice and her kind heart. But Elara harb"
+# 40 positions in 969.5 ms: 41.3 tok/s (21.96 ms per token on the DSP)
+[1]18.4051 kld 0.00292,[2]26.0906 kld 0.00234,[3]23.7968 kld 0.00253,[4]24.8341 kld 0.00245,[5]25.1893 kld 0.00222,Final estimate: PPL = 25.1893 +/- 2.67290  (1275 tokens scored, 9.7 s, batch)
+PPL(base file) = 24.6057   Mean KLD: 0.002222   Same top p: 98.275 %
+
+== exit 0, end 52300 mC

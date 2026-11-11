@@ -1,0 +1,12 @@
+== Gemma-3-1B-it-Q8_0.gguf gpu, start 58000 mC, 2026-11-11T06:00:57Z
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/examples/vk_gemma testdata/gguf/Gemma-3-1B-it-Q8_0.gguf /data/local/tmp/aether/kl-Gemma-3-1B-it-Q8_0.kld 5 batch`
+target/aarch64-linux-android/release/examples/vk_gemma: 1 file pushed, 0 skipped. 406.6 MB/s (13180352 bytes in 0.031s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+# testdata/gguf/Gemma-3-1B-it-Q8_0.gguf on Adreno (TM) 830 | upload + record 1375 ms, prompt batch 128
+# greedy: " a young woman named Elara. She was known for her beautiful singing voice and her kind heart. But Elara harb"
+# 40 positions in 1298.7 ms: 30.8 tok/s
+[1]18.3837 kld 0.00295,[2]26.0837 kld 0.00235,[3]23.7951 kld 0.00248,[4]24.8352 kld 0.00242,[5]25.1910 kld 0.00219,Final estimate: PPL = 25.1910 +/- 2.67313  (1275 tokens scored, 28.3 s, prompt pass, batches of 128)
+PPL(base file) = 24.6057   Mean KLD: 0.002193   Same top p: 98.353 %
+
+== exit 0, end 49200 mC

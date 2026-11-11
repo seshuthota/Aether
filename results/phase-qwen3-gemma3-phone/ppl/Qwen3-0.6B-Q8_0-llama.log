@@ -1,0 +1,14 @@
+== Qwen3-0.6B-Q8_0.gguf llama, start 51900 mC, 2026-11-11T06:03:05Z
+0.00.354.336 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.03.107.629 I cmn          init: llama threadpool init, n_threads = 6
+0.03.149.471 I 
+0.03.149.562 I system_info: n_threads = 6 (n_threads_batch = 6) / 8 | CPU : NEON = 1 | ARM_FMA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | REPACK = 1 | 
+0.03.149.662 I perplexity: saving all logits to /data/local/tmp/aether/kl-Qwen3-0.6B-Q8_0.kld
+0.03.149.671 I perplexity: tokenizing the input ..
+0.03.681.220 I perplexity: tokenization took 531.54 ms
+0.03.681.602 I perplexity: calculating perplexity over 5 chunks, n_ctx=512, batch_size=2048, n_seq=4
+0.12 minutes
+0.09.505.570 I perplexity: 5.78 seconds per pass - ETA [1]12.8737,[2]18.1287,[3]18.2407,[4]19.2382,[5]19.5426,
+0.11.649.097 I Final estimate: PPL = 19.5426 +/- 1.87160
+
+== exit 0, end 60700 mC

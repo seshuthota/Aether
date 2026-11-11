@@ -1,0 +1,10 @@
+== Qwen3-1.7B-Q8_0.gguf dsp, start 61900 mC, 2026-11-11T06:07:17Z
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.01s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/examples/dsp_ppl testdata/gguf/Qwen3-1.7B-Q8_0.gguf 5 512`
+target/aarch64-linux-android/release/examples/dsp_ppl: 1 file pushed, 0 skipped. 485.1 MB/s (12443872 bytes in 0.024s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+
+thread 'main' (18346) panicked at bench/examples/dsp_ppl.rs:247:100:
+layer 0 lacks a post-norm
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+== exit 101, end 47600 mC

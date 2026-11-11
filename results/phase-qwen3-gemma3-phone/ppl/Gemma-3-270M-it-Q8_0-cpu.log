@@ -1,0 +1,20 @@
+== Gemma-3-270M-it-Q8_0.gguf cpu, start 48800 mC, 2026-11-11T05:55:54Z
+   Compiling aether-cli v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 33.40s
+     Running `/home/curious/Documents/hermes-projects/aether-infer/scripts/adb-run.sh target/aarch64-linux-android/release/aether perplexity -m testdata/gguf/Gemma-3-270M-it-Q8_0.gguf -f testdata/wikitext/wikitext-2-raw/wiki.test.raw -c 512 --chunks 5 -t 6 --kl-divergence-base /data/local/tmp/aether/kl-Gemma-3-270M-it-Q8_0.kld --kl-divergence`
+target/aarch64-linux-android/release/aether: 1 file pushed, 0 skipped. 55.9 MB/s (41360672 bytes in 0.705s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2189 skipped.
+perplexity: calculating perplexity and KL over 5 chunks, n_ctx=512 (from /data/local/tmp/aether/kl-Gemma-3-270M-it-Q8_0.kld), weights q8_0 285.0 MB, 6 threads
+[1]25.3627,[2]45.6641,[3]46.9185,[4]49.7196,[5]48.3605,
+perplexity: 1275 tokens scored in 7.4 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  48.360482 ±   5.872823
+Mean PPL(base)                :  44.785843
+Mean PPL(Q)/PPL(base)         :   1.079816
+
+====== KL divergence statistics ======
+Mean    KLD:   0.004371
+
+====== Token probability statistics ======
+Same top p: 96.471 %
+== exit 0, end 52300 mC
