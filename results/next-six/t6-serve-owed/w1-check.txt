@@ -1,0 +1,6 @@
+models equal: True
+docker: {"data": [{"created": 1794509521, "id": "smollm2-360m-instruct-q8_0.gguf", "meta": {"n_ctx": 4096, "n_vocab": 49152}, "object": "model", "owned_by": "aether"}], "object": "list"}
+native: {"data": [{"created": 1794509521, "id": "smollm2-360m-instruct-q8_0.gguf", "meta": {"n_ctx": 4096, "n_vocab": 49152}, "object": "model", "owned_by": "aether"}], "object": "list"}
+docker: ("The sky appears blue because of a phenomenon called Rayleigh scattering, which occurs when sunlight enters Earth's atmosphere and encounters tiny molecules of gases such as nitrogen and oxygen. These molecules scatter the shorter wavelengths of light, like blue and violet, more", 'length', 41, 48)
+native: ("The sky appears blue because of a phenomenon called Rayleigh scattering, which occurs when sunlight enters Earth's atmosphere and encounters tiny molecules of gases such as nitrogen and oxygen. These molecules scatter the shorter wavelengths of light, like blue and violet, more", 'length', 41, 48)
+PASS

@@ -1,0 +1,11 @@
+RESP 200 http://127.0.0.1:3000/api/chat/completions
+initial: 'Hello there! How may I assist you today?'
+waiting 25 s for the background tasks to finish
+regen visible: True box: {'x': 535, 'y': 188.875, 'width': 28, 'height': 28}
+regen clicked
+after regen: 'Hello there! How may I assist you today?' len: 40 requests: []
+waiting 25 s more
+read aloud visible: True
+read aloud clicked
+requests after read aloud: []
+audio: [['', nan, True, None]]

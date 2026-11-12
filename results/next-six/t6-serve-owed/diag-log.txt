@@ -1,0 +1,17 @@
+CONSOLE warning No token found in localStorage, user-join event not emitted
+REQ POST http://127.0.0.1:3000/api/chat/completions
+RESP 200 http://127.0.0.1:3000/api/chat/completions
+INITIAL: 'Hello! How may I assist you today?'
+BUTTONS after hover: ['Read Aloud', 'Regenerate']
+regen count: 1 visible: True
+REGEN clicked, waiting
+after 3s stop: 0 text: 'Hello! How may I assist you today?'
+after 13s text: 'Hello! How may I assist you today?'
+read aloud count: 1 visible: True
+READ ALOUD clicked
+AUDIO: [['', nan, True]]
+PANEL buttons with text: [['Search', 'Search\nCtrl+K'], [None, 'Folders'], [None, 'Chats'], [None, 'User'], ['Selected model: qwen2.5-0.5b-q4_0.gguf', 'qwen2.5-0.5b-q4_0.gguf'], [None, 'Overcome procrastination\ngive '], [None, 'Tell me a fun fact\nabout the R'], [None, 'Help me study\nvocabulary for a'], [None, "Explain options trading\nif I'm"], [None, 'Show me a code snippet\nof a we'], [None, 'Give me ideas\nfor what to do w'], ['New Chat', 'New Chat'], [None, 'Controls'], [None, 'Valves'], [None, 'System Prompt'], [None, 'Advanced Params']]
+PANEL text around System Prompt:  fun fact | about the Roman Empire | Help me study | vocabulary for a college entrance exam | Explain options trading | if I'm familiar with buying and selling stocks | Show me a code snippet | of a website's sticky header | Give me ideas | for what to do with my kids' art | New Chat | Hello / Open WebUI | Controls | Valves | System Prompt | Advanced Params
+REQ POST http://127.0.0.1:3000/api/chat/completions
+RESP 200 http://127.0.0.1:3000/api/chat/completions
+SYSPROMPT reply: 'Hello, mate! How may I assist you today?'

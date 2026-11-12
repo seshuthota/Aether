@@ -1,0 +1,10 @@
+REGEN initial: 34 Hello, how may I assist you today?
+REGEN clicked
+REGEN saw Stop: False text changed: False new length: 34 | Hello, how may I assist you today?
+SYSPROMPT fields: [['DIV', 'chat-input', 'How can I help you today?', None], ['TEXTAREA', '', 'System Prompt', 'Enter system prompt']]
+SYSPROMPT filled
+SYSPROMPT reply: Hello! How may I assist you today?
+SYSPROMPT contains Arrr: False
+TTS Read Aloud buttons: 1
+TTS audio elements: [['', nan, True]]
+STT elapsed: 0.5 s; out: {"detail":"Error transcribing chunk: External: `file`: not a WAV file (no RIFF / WAVE header) (send a WAV file)"} err: 

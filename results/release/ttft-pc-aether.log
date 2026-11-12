@@ -1,0 +1,2 @@
+weights: q8_0, 384.6 MB
+aether serve: listening on http://127.0.0.1:8091 (1 slot(s), 4096 positions each)
