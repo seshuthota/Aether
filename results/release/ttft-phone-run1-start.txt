@@ -1,0 +1,31 @@
+  mWakefulness=Awake
+cpu0 cur=2745600 max=2745600
+cpu6 cur=2649600 max=2649600
+  AC powered: false
+  USB powered: false
+  board temp status: 0
+  low bat status: 0
+  reverse wl chg status: 0
+  status: 3
+  level: 62
+  Capacity level: -1
+cpu-0-0-0 39900
+cpu-0-4-1 39200
+cpu-0-5-0 37600
+cpu-0-5-1 37600
+cpuss-0-0 38800
+cpuss-0-1 39600
+cpu-1-0-0 37000
+cpu-0-0-1 38400
+cpu-1-0-1 37000
+cpu-1-1-0 37000
+cpu-1-1-1 37000
+cpuss-1-0 36600
+cpuss-1-1 37000
+cpu-0-1-0 38400
+cpu-0-1-1 38000
+cpu-0-2-0 37300
+cpu-0-2-1 38400
+cpu-0-3-0 37600
+cpu-0-3-1 39200
+cpu-0-4-0 40300

@@ -1,0 +1,106 @@
+{
+  "conditions": {
+    "date": "2026-11-13T06:44:46+05:30",
+    "host": "curious",
+    "cpu": "13th Gen Intel(R) Core(TM) i7-13620H",
+    "threads": 8,
+    "model": {
+      "aether": "smollm2-360m-instruct-q8_0.gguf",
+      "llama": "/data/local/tmp/gguf/smollm2-360m-instruct-q8_0.gguf"
+    },
+    "aether": "http://127.0.0.1:18091",
+    "llama": "http://127.0.0.1:18090",
+    "runs": 5,
+    "max_tokens": 16,
+    "cache_prompt": false,
+    "text": "testdata/wikitext/wikitext-2-raw/wiki.test.raw",
+    "prompts": [
+      64,
+      256,
+      512,
+      2048
+    ]
+  },
+  "rows": [
+    {
+      "prompt": 64,
+      "prompt_tokens": 64,
+      "engine": "aether",
+      "n": 5,
+      "median_ms": 90.13,
+      "min_ms": 67.2,
+      "max_ms": 158.66,
+      "mean_ms": 99.53
+    },
+    {
+      "prompt": 64,
+      "prompt_tokens": 64,
+      "engine": "llama",
+      "n": 5,
+      "median_ms": 86.37,
+      "min_ms": 80.5,
+      "max_ms": 97.4,
+      "mean_ms": 88.1
+    },
+    {
+      "prompt": 256,
+      "prompt_tokens": 256,
+      "engine": "aether",
+      "n": 5,
+      "median_ms": 289.15,
+      "min_ms": 269.4,
+      "max_ms": 342.32,
+      "mean_ms": 295.29
+    },
+    {
+      "prompt": 256,
+      "prompt_tokens": 256,
+      "engine": "llama",
+      "n": 5,
+      "median_ms": 330.4,
+      "min_ms": 303.98,
+      "max_ms": 425.36,
+      "mean_ms": 349.77
+    },
+    {
+      "prompt": 512,
+      "prompt_tokens": 512,
+      "engine": "aether",
+      "n": 5,
+      "median_ms": 719.08,
+      "min_ms": 677.66,
+      "max_ms": 757.59,
+      "mean_ms": 718.68
+    },
+    {
+      "prompt": 512,
+      "prompt_tokens": 512,
+      "engine": "llama",
+      "n": 5,
+      "median_ms": 718.24,
+      "min_ms": 634.57,
+      "max_ms": 792.43,
+      "mean_ms": 713.03
+    },
+    {
+      "prompt": 2048,
+      "prompt_tokens": 2048,
+      "engine": "aether",
+      "n": 5,
+      "median_ms": 5884.09,
+      "min_ms": 5361.23,
+      "max_ms": 6247.77,
+      "mean_ms": 5884.72
+    },
+    {
+      "prompt": 2048,
+      "prompt_tokens": 2048,
+      "engine": "llama",
+      "n": 5,
+      "median_ms": 6603.13,
+      "min_ms": 5731.91,
+      "max_ms": 6762.49,
+      "mean_ms": 6443.46
+    }
+  ]
+}
