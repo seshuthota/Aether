@@ -1,0 +1,22 @@
+{
+ "scene": {
+  "text": "The image is a simple illustration featuring a red house with a brown roof, set against a background of blue water, green and dark green mountains, and a yellow",
+  "prompt_tokens": 276,
+  "hf_prefix": false
+ },
+ "chart": {
+  "text": "The bar chart shows the percentage of people who have used a social media platform at least once, with 43% using Twitter, 38% using Facebook,",
+  "prompt_tokens": 276,
+  "hf_prefix": false
+ },
+ "strip": {
+  "text": "The image displays a series of diagonal stripes featuring a rainbow color gradient, overlaid by a single white line that runs across the entire width.",
+  "prompt_tokens": 148,
+  "hf_prefix": false
+ },
+ "icon": {
+  "text": "The image shows a red circle with a white cross inside it, set against a blue background. The red circle has a slightly pixelated or jagged edge.",
+  "prompt_tokens": 84,
+  "hf_prefix": true
+ }
+}

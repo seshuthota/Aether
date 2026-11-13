@@ -1,0 +1,22 @@
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer-kv/crates/aether)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 01s
+     Running unittests src/lib.rs (target/release/deps/aether-4e6c21fb3a6f00e0)
+
+running 1 test
+qwen3-tts F32 F16 cache, case 0: talker logits worst relative 5.70e-4; free-running greedy: 28 of 50 frames equal, 50 frames made, 369 ms/frame
+qwen3-tts F32 F16 cache, case 1: talker logits worst relative 3.66e-4; free-running greedy: 6 of 25 frames equal, 27 frames made, 364 ms/frame
+test model::qwen3tts::tests::f16_kv_drift_against_qwen_tts has been running for over 60 seconds
+qwen3-tts F32 F16 cache, case 2: talker logits worst relative 4.18e-4; free-running greedy: 14 of 49 frames equal, 48 frames made, 363 ms/frame
+qwen3-tts F32 F16 cache, case 3: talker logits worst relative 4.58e-4; free-running greedy: 6 of 49 frames equal, 68 frames made, 363 ms/frame
+qwen3-tts F32 F16 cache: teacher-forced per frame: talker 95.5 ms, predictor 266.4 ms
+qwen3-tts F32 F16 cache (imatrix false): teacher-forced greedy agrees on 166/173 first codes and 2585/2595 predictor codes
+qwen3-tts Q4_K_M F16 cache, case 0: talker logits worst relative 2.59e-1; free-running greedy: 0 of 50 frames equal, 92 frames made, 2512 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 1: talker logits worst relative 2.07e-1; free-running greedy: 0 of 25 frames equal, 26 frames made, 2754 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 2: talker logits worst relative 1.56e-1; free-running greedy: 0 of 49 frames equal, 56 frames made, 2583 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 3: talker logits worst relative 1.81e-1; free-running greedy: 0 of 49 frames equal, 37 frames made, 1262 ms/frame
+qwen3-tts Q4_K_M F16 cache: teacher-forced per frame: talker 552.1 ms, predictor 1587.0 ms
+qwen3-tts Q4_K_M F16 cache (imatrix false): teacher-forced greedy agrees on 148/173 first codes and 1420/2595 predictor codes
+test model::qwen3tts::tests::f16_kv_drift_against_qwen_tts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 1077.09s
+

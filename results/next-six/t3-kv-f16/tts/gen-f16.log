@@ -1,0 +1,25 @@
+drift test exit 0
+qwen3-tts F32 F16 cache, case 0: talker logits worst relative 5.70e-4; free-running greedy: 28 of 50 frames equal, 50 frames made, 369 ms/frame
+qwen3-tts F32 F16 cache, case 1: talker logits worst relative 3.66e-4; free-running greedy: 6 of 25 frames equal, 27 frames made, 364 ms/frame
+qwen3-tts F32 F16 cache, case 2: talker logits worst relative 4.18e-4; free-running greedy: 14 of 49 frames equal, 48 frames made, 363 ms/frame
+qwen3-tts F32 F16 cache, case 3: talker logits worst relative 4.58e-4; free-running greedy: 6 of 49 frames equal, 68 frames made, 363 ms/frame
+qwen3-tts F32 F16 cache: teacher-forced per frame: talker 95.5 ms, predictor 266.4 ms
+qwen3-tts F32 F16 cache (imatrix false): teacher-forced greedy agrees on 166/173 first codes and 2585/2595 predictor codes
+qwen3-tts Q4_K_M F16 cache, case 0: talker logits worst relative 2.59e-1; free-running greedy: 0 of 50 frames equal, 92 frames made, 2512 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 1: talker logits worst relative 2.07e-1; free-running greedy: 0 of 25 frames equal, 26 frames made, 2754 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 2: talker logits worst relative 1.56e-1; free-running greedy: 0 of 49 frames equal, 56 frames made, 2583 ms/frame
+qwen3-tts Q4_K_M F16 cache, case 3: talker logits worst relative 1.81e-1; free-running greedy: 0 of 49 frames equal, 37 frames made, 1262 ms/frame
+qwen3-tts Q4_K_M F16 cache: teacher-forced per frame: talker 552.1 ms, predictor 1587.0 ms
+qwen3-tts Q4_K_M F16 cache (imatrix false): teacher-forced greedy agrees on 148/173 first codes and 1420/2595 predictor codes
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 1077.09s
+    Finished `release` profile [optimized + debuginfo] target(s) in 42.75s
+== /tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/db08fe39-a46e-4005-afd9-05b02a7c3a54/scratchpad/ttsq/gguf-f16 16:51:05
+24
+== /tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/db08fe39-a46e-4005-afd9-05b02a7c3a54/scratchpad/ttsq/f32-f16 16:58:12
+24
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/db08fe39-a46e-4005-afd9-05b02a7c3a54/scratchpad/ttsq/gguf-f16: English letter error rate 0.0018, Chinese CER 0.0111
+    en1-s3 (4.56 s, 2 errors): The kick-brown fox jumps over the lazy dog near the riverbank.
+    zh1-s3 (8.16 s, 1 errors): 请在下午三点之前把报告罚给我谢谢
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/db08fe39-a46e-4005-afd9-05b02a7c3a54/scratchpad/ttsq/f32-f16: English letter error rate 0.0018, Chinese CER 0.0000
+    en4-s1 (7.52 s, 2 errors): She sells seashells by the seashore, and the shells she sells are solely seashells.
+== done 17:06:02

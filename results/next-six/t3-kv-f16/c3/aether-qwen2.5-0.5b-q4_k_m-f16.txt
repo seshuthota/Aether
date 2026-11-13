@@ -1,0 +1,13 @@
+perplexity: calculating perplexity and KL over 20 chunks, n_ctx=512 (from /home/curious/Documents/hermes-projects/aether-infer/hostdata/imatrix/qwen2.5-0.5b-f32.kld), weights q5_0 391.7 MB, KV cache f16, 6 threads
+[1]9.8382,[2]13.5085,[3]13.5754,[4]13.4952,[5]13.5742,[6]14.1009,[7]14.4475,[8]15.4712,[9]16.4348,[10]16.9958,[11]17.3180,[12]17.4269,[13]18.2337,[14]17.7268,[15]17.5665,[16]18.0725,[17]16.7929,[18]16.9238,[19]16.7447,[20]16.7414,
+perplexity: 5100 tokens scored in 818.3 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  16.741393 ±   0.686916
+Mean PPL(base)                :  16.229929
+Mean PPL(Q)/PPL(base)         :   1.031514
+
+====== KL divergence statistics ======
+Mean    KLD:   0.032944
+
+====== Token probability statistics ======
+Same top p: 89.725 %

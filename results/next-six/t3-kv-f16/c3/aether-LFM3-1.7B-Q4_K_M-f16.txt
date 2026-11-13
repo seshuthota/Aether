@@ -1,0 +1,13 @@
+perplexity: calculating perplexity and KL over 20 chunks, n_ctx=512 (from /home/curious/Documents/hermes-projects/aether-infer/hostdata/lfm3/kl-base-bf16.bin), weights q4_k 1091.4 MB, KV cache f16, 6 threads
+[1]10.3423,[2]14.0159,[3]14.9075,[4]15.1749,[5]15.8211,[6]17.7300,[7]18.1860,[8]18.2292,[9]19.1518,[10]20.2111,[11]21.1736,[12]21.1815,[13]22.5522,[14]21.4657,[15]22.8000,[16]25.4853,[17]24.7182,[18]25.5990,[19]25.2456,[20]24.8431,
+perplexity: 5100 tokens scored in 2777.6 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  24.843053 ±   1.116059
+Mean PPL(base)                :  23.466636
+Mean PPL(Q)/PPL(base)         :   1.058654
+
+====== KL divergence statistics ======
+Mean    KLD:   0.119875
+
+====== Token probability statistics ======
+Same top p: 82.941 %
