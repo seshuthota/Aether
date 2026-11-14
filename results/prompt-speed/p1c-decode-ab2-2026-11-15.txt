@@ -1,0 +1,13 @@
+# Decode A/B, only when cool and at the 2.4/2.44 GHz caps: p2 = 31ccf58 (groups_for(rows, 4*gemv_r)), p3 = rows/64; Gemma 4 E2B Q4_0, -r 3, 512-token prompt + 64 decode
+## aether-p2 2026-11-15T01:11:01+05:30 start 38000 mC caps 2745600 2649600 kHz
+#   AC powered: false
+#   level: 76
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp512 | 144.18 ± 16.60 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  tg64 |   20.66 ± 0.19 |
+build: b95c26000-dirty (aether)
+Max RSS (KiB): 3239480
+# end 01:11:30 52300 mC caps 2745600 2649600 kHz
+

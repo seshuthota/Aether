@@ -1,0 +1,38 @@
+# Decode A/B, cooled before each run: p2 = 31ccf58's groups, p3 = 8446fd4's rows/64; Gemma 4 E2B Q4_0, -r 3
+## aether-p3 2026-11-15T02:11:39+05:30 start 36500 mC caps 2745600 2649600 kHz
+#   AC powered: false
+#   level: 71
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp512 | 146.37 ± 1.81 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  tg64 |  20.48 ± 0.18 |
+build: 31ccf58fc-dirty (aether)
+Max RSS (KiB): 3245576
+# end 02:12:12 48800 mC caps 2745600 2649600 kHz
+
+## aether-p2 2026-11-15T02:12:32+05:30 start 39200 mC caps 2745600 2649600 kHz
+#   AC powered: false
+#   level: 71
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp512 | 164.67 ± 13.77 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  tg64 |   19.37 ± 1.50 |
+build: b95c26000-dirty (aether)
+Max RSS (KiB): 3245632
+# end 02:13:01 50300 mC caps 2400000 2438400 kHz
+
+## aether-p3 2026-11-15T02:13:42+05:30 start 38400 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 70
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp512 | 150.19 ± 9.61 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  tg64 |  21.29 ± 1.28 |
+build: 31ccf58fc-dirty (aether)
+Max RSS (KiB): 3245496
+# end 02:14:10 59200 mC caps 2400000 3513600 kHz
+
+# done 2026-11-15T02:14:10+05:30

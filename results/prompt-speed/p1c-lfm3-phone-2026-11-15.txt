@@ -1,0 +1,9 @@
+# vk_gemma LFM3-1.7B-QAD-Q4_0, phone GPU, llama.cpp BF16 base, 20 chunks ctx 512, 2026-11-15T02:15:22+05:30
+# start 38800 mC caps 2400000 2438400 kHz   AC powered: false   level: 70   Capacity level: -1 
+# LFM3-1.7B-QAD-Q4_0.gguf on Adreno (TM) 830 | upload + record 4162 ms, prompt batch 128
+# greedy: " a person. Once upon a time, in a small village by the sea, there lived a person. Once upon a"
+# 39 positions in 1182.1 ms: 33.0 tok/s
+[1]10.0127 kld 0.10600,[2]14.7117 kld 0.13672,[3]15.8572 kld 0.12945,[4]16.4440 kld 0.12309,[5]17.2344 kld 0.11746,[6]19.3754 kld 0.16924,[7]19.7309 kld 0.16382,[8]19.9499 kld 0.16066,[9]20.7512 kld 0.15156,[10]22.0231 kld 0.16896,[11]24.2962 kld 0.20716,[12]24.1251 kld 0.19980,[13]25.6303 kld 0.19157,[14]24.0724 kld 0.18437,[15]25.6648 kld 0.18938,[16]28.6242 kld 0.19215,[17]27.6867 kld 0.19592,[18]28.4126 kld 0.19024,[19]27.8657 kld 0.18621,[20]27.1507 kld 0.18106,
+Final estimate: PPL = 27.1507 +/- 1.24524  (5100 tokens scored, 61.5 s, prompt pass, batches of 128)
+PPL(base file) = 23.4666   Mean KLD: 0.181057   Same top p: 79.824 %
+# end 02:16:33 48000 mC caps 2400000 2438400 kHz
