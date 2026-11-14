@@ -1,0 +1,102 @@
+# P1b profile: transposed layout, Gemma 4 E2B Q4_0, Adreno 830
+## profile 512 int8 2026-11-14T23:28:13+05:30 start 44200 mC caps 1996800 2246400 kHz   AC powered: false   level: 86   Capacity level: -1 
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 128, int8 products | 132.8 tok/s
+gate/up                          765.5 ms  19.9% of wall
+attention                        608.7 ms  15.8% of wall
+down                             418.2 ms  10.8% of wall
+q/k/v                            125.3 ms   3.3% of wall
+wo                               106.9 ms   2.8% of wall
+classifier                        61.8 ms   1.6% of wall
+gelu                              56.4 ms   1.5% of wall
+per-layer gate                    33.9 ms   0.9% of wall
+attention merge                   28.4 ms   0.7% of wall
+q/k/v norm + RoPE + cache         20.6 ms   0.5% of wall
+per-layer proj                    14.7 ms   0.4% of wall
+rmsnorm                           12.3 ms   0.3% of wall
+post-attention norm + add         10.1 ms   0.3% of wall
+post-FFN norm + add               10.0 ms   0.3% of wall
+per-layer norm + add + scale       9.4 ms   0.2% of wall
+per-layer gelu                     1.9 ms   0.0% of wall
+argmax                             0.3 ms   0.0% of wall
+soft-cap                           0.2 ms   0.0% of wall
+GPU stages, sum                 2284.9 ms  59.3% of wall
+rest (CPU, submits, waits)      1570.7 ms  40.7% of wall
+wall                            3855.6 ms
+# end 23:28:23 49600 mC caps 1996800 2246400 kHz
+
+## profile 512 f32 2026-11-14T23:28:43+05:30 start 42600 mC caps 1996800 2246400 kHz   AC powered: false   level: 86   Capacity level: -1 
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 128, f32 products | 49.0 tok/s
+gate/up                         4256.4 ms  40.7% of wall
+down                            2274.6 ms  21.8% of wall
+q/k/v                            682.6 ms   6.5% of wall
+attention                        616.2 ms   5.9% of wall
+wo                               579.5 ms   5.5% of wall
+per-layer gate                   170.0 ms   1.6% of wall
+per-layer proj                    63.6 ms   0.6% of wall
+gelu                              43.3 ms   0.4% of wall
+classifier                        38.3 ms   0.4% of wall
+attention merge                   24.5 ms   0.2% of wall
+q/k/v norm + RoPE + cache         19.9 ms   0.2% of wall
+rmsnorm                           11.4 ms   0.1% of wall
+post-FFN norm + add                8.9 ms   0.1% of wall
+post-attention norm + add          8.9 ms   0.1% of wall
+per-layer norm + add + scale       8.5 ms   0.1% of wall
+per-layer gelu                     1.9 ms   0.0% of wall
+argmax                             0.2 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 8808.6 ms  84.3% of wall
+rest (CPU, submits, waits)      1644.5 ms  15.7% of wall
+wall                           10453.1 ms
+# end 23:28:59 47300 mC caps 1996800 2246400 kHz
+
+## profile 2048 int8 2026-11-14T23:29:19+05:30 start 41900 mC caps 1996800 2246400 kHz   AC powered: false   level: 86   Capacity level: -1 
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 63, int8 products | 95.5 tok/s
+attention                       6470.1 ms  30.2% of wall
+gate/up                         3114.9 ms  14.5% of wall
+down                            1725.1 ms   8.0% of wall
+q/k/v                            571.8 ms   2.7% of wall
+wo                               456.5 ms   2.1% of wall
+classifier                       449.7 ms   2.1% of wall
+attention merge                  267.2 ms   1.2% of wall
+per-layer gate                   251.4 ms   1.2% of wall
+gelu                             183.2 ms   0.9% of wall
+q/k/v norm + RoPE + cache         86.5 ms   0.4% of wall
+per-layer proj                    67.4 ms   0.3% of wall
+rmsnorm                           62.6 ms   0.3% of wall
+post-attention norm + add         43.6 ms   0.2% of wall
+per-layer norm + add + scale      41.0 ms   0.2% of wall
+post-FFN norm + add               39.4 ms   0.2% of wall
+per-layer gelu                     9.5 ms   0.0% of wall
+argmax                             2.0 ms   0.0% of wall
+soft-cap                           1.4 ms   0.0% of wall
+GPU stages, sum                13843.5 ms  64.5% of wall
+rest (CPU, submits, waits)      7607.6 ms  35.5% of wall
+wall                           21451.2 ms
+# end 23:29:46 49600 mC caps 1996800 2246400 kHz
+
+## profile 2048 f32 2026-11-14T23:30:06+05:30 start 42300 mC caps 1996800 2246400 kHz   AC powered: false   level: 86   Capacity level: -1 
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 63, f32 products | 34.9 tok/s
+gate/up                        17567.7 ms  29.9% of wall
+down                           15883.0 ms  27.0% of wall
+attention                       6503.3 ms  11.1% of wall
+wo                              4050.1 ms   6.9% of wall
+q/k/v                           3199.5 ms   5.4% of wall
+per-layer gate                  1383.2 ms   2.4% of wall
+per-layer proj                   453.3 ms   0.8% of wall
+classifier                       319.5 ms   0.5% of wall
+attention merge                  249.2 ms   0.4% of wall
+gelu                             167.0 ms   0.3% of wall
+q/k/v norm + RoPE + cache         86.8 ms   0.1% of wall
+rmsnorm                           62.4 ms   0.1% of wall
+post-attention norm + add         40.7 ms   0.1% of wall
+per-layer norm + add + scale      39.5 ms   0.1% of wall
+post-FFN norm + add               36.7 ms   0.1% of wall
+per-layer gelu                    10.5 ms   0.0% of wall
+argmax                             1.6 ms   0.0% of wall
+soft-cap                           1.1 ms   0.0% of wall
+GPU stages, sum                50055.1 ms  85.2% of wall
+rest (CPU, submits, waits)      8671.2 ms  14.8% of wall
+wall                           58726.2 ms
+# end 23:31:09 47300 mC caps 1996800 2246400 kHz
+
+# done 2026-11-14T23:31:09+05:30

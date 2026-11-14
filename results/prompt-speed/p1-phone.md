@@ -1,3 +1,7 @@
+> Superseded by `p1b-phone.md`: the transposed layout after the layout
+> measurement (aether-infer 31ccf58). This file is the row-major version's
+> numbers (b95c260), kept for the comparison.
+
 # P1 on the phone: int8 prompt products in GemmaGpu (2026-11-14)
 
 iQOO 13 (SM8750, Adreno 830), Gemma 4 E2B Q4_0, cores 2–7, screen on,

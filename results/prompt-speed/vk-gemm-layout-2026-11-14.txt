@@ -1,0 +1,43 @@
+# The int8 GEMM layouts on the Adreno 830 (2026-11-14)
+
+`bench/examples/vk_gemm.rs TOKENS gemma` on the phone, Q4_0 matrices of
+Gemma 4 E2B's shapes, 39.2–39.6 °C at the start, clock caps 2.40/2.44 GHz,
+one process per token count. `q8` is the tuned `q4_0_gemm_q8.comp` on the
+transposed `MatQ4_0T`; `q8r` is P1's `q4_0_gemm_q8r.comp` on the row-major
+`MatQ` that the decode GEMV reads (no second copy of the weights).
+
+| shape | tokens | q8 ms | q8 GFLOP/s | q8r ms | q8r GFLOP/s | gap |
+| --- | --- | --- | --- | --- | --- | --- |
+| gate/up 12288×1536 | 128 | 3.25 | 1485 | 5.51 | 876 | 1.70× |
+| down 1536×12288 | 128 | 3.32 | 1453 | 21.27 | 227 | 6.40× |
+| q/k/v 4096×1536 | 128 | 1.14 | 1415 | 1.81 | 892 | 1.59× |
+| wo 1536×4096 | 128 | 1.10 | 1468 | 5.64 | 285 | 5.15× |
+| per-layer gate 256×1536 | 128 | 0.17 | 595 | 0.25 | 405 | 1.47× |
+| gate/up | 256 | 6.50 | 1488 | 11.40 | 848 | 1.75× |
+| down | 256 | 6.73 | 1435 | 43.94 | 220 | 6.52× |
+| q/k/v | 256 | 2.18 | 1478 | 3.55 | 908 | 1.63× |
+| wo | 256 | 2.21 | 1460 | 13.75 | 234 | 6.24× |
+| per-layer gate | 256 | 0.21 | 971 | 0.27 | 758 | 1.28× |
+
+The row-major shader's weak cases are the short, wide matrices (rows 1536,
+row stride 2–6 KB): 5–6.5× behind the transposed layout. gate/up, whose
+row stride is 768 B, is 1.6–1.75× behind.
+
+## The shared-memory staging experiment (rejected)
+
+Staging each workgroup's 256 rows × 4 blocks through shared memory (so the
+global reads are 64-byte runs along a row) was tried and made the average
+worse: gate/up 1485 → 445 GFLOP/s, q/k/v 1415 → 435, wo 1468 → 434,
+per-layer gate 595 → 298; only down improved (227 → 388) and still stayed
+3.7× behind `q8`. The barrier and shared-memory traffic cost more than the
+wider loads. The shader is unchanged (row-major, no staging).
+
+## Reading
+
+The transposed layout is 1.6–6.5× faster per product on this GPU, and the
+gap is well over the 2× that would make a layout swap worth its risk. The
+option with no extra memory is to make `MatQ4_0T` the only Q4_0 copy and
+add a transposed-layout decode GEMV (its lanes can run along the row
+dimension, where the T layout is contiguous); that needs a decode A/B
+before it is accepted. The 1.05 GB second copy would keep the current
+decode GEMV but is over the plan's 300 MB line.
