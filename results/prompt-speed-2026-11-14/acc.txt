@@ -1,0 +1,79 @@
+# temp 42600 16:19:35 battery level:59
+## aether gpu Q4_0
+| model            |        size |    params | backend | threads |   test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 27.09 ± 2.30 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 34.59 ± 0.18 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 34.79 ± 0.28 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 34.39 ± 0.06 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 | 18.29 ± 0.07 |
+Max RSS (KiB): 3315852
+# temp 43800 16:26:16 battery level:58
+## aether dsp Q4_0
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Hexagon |       6 |  pp128 | 149.66 ± 0.45 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Hexagon |       6 |  pp512 | 130.87 ± 0.28 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Hexagon |       6 | pp1024 | 117.60 ± 0.47 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Hexagon |       6 | pp2048 | 104.51 ± 2.10 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Hexagon |       6 |   tg64 |  25.23 ± 0.18 |
+Max RSS (KiB): 1777700
+# temp 44600 16:29:02 battery level:57
+## litert gpu p128
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+    - Init Total: 13894.89 ms
+  Time to first token: 0.79 s
+    Prefill Turn 1: Processed 136 tokens in 738.412031ms duration.
+      Prefill Speed: 184.18 tokens/sec.
+    Decode Turn 1: Processed 53 tokens in 2.829703436s duration.
+      Decode Speed: 18.73 tokens/sec.
+Max RSS (KiB): 676964
+# temp 43800 16:29:43 battery level:57
+## litert gpu p512
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+    - Init Total: 9803.37 ms
+  Time to first token: 2.47 s
+    Prefill Turn 1: Processed 520 tokens in 2.410199582s duration.
+      Prefill Speed: 215.75 tokens/sec.
+    Decode Turn 1: Processed 50 tokens in 2.769389374s duration.
+      Decode Speed: 18.05 tokens/sec.
+Max RSS (KiB): 745356
+# temp 43800 16:30:18 battery level:57
+## litert gpu p1024
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+    - Init Total: 9656.93 ms
+  Time to first token: 2.45 s
+    Prefill Turn 1: Processed 1032 tokens in 2.406049114s duration.
+      Prefill Speed: 428.92 tokens/sec.
+    Decode Turn 1: Processed 47 tokens in 1.935435624s duration.
+      Decode Speed: 24.28 tokens/sec.
+Max RSS (KiB): 762868
+# temp 42600 16:30:54 battery level:57
+## litert gpu p2048
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+WARNING: [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorNotFound.
+    - Init Total: 9479.73 ms
+  Time to first token: 5.46 s
+    Prefill Turn 1: Processed 2056 tokens in 5.410182446s duration.
+      Prefill Speed: 380.02 tokens/sec.
+    Decode Turn 1: Processed 33 tokens in 1.490992031s duration.
+      Decode Speed: 22.13 tokens/sec.
+Max RSS (KiB): 860284
+# temp 43000 16:31:32 battery level:57
+## llama.cpp opencl Q4_0
+main: error: failed to load model '/data/local/tmp/aether/gemma4/gemma-4-E2B-it-Q4_0.gguf'
+| model                          |       size |     params | backend    | ngl | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --------------: | -------------------: |
+Max RSS (KiB): 193840
+# temp 42300 16:32:09 battery level:57
+## llama.cpp hexagon Q4_0
+main: error: failed to load model '/data/local/tmp/aether/gemma4/gemma-4-E2B-it-Q4_0.gguf'
+Max RSS (KiB): 130104
+# done 16:32:12

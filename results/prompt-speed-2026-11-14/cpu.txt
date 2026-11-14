@@ -1,0 +1,77 @@
+# temp 40700 15:55:02 battery level:65
+## aether bench Q4_0
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp128 | 156.43 ± 0.46 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp512 | 131.05 ± 1.94 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp1024 | 106.54 ± 3.18 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp2048 |  87.85 ± 6.77 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |   tg64 |  34.45 ± 0.04 |
+Max RSS (KiB): 1876820
+# temp 44900 15:58:05 battery level:64
+## llama-bench Q4_0
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           pp128 |         90.63 ± 6.13 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           pp512 |         87.20 ± 0.14 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |          pp1024 |         79.29 ± 0.43 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |          pp2048 |         67.84 ± 0.05 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |            tg64 |         23.89 ± 0.05 |
+Max RSS (KiB): 4456144
+# temp 44600 16:01:53 battery level:63
+## aether bench Q4_K_M
+| model                     |        size |    params | backend | threads |   test |          t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | CPU     |       6 |  pp128 | 85.61 ± 0.98 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | CPU     |       6 |  pp512 | 80.94 ± 0.06 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | CPU     |       6 | pp1024 | 73.86 ± 0.23 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | CPU     |       6 | pp2048 | 59.93 ± 3.19 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | CPU     |       6 |   tg64 | 28.24 ± 0.11 |
+Max RSS (KiB): 1875348
+# temp 44900 16:06:10 battery level:62
+## llama-bench Q4_K_M
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| gemma4 E2B Q4_K - Medium       |   2.88 GiB |     4.65 B | CPU        |       6 |           pp128 |          9.60 ± 0.14 |
+| gemma4 E2B Q4_K - Medium       |   2.88 GiB |     4.65 B | CPU        |       6 |           pp512 |         18.83 ± 0.11 |
+| gemma4 E2B Q4_K - Medium       |   2.88 GiB |     4.65 B | CPU        |       6 |          pp1024 |         38.01 ± 8.67 |
+| gemma4 E2B Q4_K - Medium       |   2.88 GiB |     4.65 B | CPU        |       6 |          pp2048 |         34.39 ± 5.05 |
+| gemma4 E2B Q4_K - Medium       |   2.88 GiB |     4.65 B | CPU        |       6 |            tg64 |          8.83 ± 0.00 |
+Max RSS (KiB): 4343796
+# temp 44600 16:16:16 battery level:60
+## litert cpu p128
+    - Init Total: 2183.03 ms
+  Time to first token: 3.41 s
+    Prefill Turn 1: Processed 136 tokens in 3.29073927s duration.
+      Prefill Speed: 41.33 tokens/sec.
+    Decode Turn 1: Processed 44 tokens in 5.289505987s duration.
+      Decode Speed: 8.32 tokens/sec.
+Max RSS (KiB): 1407404
+# temp 43800 16:16:57 battery level:60
+## litert cpu p512
+    - Init Total: 1288.09 ms
+  Time to first token: 6.49 s
+    Prefill Turn 1: Processed 520 tokens in 6.443327497s duration.
+      Prefill Speed: 80.70 tokens/sec.
+    Decode Turn 1: Processed 53 tokens in 2.725311509s duration.
+      Decode Speed: 19.45 tokens/sec.
+Max RSS (KiB): 1481116
+# temp 43400 16:17:39 battery level:60
+## litert cpu p1024
+    - Init Total: 919.34 ms
+  Time to first token: 10.88 s
+    Prefill Turn 1: Processed 1032 tokens in 10.828233434s duration.
+      Prefill Speed: 95.31 tokens/sec.
+    Decode Turn 1: Processed 47 tokens in 2.25856729s duration.
+      Decode Speed: 20.81 tokens/sec.
+Max RSS (KiB): 2060480
+# temp 43000 16:18:25 battery level:59
+## litert cpu p2048
+    - Init Total: 1223.10 ms
+  Time to first token: 19.26 s
+    Prefill Turn 1: Processed 2056 tokens in 19.193517649s duration.
+      Prefill Speed: 107.12 tokens/sec.
+    Decode Turn 1: Processed 43 tokens in 2.652919165s duration.
+      Decode Speed: 16.21 tokens/sec.
+Max RSS (KiB): 2129524
+# done 16:19:09
