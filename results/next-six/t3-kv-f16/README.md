@@ -91,3 +91,13 @@ alternated f32/f16/f32/f16): 0.25/0.24/0.24/0.24× real time. The PC carried
 a load average near 7 from other processes during this session (the
 drift test's Q4_K_M f16 timings, 5× slower than its f32 run, are that load,
 not the cache); speed is C4's, on the phone.
+
+## C0 / C4 on the phone (2026-11-14)
+
+iQOO 13, `aether bench --cores 2-7 -p 512 -n 64 -d 0,512,2048,4096 -r 1`
+with `-ctk/-ctv f32` and `f16` alternated three times, each run started
+below 47 °C, on the charger; llama-bench d02b4c0d6 (`taskset fc -t 6 -fa 1`)
+with its f16 and q8_0 caches once each. Raw: `c4-phone.txt` (script
+`c4-phone.sh`); the summary table is in aether-infer `plans/kv-cache.md`.
+f16 is slower at every depth (prompt at depth 4096 −20%, decode up to −7%)
+for 32–70 MB less memory: f32 stays the default.

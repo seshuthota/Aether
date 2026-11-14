@@ -1,0 +1,209 @@
+# temp 43000 13:59:11
+## aether qwen-instruct-q4_0.gguf kv=f32
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 620.70 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 178.83 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 492.68 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 157.21 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 268.55 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 | 114.66 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 165.41 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  80.78 ± 0.00 |
+Max RSS (KiB): 830196
+# temp 46100 14:01:50
+## aether qwen-instruct-q4_0.gguf kv=f16
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 544.87 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 160.55 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 384.00 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 135.93 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 212.89 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 | 107.57 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 125.68 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  75.96 ± 0.00 |
+Max RSS (KiB): 759144
+# temp 46500 14:04:56
+## aether qwen-instruct-q4_0.gguf kv=f16
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 474.45 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 145.86 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 331.92 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 130.67 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 195.16 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 |  99.49 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 125.72 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  75.70 ± 0.00 |
+Max RSS (KiB): 744976
+# temp 46900 14:08:07
+## aether qwen-instruct-q4_0.gguf kv=f32
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 497.16 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 148.13 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 376.30 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 131.23 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 230.32 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 | 101.64 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 153.16 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  75.87 ± 0.00 |
+Max RSS (KiB): 795340
+# temp 46500 14:11:21
+## aether qwen-instruct-q4_0.gguf kv=f32
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 507.22 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 148.35 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 400.56 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 131.92 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 233.84 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 |  99.39 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 155.18 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  79.91 ± 0.00 |
+Max RSS (KiB): 837484
+# temp 46500 14:14:35
+## aether qwen-instruct-q4_0.gguf kv=f16
+| model           |       size |   params | backend | threads |          test |           t/s |
+| --------------- | ---------: | -------: | ------- | ------: | ------------: | ------------: |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |         pp512 | 475.71 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |          tg64 | 149.08 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  pp512 @ d512 | 342.80 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |   tg64 @ d512 | 130.48 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d2048 | 194.96 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d2048 |  99.51 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 | pp512 @ d4096 | 126.02 ± 0.00 |
+| qwen2 0.5B Q4_0 | 265.25 MiB | 494.03 M | CPU     |       6 |  tg64 @ d4096 |  75.71 ± 0.00 |
+Max RSS (KiB): 759912
+# temp 46900 14:17:46
+## llama-bench qwen-instruct-q4_0.gguf ctk=f16
+| model                          |       size |     params | backend    | threads |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --: | --------------: | -------------------: |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |           pp512 |        504.03 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |            tg64 |        141.55 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |    pp512 @ d512 |        329.48 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |     tg64 @ d512 |        102.96 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |   pp512 @ d2048 |        177.30 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |    tg64 @ d2048 |         61.71 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |   pp512 @ d4096 |        110.88 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   1 |    tg64 @ d4096 |         38.32 ± 0.00 |
+Max RSS (KiB): 766896
+# temp 46500 14:19:15
+## llama-bench qwen-instruct-q4_0.gguf ctk=q8_0
+| model                          |       size |     params | backend    | threads | type_k | type_v |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | -----: | -----: | --: | --------------: | -------------------: |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |           pp512 |        380.26 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |            tg64 |        137.45 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |    pp512 @ d512 |        211.98 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |     tg64 @ d512 |        107.78 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |   pp512 @ d2048 |         91.27 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |    tg64 @ d2048 |         69.62 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |   pp512 @ d4096 |         52.63 ± 0.00 |
+| qwen2 1B Q4_0                  | 265.25 MiB |   494.03 M | CPU        |       6 |   q8_0 |   q8_0 |   1 |    tg64 @ d4096 |         44.68 ± 0.00 |
+Max RSS (KiB): 707760
+# temp 46500 14:21:18
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f32
+| model                   |        size |    params | backend | threads |          test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 104.35 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 |  39.19 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 |  99.17 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 |  37.25 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 |  85.54 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 |  34.49 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 |  62.43 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 |  29.76 ± 0.00 |
+Max RSS (KiB): 1362016
+# temp 46900 14:28:42
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f16
+| model                   |        size |    params | backend | threads |          test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 101.15 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 |  37.24 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 |  89.85 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 |  36.64 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 |  71.93 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 |  32.06 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 |  49.46 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 |  26.86 ± 0.00 |
+Max RSS (KiB): 1328852
+# temp 46900 14:37:01
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f16
+| model                   |        size |    params | backend | threads |          test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 100.01 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 |  39.36 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 |  90.16 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 |  36.66 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 |  71.79 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 |  32.48 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 |  53.99 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 |  28.01 ± 0.00 |
+Max RSS (KiB): 1328688
+# temp 46500 14:44:43
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f32
+| model                   |        size |    params | backend | threads |          test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 104.79 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 |  39.32 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 |  98.82 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 |  37.28 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 |  85.24 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 |  33.87 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 |  65.76 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 |  29.00 ± 0.00 |
+Max RSS (KiB): 1361756
+# temp 46900 14:51:36
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f32
+| model                   |        size |    params | backend | threads |          test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 102.77 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 |  39.35 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 |  98.54 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 |  37.23 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 |  85.37 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 |  34.14 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 |  66.33 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 |  30.38 ± 0.00 |
+Max RSS (KiB): 1362300
+# temp 46900 14:58:30
+## aether LFM3-1.7B-Q4_K_M.gguf kv=f16
+| model                   |        size |    params | backend | threads |          test |          t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | ------------: | -----------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |         pp512 | 99.99 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |          tg64 | 39.17 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp512 @ d512 | 90.88 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |   tg64 @ d512 | 36.65 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d2048 | 71.96 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d2048 | 32.49 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp512 @ d4096 | 52.37 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg64 @ d4096 | 27.59 ± 0.00 |
+Max RSS (KiB): 1328956
+# temp 46500 15:06:12
+## llama-bench LFM3-1.7B-Q4_K_M.gguf ctk=f16
+| model                          |       size |     params | backend    | threads |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --: | --------------: | -------------------: |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |           pp512 |        101.91 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |            tg64 |         33.92 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |    pp512 @ d512 |         72.96 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |     tg64 @ d512 |         20.35 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |   pp512 @ d2048 |         70.18 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |    tg64 @ d2048 |         23.39 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |   pp512 @ d4096 |         60.09 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   1 |    tg64 @ d4096 |         13.36 ± 0.00 |
+Max RSS (KiB): 2364884
+# temp 46900 15:09:44
+## llama-bench LFM3-1.7B-Q4_K_M.gguf ctk=q8_0
+| model                          |       size |     params | backend    | threads | type_k | type_v |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | -----: | -----: | --: | --------------: | -------------------: |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |           pp512 |         64.73 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |            tg64 |         18.45 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |    pp512 @ d512 |         56.15 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |     tg64 @ d512 |         23.26 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |   pp512 @ d2048 |         44.83 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |    tg64 @ d2048 |         19.34 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |   pp512 @ d4096 |         41.75 ± 0.00 |
+| lfm3 1.7B Q4_K - Medium        |   1.02 GiB |     1.73 B | CPU        |       6 |   q8_0 |   q8_0 |   1 |    tg64 @ d4096 |         20.51 ± 0.00 |
+Max RSS (KiB): 2335228
+# done 15:14:04
