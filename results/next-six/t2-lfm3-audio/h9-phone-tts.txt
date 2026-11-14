@@ -1,0 +1,12 @@
+cpu max before: 42300
+battery:  AC powered: false  USB powered: false  level: 72  Capacity level: -1 
+speak: tts1.wav: 3.36 s of audio in 1.67 s (2.01x real time); first audio after 363 ms; loaded in 1.0 s
+Real time (s): 2.841039
+Max RSS (KiB): 1468560
+speak: tts2.wav: 2.40 s of audio in 1.26 s (1.90x real time); first audio after 283 ms; loaded in 0.9 s
+Real time (s): 2.345616
+Max RSS (KiB): 1461700
+speak: tts3.wav: 3.36 s of audio in 1.60 s (2.11x real time); first audio after 296 ms; loaded in 1.0 s
+Real time (s): 2.704201
+Max RSS (KiB): 1468796
+cpu max after: 63400

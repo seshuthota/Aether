@@ -1,0 +1,15 @@
+cpu max before: 42600
+battery:  AC powered: false  USB powered: false  level: 72  Capacity level: -1 
+[00:00:00.000 --> 00:00:11.000]  And so, my fellow Americans, ask not what your country can do for you. Ask what you can do for your country.
+transcribe: jfk.wav: 11.0 s of audio, language en, 1 segments in 1.84 s (6.0x real time)
+Real time (s): 2.995159
+Max RSS (KiB): 1421152
+[00:00:00.000 --> 00:00:04.240]  Bonjour à tous ! Le train pour Paris partira à 8 heures ce soir.
+transcribe: fr.wav: 4.2 s of audio, language fr, 1 segments in 0.91 s (4.7x real time)
+Real time (s): 2.473465
+Max RSS (KiB): 1353672
+[00:00:00.000 --> 00:00:06.560]  今天天气很好，我们去公园散步吧，请在下午三点之前把报告发给我。
+transcribe: zh.wav: 6.6 s of audio, language zh, 1 segments in 1.25 s (5.3x real time)
+Real time (s): 2.285390
+Max RSS (KiB): 1399236
+cpu max after: 57600

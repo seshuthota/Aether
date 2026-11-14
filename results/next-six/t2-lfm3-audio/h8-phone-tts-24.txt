@@ -1,0 +1,27 @@
+40700
+en0-s1 speak: h8q/en0-s1.wav: 3.36 s of audio in 1.68 s (2.00x real time); first audio after 298 ms; loaded in 1.0 s
+en0-s2 speak: h8q/en0-s2.wav: 3.84 s of audio in 1.88 s (2.04x real time); first audio after 297 ms; loaded in 1.0 s
+en0-s3 speak: h8q/en0-s3.wav: 3.36 s of audio in 1.67 s (2.01x real time); first audio after 302 ms; loaded in 1.0 s
+en1-s1 speak: h8q/en1-s1.wav: 4.64 s of audio in 2.21 s (2.10x real time); first audio after 314 ms; loaded in 1.0 s
+en1-s2 speak: h8q/en1-s2.wav: 4.00 s of audio in 1.95 s (2.05x real time); first audio after 314 ms; loaded in 1.0 s
+en1-s3 speak: h8q/en1-s3.wav: 4.00 s of audio in 1.93 s (2.08x real time); first audio after 317 ms; loaded in 1.0 s
+en2-s1 speak: h8q/en2-s1.wav: 4.48 s of audio in 2.13 s (2.10x real time); first audio after 309 ms; loaded in 1.0 s
+en2-s2 speak: h8q/en2-s2.wav: 4.80 s of audio in 2.23 s (2.16x real time); first audio after 309 ms; loaded in 0.9 s
+en2-s3 speak: h8q/en2-s3.wav: 4.16 s of audio in 1.97 s (2.11x real time); first audio after 311 ms; loaded in 0.9 s
+en3-s1 speak: h8q/en3-s1.wav: 4.96 s of audio in 2.35 s (2.11x real time); first audio after 352 ms; loaded in 0.9 s
+en3-s2 speak: h8q/en3-s2.wav: 4.96 s of audio in 2.41 s (2.05x real time); first audio after 380 ms; loaded in 1.0 s
+en3-s3 speak: h8q/en3-s3.wav: 4.96 s of audio in 2.38 s (2.08x real time); first audio after 373 ms; loaded in 1.0 s
+en4-s1 speak: h8q/en4-s1.wav: 5.28 s of audio in 3.33 s (1.59x real time); first audio after 398 ms; loaded in 1.0 s
+en4-s2 speak: h8q/en4-s2.wav: 5.92 s of audio in 2.81 s (2.10x real time); first audio after 395 ms; loaded in 1.0 s
+en4-s3 speak: h8q/en4-s3.wav: 5.60 s of audio in 3.14 s (1.78x real time); first audio after 399 ms; loaded in 1.0 s
+en5-s1 speak: h8q/en5-s1.wav: 5.28 s of audio in 2.57 s (2.05x real time); first audio after 370 ms; loaded in 1.0 s
+en5-s2 speak: h8q/en5-s2.wav: 5.68 s of audio in 2.75 s (2.06x real time); first audio after 374 ms; loaded in 1.0 s
+en5-s3 speak: h8q/en5-s3.wav: 5.28 s of audio in 2.67 s (1.98x real time); first audio after 418 ms; loaded in 1.1 s
+zh0-s1 speak: h8q/zh0-s1.wav: 3.68 s of audio in 2.14 s (1.72x real time); first audio after 379 ms; loaded in 1.1 s
+zh0-s2 speak: h8q/zh0-s2.wav: 3.52 s of audio in 2.00 s (1.76x real time); first audio after 384 ms; loaded in 1.1 s
+zh0-s3 speak: h8q/zh0-s3.wav: 3.68 s of audio in 2.12 s (1.74x real time); first audio after 389 ms; loaded in 1.1 s
+zh1-s1 speak: h8q/zh1-s1.wav: 3.84 s of audio in 2.13 s (1.80x real time); first audio after 446 ms; loaded in 1.1 s
+zh1-s2 speak: h8q/zh1-s2.wav: 4.24 s of audio in 2.67 s (1.59x real time); first audio after 395 ms; loaded in 1.1 s
+zh1-s3 speak: h8q/zh1-s3.wav: 4.32 s of audio in 2.80 s (1.54x real time); first audio after 488 ms; loaded in 1.1 s
+62600
+/data/local/tmp/aether/h8q/./: 24 files pulled, 0 skipped. 4.0 MB/s (5177376 bytes in 1.219s)

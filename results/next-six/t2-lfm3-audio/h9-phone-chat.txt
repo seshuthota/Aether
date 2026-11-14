@@ -1,0 +1,15 @@
+cpu max before: 42600
+battery:  AC powered: false  USB powered: false  level: 71  Capacity level: -1 
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: chat1.wav: 4.24 s of speech in 2.26 s (1.88x real time); prompt 29 tokens in 311 ms; first text after 311 ms, first audio after 443 ms; 70 slots; loaded in 0.9 s
+Real time (s): 3.317268
+Max RSS (KiB): 1470780
+The capital of France is Paris.
+speak --chat: chat2.wav: 2.40 s of speech in 1.50 s (1.60x real time); prompt 59 tokens in 417 ms; first text after 418 ms, first audio after 550 ms; 37 slots; loaded in 0.9 s
+Real time (s): 2.509642
+Max RSS (KiB): 1584452
+The Moon is Earth's natural satellite, the only celestial body we can see without a telescope. Would you like another fact?
+speak --chat: chat3.wav: 7.12 s of speech in 3.44 s (2.07x real time); prompt 30 tokens in 211 ms; first text after 212 ms, first audio after 348 ms; 114 slots; loaded in 0.9 s
+Real time (s): 4.445193
+Max RSS (KiB): 1479732
+cpu max after: 68800

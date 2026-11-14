@@ -1,0 +1,350 @@
+{
+ "hostdata/lfm3-audio/h8q/ref": {
+  "cer_en": 0.0018467220683287165,
+  "cer_zh": 0.011111111111111112,
+  "clips": [
+   {
+    "name": "en0-s1",
+    "seconds": 3.36,
+    "heard": "Hello, this is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en0-s2",
+    "seconds": 3.36,
+    "heard": "Hello. This is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en0-s3",
+    "seconds": 3.36,
+    "heard": "Hello, this is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en1-s1",
+    "seconds": 4.32,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en1-s2",
+    "seconds": 4.32,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en1-s3",
+    "seconds": 4.64,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en2-s1",
+    "seconds": 4.72,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en2-s2",
+    "seconds": 4.48,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en2-s3",
+    "seconds": 4.8,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en3-s1",
+    "seconds": 5.12,
+    "heard": "Our meeting has been moved to Thursday at 3 o'clock in the main conference room.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en3-s2",
+    "seconds": 5.76,
+    "heard": "Our meeting has been moved to Thursday at 3 o'clock in the main conference room.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en3-s3",
+    "seconds": 4.96,
+    "heard": "Our meeting has been moved Thursday at 3 o'clock in the main conference room.",
+    "errors": 2,
+    "units": 68
+   },
+   {
+    "name": "en4-s1",
+    "seconds": 5.76,
+    "heard": "She sells seashells by the seashore and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en4-s2",
+    "seconds": 5.44,
+    "heard": "She sells seashells by the seashore, and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en4-s3",
+    "seconds": 5.6,
+    "heard": "She sells seashells by the seashore and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en5-s1",
+    "seconds": 5.92,
+    "heard": "Turn left at the second traffic light, then continue straight for about two kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "en5-s2",
+    "seconds": 5.76,
+    "heard": "Turn left at the second traffic light, then continue straight for about 2 kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "en5-s3",
+    "seconds": 5.6,
+    "heard": "Turn left at the second traffic light, then continue straight for about 2 kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "zh0-s1",
+    "seconds": 3.68,
+    "heard": "今天天氣很好,我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh0-s2",
+    "seconds": 3.84,
+    "heard": "今天天氣很好我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh0-s3",
+    "seconds": 3.68,
+    "heard": "今天天氣很好 我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh1-s1",
+    "seconds": 4.0,
+    "heard": "请在下午3点之前把报告发给我。谢谢。",
+    "errors": 1,
+    "units": 16
+   },
+   {
+    "name": "zh1-s2",
+    "seconds": 3.84,
+    "heard": "请在下午三点之前把报告发给我。谢谢。",
+    "errors": 0,
+    "units": 16
+   },
+   {
+    "name": "zh1-s3",
+    "seconds": 3.68,
+    "heard": "请在下午三点之前把报告发给我。谢谢。",
+    "errors": 0,
+    "units": 16
+   }
+  ]
+ },
+ "hostdata/lfm3-audio/h8q/q4_k_m": {
+  "cer_en": 0.0,
+  "cer_zh": 0.011111111111111112,
+  "clips": [
+   {
+    "name": "en0-s1",
+    "seconds": 3.36,
+    "heard": "Hello, this is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en0-s2",
+    "seconds": 3.84,
+    "heard": "Hello, this is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en0-s3",
+    "seconds": 3.36,
+    "heard": "Hello. This is a quick test of the speech engine.",
+    "errors": 0,
+    "units": 38
+   },
+   {
+    "name": "en1-s1",
+    "seconds": 4.64,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en1-s2",
+    "seconds": 4.0,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en1-s3",
+    "seconds": 4.0,
+    "heard": "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "errors": 0,
+    "units": 51
+   },
+   {
+    "name": "en2-s1",
+    "seconds": 4.48,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en2-s2",
+    "seconds": 4.8,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en2-s3",
+    "seconds": 4.16,
+    "heard": "Please remember to bring your umbrella because it might rain this afternoon.",
+    "errors": 0,
+    "units": 64
+   },
+   {
+    "name": "en3-s1",
+    "seconds": 4.96,
+    "heard": "Our meeting has been moved to Thursday at 3 o'clock in the main conference room.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en3-s2",
+    "seconds": 4.96,
+    "heard": "Our meeting has been moved to Thursday at 3 o'clock in the main conference room.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en3-s3",
+    "seconds": 4.96,
+    "heard": "Our meeting has been moved to Thursday at 3 o'clock in the main conference room.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en4-s1",
+    "seconds": 5.28,
+    "heard": "She sells seashells by the seashore, and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en4-s2",
+    "seconds": 5.92,
+    "heard": "She sells seashells by the seashore and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en4-s3",
+    "seconds": 5.6,
+    "heard": "She sells seashells by the seashore, and the shells she sells are surely seashells.",
+    "errors": 0,
+    "units": 68
+   },
+   {
+    "name": "en5-s1",
+    "seconds": 5.28,
+    "heard": "Turn left at the second traffic light, then continue straight for about 2 kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "en5-s2",
+    "seconds": 5.68,
+    "heard": "Turn left at the second traffic light, then continue straight for about 2 kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "en5-s3",
+    "seconds": 5.28,
+    "heard": "Turn left at the second traffic light, then continue straight for about two kilometers.",
+    "errors": 0,
+    "units": 72
+   },
+   {
+    "name": "zh0-s1",
+    "seconds": 3.68,
+    "heard": "今天天氣很好 我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh0-s2",
+    "seconds": 3.52,
+    "heard": "今天天氣很好,我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh0-s3",
+    "seconds": 3.68,
+    "heard": "今天天氣很好 我們去公園散步吧",
+    "errors": 0,
+    "units": 14
+   },
+   {
+    "name": "zh1-s1",
+    "seconds": 3.84,
+    "heard": "请在下午三点之前把报告发给我。谢谢。",
+    "errors": 0,
+    "units": 16
+   },
+   {
+    "name": "zh1-s2",
+    "seconds": 4.24,
+    "heard": "请在下午三点之前把报告告发给我。谢谢。",
+    "errors": 1,
+    "units": 16
+   },
+   {
+    "name": "zh1-s3",
+    "seconds": 4.32,
+    "heard": "请在下午三点之前把报告发给我。谢谢。",
+    "errors": 0,
+    "units": 16
+   }
+  ]
+ }
+}
