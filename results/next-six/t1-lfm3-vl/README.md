@@ -76,3 +76,32 @@ leaves it the same way.
 included) 19.0 s, decode 12.3 tok/s; the same model on 241 text tokens
 prefills in 15.6 s, so the encoder is a small part. The phone numbers are
 V7.
+
+## V7 on the phone (2026-11-14)
+
+iQOO 13 (SM8750), `--cores 2-7` (6 threads), what an app ships:
+`LFM3-VL-2B-Q4_K_M.gguf` + `mmproj-LFM3-VL-2B-Q8_0.gguf`. On the charger
+(79%), screen kept on, Tailscale adb; SoC 45.7 °C at the first run, 57–62 °C
+from the second batch on. `aether run --temp 0 -n 32 --reasoning-budget 0`,
+"Describe the image in one sentence.", three runs each (`v7-phone.txt`);
+peak RSS from `toybox time -v`.
+
+| Image | Prompt tokens | Prompt (mean) | Text pp at that length | Encode (difference) | Decode | Peak RSS |
+| --- | --- | --- | --- | --- | --- | --- |
+| scene, cap 256 | 276 | 3653 ms | 2439 ms (113.2 tok/s) | ~1.21 s | 44.9 tok/s | 1.55 GB |
+| chart, cap 256 | 276 | 3799 ms | 2439 ms | ~1.36 s | 43.9 tok/s | 1.55 GB |
+| strip, cap 256 | 148 | 1813 ms | 1288 ms (114.9 tok/s) | ~0.52 s | 44.2 tok/s | 1.54 GB |
+| scene, cap 64 | 84 | 962 ms | 810 ms (103.8 tok/s) | ~0.15 s | 46.4 tok/s | 1.53 GB |
+| icon, cap 256 | 84 | 1103 ms | 810 ms | ~0.29 s | 42.6 tok/s | 1.53 GB |
+| text only | 18 | 258 ms | – | – | 43.4 tok/s | 1.32 GB |
+
+The encode column is the image prompt's time minus `aether bench -p
+84,148,276` on the same LM (run after the batch, at 61 °C): an estimate,
+the CLI does not time the encoder on its own. Q4_K_M's icon answer equals
+transformers' greedy text ("The image shows a red circle with a white
+cross inside it, set against a blue background.").
+
+AAR: `VisionChatTest` with the Q4_K_M + Q8_0 files, split in two tests (the
+vendor freezer stops an instrumentation process ~10 s in):
+`chatsAboutABitmap` 4.5 s, `refusesPicturesItCannotTake` 3.0 s, both pass
+(`v7-phone-aar.txt`).

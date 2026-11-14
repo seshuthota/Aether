@@ -1,0 +1,8 @@
+Success
+47600
+Time: 4.467
+OK (1 test)
+^ chatsAboutABitmap
+Time: 2.993
+OK (1 test)
+^ refusesPicturesItCannotTake

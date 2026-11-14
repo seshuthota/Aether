@@ -1,0 +1,27 @@
+scene256 r1 t=45700 prefill: 276 tokens in 3567.8 ms (77.4 tok/s) | decode: 31 tokens in 696.0 ms (44.5 tok/s) | peak RSS 1554704 kB Max RSS (KiB): 1554704 
+scene256 r2 t=56900 prefill: 276 tokens in 3777.3 ms (73.1 tok/s) | decode: 31 tokens in 687.1 ms (45.1 tok/s) | peak RSS 1554796 kB Max RSS (KiB): 1554796 
+scene256 r3 t=58800 prefill: 276 tokens in 3615.3 ms (76.3 tok/s) | decode: 31 tokens in 685.3 ms (45.2 tok/s) | peak RSS 1554760 kB Max RSS (KiB): 1554760 
+scene64 r1 t=61100 prefill: 84 tokens in 954.9 ms (88.0 tok/s) | decode: 31 tokens in 666.7 ms (46.5 tok/s) | peak RSS 1529000 kB Max RSS (KiB): 1529000 
+scene64 r2 t=61100 prefill: 84 tokens in 979.6 ms (85.7 tok/s) | decode: 31 tokens in 668.1 ms (46.4 tok/s) | peak RSS 1528772 kB Max RSS (KiB): 1528772 
+scene64 r3 t=61100 prefill: 84 tokens in 952.6 ms (88.2 tok/s) | decode: 31 tokens in 669.2 ms (46.3 tok/s) | peak RSS 1528620 kB Max RSS (KiB): 1528620 
+chart r1 t=60700 prefill: 276 tokens in 3658.0 ms (75.5 tok/s) | decode: 30 tokens in 664.7 ms (45.1 tok/s) | peak RSS 1554748 kB Max RSS (KiB): 1554748 
+chart r2 t=62300 prefill: 276 tokens in 3973.9 ms (69.5 tok/s) | decode: 30 tokens in 693.3 ms (43.3 tok/s) | peak RSS 1555060 kB Max RSS (KiB): 1555060 
+chart r3 t=62600 prefill: 276 tokens in 3765.7 ms (73.3 tok/s) | decode: 30 tokens in 694.7 ms (43.2 tok/s) | peak RSS 1540288 kB Max RSS (KiB): 1540288 
+strip r1 t=62600 prefill: 148 tokens in 1793.2 ms (82.5 tok/s) | decode: 31 tokens in 703.6 ms (44.1 tok/s) | peak RSS 1539636 kB Max RSS (KiB): 1539636 
+strip r2 t=62600 prefill: 148 tokens in 1829.2 ms (80.9 tok/s) | decode: 31 tokens in 699.9 ms (44.3 tok/s) | peak RSS 1539496 kB Max RSS (KiB): 1539496 
+strip r3 t=62300 prefill: 148 tokens in 1815.1 ms (81.5 tok/s) | decode: 31 tokens in 703.7 ms (44.1 tok/s) | peak RSS 1539504 kB Max RSS (KiB): 1539504 
+icon r1 t=61900 prefill: 84 tokens in 1115.2 ms (75.3 tok/s) | decode: 31 tokens in 723.8 ms (42.8 tok/s) | peak RSS 1528080 kB Max RSS (KiB): 1528080 
+icon r2 t=60700 prefill: 84 tokens in 1105.4 ms (76.0 tok/s) | decode: 31 tokens in 723.8 ms (42.8 tok/s) | peak RSS 1527672 kB Max RSS (KiB): 1527672 
+icon r3 t=60300 prefill: 84 tokens in 1088.4 ms (77.2 tok/s) | decode: 31 tokens in 736.0 ms (42.1 tok/s) | peak RSS 1528096 kB Max RSS (KiB): 1528096 
+text r1 t=61900 prefill: 18 tokens in 255.4 ms (70.5 tok/s) | decode: 31 tokens in 1035.1 ms (29.9 tok/s) | peak RSS 1324916 kB Max RSS (KiB): 1324916 
+text r2 t=60700 prefill: 18 tokens in 260.2 ms (69.2 tok/s) | decode: 31 tokens in 712.8 ms (43.5 tok/s) | peak RSS 1324452 kB Max RSS (KiB): 1324452 
+text r3 t=60700 prefill: 18 tokens in 257.4 ms (69.9 tok/s) | decode: 31 tokens in 713.9 ms (43.4 tok/s) | peak RSS 1324484 kB Max RSS (KiB): 1324484 
+61100
+| model                 |        size |    params | backend | threads |  test |           t/s |
+| --------------------- | ----------: | --------: | ------- | ------: | ----: | ------------: |
+| lfm3 2B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  pp84 | 103.76 ± 0.45 |
+| lfm3 2B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp148 | 114.91 ± 1.03 |
+| lfm3 2B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | pp276 | 113.17 ± 0.37 |
+| lfm3 2B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 |  tg32 |  44.08 ± 0.04 |
+
+build: 438b9c044 (aether)
