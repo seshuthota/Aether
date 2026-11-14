@@ -1,0 +1,12 @@
+# vk_gemma: LFM3-1.7B-QAD-Q4_0 prompt vs llama.cpp BF16 base, Intel RPL-P, 2026-11-15
+# 20 chunks, ctx 512, wikitext-2 test, batch 128
+# testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf on Intel(R) Graphics (RPL-P) | upload + record 2460 ms, prompt batch 128
+# greedy: " a person. Once upon a time, in a small village by the sea, there lived a person. Once upon a"
+# 39 positions in 1926.5 ms: 20.2 tok/s
+[1]9.9754 kld 0.10449,[2]14.6513 kld 0.13565,[3]15.8091 kld 0.12854,[4]16.4058 kld 0.12250,[5]17.1677 kld 0.11546,[6]19.2999 kld 0.16650,[7]19.6739 kld 0.16160,[8]19.9104 kld 0.15869,[9]20.7143 kld 0.14974,[10]21.9908 kld 0.16708,[11]24.2706 kld 0.20518,[12]24.0982 kld 0.19783,[13]25.5910 kld 0.18964,[14]24.0466 kld 0.18261,[15]25.6374 kld 0.18767,[16]28.6170 kld 0.19072,[17]27.6659 kld 0.19492,[18]28.3906 kld 0.18940,[19]27.8481 kld 0.18549,[20]27.1311 kld 0.18031,
+Final estimate: PPL = 27.1311 +/- 1.24489  (5100 tokens scored, 578.2 s, prompt pass, batches of 128)
+PPL(base file) = 23.4666   Mean KLD: 0.180309   Same top p: 80.157 %
+# llama.cpp 0.28.0, QAD-Q4_0 vs the same BF16 base (20 chunks, ctx 512)
+Final estimate: PPL = 27.1383 +/- 1.24457
+Mean    KLD:   0.183190 ±   0.004556
+Same top p: 79.922 ± 0.561 %
