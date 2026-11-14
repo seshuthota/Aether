@@ -1,0 +1,11 @@
+# 2026-11-14T18:32:32+05:30 aether CPU Q4_0, commit 3a50c4f, start 39200 m°C zone0, caps 2400000 2438400 kHz,   level: 39
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp128 | 170.66 ± 1.81 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp512 |  53.12 ± 6.80 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp1024 | 80.73 ± 19.30 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp2048 |  62.70 ± 9.10 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |   tg64 |  13.76 ± 2.74 |
+
+build: 3a50c4fcc (aether)
+# end 61100 m°C zone0, caps 1785600kHz,   level: 37

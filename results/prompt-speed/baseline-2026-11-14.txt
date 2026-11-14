@@ -1,0 +1,41 @@
+# prompt-speed 2026-11-14T18:01:06+05:30: Gemma 4 E2B Q4_0 prompt and decode speed, I2401
+# model /data/local/tmp/aether/gemma4/gemma-4-E2B-it-Q4_0.gguf; aether 3a50c4f; prompts 128,512,1024,2048; decode 64 tokens; 3 repetitions
+# aether cores 2-7; llama-bench and LiteRT taskset fc (6 threads)
+## aether CPU warm-up (not timed)
+# 2026-11-14T18:01:07+05:30, commit 3a50c4f, start 43000 m°C (zone0), hottest CPU 53200 m°C, screen Awake
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 44
+# Capacity level: -1
+| model            |        size |    params | backend | threads |  test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp128 | 164.93 ± 0.00 |
+
+build: 3a50c4fcc (aether)
+
+## aether CPU Q4_0
+# 2026-11-14T18:01:39+05:30, commit 3a50c4f, start 42600 m°C (zone0), hottest CPU 49900 m°C, screen Awake
+# AC powered: false
+# USB powered: false
+# Wireless powered: false
+# board temp status: 0
+# low bat status: 0
+# reverse wl chg status: 0
+# status: 3
+# level: 44
+# Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp128 |  95.59 ± 5.66 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |  pp512 | 90.16 ± 16.25 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp1024 |  91.92 ± 1.75 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp2048 |  63.91 ± 5.51 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 |   tg64 |  22.91 ± 1.09 |
+
+build: 3a50c4fcc (aether)
+
