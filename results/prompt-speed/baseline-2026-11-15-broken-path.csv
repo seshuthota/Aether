@@ -1,0 +1,6 @@
+variant,kind,size,round,value,temp_c,cap_perf_ghz,cap_prime_ghz
+llama,pp,128,0,118.22,40,2.40,2.44
+llama,pp,512,0,109.68,40,2.40,2.44
+llama,pp,1024,0,86.14,40,2.40,2.44
+llama,pp,2048,0,69.82,40,2.40,2.44
+llama,tg,64,0,23.87,40,2.40,2.44

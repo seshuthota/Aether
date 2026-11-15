@@ -1,0 +1,64 @@
+# phone-ab 2026-11-15T17:12:46+0530: vk-gemm-f16-int8-2026-11-15.txt; 2 rounds, alternated
+# vk_gemm256: ./vk_gemm 256 gemma
+# vk_gemm128: ./vk_gemm 128 gemma
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 17:12:46 44 C caps 2.40/2.44 GHz
+# cooling 17:13:07 40 C caps 2.40/2.44 GHz
+
+## vk_gemm256 round 0 17:13:07 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 58;   Capacity level: -1
+# Adreno (TM) 830 | 256 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,q8_ms,q8_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops
+gate/up,12288,1536,35.23,274,9.55,1012,10.51,920,6.48,1491,35.43,273,35.87,269,10.92,885,15.95,606,14.69,658
+down,1536,12288,39.45,245,10.35,934,11.66,829,6.68,1447,39.43,245,39.66,244,11.69,826,16.56,584,11.64,831
+q/k/v,4096,1536,12.38,260,3.32,970,3.65,882,2.23,1445,12.34,261,12.42,259,3.72,866,5.47,589,4.68,688
+wo,1536,4096,12.67,254,3.39,949,3.75,858,2.14,1503,12.79,252,12.82,251,3.80,848,5.56,579,3.80,847
+per-layer gate,256,1536,1.12,180,0.38,533,0.41,497,0.21,973,1.12,179,1.13,178,0.44,459,0.51,395,0.34,593
+# end 17:13:23 47 C caps 2.40/2.44 GHz; exit 0
+# cooling 17:13:23 46 C caps 2.40/2.44 GHz
+# cooling 17:13:44 40 C caps 2.40/2.44 GHz
+
+## vk_gemm128 round 0 17:13:44 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 58;   Capacity level: -1
+# Adreno (TM) 830 | 128 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,q8_ms,q8_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops
+gate/up,12288,1536,17.86,271,4.71,1026,5.37,900,3.26,1484,17.80,271,17.86,271,5.35,903,7.97,606,7.25,667
+down,1536,12288,19.92,243,5.79,834,5.98,808,3.36,1439,19.78,244,19.96,242,6.59,734,8.38,577,5.57,867
+q/k/v,4096,1536,6.66,242,1.67,962,1.85,870,1.13,1424,6.75,238,6.82,236,1.90,849,2.75,585,2.31,697
+wo,1536,4096,6.36,253,1.90,850,2.03,794,1.10,1464,6.35,253,6.42,251,2.06,782,2.73,589,1.87,861
+per-layer gate,256,1536,1.10,91,0.28,357,0.27,368,0.17,596,1.10,91,1.11,91,0.33,302,0.39,260,0.48,211
+# end 17:13:55 46 C caps 2.40/2.44 GHz; exit 0
+# cooling 17:13:55 45 C caps 2.40/2.44 GHz
+# cooling 17:14:15 40 C caps 2.40/2.44 GHz
+# cooling 17:14:35 41 C caps 2.40/2.44 GHz
+# cooling 17:14:55 42 C caps 2.40/2.44 GHz
+# cooling 17:15:15 42 C caps 2.40/2.44 GHz
+# cooling 17:15:35 42 C caps 2.40/2.44 GHz
+# cooling 17:15:55 42 C caps 2.23/2.44 GHz
+# cooling 17:16:16 42 C caps 2.23/2.44 GHz
+# cooling 17:16:36 41 C caps 2.40/2.44 GHz
+# cooling 17:16:56 41 C caps 2.40/2.44 GHz
+# cooling 17:17:16 47 C caps 2.40/2.44 GHz
+# cooling 17:17:36 42 C caps 2.40/2.44 GHz
+# cooling 17:17:56 40 C caps 2.40/2.44 GHz
+
+## vk_gemm128 round 1 17:17:56 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 57;   Capacity level: -1
+# Adreno (TM) 830 | 128 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,q8_ms,q8_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops
+gate/up,12288,1536,17.88,270,4.71,1025,5.26,919,3.26,1481,17.78,272,17.88,270,5.34,906,8.02,603,7.28,664
+down,1536,12288,19.76,244,5.83,829,6.42,752,3.34,1446,19.71,245,19.91,243,6.63,729,8.37,577,5.84,827
+q/k/v,4096,1536,6.71,240,1.68,958,1.87,861,1.14,1416,6.77,238,6.76,238,1.90,848,2.77,581,2.30,701
+wo,1536,4096,6.38,252,1.87,863,2.00,807,1.09,1473,6.40,252,6.37,253,2.06,780,2.74,587,1.87,863
+per-layer gate,256,1536,1.10,91,0.28,357,0.27,367,0.17,595,1.10,91,1.11,91,0.33,302,0.43,236,0.20,498
+# end 17:18:07 46 C caps 2.40/2.44 GHz; exit 0
+# cooling 17:18:07 45 C caps 2.40/2.44 GHz
+# cooling 17:18:29 40 C caps 2.40/2.44 GHz
+# cooling 17:18:49 40 C caps 2.40/2.44 GHz
+
+## vk_gemm256 round 1 17:18:49 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 57;   Capacity level: -1
+# Adreno (TM) 830 | 256 tokens | CPU: cores 2-7
+shape,rows,cols,gpu_ms,gpu_gflops,f16_ms,f16_gflops,texel_ms,texel_gflops,q8_ms,q8_gflops,qx_q4_0_ms,qx_q4_0_gflops,qx_q5_0_ms,qx_q5_0_gflops,qxh_q4_0_ms,qxh_q4_0_gflops,qxh_q5_0_ms,qxh_q5_0_gflops,cpu_ms,cpu_gflops
+gate/up,12288,1536,35.59,272,9.48,1019,10.48,922,6.48,1491,35.33,274,35.88,269,10.63,909,16.01,604,14.78,654
+down,1536,12288,39.56,244,10.35,934,11.65,829,6.67,1450,39.43,245,39.81,243,11.64,830,16.46,587,13.39,722
+q/k/v,4096,1536,12.17,265,3.26,987,3.57,901,2.22,1449,12.36,261,12.41,260,3.73,864,5.50,586,4.71,685
+wo,1536,4096,12.64,255,3.41,946,3.78,853,2.15,1499,12.60,256,12.76,252,3.83,841,5.60,575,3.69,873
+per-layer gate,256,1536,1.12,180,0.38,533,0.40,498,0.21,963,1.12,180,1.13,178,0.43,468,0.55,368,0.75,269
+# end 17:19:06 48 C caps 2.40/2.44 GHz; exit 0

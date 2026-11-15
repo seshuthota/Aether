@@ -1,0 +1,35 @@
+# phone-ab 2026-11-15T17:19:07+0530: p6-host-read-2026-11-15.txt; 3 rounds, alternated
+# host_read: ./p6_host_read 256
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 17:19:07 46 C caps 2.40/2.44 GHz
+# cooling 17:19:27 40 C caps 2.40/2.44 GHz
+# cooling 17:19:47 40 C caps 2.40/2.44 GHz
+
+## host_read round 0 17:19:48 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 57;   Capacity level: -1
+# Adreno (TM) 830 | 256 MiB, 6 threads on cores [2, 3, 4, 5, 6, 7], handover 42 MiB, T-layout 256 rows a thread of 1536
+memory      type | handover ms (GB/s) |    stream GB/s |  T-layout GB/s
+coherent       6 |     1.93 ( 22.8)    |           66.1 |           29.6   (GPU fill 24.2 GB/s)
+cached         6 |     1.94 ( 22.8)    |           65.2 |           29.5   (GPU fill 25.6 GB/s)
+heap           - |     2.11 ( 20.9)    |           61.3 |           29.2
+# end 17:19:49 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 17:19:49 43 C caps 2.40/2.44 GHz
+# cooling 17:20:09 40 C caps 2.40/2.44 GHz
+
+## host_read round 1 17:20:09 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 57;   Capacity level: -1
+# Adreno (TM) 830 | 256 MiB, 6 threads on cores [2, 3, 4, 5, 6, 7], handover 42 MiB, T-layout 256 rows a thread of 1536
+memory      type | handover ms (GB/s) |    stream GB/s |  T-layout GB/s
+coherent       6 |     1.93 ( 22.8)    |           68.1 |           29.6   (GPU fill 34.5 GB/s)
+cached         6 |     2.01 ( 21.9)    |           67.3 |           29.7   (GPU fill 37.1 GB/s)
+heap           - |     2.04 ( 21.6)    |           67.9 |           29.3
+# end 17:20:10 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 17:20:10 43 C caps 2.40/2.44 GHz
+# cooling 17:20:30 42 C caps 2.40/2.44 GHz
+# cooling 17:20:50 40 C caps 2.40/2.44 GHz
+
+## host_read round 2 17:20:51 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 57;   Capacity level: -1
+# Adreno (TM) 830 | 256 MiB, 6 threads on cores [2, 3, 4, 5, 6, 7], handover 42 MiB, T-layout 256 rows a thread of 1536
+memory      type | handover ms (GB/s) |    stream GB/s |  T-layout GB/s
+coherent       6 |     1.95 ( 22.6)    |           67.3 |           29.2   (GPU fill 33.9 GB/s)
+cached         6 |     1.94 ( 22.7)    |           67.3 |           29.5   (GPU fill 45.6 GB/s)
+heap           - |     2.02 ( 21.8)    |           67.1 |           29.3
+# end 17:20:52 44 C caps 2.40/2.44 GHz; exit 0

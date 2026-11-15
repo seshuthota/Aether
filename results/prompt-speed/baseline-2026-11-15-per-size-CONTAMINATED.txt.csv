@@ -1,0 +1,3 @@
+variant,kind,size,round,value,temp_c,cap_perf_ghz,cap_prime_ghz,end_temp_c,end_cap_perf_ghz,end_cap_prime_ghz
+aether-cpu,pp,128,0,170.54,40,2.40,2.44,50,2.40,2.44
+aether-cpu,pp,512,0,98.06,39,2.40,2.44,61,2.40,2.44

@@ -1,0 +1,101 @@
+# CONTAMINATED: from 16:00 another harness (opencode session, PID 4103487, no phone lock) ran jobs on the phone at the same time; stopped at 16:26. Do not use these numbers.
+# phone-bench 2026-11-15T15:59:56+0530: baseline-2026-11-15-per-size.txt
+# model /data/local/tmp/aether/gemma4/gemma-4-E2B-it-Q4_0.gguf; variants aether-cpu,aether-gpu,aether-dsp,llama,litert-cpu,litert-gpu; prompts 128,512,1024,2048; gen 64; 3 rounds
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 15:59:56 41 C caps 2.40/2.44 GHz
+# cooling 16:00:17 40 C caps 2.40/2.44 GHz
+
+## aether-cpu p128 round 0 16:00:17 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 66;   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp128 | 170.54 ± 0.00 |
+
+build: 457514131 (aether)
+
+# end 16:00:21 50 C caps 2.40/2.44 GHz
+# cooling 16:00:21 48 C caps 2.40/2.44 GHz
+# cooling 16:00:42 41 C caps 2.40/2.44 GHz
+# cooling 16:01:03 40 C caps 2.40/2.44 GHz
+# cooling 16:01:23 48 C caps 2.40/2.44 GHz
+# cooling 16:01:45 59 C caps 2.40/2.44 GHz
+# cooling 16:02:06 63 C caps 2.00/2.25 GHz
+# cooling 16:02:27 66 C caps 1.79/1.96 GHz
+# cooling 16:02:47 47 C caps 1.79/1.96 GHz
+# cooling 16:03:07 44 C caps 1.79/1.96 GHz
+# cooling 16:03:30 42 C caps 1.79/1.96 GHz
+# cooling 16:03:52 42 C caps 1.79/1.96 GHz
+# cooling 16:04:15 41 C caps 1.79/1.96 GHz
+# cooling 16:04:35 41 C caps 2.00/2.25 GHz
+# cooling 16:04:59 40 C caps 2.00/2.25 GHz
+# cooling 16:05:19 40 C caps 2.00/2.25 GHz
+# cooling 16:05:41 40 C caps 2.00/2.25 GHz
+# cooling 16:06:05 40 C caps 2.00/2.25 GHz
+# cooling 16:06:30 40 C caps 2.00/2.25 GHz
+# cooling 16:06:50 40 C caps 2.00/2.25 GHz
+# cooling 16:07:10 40 C caps 2.00/2.25 GHz
+# cooling 16:07:30 39 C caps 2.00/2.25 GHz
+# cooling 16:07:50 42 C caps 2.40/2.44 GHz
+# cooling 16:08:10 40 C caps 2.40/2.44 GHz
+# cooling 16:08:31 57 C caps 2.40/2.44 GHz
+# cooling 16:08:51 57 C caps 2.00/2.25 GHz
+# cooling 16:09:12 57 C caps 1.79/1.96 GHz
+# cooling 16:09:32 55 C caps 1.79/1.96 GHz
+# cooling 16:09:52 52 C caps 1.79/1.96 GHz
+# cooling 16:10:14 45 C caps 1.79/1.96 GHz
+# cooling 16:10:34 999 C caps 0.00/0.00 GHz
+# cooling 16:10:54 999 C caps 0.00/0.00 GHz
+# cooling 16:11:14 999 C caps 0.00/0.00 GHz
+# cooling 16:11:34 999 C caps 0.00/0.00 GHz
+# cooling 16:11:54 999 C caps 0.00/0.00 GHz
+# cooling 16:12:14 999 C caps 0.00/0.00 GHz
+# cooling 16:12:34 999 C caps 0.00/0.00 GHz
+# cooling 16:12:54 999 C caps 0.00/0.00 GHz
+# cooling 16:13:14 999 C caps 0.00/0.00 GHz
+# cooling 16:13:34 999 C caps 0.00/0.00 GHz
+# cooling 16:13:54 999 C caps 0.00/0.00 GHz
+# cooling 16:14:14 999 C caps 0.00/0.00 GHz
+# cooling 16:14:34 999 C caps 0.00/0.00 GHz
+# cooling 16:14:54 999 C caps 0.00/0.00 GHz
+# cooling 16:15:14 999 C caps 0.00/0.00 GHz
+# cooling 16:15:34 999 C caps 0.00/0.00 GHz
+# cooling 16:15:54 999 C caps 0.00/0.00 GHz
+# cooling 16:16:14 999 C caps 0.00/0.00 GHz
+# cooling 16:16:34 999 C caps 0.00/0.00 GHz
+# cooling 16:16:54 999 C caps 0.00/0.00 GHz
+# cooling 16:17:14 999 C caps 0.00/0.00 GHz
+# cooling 16:17:34 999 C caps 0.00/0.00 GHz
+# cooling 16:17:54 999 C caps 0.00/0.00 GHz
+# cooling 16:18:14 999 C caps 0.00/0.00 GHz
+# cooling 16:18:34 999 C caps 0.00/0.00 GHz
+# cooling 16:18:54 999 C caps 0.00/0.00 GHz
+# cooling 16:19:14 999 C caps 0.00/0.00 GHz
+# cooling 16:19:34 999 C caps 0.00/0.00 GHz
+# cooling 16:19:54 999 C caps 0.00/0.00 GHz
+# cooling 16:20:14 999 C caps 0.00/0.00 GHz
+# cooling 16:20:34 999 C caps 0.00/0.00 GHz
+# cooling 16:20:54 999 C caps 0.00/0.00 GHz
+# cooling 16:21:14 999 C caps 0.00/0.00 GHz
+# cooling 16:21:34 999 C caps 0.00/0.00 GHz
+# cooling 16:21:54 999 C caps 0.00/0.00 GHz
+# cooling 16:22:14 999 C caps 0.00/0.00 GHz
+# cooling 16:22:34 999 C caps 0.00/0.00 GHz
+# cooling 16:22:54 999 C caps 0.00/0.00 GHz
+# cooling 16:23:14 999 C caps 0.00/0.00 GHz
+# cooling 16:23:34 999 C caps 0.00/0.00 GHz
+# cooling 16:23:54 999 C caps 0.00/0.00 GHz
+# cooling 16:24:14 999 C caps 0.00/0.00 GHz
+# cooling 16:24:34 999 C caps 0.00/0.00 GHz
+# cooling 16:24:54 999 C caps 0.00/0.00 GHz
+# cooling 16:25:14 999 C caps 0.00/0.00 GHz
+# cooling 16:25:34 999 C caps 0.00/0.00 GHz
+# cooling 16:25:54 39 C caps 2.40/2.44 GHz
+
+## aether-cpu p512 round 0 16:25:55 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 63;   Capacity level: -1
+| model            |        size |    params | backend | threads |  test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ----: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | pp512 | 98.06 ± 0.00 |
+
+build: 457514131 (aether)
+
+# end 16:26:08 61 C caps 2.40/2.44 GHz
+# cooling 16:26:08 60 C caps 2.40/2.44 GHz

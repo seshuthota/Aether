@@ -1,0 +1,39 @@
+# phone-bench 2026-11-15T15:39:11+0530: baseline-2026-11-15.txt
+# model /data/local/tmp/aether/gemma4/gemma-4-E2B-it-Q4_0.gguf; variants aether-cpu,aether-gpu,aether-dsp,llama,litert-cpu,litert-gpu; prompts 128,512,1024,2048; gen 64; 3 rounds
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 15:39:11 39 mC caps 2.40/2.44 GHz
+
+## aether-cpu round 0 15:39:11 start 39 mC caps 2.40/2.44 GHz; AC powered: false;   level: 69;   Capacity level: -1
+/system/bin/sh: .//data/local/tmp/aether/aether-bench-now: inaccessible or not found
+
+# end 15:39:11 39 mC caps 2.40/2.44 GHz
+# cooling 15:39:11 39 mC caps 2.40/2.44 GHz
+
+## aether-gpu round 0 15:39:11 start 40 mC caps 2.40/2.44 GHz; AC powered: false;   level: 69;   Capacity level: -1
+/system/bin/sh: .//data/local/tmp/aether/aether-bench-now: inaccessible or not found
+
+# end 15:39:11 39 mC caps 2.40/2.44 GHz
+# cooling 15:39:11 40 mC caps 2.40/2.44 GHz
+
+## aether-dsp round 0 15:39:12 start 40 mC caps 2.40/2.44 GHz; AC powered: false;   level: 69;   Capacity level: -1
+/system/bin/sh: .//data/local/tmp/aether/aether-bench-now: inaccessible or not found
+
+# end 15:39:12 40 mC caps 2.40/2.44 GHz
+# cooling 15:39:12 40 mC caps 2.40/2.44 GHz
+
+## llama round 0 15:39:12 start 40 mC caps 2.40/2.44 GHz; AC powered: false;   level: 69;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           pp128 |        118.22 ± 0.00 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |           pp512 |        109.68 ± 0.00 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |          pp1024 |         86.14 ± 0.00 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |          pp2048 |         69.82 ± 0.00 |
+| gemma4 E2B Q4_0                |   2.63 GiB |     4.63 B | CPU        |       6 |            tg64 |         23.87 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+
+# end 15:40:59 60 mC caps 1.79/1.96 GHz
+# cooling 15:40:59 60 mC caps 1.79/1.96 GHz
+# cooling 15:41:19 46 mC caps 1.79/1.96 GHz
+# cooling 15:41:40 44 mC caps 1.79/1.96 GHz
+# cooling 15:42:00 43 mC caps 1.79/1.96 GHz
