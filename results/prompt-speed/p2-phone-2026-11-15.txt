@@ -1,0 +1,158 @@
+# P2 vs P1 A/B: p3 = 8446fd4 (per-token prompt attention, PARTS_BUDGET batch), p4 = db5f372 (flash + batch 256); Gemma 4 E2B Q4_0, Adreno 830, -r 2
+## bench aether-p3 2026-11-15T08:14:49+05:30 start 36500 mC caps 2918400 3072000 kHz
+#   AC powered: false
+#   level: 62
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 |  119.47 ± 7.72 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 126.18 ± 11.36 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 |  119.38 ± 3.43 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 |   87.99 ± 0.60 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |   21.14 ± 0.15 |
+build: 31ccf58fc-dirty (aether)
+Max RSS (KiB): 3357780
+# end 08:17:00 53800 mC caps 1785600 1017600 kHz
+
+## bench aether-p4 2026-11-15T08:18:43+05:30 start 39900 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 61
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 161.18 ± 3.86 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 143.54 ± 1.51 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 125.29 ± 3.67 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 104.45 ± 0.30 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.58 ± 0.69 |
+build: e05fb2865 (aether)
+Max RSS (KiB): 3380680
+# end 08:20:32 51100 mC caps 2400000 2438400 kHz
+
+## bench aether-p4 2026-11-15T08:21:13+05:30 start 39900 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 60
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 164.15 ± 0.67 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 142.67 ± 0.08 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 125.06 ± 0.11 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 106.31 ± 0.73 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.43 ± 0.62 |
+build: e05fb2865 (aether)
+Max RSS (KiB): 3383844
+# end 08:23:01 51500 mC caps 1996800 2246400 kHz
+
+## bench aether-p3 2026-11-15T08:24:48+05:30 start 39600 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 60
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 135.10 ± 1.48 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 131.76 ± 1.44 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 118.66 ± 0.29 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 |  99.56 ± 3.38 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  17.05 ± 0.01 |
+build: 31ccf58fc-dirty (aether)
+Max RSS (KiB): 3365972
+# end 08:26:42 51100 mC caps 1996800 2246400 kHz
+
+## profile 512 aether-p3 2026-11-15T08:26:42+05:30 start 50700 mC caps 1996800 2246400 kHz
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products | 132.2 tok/s
+gate/up                          772.1 ms  19.9% of wall
+attention                        712.2 ms  18.4% of wall
+down                             434.5 ms  11.2% of wall
+q/k/v                            119.3 ms   3.1% of wall
+wo                               107.0 ms   2.8% of wall
+gelu                              79.0 ms   2.0% of wall
+classifier                        27.9 ms   0.7% of wall
+q/k/v norm + RoPE + cache         23.0 ms   0.6% of wall
+per-layer gate                    21.6 ms   0.6% of wall
+per-layer proj                    14.0 ms   0.4% of wall
+rmsnorm                           11.7 ms   0.3% of wall
+post-FFN norm + add               11.6 ms   0.3% of wall
+post-attention norm + add         11.0 ms   0.3% of wall
+per-layer norm + add + scale      10.3 ms   0.3% of wall
+per-layer gelu                     1.9 ms   0.0% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 2357.3 ms  60.9% of wall
+rest (CPU, submits, waits)      1514.8 ms  39.1% of wall
+wall                            3872.0 ms
+# end 08:26:53 49600 mC caps 1996800 2246400 kHz
+
+## profile 512 aether-p4 2026-11-15T08:26:54+05:30 start 49600 mC caps 1996800 2246400 kHz
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products | 134.4 tok/s
+gate/up                          778.6 ms  20.4% of wall
+attention                        731.9 ms  19.2% of wall
+down                             435.2 ms  11.4% of wall
+q/k/v                            120.2 ms   3.2% of wall
+wo                               107.5 ms   2.8% of wall
+gelu                              77.8 ms   2.0% of wall
+classifier                        36.5 ms   1.0% of wall
+q/k/v norm + RoPE + cache         22.4 ms   0.6% of wall
+per-layer gate                    21.7 ms   0.6% of wall
+per-layer proj                    14.1 ms   0.4% of wall
+rmsnorm                           12.0 ms   0.3% of wall
+post-FFN norm + add               11.7 ms   0.3% of wall
+post-attention norm + add         11.1 ms   0.3% of wall
+per-layer norm + add + scale      10.4 ms   0.3% of wall
+per-layer gelu                     1.9 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 2393.1 ms  62.8% of wall
+rest (CPU, submits, waits)      1416.4 ms  37.2% of wall
+wall                            3809.6 ms
+# end 08:27:04 49600 mC caps 1996800 2246400 kHz
+
+## profile 2048 aether-p3 2026-11-15T08:27:05+05:30 start 48400 mC caps 1996800 2246400 kHz
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products | 97.6 tok/s
+attention                       8297.8 ms  39.5% of wall
+gate/up                         3124.8 ms  14.9% of wall
+down                            1765.1 ms   8.4% of wall
+q/k/v                            484.9 ms   2.3% of wall
+wo                               436.1 ms   2.1% of wall
+gelu                             333.5 ms   1.6% of wall
+classifier                       145.7 ms   0.7% of wall
+q/k/v norm + RoPE + cache         91.1 ms   0.4% of wall
+per-layer gate                    88.0 ms   0.4% of wall
+per-layer proj                    57.4 ms   0.3% of wall
+post-FFN norm + add               50.0 ms   0.2% of wall
+rmsnorm                           49.5 ms   0.2% of wall
+post-attention norm + add         46.7 ms   0.2% of wall
+per-layer norm + add + scale      43.4 ms   0.2% of wall
+per-layer gelu                     8.0 ms   0.0% of wall
+argmax                             0.6 ms   0.0% of wall
+soft-cap                           0.4 ms   0.0% of wall
+GPU stages, sum                15023.1 ms  71.6% of wall
+rest (CPU, submits, waits)      5967.3 ms  28.4% of wall
+wall                           20990.4 ms
+# end 08:27:33 48400 mC caps 1996800 2246400 kHz
+
+## profile 2048 aether-p4 2026-11-15T08:27:34+05:30 start 47600 mC caps 1996800 2246400 kHz
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products | 99.4 tok/s
+attention                       8200.6 ms  39.8% of wall
+gate/up                         3108.0 ms  15.1% of wall
+down                            1757.9 ms   8.5% of wall
+q/k/v                            481.3 ms   2.3% of wall
+wo                               432.9 ms   2.1% of wall
+gelu                             334.1 ms   1.6% of wall
+classifier                       147.1 ms   0.7% of wall
+q/k/v norm + RoPE + cache         89.3 ms   0.4% of wall
+per-layer gate                    87.4 ms   0.4% of wall
+per-layer proj                    57.0 ms   0.3% of wall
+post-FFN norm + add               49.2 ms   0.2% of wall
+rmsnorm                           49.0 ms   0.2% of wall
+post-attention norm + add         46.3 ms   0.2% of wall
+per-layer norm + add + scale      42.9 ms   0.2% of wall
+per-layer gelu                     8.0 ms   0.0% of wall
+argmax                             0.6 ms   0.0% of wall
+soft-cap                           0.4 ms   0.0% of wall
+GPU stages, sum                14892.0 ms  72.3% of wall
+rest (CPU, submits, waits)      5711.5 ms  27.7% of wall
+wall                           20603.5 ms
+# end 08:28:02 47600 mC caps 1996800 2246400 kHz
+
+# done 2026-11-15T08:28:03+05:30
