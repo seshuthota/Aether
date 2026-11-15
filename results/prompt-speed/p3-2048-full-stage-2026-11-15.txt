@@ -1,0 +1,23 @@
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products | 167.3 tok/s
+attention                       5103.7 ms  41.7% of wall
+gate/up                         3046.7 ms  24.9% of wall
+down                            1674.4 ms  13.7% of wall
+q/k/v                            466.5 ms   3.8% of wall
+wo                               418.7 ms   3.4% of wall
+per-layer proj (batch)           235.4 ms   1.9% of wall
+gelu                             215.3 ms   1.8% of wall
+classifier                        97.9 ms   0.8% of wall
+q/k/v norm + RoPE + cache         85.9 ms   0.7% of wall
+per-layer gate                    81.6 ms   0.7% of wall
+per-layer proj                    52.7 ms   0.4% of wall
+rmsnorm                           39.6 ms   0.3% of wall
+per-layer norm + add + scale      38.1 ms   0.3% of wall
+post-FFN norm + add               37.8 ms   0.3% of wall
+post-attention norm + add         37.5 ms   0.3% of wall
+per-layer gelu                     6.4 ms   0.1% of wall
+per-layer inputs                   5.4 ms   0.0% of wall
+argmax                             0.4 ms   0.0% of wall
+soft-cap                           0.3 ms   0.0% of wall
+GPU stages, sum                11644.3 ms  95.1% of wall
+rest (CPU, submits, waits)       594.2 ms   4.9% of wall
+wall                           12238.5 ms

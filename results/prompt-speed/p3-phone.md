@@ -63,11 +63,20 @@ phone's full clocks on those cores; 2.40/2.44 is its thermal cap), so
   anything measurable against the BF16 base.
 - LFM3-QAD-Q4_0, 20 chunks: **27.1242 / 0.181109 / 79.902 %**, unchanged
   to the digit (P3 does not touch it).
+- Decode after P3 (the Q8_0 table projection runs on the CPU decode too):
+  4 chunks **PPL 43.6052 / KLD 0.342788 / top-p 79.902 %** (P1 43.6074 /
+  0.342819), so the conversion is neutral there.
 - 52 gemma shader goldens, including the two new `plefinish_` cases;
   `gemma4_ple_matches_the_cpu` compares the GPU's `ple_in` with the CPU's
   `ple_inputs` from the same Q8_0 projection (worst < 1e-4 of max |v|);
-  the five `model::gpu::gemma` tests and `c_abi_gpu_gemma4` (exact text)
+  the six `model::gpu::gemma` tests (including the new
+  `gemma4_prompt_matches_decode`: the batch path against one token at a
+  time, int8 5e-2 and `f32_gemm` 1e-3) and `c_abi_gpu_gemma4` (exact text)
   pass.
+
+The per-stage TFLOP/s at 2048 (the P5 baseline) are in
+`p5-baseline-2026-11-15.md`; the full-stage pass is
+`p3-2048-full-stage-2026-11-15.txt`.
 
 ## Caveat on absolute numbers
 
