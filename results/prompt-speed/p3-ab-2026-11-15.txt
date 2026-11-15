@@ -1,0 +1,53 @@
+# P3 A/B: p6 = P2 (88e0d5e, PLE on one CPU thread), p7 = P3 (GPU per-layer inputs); Gemma 4 E2B Q4_0, -r 2, phone on the charger at its 90% limit (dumpsys AC state per run)
+## bench aether-p6 2026-11-15T10:39:10+05:30 start 38800 mC caps 3532800 4204800 kHz
+#   AC powered: false
+#   level: 90
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 174.61 ± 2.82 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 159.09 ± 0.30 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 137.14 ± 2.08 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 122.15 ± 0.05 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  17.32 ± 0.13 |
+build: e05fb2865 (aether)
+Max RSS (KiB): 3378460
+# end 10:40:51 52600 mC caps 1996800 2246400 kHz
+
+## bench aether-p7 2026-11-15T10:45:37+05:30 start 39900 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 90
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 | 275.84 ± 6.56 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 229.55 ± 3.22 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 197.59 ± 1.49 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 173.46 ± 1.02 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  19.21 ± 0.22 |
+build: 50ed37ba7-dirty (aether)
+Max RSS (KiB): 3408792
+# end 10:46:49 51100 mC caps 2400000 2438400 kHz
+
+## bench aether-p7 2026-11-15T10:50:33+05:30 start 38000 mC caps 2745600 2649600 kHz
+#   AC powered: false
+#   level: 90
+#   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp128 |  295.42 ± 0.99 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 |  249.67 ± 0.72 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 216.46 ± 15.91 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 |  172.50 ± 0.70 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |   19.69 ± 0.00 |
+build: 50ed37ba7-dirty (aether)
+Max RSS (KiB): 3406176
+# end 10:51:42 51500 mC caps 2400000 2438400 kHz
+
+## bench aether-p6 2026-11-15T10:55:52+05:30 start 38800 mC caps 2400000 2438400 kHz
+#   AC powered: false
+#   level: 89
+#   Capacity level: -1
+# run failed
+# end 10:57:13  mC caps kHz
+
