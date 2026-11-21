@@ -1,0 +1,21 @@
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/ca20b743-fb29-4449-b660-d1cd0593133c/scratchpad/bin/vk_gemma-depth1: 1 file pushed, 0 skipped. 26.0 MB/s (14560336 bytes in 0.534s)
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/ca20b743-fb29-4449-b660-d1cd0593133c/scratchpad/bin/vk_gemma-depth4: 1 file pushed, 0 skipped. 5.6 MB/s (14558744 bytes in 2.481s)
+/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/ca20b743-fb29-4449-b660-d1cd0593133c/scratchpad/bin/aether-p4-switch: 1 file pushed, 0 skipped. 6.2 MB/s (53539992 bytes in 8.244s)
+3 files pushed, 0 skipped. 5.7 MB/s (82659072 bytes in 13.828s)
+== depth1 batch
+# LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | upload + record 4139 ms, prompt batch 256
+Final estimate: PPL = 10.3565 +/- 2.04877  (255 tokens scored, 6.7 s, prompt pass, batches of 256)
+PPL(base file) = 10.0955   Mean KLD: 0.057903   Same top p: 93.333 %
+== depth4 batch
+# LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | upload + record 4046 ms, prompt batch 256
+Final estimate: PPL = 10.3565 +/- 2.04877  (255 tokens scored, 6.6 s, prompt pass, batches of 256)
+PPL(base file) = 10.0955   Mean KLD: 0.057903   Same top p: 93.333 %
+== depth1 batch-f32
+# LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | upload + record 4002 ms, prompt batch 256
+Final estimate: PPL = 10.3565 +/- 2.04877  (255 tokens scored, 6.7 s, prompt pass, batches of 256)
+PPL(base file) = 10.0955   Mean KLD: 0.057903   Same top p: 93.333 %
+== depth4 batch-f32
+# LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | upload + record 4922 ms, prompt batch 256
+Final estimate: PPL = 10.3565 +/- 2.04877  (255 tokens scored, 6.6 s, prompt pass, batches of 256)
+PPL(base file) = 10.0955   Mean KLD: 0.057903   Same top p: 93.333 %
+47600

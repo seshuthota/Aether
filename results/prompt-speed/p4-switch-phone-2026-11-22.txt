@@ -1,0 +1,83 @@
+# phone-ab 2026-11-22T00:48:10+0530: p4-switch-phone-2026-11-22.txt; 3 rounds, alternated
+# fix: ./aether-p4-fix bench -dev gpu --cores 2-7 -m gemma4/gemma-4-E2B-it-Q4_0.gguf -p 512,1024,2048 -n 0 -r 3
+# switch: ./aether-p4-switch bench -dev gpu --cores 2-7 -m gemma4/gemma-4-E2B-it-Q4_0.gguf -p 512,1024,2048 -n 0 -r 3
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 00:48:10 43 C caps 2.75/2.65 GHz
+# cooling 00:48:30 38 C caps 2.75/2.65 GHz
+
+## fix round 0 00:48:31 start 38 C caps 2.75/2.65 GHz; AC powered: false;   level: 85;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 |  308.28 ± 4.38 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 326.86 ± 16.57 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 275.90 ± 10.28 |
+
+build: c147f67e3 (aether)
+# end 00:49:32 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:49:32 44 C caps 2.40/2.44 GHz
+# cooling 00:49:52 40 C caps 2.40/2.44 GHz
+
+## switch round 0 00:49:52 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 85;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |            t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | -------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 |  291.37 ± 3.51 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 300.66 ± 14.08 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 |  297.70 ± 8.38 |
+
+build: c147f67e3-dirty (aether)
+# end 00:50:53 46 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:50:53 46 C caps 2.40/2.44 GHz
+# cooling 00:51:13 42 C caps 2.40/2.44 GHz
+# cooling 00:51:34 40 C caps 2.40/2.44 GHz
+
+## switch round 1 00:51:34 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 85;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 324.77 ± 0.42 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 316.18 ± 0.38 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 306.89 ± 0.35 |
+
+build: c147f67e3-dirty (aether)
+# end 00:52:35 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:52:35 44 C caps 2.40/2.44 GHz
+# cooling 00:52:55 41 C caps 2.40/2.44 GHz
+# cooling 00:53:15 40 C caps 2.40/2.44 GHz
+
+## fix round 1 00:53:15 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 85;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 289.21 ± 3.04 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 289.71 ± 4.45 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 281.52 ± 9.55 |
+
+build: c147f67e3 (aether)
+# end 00:54:53 43 C caps 2.00/2.25 GHz; exit 0
+# cooling 00:54:53 42 C caps 2.00/2.25 GHz
+# cooling 00:55:13 40 C caps 2.00/2.25 GHz
+# cooling 00:55:34 40 C caps 2.00/2.25 GHz
+# cooling 00:55:54 39 C caps 2.00/2.25 GHz
+# cooling 00:56:14 39 C caps 2.40/2.44 GHz
+
+## fix round 2 00:56:15 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 288.66 ± 2.35 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 284.37 ± 2.91 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 285.04 ± 5.98 |
+
+build: c147f67e3 (aether)
+# end 00:57:16 47 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:57:16 47 C caps 2.40/2.44 GHz
+# cooling 00:57:36 42 C caps 2.40/2.44 GHz
+# cooling 00:57:57 40 C caps 2.40/2.44 GHz
+# cooling 00:58:17 39 C caps 2.40/2.44 GHz
+
+## switch round 2 00:58:17 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |  pp512 | 325.50 ± 1.08 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 317.40 ± 0.58 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048 | 306.57 ± 0.42 |
+
+build: c147f67e3-dirty (aether)
+# end 00:59:18 45 C caps 2.00/2.25 GHz; exit 0
