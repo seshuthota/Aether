@@ -1,0 +1,20 @@
+1.30.265.984 I Final estimate: PPL = 27.2006 +/- 1.52330
+perplexity: calculating perplexity and KL over 16 chunks, n_ctx=512 (from hostdata/bonsai/kl-base-llama-q1_0-wiki16.bin), weights q1_0 242.4 MB, 10 threads
+[1]13.9431,[2]20.1792,[3]20.8420,[4]21.1938,[5]21.0685,[6]21.2676,[7]21.4036,[8]23.1446,[9]24.6578,[10]25.3841,[11]26.0328,[12]26.4917,[13]27.6556,[14]26.9345,[15]26.4498,[16]27.1752,
+perplexity: 4080 tokens scored in 903.8 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  27.175187 ±   1.521549
+Mean PPL(base)                :  27.090416
+Mean PPL(Q)/PPL(base)         :   1.003129
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000291
+
+====== Token probability statistics ======
+Same top p: 98.946 %
+
+real	15m4.151s
+user	139m25.009s
+sys	0m32.795s
+
+[exited with code 0]
