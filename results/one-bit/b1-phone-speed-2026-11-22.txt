@@ -1,0 +1,89 @@
+# phone-ab 2026-11-22T01:24:42+0530: b1-phone-speed-2026-11-22.txt; 3 rounds, alternated
+# aether: ./aether-onebit bench -m Bonsai-1.7B-Q1_0.gguf -p 128 -n 64 -r 3 --cores 2-7
+# llamacpp: /data/local/tmp/llama/llama-bench -m Bonsai-1.7B-Q1_0.gguf -p 128 -n 64 -r 3 -t 6 -C 0xfc
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 01:24:42 50 C caps 1.79/1.96 GHz
+# cooling 01:25:02 44 C caps 1.79/1.96 GHz
+# cooling 01:25:23 42 C caps 1.79/1.96 GHz
+# cooling 01:25:43 42 C caps 1.79/1.96 GHz
+# cooling 01:26:03 41 C caps 2.00/2.25 GHz
+# cooling 01:26:24 40 C caps 2.00/2.25 GHz
+# cooling 01:26:44 40 C caps 2.00/2.25 GHz
+# cooling 01:27:04 40 C caps 2.00/2.25 GHz
+# cooling 01:27:25 41 C caps 2.40/2.44 GHz
+# cooling 01:27:45 39 C caps 2.40/2.44 GHz
+
+## aether round 0 01:27:45 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |         t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 5.23 ± 0.42 |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 |  tg64 | 4.01 ± 0.02 |
+
+build: baff22be8 (aether)
+# end 01:30:17 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 01:30:18 46 C caps 2.00/2.25 GHz
+# cooling 01:30:38 43 C caps 2.00/2.25 GHz
+# cooling 01:30:58 41 C caps 2.00/2.25 GHz
+# cooling 01:31:18 40 C caps 2.00/2.25 GHz
+# cooling 01:31:38 47 C caps 2.40/3.51 GHz
+# cooling 01:31:59 40 C caps 2.40/2.44 GHz
+# cooling 01:32:19 39 C caps 2.40/2.44 GHz
+
+## llamacpp round 0 01:32:20 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 78;   Capacity level: -1
+| model                          |       size |     params | backend    | threads | cpu_mask   |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | ---------- | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |           pp128 |        210.22 ± 6.35 |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |            tg64 |         50.00 ± 1.57 |
+
+build: d02b4c0d6 (12061)
+# end 01:32:30 46 C caps 2.40/2.44 GHz; exit 0
+# cooling 01:32:30 46 C caps 2.40/2.44 GHz
+# cooling 01:32:50 40 C caps 2.40/2.44 GHz
+
+## llamacpp round 1 01:32:51 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 77;   Capacity level: -1
+| model                          |       size |     params | backend    | threads | cpu_mask   |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | ---------- | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |           pp128 |        210.80 ± 2.40 |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |            tg64 |         49.86 ± 1.58 |
+
+build: d02b4c0d6 (12061)
+# end 01:33:01 47 C caps 2.40/2.44 GHz; exit 0
+# cooling 01:33:01 47 C caps 2.40/2.44 GHz
+# cooling 01:33:21 40 C caps 2.40/2.44 GHz
+
+## aether round 1 01:33:21 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 77;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |         t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 5.29 ± 0.72 |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 |  tg64 | 3.96 ± 0.08 |
+
+build: baff22be8 (aether)
+# end 01:35:53 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 01:35:53 46 C caps 2.00/2.25 GHz
+# cooling 01:36:14 42 C caps 2.00/2.25 GHz
+# cooling 01:36:34 43 C caps 2.00/2.25 GHz
+# cooling 01:36:54 40 C caps 2.00/2.25 GHz
+# cooling 01:37:14 40 C caps 2.40/2.44 GHz
+
+## aether round 2 01:37:15 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 76;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |         t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 5.48 ± 0.42 |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 |  tg64 | 4.04 ± 0.01 |
+
+build: baff22be8 (aether)
+# end 01:39:37 48 C caps 2.00/2.25 GHz; exit 0
+# cooling 01:39:38 48 C caps 2.00/2.25 GHz
+# cooling 01:39:58 42 C caps 2.00/2.25 GHz
+# cooling 01:40:18 40 C caps 2.00/2.25 GHz
+# cooling 01:40:38 39 C caps 2.00/2.25 GHz
+# cooling 01:40:58 38 C caps 2.40/2.44 GHz
+
+## llamacpp round 2 01:40:58 start 38 C caps 2.40/2.44 GHz; AC powered: false;   level: 76;   Capacity level: -1
+| model                          |       size |     params | backend    | threads | cpu_mask   |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | ---------- | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |           pp128 |        209.16 ± 2.99 |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 | 0xfc       |            tg64 |         50.32 ± 1.23 |
+
+build: d02b4c0d6 (12061)
+# end 01:41:09 46 C caps 2.40/2.44 GHz; exit 0

@@ -1,0 +1,6 @@
++ cd /home/curious/Documents/hermes-projects/aether-infer
++ CARGO_TARGET_DIR=/tmp/claude-1000/-home-curious-Documents-hermes-projects-aether-infer/ca20b743-fb29-4449-b660-d1cd0593133c/scratchpad/tgt-onebit
++ cargo test --release --target aarch64-linux-android -p aether-infer --lib q1_0_matches_gguf_py
++ grep -E '^test |test result|panicked'
+test kernels::tests::q1_0_matches_gguf_py ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 246 filtered out; finished in 0.01s

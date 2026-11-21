@@ -1,0 +1,17 @@
+  AC powered: false
+  level: 80
+  Capacity level: -1
+36900
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q1_0-wiki2.bin), weights q1_0 242.4 MB, 6 threads
+[1]13.9944,[2]20.2236,
+perplexity: 510 tokens scored in 222.8 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  20.223612 ±   3.441467
+Mean PPL(base)                :  19.887847
+Mean PPL(Q)/PPL(base)         :   1.016883
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000271
+
+====== Token probability statistics ======
+Same top p: 99.608 %
