@@ -1,0 +1,118 @@
+# phone-ab 2026-11-21T22:56:01+0530: p1b-kquant-lfm3-phone-2026-11-21.txt; 3 rounds, alternated
+# old: ./aether-p4-fix bench -dev gpu --cores 2-7 -m LFM3-1.7B-Q4_K_M.gguf -p 512,2048 -n 128 -r 3
+# new: ./aether-kquant-new bench -dev gpu --cores 2-7 -m LFM3-1.7B-Q4_K_M.gguf -p 512,2048 -n 128 -r 3
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 22:56:01 47 C caps 2.00/2.25 GHz
+# cooling 22:56:21 43 C caps 2.00/2.25 GHz
+# cooling 22:56:41 42 C caps 2.00/2.25 GHz
+# cooling 22:57:02 41 C caps 2.00/2.25 GHz
+# cooling 22:57:22 40 C caps 2.00/2.25 GHz
+# cooling 22:57:42 40 C caps 2.00/2.25 GHz
+# cooling 22:58:02 40 C caps 2.00/2.25 GHz
+# cooling 22:58:22 40 C caps 2.00/2.25 GHz
+# cooling 22:58:43 40 C caps 2.00/2.25 GHz
+# cooling 22:59:04 39 C caps 2.40/2.44 GHz
+
+## old round 0 22:59:04 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |          t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 85.16 ± 0.07 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 79.98 ± 3.44 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 | 30.03 ± 0.09 |
+
+build: c147f67e3 (aether)
+# end 23:01:36 47 C caps 2.00/2.25 GHz; exit 0
+# cooling 23:01:37 47 C caps 2.00/2.25 GHz
+# cooling 23:01:57 43 C caps 2.00/2.25 GHz
+# cooling 23:02:17 42 C caps 2.00/2.25 GHz
+# cooling 23:02:37 41 C caps 2.00/2.25 GHz
+# cooling 23:02:58 40 C caps 2.00/2.25 GHz
+# cooling 23:03:18 40 C caps 2.00/2.25 GHz
+# cooling 23:03:39 40 C caps 2.00/2.25 GHz
+# cooling 23:03:59 40 C caps 2.00/2.25 GHz
+# cooling 23:04:19 40 C caps 2.40/2.44 GHz
+
+## new round 0 23:04:19 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 307.21 ± 3.01 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 274.46 ± 1.44 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 |  23.57 ± 0.30 |
+
+build: ae2b8e288 (aether)
+# end 23:05:20 53 C caps 2.00/2.25 GHz; exit 0
+# cooling 23:05:20 53 C caps 2.00/2.25 GHz
+# cooling 23:05:40 43 C caps 2.00/2.25 GHz
+# cooling 23:06:01 42 C caps 2.00/2.25 GHz
+# cooling 23:06:21 40 C caps 2.00/2.25 GHz
+# cooling 23:06:42 40 C caps 2.00/2.25 GHz
+# cooling 23:07:02 40 C caps 2.00/2.25 GHz
+# cooling 23:07:22 40 C caps 2.00/2.25 GHz
+# cooling 23:07:42 40 C caps 2.40/2.44 GHz
+
+## new round 1 23:07:42 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 308.96 ± 1.12 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 275.70 ± 0.80 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 |  23.82 ± 0.62 |
+
+build: ae2b8e288 (aether)
+# end 23:08:43 52 C caps 2.00/2.25 GHz; exit 0
+# cooling 23:08:43 52 C caps 2.00/2.25 GHz
+# cooling 23:09:04 43 C caps 2.00/2.25 GHz
+# cooling 23:09:24 42 C caps 2.00/2.25 GHz
+# cooling 23:09:44 41 C caps 2.00/2.25 GHz
+# cooling 23:10:04 40 C caps 2.00/2.25 GHz
+# cooling 23:10:25 40 C caps 2.00/2.25 GHz
+# cooling 23:10:45 40 C caps 2.00/2.25 GHz
+# cooling 23:11:05 40 C caps 2.40/2.44 GHz
+
+## old round 1 23:11:06 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |          t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 85.00 ± 0.09 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 80.18 ± 3.60 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 | 30.00 ± 0.07 |
+
+build: c147f67e3 (aether)
+# end 23:13:37 47 C caps 2.00/2.25 GHz; exit 0
+# cooling 23:13:37 47 C caps 2.00/2.25 GHz
+# cooling 23:13:58 43 C caps 2.00/2.25 GHz
+# cooling 23:14:18 42 C caps 2.00/2.25 GHz
+# cooling 23:14:38 41 C caps 2.00/2.25 GHz
+# cooling 23:14:58 40 C caps 2.00/2.25 GHz
+# cooling 23:15:18 40 C caps 2.00/2.25 GHz
+# cooling 23:15:39 40 C caps 2.00/2.25 GHz
+# cooling 23:16:00 40 C caps 2.00/2.25 GHz
+# cooling 23:16:20 40 C caps 2.40/2.44 GHz
+
+## old round 2 23:16:20 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |          t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 85.15 ± 0.06 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 79.89 ± 3.29 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 | 29.85 ± 0.18 |
+
+build: c147f67e3 (aether)
+# end 23:18:52 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 23:18:52 47 C caps 2.00/2.25 GHz
+# cooling 23:19:13 43 C caps 2.00/2.25 GHz
+# cooling 23:19:33 42 C caps 2.00/2.25 GHz
+# cooling 23:19:53 41 C caps 2.00/2.25 GHz
+# cooling 23:20:14 40 C caps 2.00/2.25 GHz
+# cooling 23:20:34 40 C caps 2.00/2.25 GHz
+# cooling 23:20:54 41 C caps 2.00/2.25 GHz
+# cooling 23:21:15 40 C caps 2.00/2.25 GHz
+# cooling 23:21:35 40 C caps 2.00/2.25 GHz
+# cooling 23:21:56 40 C caps 2.40/2.44 GHz
+
+## new round 2 23:21:56 start 39 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                   |        size |    params | backend | threads |   test |           t/s |
+| ----------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  pp512 | 305.09 ± 1.34 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 | pp2048 | 273.78 ± 0.09 |
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | Vulkan  |       6 |  tg128 |  23.59 ± 0.47 |
+
+build: ae2b8e288 (aether)
+# end 23:22:57 53 C caps 2.00/2.25 GHz; exit 0

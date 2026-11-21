@@ -1,0 +1,125 @@
+# phone-ab 2026-11-21T22:23:56+0530: p1b-kquant-gemma4-phone-2026-11-21.txt; 3 rounds, alternated
+# old: ./aether-p4-fix bench -dev gpu --cores 2-7 -m gemma4/gemma-4-E2B-it-Q4_K_M.gguf -p 512,2048 -n 128 -r 3
+# new: ./aether-kquant-new bench -dev gpu --cores 2-7 -m gemma4/gemma-4-E2B-it-Q4_K_M.gguf -p 512,2048 -n 128 -r 3
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 22:23:56 46 C caps 2.00/2.25 GHz
+# cooling 22:24:16 42 C caps 2.00/2.25 GHz
+# cooling 22:24:36 41 C caps 2.00/2.25 GHz
+# cooling 22:24:57 40 C caps 2.00/2.25 GHz
+# cooling 22:25:17 40 C caps 2.00/2.25 GHz
+# cooling 22:25:37 40 C caps 2.00/2.25 GHz
+# cooling 22:25:58 40 C caps 2.40/2.44 GHz
+
+## old round 0 22:25:58 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |          t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 67.35 ± 0.25 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 63.12 ± 1.36 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 | 19.47 ± 0.04 |
+
+build: c147f67e3 (aether)
+# end 22:29:11 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:29:11 46 C caps 2.00/2.25 GHz
+# cooling 22:29:32 43 C caps 2.00/2.25 GHz
+# cooling 22:29:52 42 C caps 2.00/2.25 GHz
+# cooling 22:30:12 42 C caps 2.00/2.25 GHz
+# cooling 22:30:32 41 C caps 2.00/2.25 GHz
+# cooling 22:30:52 40 C caps 2.00/2.25 GHz
+# cooling 22:31:12 40 C caps 2.00/2.25 GHz
+# cooling 22:31:32 40 C caps 2.00/2.25 GHz
+# cooling 22:31:53 40 C caps 2.00/2.25 GHz
+# cooling 22:32:13 40 C caps 2.00/2.25 GHz
+# cooling 22:32:34 39 C caps 2.40/2.44 GHz
+
+## new round 0 22:32:34 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |           t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 228.27 ± 2.62 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 227.19 ± 2.30 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 |  15.12 ± 0.19 |
+
+build: ae2b8e288 (aether)
+# end 22:33:55 50 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:33:55 49 C caps 2.00/2.25 GHz
+# cooling 22:34:16 43 C caps 2.00/2.25 GHz
+# cooling 22:34:36 42 C caps 2.00/2.25 GHz
+# cooling 22:34:56 41 C caps 2.00/2.25 GHz
+# cooling 22:35:17 41 C caps 2.00/2.25 GHz
+# cooling 22:35:37 40 C caps 2.00/2.25 GHz
+# cooling 22:35:57 40 C caps 2.00/2.25 GHz
+# cooling 22:36:17 40 C caps 2.00/2.25 GHz
+# cooling 22:36:37 40 C caps 2.00/2.25 GHz
+# cooling 22:36:58 40 C caps 2.40/2.44 GHz
+
+## new round 1 22:36:58 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |           t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 245.35 ± 0.88 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 235.89 ± 1.20 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 |  15.19 ± 0.16 |
+
+build: ae2b8e288 (aether)
+# end 22:38:19 48 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:38:19 48 C caps 2.00/2.25 GHz
+# cooling 22:38:40 43 C caps 2.00/2.25 GHz
+# cooling 22:39:00 42 C caps 2.00/2.25 GHz
+# cooling 22:39:21 41 C caps 2.00/2.25 GHz
+# cooling 22:39:42 40 C caps 2.00/2.25 GHz
+# cooling 22:40:02 40 C caps 2.00/2.25 GHz
+# cooling 22:40:22 40 C caps 2.00/2.25 GHz
+# cooling 22:40:42 40 C caps 2.00/2.25 GHz
+# cooling 22:41:02 39 C caps 2.00/2.25 GHz
+# cooling 22:41:23 39 C caps 2.40/2.44 GHz
+
+## old round 1 22:41:23 start 39 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |          t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 69.10 ± 0.09 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 64.51 ± 2.50 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 | 19.64 ± 0.06 |
+
+build: c147f67e3 (aether)
+# end 22:44:26 52 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:44:26 52 C caps 2.00/2.25 GHz
+# cooling 22:44:47 44 C caps 2.00/2.25 GHz
+# cooling 22:45:08 42 C caps 2.00/2.25 GHz
+# cooling 22:45:28 42 C caps 2.00/2.25 GHz
+# cooling 22:45:48 41 C caps 2.00/2.25 GHz
+# cooling 22:46:08 40 C caps 2.00/2.25 GHz
+# cooling 22:46:29 40 C caps 2.00/2.25 GHz
+# cooling 22:46:49 40 C caps 2.00/2.25 GHz
+# cooling 22:47:10 40 C caps 2.00/2.25 GHz
+# cooling 22:47:30 40 C caps 2.00/2.25 GHz
+# cooling 22:47:50 40 C caps 2.40/2.44 GHz
+
+## old round 2 22:47:50 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |          t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | -----------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 69.11 ± 0.09 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 63.98 ± 1.68 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 | 19.55 ± 0.04 |
+
+build: c147f67e3 (aether)
+# end 22:50:53 54 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:50:54 54 C caps 2.00/2.25 GHz
+# cooling 22:51:15 44 C caps 2.00/2.25 GHz
+# cooling 22:51:35 42 C caps 2.00/2.25 GHz
+# cooling 22:51:55 42 C caps 2.00/2.25 GHz
+# cooling 22:52:15 41 C caps 2.00/2.25 GHz
+# cooling 22:52:35 41 C caps 2.00/2.25 GHz
+# cooling 22:52:55 40 C caps 2.00/2.25 GHz
+# cooling 22:53:16 40 C caps 2.00/2.25 GHz
+# cooling 22:53:36 40 C caps 2.00/2.25 GHz
+# cooling 22:53:56 40 C caps 2.00/2.25 GHz
+# cooling 22:54:16 40 C caps 2.00/2.25 GHz
+# cooling 22:54:36 40 C caps 2.40/2.44 GHz
+
+## new round 2 22:54:37 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+| model                     |        size |    params | backend | threads |   test |           t/s |
+| ------------------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  pp512 | 249.02 ± 2.04 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 | pp2048 | 240.82 ± 0.88 |
+| gemma4 4.6B Q4_K - Medium | 2947.73 MiB | 4647.45 M | Vulkan  |       6 |  tg128 |  15.71 ± 0.27 |
+
+build: ae2b8e288 (aether)
+# end 22:55:58 48 C caps 2.00/2.25 GHz; exit 0

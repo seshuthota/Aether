@@ -1,0 +1,415 @@
+# phone-ab 2026-11-21T23:22:59+0530: p4b-fusion-phone-2026-11-21.txt; 3 rounds, alternated
+# p1b-512: ./aether-prof-p1b gemma4/gemma-4-E2B-it-Q4_0.gguf 512
+# p4b-512: ./aether-prof-p4b gemma4/gemma-4-E2B-it-Q4_0.gguf 512
+# p1b-2048: ./aether-prof-p1b gemma4/gemma-4-E2B-it-Q4_0.gguf 2048
+# p4b-2048: ./aether-prof-p4b gemma4/gemma-4-E2B-it-Q4_0.gguf 2048
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 23:22:59 50 C caps 2.00/2.25 GHz
+# cooling 23:23:19 43 C caps 2.00/2.25 GHz
+# cooling 23:23:40 42 C caps 2.00/2.25 GHz
+# cooling 23:24:00 41 C caps 2.00/2.25 GHz
+# cooling 23:24:20 41 C caps 2.00/2.25 GHz
+# cooling 23:24:40 40 C caps 2.00/2.25 GHz
+# cooling 23:25:00 40 C caps 2.00/2.25 GHz
+# cooling 23:25:21 40 C caps 2.00/2.25 GHz
+# cooling 23:25:41 40 C caps 2.40/2.44 GHz
+
+## p1b-512 round 0 23:25:41 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 288.2 tok/s
+gate/up                          711.3 ms  40.0% of wall
+down                             395.1 ms  22.2% of wall
+q/k/v                            109.4 ms   6.2% of wall
+wo                                98.5 ms   5.5% of wall
+gelu                              64.3 ms   3.6% of wall
+attention scores                  37.9 ms   2.1% of wall
+attention softmax                 30.6 ms   1.7% of wall
+classifier                        29.2 ms   1.6% of wall
+attention values                  27.5 ms   1.5% of wall
+q/k/v norm + RoPE + cache         20.2 ms   1.1% of wall
+per-layer gate                    19.9 ms   1.1% of wall
+attention stage                   13.4 ms   0.8% of wall
+per-layer proj                    12.8 ms   0.7% of wall
+per-layer proj (batch)            11.4 ms   0.6% of wall
+rmsnorm                           11.0 ms   0.6% of wall
+post-FFN norm + add               10.1 ms   0.6% of wall
+post-attention norm + add         10.0 ms   0.6% of wall
+per-layer norm + add + scale       9.6 ms   0.5% of wall
+per-layer inputs                   1.9 ms   0.1% of wall
+per-layer gelu                     1.8 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1626.0 ms  91.5% of wall
+rest (CPU, submits, waits)       150.5 ms   8.5% of wall
+wall                            1776.5 ms
+attention, all stages            109.4 ms   6.2% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:25:51 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:25:51 45 C caps 2.40/2.44 GHz
+# cooling 23:26:11 40 C caps 2.40/2.44 GHz
+# cooling 23:26:32 40 C caps 2.40/2.44 GHz
+# cooling 23:26:52 40 C caps 2.40/2.44 GHz
+
+## p4b-512 round 0 23:26:52 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 303.8 tok/s
+gate/up                          709.6 ms  42.1% of wall
+down                             363.5 ms  21.6% of wall
+q/k/v                            108.6 ms   6.4% of wall
+wo                                98.0 ms   5.8% of wall
+gelu                              48.5 ms   2.9% of wall
+attention scores                  37.5 ms   2.2% of wall
+classifier                        29.6 ms   1.8% of wall
+attention softmax                 29.3 ms   1.7% of wall
+attention values                  27.4 ms   1.6% of wall
+q/k/v norm + RoPE + cache         19.8 ms   1.2% of wall
+per-layer gate                    19.6 ms   1.2% of wall
+attention stage                   13.1 ms   0.8% of wall
+per-layer proj                    12.6 ms   0.7% of wall
+per-layer proj (batch)            11.5 ms   0.7% of wall
+rmsnorm                           10.5 ms   0.6% of wall
+post-attention norm + add          9.6 ms   0.6% of wall
+post-FFN norm + add                9.6 ms   0.6% of wall
+per-layer norm + add + scale       9.2 ms   0.5% of wall
+per-layer inputs                   2.0 ms   0.1% of wall
+per-layer gelu                     1.7 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1571.7 ms  93.3% of wall
+rest (CPU, submits, waits)       113.4 ms   6.7% of wall
+wall                            1685.1 ms
+attention, all stages            107.4 ms   6.4% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:27:02 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:27:03 43 C caps 2.40/2.44 GHz
+# cooling 23:27:23 40 C caps 2.40/2.44 GHz
+
+## p1b-2048 round 0 23:27:23 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 281.8 tok/s
+gate/up                         2796.0 ms  38.5% of wall
+down                            1537.3 ms  21.2% of wall
+q/k/v                            430.2 ms   5.9% of wall
+wo                               386.0 ms   5.3% of wall
+attention scores                 288.0 ms   4.0% of wall
+attention values                 249.4 ms   3.4% of wall
+attention softmax                222.7 ms   3.1% of wall
+gelu                             216.1 ms   3.0% of wall
+classifier                       101.4 ms   1.4% of wall
+q/k/v norm + RoPE + cache         77.4 ms   1.1% of wall
+per-layer gate                    76.9 ms   1.1% of wall
+attention stage                   64.0 ms   0.9% of wall
+per-layer proj                    49.8 ms   0.7% of wall
+per-layer proj (batch)            45.1 ms   0.6% of wall
+rmsnorm                           39.2 ms   0.5% of wall
+post-FFN norm + add               36.1 ms   0.5% of wall
+post-attention norm + add         36.0 ms   0.5% of wall
+per-layer norm + add + scale      34.6 ms   0.5% of wall
+per-layer inputs                   6.7 ms   0.1% of wall
+per-layer gelu                     6.3 ms   0.1% of wall
+argmax                             0.5 ms   0.0% of wall
+soft-cap                           0.3 ms   0.0% of wall
+GPU stages, sum                 6700.2 ms  92.2% of wall
+rest (CPU, submits, waits)       567.2 ms   7.8% of wall
+wall                            7267.4 ms
+attention, all stages            824.2 ms  11.3% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:27:43 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:27:43 43 C caps 2.40/2.44 GHz
+# cooling 23:28:04 40 C caps 2.40/2.44 GHz
+# cooling 23:28:24 40 C caps 2.40/2.44 GHz
+
+## p4b-2048 round 0 23:28:24 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 284.1 tok/s
+gate/up                         2815.4 ms  39.1% of wall
+down                            1443.1 ms  20.0% of wall
+q/k/v                            432.6 ms   6.0% of wall
+wo                               389.1 ms   5.4% of wall
+attention scores                 290.2 ms   4.0% of wall
+attention values                 251.2 ms   3.5% of wall
+attention softmax                239.6 ms   3.3% of wall
+gelu                             186.2 ms   2.6% of wall
+classifier                       112.9 ms   1.6% of wall
+q/k/v norm + RoPE + cache         78.3 ms   1.1% of wall
+per-layer gate                    78.0 ms   1.1% of wall
+attention stage                   65.6 ms   0.9% of wall
+per-layer proj                    50.0 ms   0.7% of wall
+per-layer proj (batch)            45.8 ms   0.6% of wall
+rmsnorm                           41.1 ms   0.6% of wall
+post-FFN norm + add               37.9 ms   0.5% of wall
+post-attention norm + add         37.4 ms   0.5% of wall
+per-layer norm + add + scale      35.8 ms   0.5% of wall
+per-layer gelu                     6.6 ms   0.1% of wall
+per-layer inputs                   6.5 ms   0.1% of wall
+argmax                             0.5 ms   0.0% of wall
+soft-cap                           0.4 ms   0.0% of wall
+GPU stages, sum                 6644.3 ms  92.2% of wall
+rest (CPU, submits, waits)       564.4 ms   7.8% of wall
+wall                            7208.6 ms
+attention, all stages            846.6 ms  11.7% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:28:44 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:28:44 42 C caps 2.40/2.44 GHz
+# cooling 23:29:05 40 C caps 2.40/2.44 GHz
+# cooling 23:29:25 40 C caps 2.40/2.44 GHz
+
+## p4b-2048 round 1 23:29:25 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 283.6 tok/s
+gate/up                         2814.1 ms  39.0% of wall
+down                            1443.0 ms  20.0% of wall
+q/k/v                            433.6 ms   6.0% of wall
+wo                               390.0 ms   5.4% of wall
+attention scores                 290.7 ms   4.0% of wall
+attention values                 251.6 ms   3.5% of wall
+attention softmax                244.5 ms   3.4% of wall
+gelu                             190.0 ms   2.6% of wall
+classifier                       117.0 ms   1.6% of wall
+per-layer gate                    78.4 ms   1.1% of wall
+q/k/v norm + RoPE + cache         78.3 ms   1.1% of wall
+attention stage                   66.5 ms   0.9% of wall
+per-layer proj                    50.3 ms   0.7% of wall
+per-layer proj (batch)            45.3 ms   0.6% of wall
+rmsnorm                           41.7 ms   0.6% of wall
+post-FFN norm + add               38.0 ms   0.5% of wall
+post-attention norm + add         37.7 ms   0.5% of wall
+per-layer norm + add + scale      36.0 ms   0.5% of wall
+per-layer inputs                   7.1 ms   0.1% of wall
+per-layer gelu                     6.6 ms   0.1% of wall
+argmax                             0.5 ms   0.0% of wall
+soft-cap                           0.4 ms   0.0% of wall
+GPU stages, sum                 6661.2 ms  92.2% of wall
+rest (CPU, submits, waits)       560.3 ms   7.8% of wall
+wall                            7221.5 ms
+attention, all stages            853.3 ms  11.8% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:29:46 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:29:46 42 C caps 2.40/2.44 GHz
+# cooling 23:30:07 40 C caps 2.40/2.44 GHz
+
+## p1b-2048 round 1 23:30:07 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 278.4 tok/s
+gate/up                         2811.9 ms  38.2% of wall
+down                            1548.0 ms  21.0% of wall
+q/k/v                            432.5 ms   5.9% of wall
+wo                               388.7 ms   5.3% of wall
+attention scores                 289.7 ms   3.9% of wall
+attention values                 250.8 ms   3.4% of wall
+attention softmax                235.5 ms   3.2% of wall
+gelu                             229.3 ms   3.1% of wall
+classifier                       117.4 ms   1.6% of wall
+q/k/v norm + RoPE + cache         78.4 ms   1.1% of wall
+per-layer gate                    78.0 ms   1.1% of wall
+attention stage                   65.6 ms   0.9% of wall
+per-layer proj                    50.0 ms   0.7% of wall
+per-layer proj (batch)            45.1 ms   0.6% of wall
+rmsnorm                           40.8 ms   0.6% of wall
+post-FFN norm + add               37.4 ms   0.5% of wall
+post-attention norm + add         37.1 ms   0.5% of wall
+per-layer norm + add + scale      35.6 ms   0.5% of wall
+per-layer inputs                   6.7 ms   0.1% of wall
+per-layer gelu                     6.5 ms   0.1% of wall
+argmax                             0.5 ms   0.0% of wall
+soft-cap                           0.4 ms   0.0% of wall
+GPU stages, sum                 6786.2 ms  92.2% of wall
+rest (CPU, submits, waits)       571.2 ms   7.8% of wall
+wall                            7357.4 ms
+attention, all stages            841.7 ms  11.4% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:30:27 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:30:27 42 C caps 2.40/2.44 GHz
+# cooling 23:30:47 40 C caps 2.40/2.44 GHz
+
+## p4b-512 round 1 23:30:48 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 304.0 tok/s
+gate/up                          709.9 ms  42.2% of wall
+down                             363.9 ms  21.6% of wall
+q/k/v                            109.1 ms   6.5% of wall
+wo                                97.9 ms   5.8% of wall
+gelu                              49.3 ms   2.9% of wall
+attention scores                  38.4 ms   2.3% of wall
+attention softmax                 30.2 ms   1.8% of wall
+classifier                        29.2 ms   1.7% of wall
+attention values                  27.5 ms   1.6% of wall
+q/k/v norm + RoPE + cache         20.0 ms   1.2% of wall
+per-layer gate                    19.8 ms   1.2% of wall
+attention stage                   13.3 ms   0.8% of wall
+per-layer proj                    12.7 ms   0.8% of wall
+per-layer proj (batch)            11.3 ms   0.7% of wall
+rmsnorm                           10.7 ms   0.6% of wall
+post-FFN norm + add                9.7 ms   0.6% of wall
+post-attention norm + add          9.7 ms   0.6% of wall
+per-layer norm + add + scale       9.3 ms   0.6% of wall
+per-layer inputs                   1.9 ms   0.1% of wall
+per-layer gelu                     1.7 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1575.8 ms  93.6% of wall
+rest (CPU, submits, waits)       108.2 ms   6.4% of wall
+wall                            1684.0 ms
+attention, all stages            109.4 ms   6.5% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:30:58 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:30:58 43 C caps 2.40/2.44 GHz
+# cooling 23:31:18 40 C caps 2.40/2.44 GHz
+# cooling 23:31:39 40 C caps 2.40/2.44 GHz
+
+## p1b-512 round 1 23:31:39 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 293.7 tok/s
+gate/up                          707.5 ms  40.6% of wall
+down                             390.6 ms  22.4% of wall
+q/k/v                            108.7 ms   6.2% of wall
+wo                                98.1 ms   5.6% of wall
+gelu                              59.5 ms   3.4% of wall
+attention scores                  37.7 ms   2.2% of wall
+attention softmax                 29.8 ms   1.7% of wall
+classifier                        29.3 ms   1.7% of wall
+attention values                  27.4 ms   1.6% of wall
+q/k/v norm + RoPE + cache         19.8 ms   1.1% of wall
+per-layer gate                    19.7 ms   1.1% of wall
+attention stage                   13.2 ms   0.8% of wall
+per-layer proj                    12.6 ms   0.7% of wall
+per-layer proj (batch)            11.4 ms   0.7% of wall
+rmsnorm                           10.5 ms   0.6% of wall
+post-FFN norm + add                9.6 ms   0.6% of wall
+post-attention norm + add          9.6 ms   0.6% of wall
+per-layer norm + add + scale       9.2 ms   0.5% of wall
+per-layer inputs                   1.9 ms   0.1% of wall
+per-layer gelu                     1.7 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1608.0 ms  92.2% of wall
+rest (CPU, submits, waits)       135.2 ms   7.8% of wall
+wall                            1743.2 ms
+attention, all stages            108.0 ms   6.2% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:31:49 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:31:49 42 C caps 2.40/2.44 GHz
+# cooling 23:32:09 40 C caps 2.40/2.44 GHz
+
+## p1b-512 round 2 23:32:10 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 289.6 tok/s
+gate/up                          709.9 ms  40.2% of wall
+down                             392.9 ms  22.2% of wall
+q/k/v                            109.2 ms   6.2% of wall
+wo                                98.1 ms   5.5% of wall
+gelu                              63.0 ms   3.6% of wall
+attention scores                  37.9 ms   2.1% of wall
+attention softmax                 29.3 ms   1.7% of wall
+classifier                        29.2 ms   1.6% of wall
+attention values                  27.5 ms   1.6% of wall
+q/k/v norm + RoPE + cache         20.0 ms   1.1% of wall
+per-layer gate                    19.9 ms   1.1% of wall
+attention stage                   13.3 ms   0.8% of wall
+per-layer proj                    12.8 ms   0.7% of wall
+per-layer proj (batch)            11.4 ms   0.6% of wall
+rmsnorm                           11.0 ms   0.6% of wall
+post-FFN norm + add               10.1 ms   0.6% of wall
+post-attention norm + add          9.9 ms   0.6% of wall
+per-layer norm + add + scale       9.5 ms   0.5% of wall
+per-layer inputs                   1.9 ms   0.1% of wall
+per-layer gelu                     1.8 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1618.7 ms  91.6% of wall
+rest (CPU, submits, waits)       149.0 ms   8.4% of wall
+wall                            1767.7 ms
+attention, all stages            107.9 ms   6.1% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:32:20 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:32:20 42 C caps 2.40/2.44 GHz
+# cooling 23:32:40 40 C caps 2.40/2.44 GHz
+
+## p4b-512 round 2 23:32:40 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 512 tokens, batch 256, int8 products, attention as products | 301.4 tok/s
+gate/up                          708.6 ms  41.7% of wall
+down                             364.4 ms  21.4% of wall
+q/k/v                            109.0 ms   6.4% of wall
+wo                                98.6 ms   5.8% of wall
+gelu                              49.8 ms   2.9% of wall
+attention scores                  37.8 ms   2.2% of wall
+attention softmax                 29.5 ms   1.7% of wall
+classifier                        29.2 ms   1.7% of wall
+attention values                  27.4 ms   1.6% of wall
+q/k/v norm + RoPE + cache         20.1 ms   1.2% of wall
+per-layer gate                    19.8 ms   1.2% of wall
+attention stage                   13.2 ms   0.8% of wall
+per-layer proj                    12.7 ms   0.7% of wall
+per-layer proj (batch)            11.4 ms   0.7% of wall
+rmsnorm                           10.8 ms   0.6% of wall
+post-FFN norm + add                9.9 ms   0.6% of wall
+post-attention norm + add          9.8 ms   0.6% of wall
+per-layer norm + add + scale       9.3 ms   0.5% of wall
+per-layer inputs                   1.9 ms   0.1% of wall
+per-layer gelu                     1.7 ms   0.1% of wall
+argmax                             0.1 ms   0.0% of wall
+soft-cap                           0.1 ms   0.0% of wall
+GPU stages, sum                 1575.2 ms  92.7% of wall
+rest (CPU, submits, waits)       123.7 ms   7.3% of wall
+wall                            1698.9 ms
+attention, all stages            108.0 ms   6.4% of wall
+# attention products' buffers at seq_len 512: 9.0 MiB [2097152, 524288, 524288, 4194304, 2097152] (q, keys, values, scores, P)
+# end 23:32:51 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:32:51 42 C caps 2.40/2.44 GHz
+# cooling 23:33:11 40 C caps 2.40/2.44 GHz
+
+## p1b-2048 round 2 23:33:12 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 291.3 tok/s
+gate/up                         2788.3 ms  39.7% of wall
+down                            1529.1 ms  21.8% of wall
+q/k/v                            428.3 ms   6.1% of wall
+wo                               385.1 ms   5.5% of wall
+attention scores                 287.6 ms   4.1% of wall
+attention values                 249.0 ms   3.5% of wall
+attention softmax                212.5 ms   3.0% of wall
+gelu                             208.1 ms   3.0% of wall
+classifier                        92.3 ms   1.3% of wall
+q/k/v norm + RoPE + cache         77.0 ms   1.1% of wall
+per-layer gate                    76.4 ms   1.1% of wall
+attention stage                   63.3 ms   0.9% of wall
+per-layer proj                    48.9 ms   0.7% of wall
+per-layer proj (batch)            44.7 ms   0.6% of wall
+rmsnorm                           37.9 ms   0.5% of wall
+post-attention norm + add         35.4 ms   0.5% of wall
+post-FFN norm + add               35.3 ms   0.5% of wall
+per-layer norm + add + scale      33.7 ms   0.5% of wall
+per-layer gelu                     6.1 ms   0.1% of wall
+per-layer inputs                   6.0 ms   0.1% of wall
+argmax                             0.4 ms   0.0% of wall
+soft-cap                           0.3 ms   0.0% of wall
+GPU stages, sum                 6645.8 ms  94.5% of wall
+rest (CPU, submits, waits)       384.5 ms   5.5% of wall
+wall                            7030.3 ms
+attention, all stages            812.3 ms  11.6% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:33:32 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 23:33:32 43 C caps 2.40/2.44 GHz
+# cooling 23:33:53 40 C caps 2.40/2.44 GHz
+# cooling 23:34:14 40 C caps 2.40/2.44 GHz
+
+## p4b-2048 round 2 23:34:14 start 40 C caps 2.40/2.44 GHz; AC powered: true;   level: 90;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 2048 tokens, batch 256, int8 products, attention as products | 288.8 tok/s
+gate/up                         2814.5 ms  39.7% of wall
+down                            1442.5 ms  20.3% of wall
+q/k/v                            432.5 ms   6.1% of wall
+wo                               389.9 ms   5.5% of wall
+attention scores                 290.5 ms   4.1% of wall
+attention values                 251.1 ms   3.5% of wall
+attention softmax                234.0 ms   3.3% of wall
+gelu                             183.8 ms   2.6% of wall
+classifier                       106.3 ms   1.5% of wall
+q/k/v norm + RoPE + cache         79.3 ms   1.1% of wall
+per-layer gate                    77.9 ms   1.1% of wall
+attention stage                   65.6 ms   0.9% of wall
+per-layer proj                    49.8 ms   0.7% of wall
+per-layer proj (batch)            45.0 ms   0.6% of wall
+rmsnorm                           40.6 ms   0.6% of wall
+post-FFN norm + add               37.1 ms   0.5% of wall
+post-attention norm + add         37.0 ms   0.5% of wall
+per-layer norm + add + scale      35.6 ms   0.5% of wall
+per-layer gelu                     6.4 ms   0.1% of wall
+per-layer inputs                   6.4 ms   0.1% of wall
+argmax                             0.5 ms   0.0% of wall
+soft-cap                           0.3 ms   0.0% of wall
+GPU stages, sum                 6626.8 ms  93.4% of wall
+rest (CPU, submits, waits)       465.3 ms   6.6% of wall
+wall                            7092.1 ms
+attention, all stages            841.2 ms  11.9% of wall
+# attention products' buffers at seq_len 2048: 30.0 MiB [2097152, 2097152, 2097152, 16777216, 8388608] (q, keys, values, scores, P)
+# end 23:34:35 42 C caps 2.40/2.44 GHz; exit 0
