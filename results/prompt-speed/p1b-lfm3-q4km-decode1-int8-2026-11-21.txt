@@ -1,0 +1,6 @@
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on Intel(R) Graphics (RPL-P) | upload + record 2813 ms, prompt batch 256
+# greedy: " a person by the sea. By the sea, there was a person by the sea. There was a person by the"
+# 39 positions in 2759.6 ms: 14.1 tok/s
+[1]10.4212 kld 0.05888,
+Final estimate: PPL = 10.4212 +/- 2.05989  (255 tokens scored, 36.8 s, decode)
+PPL(base file) = 10.0955   Mean KLD: 0.058877   Same top p: 92.549 %

@@ -1,0 +1,5 @@
+# testdata/gguf/smollm2-135m-q4_0.gguf on Intel(R) Graphics (RPL-P) | upload + record 272 ms
+# greedy: The capital of France is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of the United States. The capital of the United States is the capital of
+# 64 positions in 712.1 ms: 89.9 tok/s
+[1]13.9728,[2]21.0156,[3]20.2675,[4]20.8721,
+Final estimate: PPL = 20.8721 +/- 2.00078  (1020 tokens scored, 5.9 s, 344.8 tok/s through the GPU, batches of 256, q4_0_gemm_q8)

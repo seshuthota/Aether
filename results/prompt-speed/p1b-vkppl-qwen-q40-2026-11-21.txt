@@ -1,0 +1,5 @@
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Intel(R) Graphics (RPL-P) | upload + record 6945 ms
+# greedy: The capital of France is Paris. It is the largest city in the world and the most populous city in the world. It is also the capital of the French Republic. It is the capital of the French Federation. It is the capital of the French Community. It is the capital of the French Province. It is the
+# 64 positions in 1218.1 ms: 52.5 tok/s
+[1]10.7091,[2]14.7917,[3]15.5022,[4]15.8560,
+Final estimate: PPL = 15.8560 +/- 1.51619  (1020 tokens scored, 11.6 s, 175.6 tok/s through the GPU, batches of 256, q4_0_gemm_q8)

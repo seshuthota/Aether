@@ -1,0 +1,29 @@
+# testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf on Intel(R) Graphics (RPL-P) | upload + record 1574 ms, prompt batch 256
+# greedy: " a person. Once upon a time, in a small village by the sea, there lived a person. Once upon a"
+# 39 positions in 2053.8 ms: 19.0 tok/s
+[1]9.9658 kld 0.10402,[2]14.6293 kld 0.13540,[3]15.7653 kld 0.12734,[4]16.3702 kld 0.12137,[5]17.1218 kld 0.11432,[6]19.2825 kld 0.16588,[7]19.6509 kld 0.16093,[8]19.8825 kld 0.15818,[9]20.6907 kld 0.14935,[10]21.9776 kld 0.16696,[11]24.2671 kld 0.20535,[12]24.0926 kld 0.19799,[13]25.5909 kld 0.18984,[14]24.0437 kld 0.18282,[15]25.6393 kld 0.18822,[16]28.6014 kld 0.19110,[17]27.6528 kld 0.19591,[18]28.3770 kld 0.19030,[19]27.8367 kld 0.18633,[20]27.1242 kld 0.18111,
+Final estimate: PPL = 27.1242 +/- 1.24397  (5100 tokens scored, 567.0 s, prompt pass, batches of 256)
+PPL(base file) = 23.4666   Mean KLD: 0.181109   Same top p: 79.902 %
+	Command being timed: "target/release/examples/vk_gemma testdata/gguf/LFM3-1.7B-QAD-Q4_0.gguf hostdata/lfm3/kl-base-bf16.bin 20 batch"
+	User time (seconds): 6.34
+	System time (seconds): 2.06
+	Percent of CPU this job got: 1%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 9:30.86
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1492696
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1333348
+	Voluntary context switches: 5005
+	Involuntary context switches: 144
+	Swaps: 0
+	File system inputs: 2039696
+	File system outputs: 88
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

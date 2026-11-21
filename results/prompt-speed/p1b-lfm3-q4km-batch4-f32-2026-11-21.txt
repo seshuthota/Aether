@@ -1,0 +1,29 @@
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on Intel(R) Graphics (RPL-P) | upload + record 1578 ms, prompt batch 256
+# greedy: " a person by the sea. By the sea, there was a person by the sea. There was a person by the"
+# 39 positions in 3435.9 ms: 11.4 tok/s
+[1]10.3579 kld 0.05792,[2]14.0385 kld 0.06550,[3]14.8906 kld 0.06574,[4]15.1771 kld 0.06354,
+Final estimate: PPL = 15.1771 +/- 1.47366  (1020 tokens scored, 539.7 s, prompt pass, batches of 256)
+PPL(base file) = 14.6983   Mean KLD: 0.063543   Same top p: 89.118 %
+	Command being timed: "target/release/examples/vk_gemma testdata/gguf/LFM3-1.7B-Q4_K_M.gguf hostdata/lfm3/kl-base-bf16.bin 4 batch-f32"
+	User time (seconds): 2.52
+	System time (seconds): 0.65
+	Percent of CPU this job got: 0%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 9:04.98
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1544048
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 314129
+	Voluntary context switches: 1183
+	Involuntary context switches: 50
+	Swaps: 0
+	File system inputs: 510464
+	File system outputs: 40
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
