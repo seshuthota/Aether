@@ -1,0 +1,41 @@
+# phone-ab 2026-11-21T12:51:46+0530: p6a-fix-2026-11-21.txt; 1 rounds, alternated
+# old-cpudecode: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# new-cpudecode: ./aether-p6a3 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# cool below 44 C (zone0); cap floor 1.90 GHz; screen on
+# cooling 12:51:46 43 C caps 2.00/2.25 GHz
+
+## old-cpudecode round 0 12:51:46 start 43 C caps 2.00/2.25 GHz; AC powered: true;   level: 65;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 153.49 ± 7.22 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 |  84.07 ± 5.58 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  29.55 ± 0.20 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 |  63.09 ± 1.39 |
+
+build: 5777432f8 (aether)
+# end 12:56:10 60 C caps 1.56/1.40 GHz; exit 0
+# cooling 12:56:10 60 C caps 1.56/1.40 GHz
+# cooling 12:56:30 53 C caps 1.56/1.40 GHz
+# cooling 12:56:51 53 C caps 1.56/1.40 GHz
+# cooling 12:57:11 48 C caps 1.56/1.40 GHz
+# cooling 12:57:31 47 C caps 1.56/1.40 GHz
+# cooling 12:57:51 45 C caps 1.56/1.69 GHz
+# cooling 12:58:12 46 C caps 1.79/1.69 GHz
+# cooling 12:58:32 44 C caps 1.79/1.69 GHz
+# cooling 12:58:52 43 C caps 1.79/1.96 GHz
+# cooling 12:59:13 45 C caps 1.79/1.96 GHz
+# cooling 12:59:33 43 C caps 1.79/1.96 GHz
+# cooling 12:59:53 42 C caps 1.79/1.96 GHz
+# cooling 13:00:13 42 C caps 1.79/1.96 GHz
+# cooling 13:00:34 42 C caps 2.00/2.25 GHz
+
+## new-cpudecode round 0 13:00:34 start 42 C caps 2.00/2.25 GHz; AC powered: false;   level: 68;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 251.00 ± 1.43 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 243.59 ± 4.49 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  33.40 ± 1.21 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 161.36 ± 7.88 |
+
+build: 5777432f8-dirty (aether)
+# end 13:02:26 56 C caps 1.79/1.96 GHz; exit 0

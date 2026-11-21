@@ -1,0 +1,179 @@
+# phone-ab 2026-11-21T13:16:28+0530: p6a-phone-2026-11-21.txt; 3 rounds, alternated
+# gemma4-gpu: ./aether-p6a3 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# gemma4-cpudecode: ./aether-p6a3 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-gpu: ./aether-p6a3 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-cpudecode: ./aether-p6a3 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# cool below 44 C (zone0); cap floor 1.90 GHz; screen on
+# cooling 13:16:28 36 C caps 2.75/2.65 GHz
+
+## gemma4-gpu round 0 13:16:28 start 36 C caps 2.75/2.65 GHz; AC powered: false;   level: 68;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 326.03 ± 4.39 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 320.48 ± 3.78 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  20.11 ± 1.85 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 124.12 ± 0.29 |
+
+build: 5777432f8-dirty (aether)
+# end 13:18:30 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 13:18:30 45 C caps 2.40/2.44 GHz
+# cooling 13:18:51 41 C caps 2.40/2.44 GHz
+
+## gemma4-cpudecode round 0 13:18:51 start 41 C caps 2.40/2.44 GHz; AC powered: false;   level: 68;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 281.31 ± 5.76 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 259.43 ± 1.43 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  35.21 ± 0.40 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 165.03 ± 0.10 |
+
+build: 5777432f8-dirty (aether)
+# end 13:20:42 50 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:20:42 50 C caps 1.79/1.96 GHz
+# cooling 13:21:02 45 C caps 1.79/1.96 GHz
+# cooling 13:21:22 42 C caps 1.79/1.96 GHz
+# cooling 13:21:42 41 C caps 1.79/1.96 GHz
+# cooling 13:22:03 40 C caps 2.00/2.25 GHz
+
+## lfm3-gpu round 0 13:22:03 start 40 C caps 2.00/2.25 GHz; AC powered: false;   level: 67;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |            t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | -------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 |  327.48 ± 1.16 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 275.76 ± 21.24 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |   32.83 ± 0.68 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 |  181.96 ± 2.01 |
+
+build: 5777432f8-dirty (aether)
+# end 13:23:44 47 C caps 2.00/2.25 GHz; exit 0
+# cooling 13:23:44 46 C caps 2.00/2.25 GHz
+# cooling 13:24:04 43 C caps 2.00/2.25 GHz
+
+## lfm3-cpudecode round 0 13:24:04 start 43 C caps 2.00/2.25 GHz; AC powered: false;   level: 67;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 316.44 ± 1.46 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 279.01 ± 0.83 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |  53.51 ± 0.02 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 216.18 ± 0.64 |
+
+build: 5777432f8-dirty (aether)
+# end 13:25:35 50 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:25:35 50 C caps 1.79/1.96 GHz
+# cooling 13:25:55 44 C caps 1.79/1.96 GHz
+# cooling 13:26:15 42 C caps 1.79/1.96 GHz
+# cooling 13:26:36 42 C caps 2.00/2.25 GHz
+
+## lfm3-cpudecode round 1 13:26:36 start 41 C caps 2.00/2.25 GHz; AC powered: false;   level: 66;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 314.26 ± 2.33 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 281.33 ± 0.78 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 | 41.47 ± 19.05 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 208.96 ± 9.76 |
+
+build: 5777432f8-dirty (aether)
+# end 13:28:17 48 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:28:17 48 C caps 1.79/1.96 GHz
+# cooling 13:28:37 44 C caps 1.79/1.96 GHz
+# cooling 13:28:57 42 C caps 1.79/1.96 GHz
+# cooling 13:29:18 41 C caps 1.79/1.96 GHz
+# cooling 13:29:38 40 C caps 2.00/2.25 GHz
+
+## lfm3-gpu round 1 13:29:38 start 40 C caps 2.00/2.25 GHz; AC powered: false;   level: 66;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 326.14 ± 2.29 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 291.35 ± 2.62 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |  32.94 ± 0.16 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 179.78 ± 1.09 |
+
+build: 5777432f8-dirty (aether)
+# end 13:31:19 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 13:31:19 45 C caps 2.00/2.25 GHz
+# cooling 13:31:39 42 C caps 2.00/2.25 GHz
+
+## gemma4-cpudecode round 1 13:31:39 start 42 C caps 2.00/2.25 GHz; AC powered: false;   level: 65;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 237.26 ± 1.97 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 247.28 ± 3.66 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  35.18 ± 0.52 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 164.27 ± 0.55 |
+
+build: 5777432f8-dirty (aether)
+# end 13:33:31 53 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:33:31 53 C caps 1.79/1.96 GHz
+# cooling 13:33:51 45 C caps 1.79/1.96 GHz
+# cooling 13:34:11 43 C caps 1.79/1.96 GHz
+# cooling 13:34:32 41 C caps 1.79/1.96 GHz
+# cooling 13:34:52 41 C caps 2.00/2.25 GHz
+
+## gemma4-gpu round 1 13:34:52 start 41 C caps 2.00/2.25 GHz; AC powered: false;   level: 64;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 264.99 ± 3.76 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 257.48 ± 5.02 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  18.79 ± 0.33 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 119.15 ± 0.66 |
+
+build: 5777432f8-dirty (aether)
+# end 13:37:05 51 C caps 2.00/2.25 GHz; exit 0
+# cooling 13:37:05 51 C caps 2.00/2.25 GHz
+# cooling 13:37:26 43 C caps 2.00/2.25 GHz
+
+## gemma4-gpu round 2 13:37:26 start 43 C caps 2.00/2.25 GHz; AC powered: false;   level: 64;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 263.99 ± 4.09 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 261.79 ± 0.87 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  18.36 ± 0.03 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 119.01 ± 0.30 |
+
+build: 5777432f8-dirty (aether)
+# end 13:39:37 49 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:39:37 48 C caps 1.79/1.96 GHz
+# cooling 13:39:58 43 C caps 1.79/1.96 GHz
+# cooling 13:40:18 42 C caps 1.79/1.96 GHz
+# cooling 13:40:38 42 C caps 1.79/1.96 GHz
+# cooling 13:40:58 40 C caps 2.00/2.25 GHz
+
+## gemma4-cpudecode round 2 13:40:58 start 40 C caps 2.00/2.25 GHz; AC powered: false;   level: 63;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 252.71 ± 2.05 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 252.57 ± 1.79 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  35.23 ± 0.50 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 162.74 ± 2.34 |
+
+build: 5777432f8-dirty (aether)
+# end 13:42:50 53 C caps 1.79/1.96 GHz; exit 0
+# cooling 13:42:50 53 C caps 1.79/1.96 GHz
+# cooling 13:43:10 46 C caps 1.79/1.96 GHz
+# cooling 13:43:30 43 C caps 1.79/1.96 GHz
+# cooling 13:43:50 42 C caps 1.79/1.96 GHz
+# cooling 13:44:10 41 C caps 1.79/1.96 GHz
+# cooling 13:44:31 41 C caps 2.00/2.25 GHz
+
+## lfm3-gpu round 2 13:44:31 start 40 C caps 2.00/2.25 GHz; AC powered: false;   level: 62;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 327.53 ± 1.02 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 291.90 ± 2.74 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |  33.29 ± 0.33 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 181.45 ± 0.29 |
+
+build: 5777432f8-dirty (aether)
+# end 13:46:13 46 C caps 2.00/2.25 GHz; exit 0
+# cooling 13:46:13 46 C caps 2.00/2.25 GHz
+# cooling 13:46:33 43 C caps 2.00/2.25 GHz
+
+## lfm3-cpudecode round 2 13:46:33 start 43 C caps 2.00/2.25 GHz; AC powered: false;   level: 62;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 313.71 ± 2.22 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 277.77 ± 0.83 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |  53.14 ± 0.22 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 213.30 ± 0.52 |
+
+build: 5777432f8-dirty (aether)
+# end 13:48:05 50 C caps 1.79/1.96 GHz; exit 0
