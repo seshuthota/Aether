@@ -1,0 +1,33 @@
+# B2 Q1_0 NEON kernels, aarch64 correctness under qemu-user (not timings)
+
+Host: Linux 7.0.0-43-generic x86_64 (i7-13620H), 2026-11-22.
+qemu-aarch64 version 8.2.2, run as `qemu-aarch64-static -cpu max,sve=off`
+(dotprod and i8mm both report true; the Oryon features, no SVE).
+Target: aarch64-unknown-linux-musl, release, `--features internals`.
+Branch one-bit, B2 commit 2529567 on top of baff22b (B1).
+
+Command:
+
+  cargo test --release --target aarch64-unknown-linux-musl -p aether-infer \
+      --features internals --lib kernels::tests::q1_0 -- --test-threads=1
+
+Output:
+
+running 2 tests
+test kernels::tests::q1_0_matches_gguf_py ... ok
+test kernels::tests::q1_0_table_expansion_matches_registers ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 246 filtered out
+
+Cases (tools/gen_q1_0.py, gguf-py Q1_0/Q8_0): 1x128_t1, 5x256_t1,
+17x2048_t3, 8x6144_t2, 64x1024_t5, 12x512_t9. Each checks, for one and
+three threads: the row dequantization is bit-exact against gguf-py, and
+dot1, dot4 (groups of four rows; 5 and 17 rows leave a dot1 tail) and the
+i8mm mmla path (t = 2, 3, 5, 9: pair tiles P=1..3 and P=4) are within
+1e-6·sqrt(n) relative of dequant(Q8_0(x)) @ dequant(W)ᵀ in float64. t=9
+was added for B2 so the NP=4 tile is hit.
+
+The second test checks the table-expansion A/B variant against the
+register expansion in all three kernels (exact equality).
+
+Qemu times are meaningless and not recorded.
