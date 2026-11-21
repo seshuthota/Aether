@@ -1,0 +1,67 @@
+# phone-ab 2026-11-21T14:07:46+0530: p4-1024-phone-2026-11-21.txt; 3 rounds, alternated
+# bench-1024-old: ./aether-p6a3 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 1024 -n 64 -r 3
+# bench-1024-new: ./aether-p4 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 1024 -n 64 -r 3
+# cool below 44 C (zone0); cap floor 1.90 GHz; screen on
+# cooling 14:07:46 40 C caps 2.00/2.25 GHz
+
+## bench-1024-old round 0 14:07:46 start 40 C caps 2.00/2.25 GHz; AC powered: false;   level: 58;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 270.08 ± 2.02 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.56 ± 0.03 |
+
+build: 5777432f8-dirty (aether)
+# end 14:08:27 43 C caps 2.00/2.25 GHz; exit 0
+# cooling 14:08:27 43 C caps 2.00/2.25 GHz
+
+## bench-1024-new round 0 14:08:28 start 43 C caps 2.00/2.25 GHz; AC powered: false;   level: 58;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 288.29 ± 1.72 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.63 ± 0.06 |
+
+build: eb5e09f5b-dirty (aether)
+# end 14:08:58 50 C caps 2.00/2.25 GHz; exit 0
+# cooling 14:08:58 50 C caps 2.00/2.25 GHz
+# cooling 14:09:19 42 C caps 2.00/2.25 GHz
+
+## bench-1024-new round 1 14:09:19 start 42 C caps 2.00/2.25 GHz; AC powered: false;   level: 58;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 288.65 ± 1.29 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  19.22 ± 0.11 |
+
+build: eb5e09f5b-dirty (aether)
+# end 14:09:50 50 C caps 2.00/2.25 GHz; exit 0
+# cooling 14:09:50 49 C caps 2.00/2.25 GHz
+# cooling 14:10:10 42 C caps 2.00/2.25 GHz
+
+## bench-1024-old round 1 14:10:10 start 42 C caps 2.00/2.25 GHz; AC powered: false;   level: 58;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 267.62 ± 2.50 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.59 ± 0.09 |
+
+build: 5777432f8-dirty (aether)
+# end 14:10:51 43 C caps 2.00/2.25 GHz; exit 0
+# cooling 14:10:51 43 C caps 2.00/2.25 GHz
+
+## bench-1024-old round 2 14:10:51 start 44 C caps 2.00/2.25 GHz; AC powered: false;   level: 58;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 265.05 ± 2.92 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.69 ± 0.37 |
+
+build: 5777432f8-dirty (aether)
+# end 14:11:32 44 C caps 2.00/2.25 GHz; exit 0
+# cooling 14:11:32 44 C caps 2.00/2.25 GHz
+# cooling 14:11:52 42 C caps 2.00/2.25 GHz
+
+## bench-1024-new round 2 14:11:52 start 42 C caps 2.00/2.25 GHz; AC powered: false;   level: 57;   Capacity level: -1
+| model            |        size |    params | backend | threads |   test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp1024 | 289.40 ± 0.86 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |   tg64 |  18.59 ± 0.07 |
+
+build: eb5e09f5b-dirty (aether)
+# end 14:12:23 51 C caps 2.00/2.25 GHz; exit 0
