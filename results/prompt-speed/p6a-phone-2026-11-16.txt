@@ -1,0 +1,259 @@
+# phone-ab 2026-11-16T21:04:17+0530: p6a-phone-2026-11-16.txt; 3 rounds, alternated
+# gemma4-gpu: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# gemma4-cpudecode: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-gpu: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-cpudecode: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 21:04:17 40 C caps 2.75/2.65 GHz
+
+## gemma4-gpu round 0 21:04:17 start 39 C caps 2.75/2.65 GHz; AC powered: false;   level: 80;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 322.72 ± 5.84 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 276.40 ± 6.79 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  20.34 ± 0.76 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 123.86 ± 2.19 |
+
+build: 5777432f8 (aether)
+# end 21:06:21 55 C caps 2.00/2.25 GHz; exit 0
+# cooling 21:06:21 55 C caps 2.00/2.25 GHz
+# cooling 21:06:43 45 C caps 2.00/2.25 GHz
+# cooling 21:07:09 43 C caps 2.00/2.25 GHz
+# cooling 21:07:29 42 C caps 2.00/2.25 GHz
+# cooling 21:07:52 42 C caps 2.00/2.25 GHz
+# cooling 21:08:13 42 C caps 2.00/2.25 GHz
+# cooling 21:08:33 41 C caps 2.00/2.25 GHz
+# cooling 21:08:53 999 C caps 0.00/0.00 GHz
+# cooling 21:09:13 999 C caps 0.00/0.00 GHz
+# cooling 21:09:33 999 C caps 0.00/0.00 GHz
+# cooling 21:09:53 999 C caps 0.00/0.00 GHz
+# cooling 21:10:13 999 C caps 0.00/0.00 GHz
+# cooling 21:10:33 999 C caps 0.00/0.00 GHz
+# cooling 21:10:53 999 C caps 0.00/0.00 GHz
+# cooling 21:11:13 999 C caps 0.00/0.00 GHz
+# cooling 21:11:33 999 C caps 0.00/0.00 GHz
+# cooling 21:11:53 999 C caps 0.00/0.00 GHz
+# cooling 21:12:13 999 C caps 0.00/0.00 GHz
+# cooling 21:12:33 999 C caps 0.00/0.00 GHz
+# cooling 21:12:53 999 C caps 0.00/0.00 GHz
+# cooling 21:13:13 999 C caps 0.00/0.00 GHz
+# cooling 21:13:33 999 C caps 0.00/0.00 GHz
+# cooling 21:13:53 999 C caps 0.00/0.00 GHz
+# cooling 21:14:13 999 C caps 0.00/0.00 GHz
+# cooling 21:14:33 999 C caps 0.00/0.00 GHz
+# cooling 21:14:53 999 C caps 0.00/0.00 GHz
+# cooling 21:15:13 999 C caps 0.00/0.00 GHz
+# cooling 21:15:33 999 C caps 0.00/0.00 GHz
+# cooling 21:15:53 999 C caps 0.00/0.00 GHz
+# cooling 21:16:13 999 C caps 0.00/0.00 GHz
+# cooling 21:16:33 999 C caps 0.00/0.00 GHz
+# cooling 21:16:53 999 C caps 0.00/0.00 GHz
+# cooling 21:17:13 999 C caps 0.00/0.00 GHz
+# cooling 21:17:33 999 C caps 0.00/0.00 GHz
+# cooling 21:17:53 999 C caps 0.00/0.00 GHz
+# cooling 21:18:13 999 C caps 0.00/0.00 GHz
+# cooling 21:18:33 999 C caps 0.00/0.00 GHz
+# cooling 21:18:53 999 C caps 0.00/0.00 GHz
+# cooling 21:19:13 999 C caps 0.00/0.00 GHz
+# cooling 21:19:33 999 C caps 0.00/0.00 GHz
+# cooling 21:19:53 999 C caps 0.00/0.00 GHz
+# cooling 21:20:13 999 C caps 0.00/0.00 GHz
+# cooling 21:20:33 999 C caps 0.00/0.00 GHz
+# cooling 21:20:53 999 C caps 0.00/0.00 GHz
+# cooling 21:21:13 999 C caps 0.00/0.00 GHz
+# cooling 21:21:33 999 C caps 0.00/0.00 GHz
+# cooling 21:21:53 999 C caps 0.00/0.00 GHz
+# cooling 21:22:13 999 C caps 0.00/0.00 GHz
+# cooling 21:22:33 999 C caps 0.00/0.00 GHz
+# cooling 21:22:53 999 C caps 0.00/0.00 GHz
+# cooling 21:23:13 999 C caps 0.00/0.00 GHz
+# cooling 21:23:33 999 C caps 0.00/0.00 GHz
+# cooling 21:23:54 999 C caps 0.00/0.00 GHz
+# cooling 21:24:14 999 C caps 0.00/0.00 GHz
+# cooling 21:24:34 999 C caps 0.00/0.00 GHz
+# cooling 21:24:54 999 C caps 0.00/0.00 GHz
+# cooling 21:25:14 999 C caps 0.00/0.00 GHz
+# cooling 21:25:34 999 C caps 0.00/0.00 GHz
+# cooling 21:25:54 999 C caps 0.00/0.00 GHz
+# cooling 21:26:14 999 C caps 0.00/0.00 GHz
+# cooling 21:26:34 999 C caps 0.00/0.00 GHz
+# cooling 21:26:54 999 C caps 0.00/0.00 GHz
+# cooling 21:27:14 999 C caps 0.00/0.00 GHz
+# cooling 21:27:34 999 C caps 0.00/0.00 GHz
+# cooling 21:27:54 999 C caps 0.00/0.00 GHz
+# cooling 21:28:14 999 C caps 0.00/0.00 GHz
+# cooling 21:28:34 999 C caps 0.00/0.00 GHz
+# cooling 21:28:54 999 C caps 0.00/0.00 GHz
+# cooling 21:29:14 999 C caps 0.00/0.00 GHz
+# cooling 21:29:34 999 C caps 0.00/0.00 GHz
+# cooling 21:29:54 999 C caps 0.00/0.00 GHz
+# cooling 21:30:14 999 C caps 0.00/0.00 GHz
+# cooling 21:30:34 999 C caps 0.00/0.00 GHz
+# cooling 21:30:54 999 C caps 0.00/0.00 GHz
+# cooling 21:31:14 999 C caps 0.00/0.00 GHz
+# cooling 21:31:34 999 C caps 0.00/0.00 GHz
+# cooling 21:31:54 999 C caps 0.00/0.00 GHz
+# cooling 21:32:14 999 C caps 0.00/0.00 GHz
+# cooling 21:32:34 999 C caps 0.00/0.00 GHz
+# cooling 21:32:54 999 C caps 0.00/0.00 GHz
+# cooling 21:33:14 999 C caps 0.00/0.00 GHz
+# cooling 21:33:34 999 C caps 0.00/0.00 GHz
+# cooling 21:33:54 999 C caps 0.00/0.00 GHz
+# cooling 21:34:14 999 C caps 0.00/0.00 GHz
+# cooling 21:34:34 999 C caps 0.00/0.00 GHz
+# cooling 21:34:54 999 C caps 0.00/0.00 GHz
+# cooling 21:35:14 999 C caps 0.00/0.00 GHz
+# cooling 21:35:34 999 C caps 0.00/0.00 GHz
+# cooling 21:35:54 999 C caps 0.00/0.00 GHz
+# cooling 21:36:14 999 C caps 0.00/0.00 GHz
+# not cool enough, skipping gemma4-cpudecode round 0
+# cooling 21:36:34 999 C caps 0.00/0.00 GHz
+# cooling 21:36:54 999 C caps 0.00/0.00 GHz
+# cooling 21:37:14 999 C caps 0.00/0.00 GHz
+# cooling 21:37:34 999 C caps 0.00/0.00 GHz
+# cooling 21:37:54 999 C caps 0.00/0.00 GHz
+# cooling 21:38:14 999 C caps 0.00/0.00 GHz
+# cooling 21:38:34 999 C caps 0.00/0.00 GHz
+# cooling 21:38:54 999 C caps 0.00/0.00 GHz
+# cooling 21:39:14 999 C caps 0.00/0.00 GHz
+# cooling 21:39:34 999 C caps 0.00/0.00 GHz
+# cooling 21:39:54 999 C caps 0.00/0.00 GHz
+# cooling 21:40:14 999 C caps 0.00/0.00 GHz
+# cooling 21:40:34 999 C caps 0.00/0.00 GHz
+# cooling 21:40:54 999 C caps 0.00/0.00 GHz
+# cooling 21:41:14 999 C caps 0.00/0.00 GHz
+# cooling 21:41:34 999 C caps 0.00/0.00 GHz
+# cooling 21:41:54 999 C caps 0.00/0.00 GHz
+# cooling 21:42:14 999 C caps 0.00/0.00 GHz
+# cooling 21:42:34 999 C caps 0.00/0.00 GHz
+# cooling 21:42:54 999 C caps 0.00/0.00 GHz
+# cooling 21:43:14 999 C caps 0.00/0.00 GHz
+# cooling 21:43:34 999 C caps 0.00/0.00 GHz
+# cooling 21:43:54 999 C caps 0.00/0.00 GHz
+# cooling 21:44:14 999 C caps 0.00/0.00 GHz
+# cooling 21:44:34 999 C caps 0.00/0.00 GHz
+# cooling 21:44:54 999 C caps 0.00/0.00 GHz
+# cooling 21:45:14 999 C caps 0.00/0.00 GHz
+# cooling 21:45:34 999 C caps 0.00/0.00 GHz
+# cooling 21:45:54 999 C caps 0.00/0.00 GHz
+# cooling 21:46:14 999 C caps 0.00/0.00 GHz
+# cooling 21:46:34 999 C caps 0.00/0.00 GHz
+# cooling 21:46:54 999 C caps 0.00/0.00 GHz
+# cooling 21:47:14 999 C caps 0.00/0.00 GHz
+# cooling 21:47:34 999 C caps 0.00/0.00 GHz
+# cooling 21:47:54 999 C caps 0.00/0.00 GHz
+# cooling 21:48:14 999 C caps 0.00/0.00 GHz
+# cooling 21:48:34 999 C caps 0.00/0.00 GHz
+# cooling 21:48:54 999 C caps 0.00/0.00 GHz
+# cooling 21:49:14 999 C caps 0.00/0.00 GHz
+# cooling 21:49:34 999 C caps 0.00/0.00 GHz
+# cooling 21:49:54 999 C caps 0.00/0.00 GHz
+# cooling 21:50:14 999 C caps 0.00/0.00 GHz
+# phone-ab 2026-11-16T21:51:10+0530: p6a-phone-2026-11-16.txt; 3 rounds, alternated
+# gemma4-gpu: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# gemma4-cpudecode: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-gpu: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-cpudecode: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 21:51:10 36 C caps 2.75/2.65 GHz
+
+## gemma4-gpu round 0 21:51:11 start 36 C caps 2.75/2.65 GHz; AC powered: false;   level: 77;   Capacity level: -1
+
+# end 21:52:03 999 C caps 2.75/2.65 GHz; exit 255
+# cooling 21:52:03 43 C caps 2.75/2.65 GHz
+# phone-ab 2026-11-16T22:10:08+0530: p6a-phone-2026-11-16.txt; 3 rounds, alternated
+# gemma4-gpu: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# gemma4-cpudecode: ./aether-p6a2 bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-gpu: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# lfm3-cpudecode: ./aether-p6a2 bench -m LFM3-1.7B-QAD-Q4_0.gguf -dev gpu --cpu-decode --cores 2-7 -p 512,2048 -n 128 -pg 2048,128 -r 3
+# cool below 40 C (zone0); cap floor 2.40 GHz; screen on
+# cooling 22:10:08 38 C caps 2.92/3.07 GHz
+
+## gemma4-gpu round 0 22:10:08 start 38 C caps 2.92/3.07 GHz; AC powered: false;   level: 76;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 345.46 ± 3.46 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 | 326.20 ± 1.60 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 |  21.70 ± 1.29 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 | 126.97 ± 1.31 |
+
+build: 5777432f8 (aether)
+# end 22:12:10 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:12:10 43 C caps 2.40/2.44 GHz
+# cooling 22:12:31 41 C caps 2.40/2.44 GHz
+# cooling 22:12:52 39 C caps 2.40/2.44 GHz
+
+## gemma4-cpudecode round 0 22:12:52 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 75;   Capacity level: -1
+| model            |        size |    params | backend | threads |         test |           t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | -----------: | ------------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        pp512 | 182.26 ± 1.67 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |       pp2048 |  99.02 ± 3.58 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 |        tg128 | 22.34 ± 12.16 |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | Vulkan  |       6 | pp2048+tg128 |  56.79 ± 6.53 |
+
+build: 5777432f8 (aether)
+# end 22:17:21 59 C caps 1.56/1.40 GHz; exit 0
+# cooling 22:17:21 59 C caps 1.56/1.40 GHz
+# cooling 22:17:41 54 C caps 1.56/1.40 GHz
+# cooling 22:18:01 48 C caps 1.56/1.40 GHz
+# cooling 22:18:23 48 C caps 1.56/1.69 GHz
+# cooling 22:18:43 47 C caps 1.56/1.69 GHz
+# cooling 22:19:03 45 C caps 1.79/1.69 GHz
+# cooling 22:19:24 52 C caps 1.79/1.96 GHz
+# cooling 22:19:45 45 C caps 1.79/1.96 GHz
+# cooling 22:20:05 43 C caps 1.79/1.96 GHz
+# cooling 22:20:27 43 C caps 1.79/1.96 GHz
+# cooling 22:20:51 42 C caps 1.79/1.96 GHz
+# cooling 22:21:21 999 C caps 0.00/0.00 GHz
+# cooling 22:21:42 999 C caps 0.00/0.00 GHz
+# cooling 22:22:02 999 C caps 0.00/0.00 GHz
+# cooling 22:22:22 999 C caps 0.00/0.00 GHz
+# cooling 22:22:42 999 C caps 0.00/0.00 GHz
+# cooling 22:23:02 999 C caps 0.00/0.00 GHz
+# cooling 22:23:22 999 C caps 0.00/0.00 GHz
+# cooling 22:23:42 999 C caps 0.00/0.00 GHz
+# cooling 22:24:02 999 C caps 0.00/0.00 GHz
+# cooling 22:24:22 999 C caps 0.00/0.00 GHz
+# cooling 22:24:42 999 C caps 0.00/0.00 GHz
+# cooling 22:25:02 999 C caps 0.00/0.00 GHz
+# cooling 22:25:27 41 C caps 2.00/2.25 GHz
+# cooling 22:25:47 40 C caps 2.00/2.25 GHz
+# cooling 22:26:08 40 C caps 2.00/2.25 GHz
+# cooling 22:26:28 44 C caps 2.40/2.44 GHz
+# cooling 22:26:50 42 C caps 2.40/2.44 GHz
+# cooling 22:27:10 41 C caps 2.40/2.44 GHz
+# cooling 22:27:31 41 C caps 2.40/2.44 GHz
+# cooling 22:27:52 41 C caps 2.40/2.44 GHz
+# cooling 22:28:12 41 C caps 2.40/2.44 GHz
+# cooling 22:28:32 41 C caps 2.40/2.44 GHz
+# cooling 22:28:53 42 C caps 2.40/2.44 GHz
+# cooling 22:29:13 41 C caps 2.40/2.44 GHz
+# cooling 22:29:33 41 C caps 2.40/2.44 GHz
+# cooling 22:29:54 44 C caps 2.40/2.44 GHz
+# cooling 22:30:14 42 C caps 2.40/2.44 GHz
+# cooling 22:30:34 41 C caps 2.40/2.44 GHz
+# cooling 22:30:56 41 C caps 2.40/2.44 GHz
+# cooling 22:31:16 41 C caps 2.40/2.44 GHz
+# cooling 22:31:40 40 C caps 2.40/2.44 GHz
+
+## lfm3-gpu round 0 22:31:40 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 71;   Capacity level: -1
+| model          |       size |    params | backend | threads |         test |           t/s |
+| -------------- | ---------: | --------: | ------- | ------: | -----------: | ------------: |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        pp512 | 360.29 ± 1.17 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |       pp2048 | 316.28 ± 1.06 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 |        tg128 |  37.76 ± 0.19 |
+| lfm3 1.7B Q4_0 | 993.13 MiB | 1728.80 M | Vulkan  |       6 | pp2048+tg128 | 187.71 ± 1.58 |
+
+build: 5777432f8 (aether)
+# end 22:33:21 47 C caps 2.00/2.25 GHz; exit 0
+# cooling 22:33:21 47 C caps 2.00/2.25 GHz
+# cooling 22:33:42 44 C caps 2.00/2.25 GHz
+# cooling 22:34:06 43 C caps 2.00/2.25 GHz
+# cooling 22:34:26 42 C caps 2.00/2.25 GHz
+# cooling 22:34:46 42 C caps 2.00/2.25 GHz
+# cooling 22:35:18 42 C caps 2.00/2.25 GHz
+# cooling 22:35:42 44 C caps 2.40/2.44 GHz
+# cooling 22:36:10 42 C caps 2.40/2.44 GHz
+# cooling 22:36:35 42 C caps 2.40/2.44 GHz
+# cooling 22:36:55 46 C caps 2.40/2.44 GHz
+# cooling 22:38:30 999 C caps 0.00/0.00 GHz
