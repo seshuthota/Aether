@@ -1,0 +1,23 @@
+0.01.444.598 I cmn          init: llama threadpool init, n_threads = 8
+0.02.136.356 W init_audio: audio input is in experimental stage and may have reduced quality:
+    https://github.com/ggml-org/llama.cpp/discussions/13759
+0.02.143.578 I mtmd_cli_context: chat template example:
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+
+0.02.143.579 I main: loading model: hostdata/lfm3-audio/gguf/LFM3-Audio-2B-Q4_K_M.gguf
+0.02.143.628 W WARN: This is an experimental CLI for testing multimodal capability.
+0.02.143.629 W       For normal use cases, please use the standard llama-cli
+0.02.188.358 I encoding mtmd batch, n_chunks = 1 (done = 1, total = 3)
+0.02.346.264 I mtmd batch encoding done in 158 ms
+
+And so, my fellow Americans, ask not what your country can do for you. Ask what you can do for your country. Perform ASR.
+
+
