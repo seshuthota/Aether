@@ -1,0 +1,314 @@
+# phone-ab 2026-11-22T00:06:03+0530: kquant-decode-split-phone-2026-11-21.txt; 2 rounds, alternated
+# orig: ./prof-dec-orig gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# s1: AETHER_Q8T_SPLIT=1 ./prof-dec-rows gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# s2: AETHER_Q8T_SPLIT=2 ./prof-dec-rows gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# s4: AETHER_Q8T_SPLIT=4 ./prof-dec-rows gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# s8: AETHER_Q8T_SPLIT=8 ./prof-dec-rows gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# default: ./prof-dec-rows gemma4/gemma-4-E2B-it-Q4_K_M.gguf 32
+# cool below 40 C (zone0); cap floor 2.00 GHz; screen on
+# cooling 00:06:03 46 C caps 2.40/2.44 GHz
+# cooling 00:06:23 42 C caps 2.40/2.44 GHz
+# cooling 00:06:44 41 C caps 2.40/2.44 GHz
+# cooling 00:07:04 40 C caps 2.40/2.44 GHz
+
+## orig round 0 00:07:04 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 88;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   1.5%
+q/k/v                            0.078 ms/token   5.1%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.6%
+attention                        0.072 ms/token   4.7%
+attention merge                  0.009 ms/token   0.6%
+wo                               0.075 ms/token   4.9%
+post-attention norm + add        0.011 ms/token   0.7%
+gate/up                          0.485 ms/token  31.5%
+gelu                             0.005 ms/token   0.3%
+down                             0.559 ms/token  36.4%
+post-FFN norm + add              0.012 ms/token   0.8%
+per-layer gate                   0.025 ms/token   1.6%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.021 ms/token   1.4%
+per-layer norm + add + scale     0.011 ms/token   0.7%
+classifier                       0.136 ms/token   8.9%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.538 ms/token
+# end 00:07:24 42 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:07:24 42 C caps 2.40/2.44 GHz
+# cooling 00:07:44 41 C caps 2.40/2.44 GHz
+# cooling 00:08:05 40 C caps 2.40/2.44 GHz
+
+## s1 round 0 00:08:05 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 88;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   1.8%
+q/k/v                            0.078 ms/token   6.2%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.8%
+attention                        0.071 ms/token   5.6%
+attention merge                  0.009 ms/token   0.7%
+wo                               0.084 ms/token   6.6%
+post-attention norm + add        0.011 ms/token   0.9%
+gate/up                          0.391 ms/token  31.0%
+gelu                             0.005 ms/token   0.4%
+down                             0.336 ms/token  26.6%
+post-FFN norm + add              0.012 ms/token   0.9%
+per-layer gate                   0.045 ms/token   3.6%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.019 ms/token   1.5%
+per-layer norm + add + scale     0.011 ms/token   0.9%
+classifier                       0.151 ms/token  11.9%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.263 ms/token
+# end 00:08:15 46 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:08:15 45 C caps 2.40/2.44 GHz
+# cooling 00:08:35 40 C caps 2.40/2.44 GHz
+# cooling 00:08:56 40 C caps 2.40/2.44 GHz
+
+## s2 round 0 00:08:56 start 40 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   2.1%
+q/k/v                            0.064 ms/token   6.2%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.9%
+attention                        0.071 ms/token   6.9%
+attention merge                  0.008 ms/token   0.8%
+wo                               0.057 ms/token   5.6%
+post-attention norm + add        0.011 ms/token   1.1%
+gate/up                          0.346 ms/token  33.7%
+gelu                             0.005 ms/token   0.5%
+down                             0.221 ms/token  21.5%
+post-FFN norm + add              0.011 ms/token   1.1%
+per-layer gate                   0.031 ms/token   3.0%
+per-layer gelu                   0.004 ms/token   0.4%
+per-layer proj                   0.017 ms/token   1.7%
+per-layer norm + add + scale     0.011 ms/token   1.1%
+classifier                       0.137 ms/token  13.3%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.028 ms/token
+# end 00:09:07 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:09:07 46 C caps 2.40/2.44 GHz
+# cooling 00:09:27 41 C caps 2.40/2.44 GHz
+# cooling 00:09:47 40 C caps 2.40/2.44 GHz
+# cooling 00:10:08 40 C caps 2.40/2.44 GHz
+
+## s4 round 0 00:10:08 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   2.0%
+q/k/v                            0.068 ms/token   6.2%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.9%
+attention                        0.072 ms/token   6.5%
+attention merge                  0.009 ms/token   0.8%
+wo                               0.059 ms/token   5.3%
+post-attention norm + add        0.011 ms/token   1.0%
+gate/up                          0.397 ms/token  36.1%
+gelu                             0.005 ms/token   0.5%
+down                             0.236 ms/token  21.5%
+post-FFN norm + add              0.011 ms/token   1.0%
+per-layer gate                   0.024 ms/token   2.2%
+per-layer gelu                   0.004 ms/token   0.4%
+per-layer proj                   0.019 ms/token   1.8%
+per-layer norm + add + scale     0.011 ms/token   1.0%
+classifier                       0.137 ms/token  12.4%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.098 ms/token
+# end 00:10:18 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:10:18 45 C caps 2.40/2.44 GHz
+# cooling 00:10:38 39 C caps 2.40/2.44 GHz
+
+## s8 round 0 00:10:38 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   1.7%
+q/k/v                            0.078 ms/token   5.8%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.8%
+attention                        0.073 ms/token   5.4%
+attention merge                  0.009 ms/token   0.7%
+wo                               0.067 ms/token   5.0%
+post-attention norm + add        0.011 ms/token   0.8%
+gate/up                          0.465 ms/token  34.6%
+gelu                             0.005 ms/token   0.4%
+down                             0.374 ms/token  27.9%
+post-FFN norm + add              0.012 ms/token   0.9%
+per-layer gate                   0.023 ms/token   1.7%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.021 ms/token   1.6%
+per-layer norm + add + scale     0.011 ms/token   0.8%
+classifier                       0.153 ms/token  11.4%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.343 ms/token
+# end 00:10:49 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:10:49 45 C caps 2.40/2.44 GHz
+# cooling 00:11:09 39 C caps 2.40/2.44 GHz
+
+## default round 0 00:11:09 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   2.1%
+q/k/v                            0.066 ms/token   6.1%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.9%
+attention                        0.071 ms/token   6.6%
+attention merge                  0.009 ms/token   0.8%
+wo                               0.059 ms/token   5.5%
+post-attention norm + add        0.011 ms/token   1.0%
+gate/up                          0.377 ms/token  35.0%
+gelu                             0.005 ms/token   0.5%
+down                             0.237 ms/token  22.0%
+post-FFN norm + add              0.011 ms/token   1.1%
+per-layer gate                   0.025 ms/token   2.3%
+per-layer gelu                   0.004 ms/token   0.4%
+per-layer proj                   0.019 ms/token   1.8%
+per-layer norm + add + scale     0.011 ms/token   1.0%
+classifier                       0.137 ms/token  12.7%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.077 ms/token
+# end 00:11:19 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:11:19 44 C caps 2.40/2.44 GHz
+# cooling 00:11:40 39 C caps 2.40/2.44 GHz
+
+## default round 1 00:11:40 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   2.2%
+q/k/v                            0.064 ms/token   6.3%
+q/k/v norm + RoPE + cache        0.010 ms/token   1.0%
+attention                        0.071 ms/token   6.9%
+attention merge                  0.009 ms/token   0.9%
+wo                               0.055 ms/token   5.4%
+post-attention norm + add        0.012 ms/token   1.1%
+gate/up                          0.345 ms/token  33.9%
+gelu                             0.006 ms/token   0.5%
+down                             0.224 ms/token  22.0%
+post-FFN norm + add              0.012 ms/token   1.1%
+per-layer gate                   0.024 ms/token   2.4%
+per-layer gelu                   0.004 ms/token   0.4%
+per-layer proj                   0.018 ms/token   1.8%
+per-layer norm + add + scale     0.011 ms/token   1.1%
+classifier                       0.129 ms/token  12.7%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.018 ms/token
+# end 00:11:50 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:11:50 44 C caps 2.40/2.44 GHz
+# cooling 00:12:10 39 C caps 2.40/2.44 GHz
+
+## s8 round 1 00:12:10 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   1.7%
+q/k/v                            0.079 ms/token   5.9%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.7%
+attention                        0.072 ms/token   5.4%
+attention merge                  0.009 ms/token   0.7%
+wo                               0.068 ms/token   5.0%
+post-attention norm + add        0.011 ms/token   0.9%
+gate/up                          0.470 ms/token  35.1%
+gelu                             0.005 ms/token   0.4%
+down                             0.369 ms/token  27.5%
+post-FFN norm + add              0.012 ms/token   0.9%
+per-layer gate                   0.023 ms/token   1.7%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.021 ms/token   1.6%
+per-layer norm + add + scale     0.011 ms/token   0.8%
+classifier                       0.152 ms/token  11.3%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.340 ms/token
+# end 00:12:21 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:12:21 44 C caps 2.40/2.44 GHz
+# cooling 00:12:41 38 C caps 2.40/2.44 GHz
+
+## s4 round 1 00:12:41 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   1.9%
+q/k/v                            0.073 ms/token   6.0%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.8%
+attention                        0.073 ms/token   5.9%
+attention merge                  0.009 ms/token   0.7%
+wo                               0.063 ms/token   5.2%
+post-attention norm + add        0.012 ms/token   0.9%
+gate/up                          0.455 ms/token  37.3%
+gelu                             0.006 ms/token   0.5%
+down                             0.264 ms/token  21.6%
+post-FFN norm + add              0.012 ms/token   1.0%
+per-layer gate                   0.045 ms/token   3.7%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.020 ms/token   1.6%
+per-layer norm + add + scale     0.011 ms/token   0.9%
+classifier                       0.139 ms/token  11.4%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.220 ms/token
+# end 00:12:51 44 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:12:52 44 C caps 2.40/2.44 GHz
+# cooling 00:13:12 39 C caps 2.40/2.44 GHz
+
+## s2 round 1 00:13:12 start 39 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.022 ms/token   2.0%
+q/k/v                            0.066 ms/token   6.0%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.9%
+attention                        0.071 ms/token   6.4%
+attention merge                  0.009 ms/token   0.8%
+wo                               0.060 ms/token   5.4%
+post-attention norm + add        0.011 ms/token   1.0%
+gate/up                          0.383 ms/token  34.5%
+gelu                             0.005 ms/token   0.5%
+down                             0.240 ms/token  21.6%
+post-FFN norm + add              0.011 ms/token   1.0%
+per-layer gate                   0.032 ms/token   2.9%
+per-layer gelu                   0.004 ms/token   0.4%
+per-layer proj                   0.018 ms/token   1.6%
+per-layer norm + add + scale     0.011 ms/token   1.0%
+classifier                       0.152 ms/token  13.7%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.109 ms/token
+# end 00:13:22 43 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:13:23 43 C caps 2.40/2.44 GHz
+# cooling 00:13:43 38 C caps 2.40/2.44 GHz
+
+## s1 round 1 00:13:43 start 38 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   1.7%
+q/k/v                            0.081 ms/token   6.2%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.8%
+attention                        0.072 ms/token   5.5%
+attention merge                  0.009 ms/token   0.7%
+wo                               0.086 ms/token   6.6%
+post-attention norm + add        0.011 ms/token   0.9%
+gate/up                          0.420 ms/token  32.0%
+gelu                             0.006 ms/token   0.4%
+down                             0.348 ms/token  26.5%
+post-FFN norm + add              0.012 ms/token   0.9%
+per-layer gate                   0.046 ms/token   3.5%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.020 ms/token   1.5%
+per-layer norm + add + scale     0.011 ms/token   0.9%
+classifier                       0.150 ms/token  11.5%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.311 ms/token
+# end 00:13:53 45 C caps 2.40/2.44 GHz; exit 0
+# cooling 00:13:53 44 C caps 2.40/2.44 GHz
+# cooling 00:14:14 38 C caps 2.40/2.44 GHz
+
+## orig round 1 00:14:14 start 38 C caps 2.40/2.44 GHz; AC powered: false;   level: 87;   Capacity level: -1
+# gemma4/gemma-4-E2B-it-Q4_K_M.gguf on Adreno (TM) 830 | 32 decode steps
+rmsnorm                          0.023 ms/token   1.7%
+q/k/v                            0.081 ms/token   5.8%
+q/k/v norm + RoPE + cache        0.010 ms/token   0.7%
+attention                        0.073 ms/token   5.3%
+attention merge                  0.009 ms/token   0.6%
+wo                               0.070 ms/token   5.1%
+post-attention norm + add        0.012 ms/token   0.8%
+gate/up                          0.494 ms/token  35.6%
+gelu                             0.006 ms/token   0.4%
+down                             0.404 ms/token  29.2%
+post-FFN norm + add              0.012 ms/token   0.9%
+per-layer gate                   0.024 ms/token   1.7%
+per-layer gelu                   0.004 ms/token   0.3%
+per-layer proj                   0.022 ms/token   1.6%
+per-layer norm + add + scale     0.012 ms/token   0.8%
+classifier                       0.129 ms/token   9.3%
+soft-cap                         0.001 ms/token   0.1%
+argmax                           0.001 ms/token   0.1%
+sum                              1.387 ms/token
+# end 00:14:35 40 C caps 2.40/2.44 GHz; exit 0
