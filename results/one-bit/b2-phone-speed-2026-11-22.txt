@@ -1,0 +1,157 @@
+# phone-ab 2026-11-22T10:33:34+0530: b2-phone-speed-2026-11-22.txt; 3 rounds, alternated
+# aether_pp128: ./aether-2529567 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 128 -n 0 -r 1 -o md
+# llama_pp128: taskset fc ./llama-bench -m Bonsai-1.7B-Q1_0.gguf -t 6 -p 128 -n 0 -r 1
+# aether_tg64: ./aether-2529567 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# llama_tg64: taskset fc ./llama-bench -m Bonsai-1.7B-Q1_0.gguf -t 6 -p 0 -n 64 -r 1
+# exp_ab: taskset 80 ./kquant_bench-2529567 Bonsai-1.7B-Q1_0.gguf --q4_0 Bonsai-1.7B-Q1_0.gguf --q1_0 Bonsai-1.7B-Q1_0.gguf --only ffn_gate --tokens 1,128 --ab --cores 7 --pool 7,6
+# cool below 40 C (zone0) and 37 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 10:33:34 36 C board 34.7 C caps 2.75/2.65 GHz
+
+## aether_pp128 round 0 10:33:35 start 35 C board 34.7 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 210.05 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:33:45 36 C board 34.8 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:33:46 36 C board 34.8 C caps 2.75/2.65 GHz
+
+## llama_pp128 round 0 10:33:46 start 36 C board 34.8 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        238.46 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:33:56 37 C board 35.0 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:33:56 37 C board 35.0 C caps 2.75/2.65 GHz
+
+## aether_tg64 round 0 10:33:57 start 37 C board 35.0 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 52.95 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:34:07 37 C board 35.2 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:34:07 38 C board 35.2 C caps 2.75/2.65 GHz
+
+## llama_tg64 round 0 10:34:07 start 37 C board 35.2 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         55.42 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:34:18 38 C board 35.4 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:34:18 37 C board 35.4 C caps 2.75/2.65 GHz
+
+## exp_ab round 0 10:34:18 start 37 C board 35.4 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 Some("Bonsai-1.7B-Q1_0.gguf"), cores [7], pool [7, 6], tokens [1, 128]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,1,470.2,3.76,3.77,9.565
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,128,17548.6,12.91,12.96,2.789
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,1,236.1,7.49,7.50,4.804
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,128,8952.1,25.30,25.50,1.423
+ab,ffn_gate,registers,1,1,453.9,3.90
+ab,ffn_gate,table,1,1,517.6,3.42
+ab,ffn_gate,registers,8,1,1030.5,13.74
+ab,ffn_gate,table,8,1,1128.5,12.54
+# end 10:34:29 38 C board 35.5 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:34:29 38 C board 35.5 C caps 2.75/2.65 GHz
+
+## exp_ab round 1 10:34:29 start 38 C board 35.5 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 Some("Bonsai-1.7B-Q1_0.gguf"), cores [7], pool [7, 6], tokens [1, 128]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,1,488.6,3.62,3.65,9.942
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,128,17879.5,12.67,12.86,2.842
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,1,243.9,7.25,7.27,4.962
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,128,8948.2,25.31,25.42,1.422
+ab,ffn_gate,registers,1,1,454.4,3.89
+ab,ffn_gate,table,1,1,516.5,3.43
+ab,ffn_gate,registers,8,1,1025.6,13.80
+ab,ffn_gate,table,8,1,1127.1,12.56
+# end 10:34:40 38 C board 35.6 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:34:40 38 C board 35.6 C caps 2.75/2.65 GHz
+
+## llama_tg64 round 1 10:34:40 start 38 C board 35.6 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         56.55 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:34:51 38 C board 35.8 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:34:51 38 C board 35.8 C caps 2.75/2.65 GHz
+
+## aether_tg64 round 1 10:34:52 start 38 C board 35.8 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 53.15 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:35:02 38 C board 35.9 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:02 38 C board 35.9 C caps 2.75/2.65 GHz
+
+## llama_pp128 round 1 10:35:02 start 38 C board 35.9 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        235.18 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:35:12 38 C board 35.9 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:13 38 C board 36.0 C caps 2.75/2.65 GHz
+
+## aether_pp128 round 1 10:35:13 start 38 C board 36.0 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 210.42 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:35:23 38 C board 36.0 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:23 38 C board 36.0 C caps 2.75/2.65 GHz
+
+## aether_pp128 round 2 10:35:24 start 38 C board 36.0 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 203.32 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:35:34 38 C board 36.1 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:34 38 C board 36.1 C caps 2.75/2.65 GHz
+
+## llama_pp128 round 2 10:35:34 start 38 C board 36.1 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        233.77 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:35:45 38 C board 36.2 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:45 38 C board 36.2 C caps 2.75/2.65 GHz
+
+## aether_tg64 round 2 10:35:45 start 38 C board 36.2 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 53.93 ± 0.00 |
+
+build: 2529567a4 (aether)
+# end 10:35:56 38 C board 36.2 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:35:56 38 C board 36.2 C caps 2.75/2.65 GHz
+
+## llama_tg64 round 2 10:35:56 start 38 C board 36.2 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         55.00 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 10:36:07 38 C board 36.3 C caps 2.75/2.65 GHz; exit 0
+# cooling 10:36:07 38 C board 36.3 C caps 2.75/2.65 GHz
+
+## exp_ab round 2 10:36:07 start 38 C board 36.3 C caps 2.75/2.65 GHz; AC powered: false;   level: 56;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 Some("Bonsai-1.7B-Q1_0.gguf"), cores [7], pool [7, 6], tokens [1, 128]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,1,470.2,3.76,3.77,9.565
+q1_0,ffn_gate,q1_0,6144,2048,1769472,1,128,17508.6,12.94,12.96,2.783
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,1,236.4,7.49,7.50,4.809
+q1_0,ffn_gate,q1_0,6144,2048,1769472,2,128,8949.9,25.31,25.54,1.423
+ab,ffn_gate,registers,1,1,454.3,3.89
+ab,ffn_gate,table,1,1,517.5,3.42
+ab,ffn_gate,registers,8,1,1045.2,13.54
+ab,ffn_gate,table,8,1,1134.1,12.48
+# end 10:36:17 38 C board 36.4 C caps 2.75/2.65 GHz; exit 0
