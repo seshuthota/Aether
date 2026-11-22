@@ -1,0 +1,76 @@
+# phone-ab 2026-11-22T21:17:20+0530: b5-micro-2026-11-22.txt; 3 rounds, alternated
+# micro: taskset fc ./kquant_bench-b5 Bonsai-1.7B-Q1_0.gguf --q4_0 Bonsai-1.7B-Q1_0.gguf --only __none__ --shape 4096x4096 --tokens 1,8 --cores 7 --pool 2-7
+# cool below 40 C (zone0) and 37 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 21:17:20 42 C board 40.2 C caps 2.40/2.44 GHz
+# cooling 21:17:41 40 C board 39.9 C caps 2.40/2.44 GHz
+# cooling 21:18:02 47 C board 39.6 C caps 2.40/2.44 GHz
+# cooling 21:18:25 40 C board 39.6 C caps 2.40/2.44 GHz
+# cooling 21:18:49 40 C board 39.3 C caps 2.40/2.44 GHz
+# cooling 21:19:09 41 C board 39.1 C caps 2.40/2.44 GHz
+# cooling 21:19:31 40 C board 39.0 C caps 2.40/2.44 GHz
+# cooling 21:19:51 41 C board 39.3 C caps 2.40/2.44 GHz
+# cooling 21:20:12 41 C board 39.1 C caps 2.40/2.44 GHz
+# cooling 21:20:36 39 C board 38.9 C caps 2.40/2.44 GHz
+# cooling 21:20:57 39 C board 38.8 C caps 2.40/2.44 GHz
+# cooling 21:21:17 40 C board 38.6 C caps 2.40/2.44 GHz
+# cooling 21:21:39 39 C board 38.5 C caps 2.40/2.44 GHz
+# cooling 21:21:59 39 C board 38.3 C caps 2.40/2.44 GHz
+# cooling 21:22:20 39 C board 38.5 C caps 2.40/2.44 GHz
+# cooling 21:22:40 39 C board 38.3 C caps 2.40/2.44 GHz
+# cooling 21:23:01 41 C board 38.4 C caps 2.40/2.44 GHz
+# cooling 21:23:22 39 C board 38.4 C caps 2.40/2.44 GHz
+# cooling 21:23:43 39 C board 38.2 C caps 2.40/2.44 GHz
+# cooling 21:24:03 38 C board 38.0 C caps 2.40/2.44 GHz
+# cooling 21:24:24 38 C board 37.8 C caps 2.40/2.44 GHz
+# cooling 21:24:45 38 C board 37.6 C caps 2.40/2.44 GHz
+# cooling 21:25:06 39 C board 37.8 C caps 2.40/2.44 GHz
+# cooling 21:25:26 39 C board 37.7 C caps 2.40/2.44 GHz
+# cooling 21:25:47 39 C board 37.8 C caps 2.40/2.44 GHz
+# cooling 21:26:07 38 C board 37.6 C caps 2.40/2.44 GHz
+# cooling 21:26:29 38 C board 37.4 C caps 2.40/2.44 GHz
+# cooling 21:26:49 38 C board 37.3 C caps 2.40/2.44 GHz
+# cooling 21:27:09 37 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 21:27:30 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:27:50 37 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:28:10 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## micro round 0 21:28:11 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 None, q2_0 None, repack false, cores [7], pool [2, 3, 4, 5, 6, 7], tokens [1, 8]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+synthetic,synthetic,q1_0,4096,4096,2359296,1,1,518.6,4.55,4.57,7.913
+synthetic,synthetic,q1_0,4096,4096,2359296,1,8,1539.4,12.26,12.34,2.936
+synthetic,synthetic,q2_0,4096,4096,4718592,1,1,740.5,6.37,6.68,11.299
+synthetic,synthetic,q2_0,4096,4096,4718592,1,8,2283.5,16.53,16.73,4.355
+synthetic,synthetic,q1_0,4096,4096,2359296,6,1,147.9,15.96,16.54,2.256
+synthetic,synthetic,q1_0,4096,4096,2359296,6,8,461.1,40.93,44.77,0.879
+synthetic,synthetic,q2_0,4096,4096,4718592,6,1,206.0,22.90,23.45,3.144
+synthetic,synthetic,q2_0,4096,4096,4718592,6,8,608.8,62.01,62.99,1.161
+# end 21:28:22 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:28:22 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## micro round 1 21:28:22 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 None, q2_0 None, repack false, cores [7], pool [2, 3, 4, 5, 6, 7], tokens [1, 8]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+synthetic,synthetic,q1_0,4096,4096,2359296,1,1,507.5,4.65,4.66,7.744
+synthetic,synthetic,q1_0,4096,4096,2359296,1,8,1534.6,12.30,12.38,2.927
+synthetic,synthetic,q2_0,4096,4096,4718592,1,1,731.5,6.45,6.67,11.162
+synthetic,synthetic,q2_0,4096,4096,4718592,1,8,2292.5,16.47,16.68,4.373
+synthetic,synthetic,q1_0,4096,4096,2359296,6,1,147.8,15.96,16.46,2.255
+synthetic,synthetic,q1_0,4096,4096,2359296,6,8,431.2,43.77,44.76,0.823
+synthetic,synthetic,q2_0,4096,4096,4718592,6,1,205.6,22.95,23.32,3.137
+synthetic,synthetic,q2_0,4096,4096,4718592,6,8,609.4,61.94,62.49,1.162
+# end 21:28:34 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:28:35 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## micro round 2 21:28:35 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 None, q2_0 None, repack false, cores [7], pool [2, 3, 4, 5, 6, 7], tokens [1, 8]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+synthetic,synthetic,q1_0,4096,4096,2359296,1,1,520.3,4.53,4.55,7.939
+synthetic,synthetic,q1_0,4096,4096,2359296,1,8,1538.8,12.27,12.35,2.935
+synthetic,synthetic,q2_0,4096,4096,4718592,1,1,710.3,6.64,6.68,10.839
+synthetic,synthetic,q2_0,4096,4096,4718592,1,8,2285.6,16.52,16.73,4.359
+synthetic,synthetic,q1_0,4096,4096,2359296,6,1,147.5,16.00,16.52,2.251
+synthetic,synthetic,q1_0,4096,4096,2359296,6,8,461.3,40.92,43.26,0.880
+synthetic,synthetic,q2_0,4096,4096,4718592,6,1,204.7,23.05,23.67,3.124
+synthetic,synthetic,q2_0,4096,4096,4718592,6,8,592.7,63.69,64.24,1.130
+# end 21:28:45 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0

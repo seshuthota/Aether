@@ -34,10 +34,14 @@ end, battery 78 % → 74 %, on battery. A third session was attempted for a
 full 3×3 grid; the cap fell back to 2.40/2.44 GHz on the last 8B llama
 job, so that row is n=2 rather than a mixed-cap median.
 
-Decode now scales with the CPU clock (ALU-bound): 8B tg64 is 12.98 at
-2.40/2.44 and 16.53 at 2.75/2.65, while llama.cpp's 8B decode is
-13.19 and 12.84 on the same two steps. At the top step Aether is 22–29 %
-ahead at decode; at the second step it is at parity (98.4 %).
+The top-step table is H1+H2 on cooled starts; the second-step table below
+is **H1 only on hot starts**, so 12.98 → 16.53 mixes H2's gain with both
+the clock step and the cooling, and is not a measurement of clock
+sensitivity (B4 later measured 14.64 at the same 2.40/2.44 step after
+cooling the SoC before each job). Likewise the 98.4 % parity below is
+H1-only and hot-start; B4's cooled baseline at the same step was 112.4 %.
+The controlled H2 result is the paired 4096×4096 kernel A/B, not this
+model-level pair.
 
 ## Second step, H1 only, 3 full rounds (equal caps to B3)
 

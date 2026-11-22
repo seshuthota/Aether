@@ -1,0 +1,247 @@
+# phone-ab 2026-11-22T21:29:32+0530: b5-phone-speed-2026-11-22.txt; 3 rounds, alternated
+# aether_q1_pp128: ./aether-b5 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 128 -n 0 -r 1 -o md
+# llama_q1_pp128: taskset fc /data/local/tmp/llama/llama-bench -m Bonsai-1.7B-Q1_0.gguf -t 6 -p 128 -n 0 -r 1
+# aether_q2_pp128: ./aether-b5 bench -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -dev cpu --cores 2-7 -t 6 -p 128 -n 0 -r 1 -o md
+# llama_q2_pp128: taskset fc /data/local/tmp/llama/llama-bench -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -t 6 -p 128 -n 0 -r 1
+# aether_q1_tg64: ./aether-b5 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# llama_q1_tg64: taskset fc /data/local/tmp/llama/llama-bench -m Bonsai-1.7B-Q1_0.gguf -t 6 -p 0 -n 64 -r 1
+# aether_q2_tg64: ./aether-b5 bench -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# llama_q2_tg64: taskset fc /data/local/tmp/llama/llama-bench -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -t 6 -p 0 -n 64 -r 1
+# cool below 40 C (zone0) and 37 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 21:29:32 42 C board 38.3 C caps 2.40/2.44 GHz
+# cooling 21:29:54 39 C board 38.0 C caps 2.40/2.44 GHz
+# cooling 21:30:14 38 C board 37.6 C caps 2.40/2.44 GHz
+# cooling 21:30:35 38 C board 37.3 C caps 2.40/2.44 GHz
+# cooling 21:30:55 37 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:31:16 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## aether_q1_pp128 round 0 21:31:16 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 193.44 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:31:27 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:31:27 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## llama_q1_pp128 round 0 21:31:27 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        206.19 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:31:39 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:31:39 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## aether_q2_pp128 round 0 21:31:39 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | pp128 | 136.79 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:31:49 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:31:50 39 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:32:10 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## llama_q2_pp128 round 0 21:32:10 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |           pp128 |         47.96 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:32:21 40 C board 37.2 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:32:21 41 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 21:32:41 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:33:01 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## aether_q1_tg64 round 0 21:33:01 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 61.71 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:33:12 38 C board 36.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:33:12 38 C board 36.8 C caps 2.40/2.44 GHz
+
+## llama_q1_tg64 round 0 21:33:12 start 38 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         50.81 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:33:24 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:33:24 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## aether_q2_tg64 round 0 21:33:25 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | tg64 | 43.27 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:33:37 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:33:37 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## llama_q2_tg64 round 0 21:33:38 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |            tg64 |         38.04 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:33:48 39 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:33:48 39 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:34:08 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## llama_q2_tg64 round 1 21:34:09 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |            tg64 |         37.90 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:34:19 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:34:19 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## aether_q2_tg64 round 1 21:34:19 start 39 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | tg64 | 43.26 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:34:32 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:34:32 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:34:52 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## llama_q1_tg64 round 1 21:34:52 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         50.42 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:35:03 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:35:03 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## aether_q1_tg64 round 1 21:35:04 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 61.74 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:35:14 39 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:35:14 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:35:37 38 C board 36.8 C caps 2.40/2.44 GHz
+
+## llama_q2_pp128 round 1 21:35:37 start 38 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |           pp128 |         48.27 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:35:47 42 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:35:47 42 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:36:08 38 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 21:36:29 37 C board 37.0 C caps 2.40/2.44 GHz
+
+## aether_q2_pp128 round 1 21:36:29 start 37 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | pp128 | 139.35 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:36:39 39 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:36:40 39 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:37:02 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:37:24 37 C board 36.7 C caps 2.40/2.44 GHz
+
+## llama_q1_pp128 round 1 21:37:25 start 37 C board 36.7 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        205.10 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:37:36 38 C board 36.7 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:37:36 38 C board 36.7 C caps 2.40/2.44 GHz
+
+## aether_q1_pp128 round 1 21:37:36 start 38 C board 36.7 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 191.97 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:37:47 38 C board 36.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:37:47 38 C board 36.8 C caps 2.40/2.44 GHz
+
+## aether_q1_pp128 round 2 21:37:47 start 38 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | pp128 | 192.16 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:38:05 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:38:05 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## llama_q1_pp128 round 2 21:38:05 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |           pp128 |        215.82 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:38:17 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:38:17 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## aether_q2_pp128 round 2 21:38:17 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads |  test |           t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ------------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | pp128 | 138.24 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:38:28 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:38:28 39 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:38:49 38 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 21:39:10 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## llama_q2_pp128 round 2 21:39:10 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |           pp128 |         47.84 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:39:21 40 C board 37.2 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:39:21 41 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 21:39:42 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 21:40:02 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## aether_q1_tg64 round 2 21:40:03 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 61.50 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:40:13 38 C board 36.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:40:13 38 C board 36.8 C caps 2.40/2.44 GHz
+
+## llama_q1_tg64 round 2 21:40:13 start 38 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q1_0                | 231.13 MiB |     1.72 B | CPU        |       6 |            tg64 |         51.48 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:40:26 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:40:26 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## aether_q2_tg64 round 2 21:40:26 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 41 | 461.79 MiB | 1720.03 M | CPU     |       6 | tg64 | 43.38 ± 0.00 |
+
+build: aa8ddf4b2-dirty (aether)
+# end 21:40:37 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 21:40:37 39 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:40:57 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 21:41:19 37 C board 36.7 C caps 2.40/2.44 GHz
+
+## llama_q2_tg64 round 2 21:41:19 start 37 C board 36.7 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 1.7B Q2_0                | 461.79 MiB |     1.72 B | CPU        |       6 |            tg64 |         37.68 ± 0.00 |
+
+build: d02b4c0d6 (12061)
+# end 21:41:29 38 C board 36.8 C caps 2.40/2.44 GHz; exit 0

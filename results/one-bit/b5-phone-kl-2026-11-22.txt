@@ -1,0 +1,27 @@
+$ adb shell 'cd /data/local/tmp/aether && ./aether-b5 perplexity -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -f wiki.test.raw -c 512 --chunks 2 --kl-divergence-base kl-base-llama-q2_0-wiki2.bin --kl-divergence -t 6 --cores 2-7'
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q2_0-wiki2.bin), weights q2_0 484.2 MB, 6 threads
+[1]11.3229,[2]15.6959,
+perplexity: 510 tokens scored in 9.5 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  15.695880 ±   2.501631
+Mean PPL(base)                :  15.616673
+Mean PPL(Q)/PPL(base)         :   1.005072
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000240
+
+====== Token probability statistics ======
+Same top p: 99.216 %
+
+$ adb shell '... ./aether-b5 run -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -p "The capital of France is" -n 16 --temp 0 -t 6 --cores 2-7 --no-display-prompt'
+weights: q2_0, 484.2 MB
+ Paris. The capital of France is Paris. The capital of France is Paris.
+prefill: 5 tokens in 275.8 ms (18.1 tok/s) | decode: 15 tokens in 445.8 ms (33.6 tok/s) | peak RSS 1447792 kB
+
+$ adb shell '... ./aether-b5 run -m Bonsai-1.7B-Q1_0.gguf -p x -n 1 -c 512 -t 6 --cores 2-7 --no-display-prompt'
+weights: q1_0, 242.4 MB
+prefill: 1 tokens in 22.8 ms (43.9 tok/s) | peak RSS 407380 kB
+
+$ adb shell '... ./aether-b5 run -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -p x -n 1 -c 512 -t 6 --cores 2-7 --no-display-prompt'
+weights: q2_0, 484.2 MB
+prefill: 1 tokens in 41.5 ms (24.1 tok/s) | peak RSS 648964 kB
