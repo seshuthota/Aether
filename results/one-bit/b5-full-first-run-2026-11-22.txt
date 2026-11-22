@@ -1,0 +1,414 @@
+
+== cargo fmt --all --check
+
+== cargo clippy -p aether-infer --all-targets -- -D warnings
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.82s
+
+== cargo clippy --workspace --all-targets -- -D warnings
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether)
+   Compiling aether-cli v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-cli)
+    Checking aether-bench v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/bench)
+    Checking aether-capi v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-capi)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.93s
+
+== cargo clippy --workspace --target aarch64-linux-android --all-targets -- -D warnings
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether)
+   Compiling aether-cli v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-cli)
+    Checking aether-bench v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/bench)
+    Checking aether-capi v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-capi)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.01s
+
+== MSRV 1.98: skipped (rustup toolchain install 1.98 --target aarch64-linux-android)
+
+== tests, every model
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether)
+   Compiling aether-cli v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-cli)
+   Compiling aether-bench v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/bench)
+   Compiling aether-capi v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether-capi)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 11s
+     Running unittests src/lib.rs (target/release/deps/aether-ad1fb82a08090381)
+
+running 15 tests
+test tests::c_abi_chat_audio ... ok
+test tests::c_abi_chat_vision ... ok
+test tests::c_abi_chat_without_template ... ok
+test tests::c_abi_decide ... ok
+test tests::c_abi_decide_images ... ok
+test tests::c_abi_gpu_gemma4 ... ok
+test tests::c_abi_gpu_lfm3 ... ok
+test tests::c_abi_gpu_session ... ok
+test tests::c_abi_moonshine_transcribe ... ok
+test tests::c_abi_multi_turn_chat ... ok
+test tests::c_abi_round_trip ... ok
+test tests::c_abi_sampling_and_smollm2_chat ... ok
+test tests::c_abi_speak ... ok
+test tests::c_abi_tokenize_eval_detokenize ... ok
+test tests::c_abi_transcribe ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 268.86s
+
+     Running unittests src/main.rs (target/release/deps/aether-c76a049c53e43f7a)
+
+running 23 tests
+test args::tests::devices ... ok
+test args::tests::escapes ... ok
+test args::tests::masks ... ok
+test args::tests::threads_and_cores ... ok
+test bench::tests::iso_time ... ok
+test bench::tests::stats ... ok
+test bench::tests::test_names ... ok
+test images::tests::png_round_trip ... ok
+test multipart::tests::reads_curl_form_bodies ... ok
+test run::tests::neutral_values_are_off ... ok
+test run::tests::other_flags_are_left_alone ... ok
+test run::tests::out_of_range_values_are_caught_before_the_load ... ok
+test run::tests::sampling_flags_reach_the_options ... ok
+test serve::tests::audio_places ... ok
+test serve::tests::messages_read_as_openai_sends_them ... ok
+test serve::tests::seeds_and_last_n ... ok
+test serve::tests::speech_seed ... ok
+test serve::tests::subtitle_formats ... ok
+test serve::tests::utf8_held_across_pieces ... ok
+test transcribe::tests::clock_formats_like_whisper_cpp ... ok
+test wav::tests::formats_and_channels ... ok
+test wav::tests::jfk_matches_the_reference_samples ... ok
+test wav::tests::written_files_read_back ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/bin/aether-imatrix.rs (target/release/deps/aether_imatrix-dbaefc00ddeb7a22)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/aether-quantize.rs (target/release/deps/aether_quantize-40bc297a20b1bd4c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/aether-bc6b796ad7c2b9f7)
+
+running 247 tests
+test aligned::tests::chunks_can_be_shared_across_threads ... ok
+test aligned::tests::empty_buffer_gives_empty_slice ... ok
+test aligned::tests::empty_buffer_is_aligned_and_drops_cleanly ... ok
+test aligned::tests::huge_length_is_rejected - should panic ... ok
+test aligned::tests::start_is_64_aligned_for_awkward_lengths ... ok
+test aligned::tests::starts_zeroed_and_writes_are_visible ... ok
+test api::tests::a_draft_model_loads_once_and_runs_twice ... ok
+test api::tests::bad_input_returns_an_error ... ok
+test api::tests::clear_forgets_the_cache ... ok
+test api::tests::eval_and_sample_give_the_greedy_golden ... ok
+test api::tests::eval_refuses_to_step_back_a_conv_model ... ok
+test api::tests::greedy_text_matches_the_llama2c_golden ... ok
+test api::tests::lfm3_audio_chat_with_speech ... ok
+test api::tests::lfm3_audio_synthesizer ... ok
+test api::tests::lfm3_audio_transcriber ... ok
+test api::tests::lfm3_vl_chat_with_images ... ok
+test api::tests::model_and_session_cross_threads ... ok
+test api::tests::moonshine_small_transcriber_matches_the_reference ... ok
+test api::tests::moonshine_transcriber_matches_the_reference ... ok
+test api::tests::penalties_give_llama_cpp_greedy_text ... ok
+test api::tests::sessions_on_their_own_cores ... ok
+test api::tests::sessions_share_one_model ... ok
+test api::tests::stop_strings_and_finish_reasons ... ok
+test api::tests::synthesizer_loads_a_gguf ... ok
+test api::tests::synthesizer_matches_the_reference ... ok
+test api::tests::the_next_turn_reuses_the_cache ... ok
+test api::tests::transcriber_matches_the_reference ... ok
+test audio::tests::features_match_the_processor ... ok
+test audio::tests::fft_of_a_cosine_is_two_bins ... ok
+test audio::tests::lfm3_audio_features_match_the_processor ... ok
+test audio::tests::lfm3_audio_frame_count ... ok
+test audio::tests::long_features_match_the_processor ... ok
+test audio::tests::mel_filters_match_the_processor ... ok
+test bench::tests::bench_runs_warmup_plus_iters ... ok
+test bench::tests::median_even_count_averages_middle_two ... ok
+test bench::tests::median_odd_count ... ok
+test bench::tests::outlier_moves_mean_but_not_median ... ok
+test chat::tests::detects_templates_from_jinja ... ok
+test chat::tests::gemma3_renders_full_conversations ... ok
+test chat::tests::gemma4_template_matches_hf ... ok
+test chat::tests::gguf_templates_are_detected ... ok
+test chat::tests::lfm3_matches_transformers_chat_template ... ok
+test chat::tests::llama3_template_matches_hf ... ok
+test chat::tests::matches_transformers_chat_template ... ok
+test chat::tests::multi_turn_matches_hf_apply_chat_template ... ok
+test chat::tests::think_filter_hides_split_spans ... ok
+test chat::tests::think_filter_keeps_the_prompt_out_of_the_reply ... ok
+test decision::tests::bad_requests_are_refused ... ok
+test decision::tests::f32_images_match_the_reference ... ok
+test decision::tests::f32_matches_transformers ... ok
+test decision::tests::image_prompts_match_the_processor ... ok
+test decision::tests::prompts_match_the_chat_template ... ok
+test decision::tests::q8_0_images_match_the_reference ... ok
+test decision::tests::q8_0_matches_transformers ... ok
+test decision::tests::response_has_the_reference_shape ... ok
+test eval::tests::log_probs_normalise ... ok
+test eval::tests::self_comparison_is_zero ... ok
+test format::gguf::tests::reads_llama_cpp_files ... ok
+test format::imatrix::tests::collected_imatrix_matches_llama_imatrix ... ok
+test format::imatrix::tests::imatrix_conversion_matches_llama_quantize_pure ... ok
+test format::imatrix::tests::k_quant_mix_with_imatrix_matches_llama_quantize ... ok
+test format::imatrix::tests::q4_k_m_conversion_matches_llama_quantize ... ok
+test format::imatrix::tests::reads_llama_imatrix_files ... ok
+test format::imatrix::tests::writes_llama_imatrix_files ... ok
+test format::json::tests::errors_point_at_the_problem ... ok
+test format::json::tests::integers_for_shapes_and_ids ... ok
+test format::json::tests::parses_model_files ... ok
+test format::json::tests::python_dumps ... ok
+test format::json::tests::python_floats ... ok
+test format::json::tests::scalars_and_nesting ... ok
+test format::json::tests::string_escapes_and_surrogates ... ok
+test format::mmap::tests::maps_a_file_and_an_empty_file ... ok
+test format::quantize::tests::writes_llama_quantize_files ... ok
+test format::quantize::tests::writes_llama_quantize_files_with_imatrix ... ok
+test format::quantize::tests::writes_llama_quantize_q4_k_m ... ok
+test format::safetensors::tests::bf16_widening_is_exact ... ok
+test format::safetensors::tests::f16_known_values ... ok
+test format::safetensors::tests::reads_smollm2_header ... ok
+test image::tests::python_rounding ... ok
+test image::tests::resize_to_the_same_size_is_a_copy ... ok
+test image::tests::smart_resize_matches_the_processor ... ok
+test kernels::tests::attention_group_matches_numpy ... ok
+test kernels::tests::attention_matches_numpy ... ok
+test kernels::tests::attention_window_matches_numpy ... ok
+test kernels::tests::gate_matches_numpy ... ok
+test kernels::tests::gemma_elementwise_matches_numpy ... ok
+test kernels::tests::k_quant_linear_matches_reference ... ok
+test kernels::tests::matmul_batch_matches_numpy ... ok
+test kernels::tests::matmul_matches_numpy ... ok
+test kernels::tests::q1_0_matches_gguf_py ... ok
+test kernels::tests::quantized_linear_batch_matches_reference ... ok
+test kernels::tests::quantized_linear_matches_reference ... ok
+test kernels::tests::rmsnorm_heads_matches_numpy ... ok
+test kernels::tests::rmsnorm_softmax_swiglu_match_numpy ... ok
+test kernels::tests::rope_matches_numpy ... ok
+test kernels::tests::rope_partial_matches_numpy ... ok
+test kernels::tests::short_conv_matches_numpy ... ok
+test kernels::tests::threaded_matmuls_are_bit_identical ... ok
+test membench::tests::byte_counts_follow_stream_rule ... ok
+test membench::tests::copy_scale_add ... ok
+test membench::tests::read_sum_is_exact_on_small_integers ... ok
+test membench::tests::read_sum_on_misaligned_slice ... ok
+test model::codec12hz::tests::codec_matches_qwen_tts ... ok
+test model::gguf::tests::bonsai_q1_0_greedy_matches_llama ... ok
+test model::gguf::tests::bonsai_q1_0_kl_matches_llama ... ok
+test model::gguf::tests::gemma3_loads ... ok
+test model::gguf::tests::gemma3_matches_transformers ... ok
+test model::gguf::tests::gemma4_loads ... ok
+test model::gguf::tests::gemma4_matches_transformers ... ok
+test model::gguf::tests::lfm3_conv_state_rolls_back ... ok
+test model::gguf::tests::lfm3_matches_transformers ... ok
+test model::gguf::tests::lfm3_q4km_loads ... ok
+test model::gguf::tests::llama32_3b_q8_gguf_loads ... ok
+test model::gguf::tests::llama32_f16_gguf_matches_transformers ... ok
+test model::gguf::tests::llama32_q8_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_bf16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_f16_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen2_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen35_2b_loads_and_matches_transformers ... ok
+test model::gguf::tests::qwen35_loads ... ok
+test model::gguf::tests::qwen35_matches_transformers ... ok
+test model::gguf::tests::qwen3_f32_gguf_matches_transformers ... ok
+test model::gguf::tests::qwen3_loads ... ok
+test model::gguf::tests::qwen3_q8_gguf_matches_transformers ... ok
+test model::gguf::tests::smollm2_gguf_matches_transformers ... ok
+test model::gguf::tests::untied_embedding_stays_mapped ... ok
+test model::gguf::tests::yarn_matches_transformers ... ok
+test model::hf::tests::llama32_long_positions_match_transformers ... ignored, 8448-token prefill: run with --release -- --ignored llama32_long
+test model::hf::tests::llama32_matches_transformers ... ok
+test model::hf::tests::qwen2_matches_transformers ... ok
+test model::hf::tests::qwen3_06b_matches_transformers ... ok
+test model::hf::tests::qwen3_17b_matches_transformers ... ok
+test model::hf::tests::smollm2_360m_matches_transformers ... ok
+test model::hf::tests::smollm2_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_asr_bf16_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_asr_quantized_answers_as_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_codec_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_depth_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_encoder_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_encoder_q8_0_matches_transformers ... ok
+test model::lfm3_audio::tests::lfm3_audio_generate_bf16_matches_transformers ... ok
+test model::llama2c::tests::batched_prefill_matches_llama2c ... ok
+test model::llama2c::tests::greedy_matches_llama2c_at_every_layer ... ok
+test model::llama2c::tests::long_context_matches_llama2c ... ok
+test model::llama2c::tests::seeded_sampling_matches_llama2c ... ok
+test model::llama2c::tests::threaded_greedy_matches_llama2c ... ok
+test model::moonshine::tests::moonshine_accepts_a_clip_over_20_seconds ... ok
+test model::moonshine::tests::moonshine_small_matches_transformers ... ok
+test model::moonshine::tests::moonshine_small_prefixes_match_transformers ... ok
+test model::moonshine::tests::moonshine_tiny_matches_transformers ... ok
+test model::moonshine::tests::moonshine_tiny_prefixes_match_transformers ... ok
+test model::qwen3tts::tests::code_predictor_matches_qwen_tts ... ok
+test model::qwen3tts::tests::generation_matches_qwen_tts ... ok
+test model::qwen3tts::tests::gguf_matches_qwen_tts ... ok
+test model::qwen3tts::tests::q4_0_drift_against_qwen_tts ... ok
+test model::qwen3tts::tests::q4_imatrix_drift_against_qwen_tts ... ok
+test model::qwen3tts::tests::q4_k_m_drift_against_qwen_tts ... ok
+test model::qwen3tts::tests::q5_0_drift_against_qwen_tts ... ok
+test model::qwen3tts::tests::q8_0_drift_against_qwen_tts ... ok
+test model::qwen3tts::tests::talker_matches_qwen_tts ... ok
+test model::qwen3tts::tests::tokenizer_matches_qwen_tts ... ok
+test model::qwen3tts::tests::unknown_speaker_and_language_are_refused ... ok
+test model::sampler::tests::bad_input_is_an_error ... ok
+test model::sampler::tests::draft_sampling_keeps_the_distribution ... ok
+test model::sampler::tests::penalties_and_min_p_match_llama_cpp ... ok
+test model::sampler::tests::penalties_change_the_greedy_choice ... ok
+test model::sampler::tests::rng_range ... ok
+test model::sampler::tests::temperature_zero_is_argmax ... ok
+test model::sampler::tests::top_k_one_is_argmax ... ok
+test model::sampler::tests::top_p_keeps_only_the_nucleus ... ok
+test model::vision::tests::erf_matches_known_values ... ok
+test model::vision::tests::f16_encoder_matches_transformers ... ok
+test model::vision::tests::f32_encoder_matches_transformers ... ok
+test model::vision::tests::lfm3_vl_f16_encoder_matches_transformers ... ok
+test model::vision::tests::lfm3_vl_f32_encoder_matches_transformers ... ok
+test model::vision::tests::lfm3_vl_mmproj_loads_and_refuses ... ok
+test model::vision::tests::lfm3_vl_patches_match_the_processor ... ok
+test model::vision::tests::patches_match_the_processor ... ok
+test model::vision_lfm3::tests::lfm3_vl_bf16_matches_transformers ... ok
+test model::vision_lfm3::tests::lfm3_vl_q8_0_answers_as_transformers ... ok
+test model::whisper::tests::whisper_base_decoder_matches_transformers ... ok
+test model::whisper::tests::whisper_base_encoder_matches_transformers ... ok
+test model::whisper::tests::whisper_base_timestamps_match_transformers ... ok
+test model::whisper::tests::whisper_small_decoder_matches_transformers ... ok
+test model::whisper::tests::whisper_small_encoder_matches_transformers ... ok
+test model::whisper::tests::whisper_small_timestamps_match_transformers ... ok
+test model::whisper::tests::whisper_tiny_decoder_matches_transformers ... ok
+test model::whisper::tests::whisper_tiny_encoder_matches_transformers ... ok
+test model::whisper::tests::whisper_tiny_timestamps_match_transformers ... ok
+test model::whisper::tests::whisper_transcripts_decode_as_hf ... ok
+test monitor::tests::constant_power_integrates_to_power_times_time ... ok
+test monitor::tests::counter_energy_uses_the_window_between_steps ... ok
+test monitor::tests::samples_until_stopped ... ok
+test monitor::tests::trapezoid_is_exact_for_a_ramp ... ok
+test pool::tests::a_refused_pin_still_runs ... ok
+test pool::tests::dynamic_blocks_cover_everything_once ... ok
+test pool::tests::every_share_runs_once_per_job ... ok
+test pool::tests::parked_workers_wake_up ... ok
+test pool::tests::split_covers_everything_once ... ok
+test quant::tests::f16_rounding_is_round_to_nearest_even ... ok
+test quant::tests::imatrix_quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::k_quants_match_gguf ... ok
+test quant::tests::q5_k_matches_gguf ... ok
+test quant::tests::quantizers_are_byte_identical_to_llama_cpp ... ok
+test quant::tests::repacked_k_rows_dequantize_like_row_major ... ok
+test quant::tests::repacked_rows_dequantize_like_row_major ... ok
+test quant::tests::scalar_dots_match_reference ... ok
+test session::tests::draft_length_adapts ... ok
+test session::tests::draft_model_decoding_gives_llama2c_greedy_text ... ok
+test session::tests::generates_llama2c_text_and_stops_on_request ... ok
+test session::tests::lfm3_draft_decoding_keeps_the_greedy_text ... ok
+test session::tests::llama3_prompts_start_with_one_bos ... ok
+test session::tests::lookup_decoding_gives_llama2c_greedy_text ... ok
+test sys::affinity::tests::parses_singles_ranges_and_newline ... ok
+test sys::affinity::tests::pinning_moves_the_thread ... ok
+test sys::affinity::tests::rejects_core_beyond_cpu_set ... ok
+test sys::sysfs::tests::every_online_core_has_a_max_frequency ... ok
+test sys::sysfs::tests::inventory ... ok
+test sys::sysfs::tests::missing_file_names_the_path ... ok
+test tensor::tests::from_vec_rejects_wrong_length - should panic ... ok
+test tensor::tests::get_set_roundtrip_and_row_major_order ... ok
+test tensor::tests::index_of_2_3_1_is_79 ... ok
+test tensor::tests::out_of_range_index_panics - should panic ... ok
+test tensor::tests::scalar_and_vector_shapes ... ok
+test tensor::tests::size_in_bytes ... ok
+test tensor::tests::strides_are_products_of_dims_to_the_right ... ok
+test tensor::tests::strides_of_3_by_4_are_4_and_1 ... ok
+test tests::prints_arch ... ok
+test tokenizer::bytelevel::tests::gguf_tokenizer_matches_hf_tokenizers ... ok
+test tokenizer::bytelevel::tests::gpt2_regex_cases ... ok
+test tokenizer::bytelevel::tests::lfm2_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::lfm3_gguf_tokenizer_matches_hf_tokenizers ... ok
+test tokenizer::bytelevel::tests::llama3_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::llama_bpe_regex_cases ... ok
+test tokenizer::bytelevel::tests::matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen2_regex_cases ... ok
+test tokenizer::bytelevel::tests::qwen35_gguf_tokenizer_matches_hf_tokenizers ... ok
+test tokenizer::bytelevel::tests::qwen35_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::bytelevel::tests::qwen35_regex_cases ... ok
+test tokenizer::bytelevel::tests::qwen3_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::llama2c::tests::decode_inverts_encode ... ok
+test tokenizer::llama2c::tests::encode_matches_llama2c_on_corpus ... ok
+test tokenizer::nfc::tests::known_cases ... ok
+test tokenizer::nfc::tests::matches_python_unicodedata ... ok
+test tokenizer::spm_bpe::tests::gemma3_matches_hf_tokenizers_on_corpus ... ok
+test tokenizer::spm_bpe::tests::gemma4_matches_hf_tokenizers_on_corpus ... ok
+
+test result: ok. 246 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5102.31s
+
+   Doc-tests aether
+
+running 3 tests
+test crates/aether/src/api.rs - api (line 4) - compile ... ok
+test crates/aether/src/api.rs - api::Synthesizer (line 658) - compile ... ok
+test crates/aether/src/api.rs - api::Transcriber (line 1080) - compile ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 5.47s; merged doctests compilation took 5.46s
+
+== GPU tests (vulkan): kernels::vulkan model::gpu
+   Compiling aether-infer v0.1.0 (/home/curious/Documents/hermes-projects/aether-infer/crates/aether)
+error[E0277]: `format::gguf::Gguf` doesn't implement `Debug`
+   --> crates/aether/src/format/gguf.rs:453:37
+    |
+453 |         let err = Gguf::open(&path).unwrap_err().to_string();
+    |                                     ^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Debug` is not implemented for `format::gguf::Gguf`
+   --> crates/aether/src/format/gguf.rs:162:1
+    |
+162 | pub struct Gguf {
+    | ^^^^^^^^^^^^^^^
+    = note: add `#[derive(Debug)]` to `format::gguf::Gguf` or manually `impl Debug for format::gguf::Gguf`
+note: required by a bound in `std::result::Result::<T, E>::unwrap_err`
+   --> /rustc/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/core/src/result.rs:1323:4
+
+error[E0308]: mismatched types
+    --> crates/aether/src/kernels/mod.rs:1215:54
+     |
+1215 |                     linear_batch_on(p, &mut all, &x, w, t);
+     |                     ---------------                  ^ expected `&Weight`, found `Weight`
+     |                     |
+     |                     arguments to this function are incorrect
+     |
+note: function defined here
+    --> crates/aether/src/kernels/mod.rs:754:8
+     |
+ 754 | pub fn linear_batch_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &Weight, t: usize) {
+     |        ^^^^^^^^^^^^^^^                                                        ----------
+help: consider borrowing here
+     |
+1215 |                     linear_batch_on(p, &mut all, &x, &w, t);
+     |                                                      +
+
+error[E0308]: mismatched types
+    --> crates/aether/src/kernels/mod.rs:1220:74
+     |
+1220 |                         linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], w);
+     |                         ---------                                        ^ expected `&Weight`, found `Weight`
+     |                         |
+     |                         arguments to this function are incorrect
+     |
+note: function defined here
+    --> crates/aether/src/kernels/mod.rs:873:8
+     |
+ 873 | pub fn linear_on(pool: Option<&ThreadPool>, out: &mut [f32], x: &[f32], w: &Weight) {
+     |        ^^^^^^^^^                                                        ----------
+help: consider borrowing here
+     |
+1220 |                         linear_on(p, &mut one, &x[tt * n..(tt + 1) * n], &w);
+     |                                                                          +
+
+Some errors have detailed explanations: E0277, E0308.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `aether-infer` (lib test) due to 3 previous errors
+
+FAILED:
+  cargo test --features vulkan kernels::vulkan model::gpu
