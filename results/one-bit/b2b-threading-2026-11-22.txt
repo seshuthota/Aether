@@ -1,0 +1,131 @@
+# phone-ab 2026-11-22T14:17:09+0530: b2b-threading-2026-11-22.txt; 3 rounds, alternated
+# qwen_dynamic: ./aether-b2b bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# qwen_static: ./aether-b2b-static bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# gemma_dynamic: ./aether-b2b bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# gemma_static: ./aether-b2b-static bench -m gemma4/gemma-4-E2B-it-Q4_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# cool below 40 C (zone0) and 37 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 14:17:09 39 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:17:29 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:17:49 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 14:18:10 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## qwen_dynamic round 0 14:18:10 start 37 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 53.95 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:18:20 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:18:20 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## qwen_static round 0 14:18:20 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 44.13 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:18:31 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:18:31 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:18:52 38 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 14:19:12 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## gemma_dynamic round 0 14:19:12 start 37 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 34.35 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:19:23 40 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:19:23 40 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:19:43 38 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:20:03 37 C board 37.0 C caps 2.40/2.44 GHz
+
+## gemma_static round 0 14:20:04 start 37 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 34.44 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:20:14 40 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:20:14 40 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:20:34 38 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:20:54 37 C board 37.0 C caps 2.40/2.44 GHz
+
+## gemma_static round 1 14:20:55 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 35.00 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:21:05 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:21:05 40 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:21:25 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:21:46 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## gemma_dynamic round 1 14:21:46 start 37 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 36.92 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:21:56 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:21:56 40 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:22:17 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:22:37 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## qwen_static round 1 14:22:37 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 42.86 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:22:47 38 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:22:47 38 C board 36.9 C caps 2.40/2.44 GHz
+
+## qwen_dynamic round 1 14:22:47 start 38 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 53.88 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:22:58 38 C board 37.0 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:22:58 38 C board 37.0 C caps 2.40/2.44 GHz
+
+## qwen_dynamic round 2 14:22:58 start 38 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 50.28 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:23:09 39 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:23:09 39 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 14:23:29 37 C board 37.0 C caps 2.40/2.44 GHz
+# cooling 14:23:49 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## qwen_static round 2 14:23:50 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 44.07 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:24:00 39 C board 36.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:24:00 39 C board 36.9 C caps 2.40/2.44 GHz
+
+## gemma_dynamic round 2 14:24:00 start 39 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 34.95 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:24:10 40 C board 37.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 14:24:11 40 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:24:31 38 C board 37.2 C caps 2.40/2.44 GHz
+# cooling 14:24:51 37 C board 37.0 C caps 2.40/2.44 GHz
+
+## gemma_static round 2 14:24:51 start 37 C board 37.0 C caps 2.40/2.44 GHz; AC powered: false;   level: 79;   Capacity level: -1
+| model            |        size |    params | backend | threads | test |          t/s |
+| ---------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| gemma4 4.6B Q4_0 | 2694.76 MiB | 4628.57 M | CPU     |       6 | tg64 | 34.49 ± 0.00 |
+
+build: c8d823fb5-dirty (aether)
+# end 14:25:02 42 C board 37.1 C caps 2.40/2.44 GHz; exit 0

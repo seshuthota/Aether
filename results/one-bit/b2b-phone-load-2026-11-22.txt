@@ -1,0 +1,42 @@
+==== aether-b3 1.7B load
+weights: q1_0, 242.4 MB
+Real time (s): 0.271634
+Max RSS (KiB): 177484
+==== aether-b3 1.7B greedy
+The capital of France is Paris, and the capital of Spain is Madrid. Which of the following is the
+prefill: 5 tokens in 70.3 ms (71.1 tok/s) | decode: 15 tokens in 362.9 ms (41.3 tok/s) | peak RSS 410116 kB
+==== aether-b3 4B load
+weights: q1_0, 566.3 MB
+Real time (s): 0.331289
+Max RSS (KiB): 212300
+==== aether-b3 4B greedy
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France.
+prefill: 5 tokens in 389.5 ms (12.8 tok/s) | decode: 15 tokens in 706.2 ms (21.2 tok/s) | peak RSS 759384 kB
+==== aether-b3 8B load
+weights: q1_0, 1152.7 MB
+Real time (s): 0.270722
+Max RSS (KiB): 213820
+==== aether-b3 8B greedy
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France.
+prefill: 5 tokens in 188.5 ms (26.5 tok/s) | decode: 15 tokens in 1299.2 ms (11.5 tok/s) | peak RSS 1247392 kB
+==== aether-b2b3 1.7B load
+weights: q1_0, 242.4 MB
+Real time (s): 0.427845
+Max RSS (KiB): 402260
+==== aether-b2b3 1.7B greedy
+The capital of France is Paris, and the capital of Spain is Madrid. Which of the following is the
+prefill: 5 tokens in 38.4 ms (130.2 tok/s) | decode: 15 tokens in 242.0 ms (62.0 tok/s) | peak RSS 404584 kB
+==== aether-b2b3 4B load
+weights: q1_0, 566.3 MB
+Real time (s): 0.661251
+Max RSS (KiB): 751792
+==== aether-b2b3 4B greedy
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France.
+prefill: 5 tokens in 115.9 ms (43.2 tok/s) | decode: 15 tokens in 615.9 ms (24.4 tok/s) | peak RSS 753576 kB
+==== aether-b2b3 8B load
+weights: q1_0, 1152.7 MB
+Real time (s): 1.263921
+Max RSS (KiB): 1250376
+==== aether-b2b3 8B greedy
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France.
+prefill: 5 tokens in 667.2 ms (7.5 tok/s) | decode: 15 tokens in 1673.1 ms (9.0 tok/s) | peak RSS 1251748 kB

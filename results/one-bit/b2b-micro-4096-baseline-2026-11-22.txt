@@ -1,0 +1,12 @@
+# kquant_bench: model Bonsai-1.7B-Q1_0.gguf, q4_0 Bonsai-1.7B-Q1_0.gguf, q1_0 Some("Bonsai-8B-Q1_0.gguf"), repack false, cores [7], pool [2, 3, 4, 5, 6, 7], tokens [1, 8]
+# file,tensor,format,rows,cols,weight_bytes,threads,tokens,median_us,median_gbps,best_gbps,ns_per_256
+q1_0,attn_q,q1_0,4096,4096,2359296,1,1,616.2,3.83,3.83,9.403
+q1_0,attn_q,q1_0,4096,4096,2359296,1,8,1470.2,12.84,12.93,2.804
+q1_0,attn_q,q1_0,4096,4096,2359296,6,1,171.7,13.74,13.84,2.620
+q1_0,attn_q,q1_0,4096,4096,2359296,6,8,420.8,44.86,46.55,0.803
+ab,attn_q,registers,1,1,603.8,3.91
+ab,attn_q,table,1,1,685.6,3.44
+ab,attn_q,transposed,1,1,527.8,4.47
+ab,attn_q,registers,8,1,1354.7,13.93
+ab,attn_q,table,8,1,1485.3,12.71
+ab,attn_q,transposed,8,1,1282.5,14.72
