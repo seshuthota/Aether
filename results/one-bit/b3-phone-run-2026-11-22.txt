@@ -1,0 +1,28 @@
+== 4B
+weights: q1_0, 566.3 MB
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France. Paris is the capital of France. Paris
+prefill: 5 tokens in 447.3 ms (11.2 tok/s) | decode: 23 tokens in 1634.7 ms (14.1 tok/s) | peak RSS 757072 kB
+Real time (s): 2.858416
+User time (s): 13.355572
+System time (s): 0.388885
+Max RSS (KiB): 757072
+Major faults: 0
+Minor faults: 35961
+File system inputs: 0
+File system outputs: 0
+Voluntary context switches: 80
+Involuntary context switches: 2098
+== 8B
+weights: q1_0, 1152.7 MB
+The capital of France is Paris. Paris is the capital of France. Paris is the capital of France. Paris is the capital of France. Paris
+prefill: 5 tokens in 686.9 ms (7.3 tok/s) | decode: 23 tokens in 4066.5 ms (5.7 tok/s) | peak RSS 1246896 kB
+Real time (s): 5.608638
+User time (s): 24.330298
+System time (s): 0.753467
+Max RSS (KiB): 1246896
+Major faults: 0
+Minor faults: 43065
+File system inputs: 0
+File system outputs: 0
+Voluntary context switches: 164
+Involuntary context switches: 5753

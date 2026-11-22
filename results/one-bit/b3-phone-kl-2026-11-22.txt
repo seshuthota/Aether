@@ -1,0 +1,50 @@
+# phone-ab 2026-11-22T11:51:24+0530: b3-phone-kl-2026-11-22.txt; 1 rounds, alternated
+# aether_4b_kl: ./aether-b3 perplexity -m Bonsai-4B-Q1_0.gguf -f wiki.test.raw -c 512 --chunks 2 -t 6 --cores 2-7 --kl-divergence-base kl-base-llama-q1_0-4b-wiki2.bin --kl-divergence
+# aether_8b_kl: ./aether-b3 perplexity -m Bonsai-8B-Q1_0.gguf -f wiki.test.raw -c 512 --chunks 2 -t 6 --cores 2-7 --kl-divergence-base kl-base-llama-q1_0-8b-wiki2.bin --kl-divergence
+# cool below 40 C (zone0) and 37 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 11:51:24 40 C board 37.9 C caps 2.40/2.44 GHz
+# cooling 11:51:44 38 C board 37.7 C caps 2.40/2.44 GHz
+# cooling 11:52:04 38 C board 37.3 C caps 2.40/2.44 GHz
+# cooling 11:52:24 37 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 11:52:45 37 C board 36.9 C caps 2.40/2.44 GHz
+
+## aether_4b_kl round 0 11:52:45 start 37 C board 36.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q1_0-4b-wiki2.bin), weights q1_0 566.3 MB, 6 threads
+[1]10.7768,[2]14.5369,
+perplexity: 510 tokens scored in 18.0 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  14.536940 ±   2.275753
+Mean PPL(base)                :  14.355021
+Mean PPL(Q)/PPL(base)         :   1.012673
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000169
+
+====== Token probability statistics ======
+Same top p: 99.216 %
+# end 11:53:05 53 C board 38.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 11:53:06 53 C board 38.9 C caps 2.40/2.44 GHz
+# cooling 11:53:26 42 C board 39.3 C caps 2.40/2.44 GHz
+# cooling 11:53:46 39 C board 38.6 C caps 2.40/2.44 GHz
+# cooling 11:54:06 38 C board 38.1 C caps 2.40/2.44 GHz
+# cooling 11:54:27 38 C board 37.8 C caps 2.40/2.44 GHz
+# cooling 11:54:47 38 C board 37.4 C caps 2.40/2.44 GHz
+# cooling 11:55:07 38 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 11:55:28 37 C board 37.1 C caps 2.40/2.44 GHz
+# cooling 11:55:48 37 C board 36.8 C caps 2.40/2.44 GHz
+
+## aether_8b_kl round 0 11:55:48 start 37 C board 36.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 90;   Capacity level: -1
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q1_0-8b-wiki2.bin), weights q1_0 1152.7 MB, 6 threads
+[1]10.0853,[2]13.1675,
+perplexity: 510 tokens scored in 32.1 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  13.167487 ±   2.017533
+Mean PPL(base)                :  13.046527
+Mean PPL(Q)/PPL(base)         :   1.009271
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000186
+
+====== Token probability statistics ======
+Same top p: 98.824 %
+# end 11:56:29 48 C board 41.3 C caps 2.00/2.25 GHz; exit 0
