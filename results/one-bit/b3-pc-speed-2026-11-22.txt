@@ -1,0 +1,28 @@
+== aether 4B
+| model               |       size |    params | backend | threads |  test |         t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ----: | ----------: |
+| qwen3 4.0B ftype 40 | 540.09 MiB | 4021.78 M | CPU     |      12 | pp128 | 4.97 ± 0.60 |
+| qwen3 4.0B ftype 40 | 540.09 MiB | 4021.78 M | CPU     |      12 |  tg64 | 4.33 ± 0.61 |
+
+build: 0e071bbf1 (aether)
+== llama 4B
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 4B Q1_0                  | 540.09 MiB |     4.02 B | CPU        |      12 |           pp128 |         50.59 ± 0.35 |
+| qwen3 4B Q1_0                  | 540.09 MiB |     4.02 B | CPU        |      12 |            tg64 |         28.01 ± 0.08 |
+
+build: d02b4c0d6 (12061)
+== aether 8B
+| model               |        size |    params | backend | threads |  test |         t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ----: | ----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |      12 | pp128 | 2.41 ± 0.01 |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |      12 |  tg64 | 2.44 ± 0.11 |
+
+build: 0e071bbf1 (aether)
+== llama 8B
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| qwen3 8B Q1_0                  |   1.07 GiB |     8.19 B | CPU        |      12 |           pp128 |         27.20 ± 0.21 |
+| qwen3 8B Q1_0                  |   1.07 GiB |     8.19 B | CPU        |      12 |            tg64 |         17.53 ± 0.37 |
+
+build: d02b4c0d6 (12061)
