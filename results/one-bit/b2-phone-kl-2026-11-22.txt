@@ -1,0 +1,33 @@
+=== start 2026-11-22T08:14:22+05:30
+  board temp status: 0
+  low bat status: 0
+  reverse wl chg status: 0
+  status: 3
+  level: 65
+  Capacity level: -1
+33400
+32877
+1785600 1017600 
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q1_0-wiki2.bin), weights q1_0 242.4 MB, 6 threads
+[1]13.9681,[2]20.2117,
+perplexity: 510 tokens scored in 7.0 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  20.211741 ±   3.439856
+Mean PPL(base)                :  19.887847
+Mean PPL(Q)/PPL(base)         :   1.016286
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000264
+
+====== Token probability statistics ======
+Same top p: 99.608 %
+=== end 2026-11-22T08:14:31+05:30 rc=0
+  board temp status: 0
+  low bat status: 0
+  reverse wl chg status: 0
+  status: 3
+  level: 64
+  Capacity level: -1
+55300
+33272
+2918400 3513600 

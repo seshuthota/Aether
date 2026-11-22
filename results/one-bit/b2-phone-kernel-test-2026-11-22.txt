@@ -1,0 +1,18 @@
+# B2 Q1_0 kernels on the phone: cargo runner unit tests
+# 2026-11-22T08:14:47+05:30, branch one-bit 2529567, iQOO 13 (I2401), cores 2-7
+  board temp status: 0
+  low bat status: 0
+  reverse wl chg status: 0
+  status: 3
+  level: 64
+  Capacity level: -1
+zone0 36900
+quiet_therm 34332
++ cargo test --release --target aarch64-linux-android -p aether-infer --features internals --lib kernels::tests::q1_0 -- --test-threads=1
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (target/aarch64-linux-android/release/deps/aether-a7c8ab3dc57d24f0)
+/home/curious/Documents/hermes-projects/aether-infer/target/aarch64-linux-android/release/deps/aether-a7c8ab3dc57d24f0: 1 file pushed, 0 skipped. 50.9 MB/s (56125800 bytes in 1.051s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2479 skipped.
+test kernels::tests::q1_0_matches_gguf_py ... ok
+test kernels::tests::q1_0_table_expansion_matches_registers ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 246 filtered out; finished in 0.00s
