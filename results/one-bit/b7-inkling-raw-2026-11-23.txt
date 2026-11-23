@@ -1,0 +1,104 @@
+$ python3 /tmp/opencode/gguf_head.py hostdata/inkling/Inkling-2-Mini-AD-IQ1_S.gguf  (metadata, tensors truncated to the first 12)
+version=3 tensors=704 kv=62
+general.architecture = inkling2_loop
+general.type = model
+general.sampling.temp = 1.0
+general.name = Inkling-2-Mini
+general.size_label = 128x1.8B
+general.license = apache-2.0
+general.license.link = https://www.apache.org/licenses/LICENSE-2.0
+general.tags = ['conversational', 'image-text-to-text', 'moe', 'image-text-to-text']
+inkling2_loop.block_count = 24
+inkling2_loop.context_length = 1048576
+inkling2_loop.embedding_length = 2304
+inkling2_loop.feed_forward_length = 1152
+inkling2_loop.attention.head_count = [24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24]
+inkling2_loop.attention.head_count_kv = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+inkling2_loop.attention.layer_norm_rms_epsilon = 9.999999974752427e-07
+inkling2_loop.expert_count = 128
+inkling2_loop.expert_used_count = 8
+inkling2_loop.attention.key_length = 128
+inkling2_loop.attention.value_length = 128
+inkling2_loop.loop.count = 3
+inkling2_loop.loop.start = 6
+inkling2_loop.loop.end = 18
+inkling2_loop.loop.gate_rank = 64
+inkling2_loop.vocab_size = 201024
+inkling2_loop.vocab_size_unpadded = 200058
+inkling2_loop.expert_feed_forward_length = 1152
+inkling2_loop.attention.key_length_swa = 128
+inkling2_loop.attention.value_length_swa = 128
+inkling2_loop.rope.dimension_count = 0
+inkling2_loop.attention.sliding_window = 1024
+inkling2_loop.attention.sliding_window_pattern = [True, True, True, True, True, False, True, True, True, True, True, False, True, True, True, True, True, False, True, True, True, True, True, False]
+inkling2_loop.shortconv.l_cache = 4
+inkling2_loop.expert_weights_scale = 8.0
+inkling2_loop.activation.situ_beta = 4.0
+inkling2_loop.activation.situ_linear_beta = 25.0
+inkling2_loop.attn_res.block_size = 6
+inkling2_loop.final_logit_softcapping = 30.0
+inkling2_loop.attention.relative_length = 16
+inkling2_loop.attention.relative_extent = 1024
+
+$ python3 /tmp/opencode/gguf_sizes.py ... (all 704 tensor spans, grouped)
+version 3 tensors 704 kv 62 align 32 data 11977696
+  3185.05 MB  24 {'IQ1_S': 24} ffn_gate_up_exps.weight
+  2293.24 MB  24 {'Q2_0': 24} ffn_down_exps.weight
+   379.94 MB   1 {'Q6_K': 1} output.weight
+   260.53 MB   1 {'Q4_K': 1} token_embd.weight
+   180.49 MB  24 {'Q8_0': 24} attn_gate.weight
+   180.49 MB  24 {'Q8_0': 24} attn_output.weight
+   180.49 MB  24 {'Q8_0': 24} attn_q.weight
+    60.16 MB  24 {'Q8_0': 24} attn_k.weight
+    60.16 MB  24 {'Q8_0': 24} attn_v.weight
+    28.31 MB  24 {'F32': 24} ffn_gate_inp.weight
+    22.56 MB  24 {'Q8_0': 24} attn_rel.weight
+     3.76 MB  12 {'Q8_0': 12} loop_q_ctrl_down.weight
+     3.76 MB  12 {'Q8_0': 12} loop_k_ctrl_down.weight
+     3.76 MB  12 {'Q8_0': 12} loop_ffn_ctrl_down.weight
+     3.76 MB  12 {'Q8_0': 12} loop_v_ctrl_down.weight
+     1.88 MB  12 {'Q8_0': 12} loop_q_ctrl_forget.weight
+     1.88 MB  12 {'Q8_0': 12} loop_q_ctrl_gain.weight
+     1.88 MB  12 {'Q8_0': 12} loop_k_ctrl_forget.weight
+     1.88 MB  12 {'Q8_0': 12} loop_k_ctrl_gain.weight
+     1.88 MB  12 {'Q8_0': 12} loop_ffn_ctrl_forget.weight
+     1.88 MB  12 {'Q8_0': 12} loop_ffn_ctrl_gain.weight
+     1.88 MB  12 {'Q8_0': 12} loop_v_ctrl_forget.weight
+     1.88 MB  12 {'Q8_0': 12} loop_v_ctrl_gain.weight
+     1.57 MB  24 {'F32': 24} attn_rel_bias.weight
+     1.41 MB  24 {'Q8_0': 24} attn_sink_proj.weight
+     0.88 MB  24 {'F32': 24} attn_post_conv.weight
+     0.88 MB  24 {'F32': 24} ffn_post_conv.weight
+     0.44 MB  12 {'F32': 12} loop_msg_query.weight
+     0.39 MB  24 {'F32': 24} attn_k_conv.weight
+     0.39 MB  24 {'F32': 24} attn_v_conv.weight
+     0.31 MB   4 {'Q8_0': 4} attn_k_conv_proj.weight
+     0.31 MB   4 {'Q8_0': 4} attn_v_conv_proj.weight
+     0.29 MB  24 {'F32': 24} attn_q_clip.weight
+     0.29 MB  23 {'F32': 23} attn_res_query.weight
+     0.22 MB  24 {'F32': 24} ffn_norm.weight
+     0.22 MB  24 {'F32': 24} ffn_res_query.weight
+     0.18 MB  20 {'F32': 20} attn_norm.weight
+     0.04 MB  24 {'F32': 24} attn_rel_clip.weight
+     0.04 MB   4 {'F32': 4} attn_k_inp_norm.weight
+     0.04 MB   4 {'F32': 4} attn_q_inp_norm.weight
+     0.04 MB   4 {'F32': 4} attn_v_inp_norm.weight
+     0.01 MB  24 {'F32': 24} exp_probs_b.bias
+     0.01 MB   1 {'F32': 1} output_norm.weight
+     0.01 MB   1 {'F32': 1} output_res_query.weight
+     0.01 MB   1 {'F32': 1} token_embd_norm.weight
+
+per layer: 0:258.2 1:258.2 2:258.2 3:258.2 4:258.2 5:258.4 6:260.8 7:260.8 8:260.8 9:260.8 10:260.8 11:261.0 12:260.8 13:260.8 14:260.8 15:260.8 16:260.8 17:261.0 18:258.2 19:258.2 20:258.2 21:258.2 22:258.2 23:258.4
+sum 6869.5 MB of 6869.5
+expert tensors 48 5478.3 MB; per layer gate_up/down:
+ one gate_up_exps 132.71 MB; one down_exps 95.55 MB
+ attn+ctrl per layer ~ 29.97 MB
+
+$ adb shell grep -E "MemTotal|MemAvailable|MemFree|Cached|Swap" /proc/meminfo
+MemTotal:       15473892 kB
+MemFree:          425384 kB
+MemAvailable:    6061092 kB
+Cached:          4727708 kB
+SwapCached:      1338356 kB
+SwapTotal:      29360116 kB
+SwapFree:       22066904 kB
