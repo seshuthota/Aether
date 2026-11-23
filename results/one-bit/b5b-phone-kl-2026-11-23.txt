@@ -1,0 +1,37 @@
+$ adb shell 'cd /data/local/tmp/aether && ./aether-b5b perplexity -m Ternary-Bonsai-2-2B-Q2_0.gguf -f wiki.test.raw -c 512 --chunks 2 --kl-divergence-base kl-base-llama-q2_0-t2-2b-wiki2.bin --kl-divergence -t 6 --cores 2-7'
+[1]13.8680,[2]23.8943,
+perplexity: 510 tokens scored in 13.1 s
+Mean PPL(Q)                   :  23.894283 ±   3.894753
+Mean PPL(base)                :  23.870048
+Mean PPL(Q)/PPL(base)         :   1.001015
+Mean    KLD:   0.000200
+Same top p: 99.608 %
+
+$ ... -m Ternary-Bonsai-2-4B-Q2_0.gguf ... kl-base-llama-q2_0-t2-4b-wiki2.bin ...
+[1]10.7538,[2]16.6795,
+perplexity: 510 tokens scored in 28.6 s
+Mean PPL(Q)                   :  16.679536 ±   2.588541
+Mean PPL(base)                :  16.675411
+Mean PPL(Q)/PPL(base)         :   1.000247
+Mean    KLD:   0.000186
+Same top p: 99.216 %
+
+$ ... -m Ternary-Bonsai-2-9B-Q2_0.gguf ... kl-base-llama-q2_0-t2-9b-wiki2.bin ...
+[1]10.4653,[2]15.6899,
+perplexity: 510 tokens scored in 57.9 s
+Mean PPL(Q)                   :  15.689916 ±   2.411737
+Mean PPL(base)                :  15.671739
+Mean PPL(Q)/PPL(base)         :   1.001160
+Mean    KLD:   0.000214
+Same top p: 99.804 %
+
+$ ... ./aether-b5b run -m MODEL -p "The capital of France is" -n 16 --temp 0 -t 6 --cores 2-7 --no-display-prompt
+2B: " Paris.\nThe capital of France is Paris.\nThe capital of France is" (15 new tokens, 16 requested)
+4B: " Paris.\nThe capital of the United States is Washington, D.C." (15 new tokens)
+9B: " Paris.\nThe capital of France is Paris.\nThe capital of France is" (15 new tokens)
+All match llama.cpp d02b4c0d6 byte for byte.
+
+Memory, -c 512, one token:
+2B peak RSS 652,168 kB; MemAvailable 6,748,784 -> 6,741,640 kB
+4B peak RSS 1,354,044 kB; MemAvailable 6,740,200 -> 6,917,604 kB
+9B peak RSS 2,395,672 kB; MemAvailable 6,912,592 -> 6,902,172 kB
