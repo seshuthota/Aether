@@ -1,0 +1,73 @@
+# B8 fix 2: host (PC, scalar path, Q8_K used for prompt and decode) KL vs llama.cpp d02b4c0d6, 2 wikitext-2 chunks, c=512, -t 12; AETHER_ONEBIT_ACT selects the activation format; uncommitted tree on one-bit after ade4a8d
+=== Bonsai-1.7B-Q1_0 act=q8_k
+perplexity: 510 tokens scored in 52.1 s
+Mean PPL(Q)                   :  20.210626 ±   3.439573
+Mean PPL(Q)/PPL(base)         :   1.016230
+Mean    KLD:   0.000954
+Same top p: 99.216 %
+=== Bonsai-1.7B-Q1_0 act=q8_0
+perplexity: 510 tokens scored in 88.7 s
+Mean PPL(Q)                   :  20.179157 ±   3.432971
+Mean PPL(Q)/PPL(base)         :   1.014648
+Mean    KLD:   0.000269
+Same top p: 99.804 %
+=== Bonsai-4B-Q1_0 act=q8_k
+perplexity: 510 tokens scored in 112.9 s
+Mean PPL(Q)                   :  14.531380 ±   2.273478
+Mean PPL(Q)/PPL(base)         :   1.012286
+Mean    KLD:   0.000610
+Same top p: 98.627 %
+=== Bonsai-4B-Q1_0 act=q8_0
+perplexity: 510 tokens scored in 203.2 s
+Mean PPL(Q)                   :  14.528180 ±   2.274972
+Mean PPL(Q)/PPL(base)         :   1.012063
+Mean    KLD:   0.000188
+Same top p: 99.020 %
+=== Bonsai-8B-Q1_0 act=q8_k
+perplexity: 510 tokens scored in 212.7 s
+Mean PPL(Q)                   :  13.153976 ±   2.014840
+Mean PPL(Q)/PPL(base)         :   1.008236
+Mean    KLD:   0.000700
+Same top p: 99.020 %
+=== Bonsai-8B-Q1_0 act=q8_0
+perplexity: 510 tokens scored in 383.1 s
+Mean PPL(Q)                   :  13.172579 ±   2.018774
+Mean PPL(Q)/PPL(base)         :   1.009662
+Mean    KLD:   0.000192
+Same top p: 98.824 %
+=== Ternary-Bonsai-1.7B-Q2_0_g64 act=q8_k
+perplexity: 510 tokens scored in 165.3 s
+Mean PPL(Q)                   :  15.739336 ±   2.513911
+Mean PPL(Q)/PPL(base)         :   1.007855
+Mean    KLD:   0.000937
+Same top p: 99.216 %
+=== Ternary-Bonsai-1.7B-Q2_0_g64 act=q8_0
+perplexity: 510 tokens scored in 168.7 s
+Mean PPL(Q)                   :  15.717911 ±   2.507523
+Mean PPL(Q)/PPL(base)         :   1.006483
+Mean    KLD:   0.000227
+Same top p: 99.020 %
+=== Ternary-Bonsai-2-2B-Q2_0 act=q8_k
+perplexity: 510 tokens scored in 172.1 s
+Mean PPL(Q)                   :  23.920300 ±   3.899201
+Mean PPL(Q)/PPL(base)         :   1.002105
+Mean    KLD:   0.000310
+Same top p: 99.216 %
+=== Ternary-Bonsai-2-2B-Q2_0 act=q8_0
+perplexity: 510 tokens scored in 178.3 s
+Mean PPL(Q)                   :  23.940769 ±   3.904167
+Mean PPL(Q)/PPL(base)         :   1.002963
+Mean    KLD:   0.000187
+Same top p: 99.608 %
+=== Ternary-Bonsai-2-4B-Q2_0 act=q8_k
+perplexity: 510 tokens scored in 405.7 s
+Mean PPL(Q)                   :  16.673600 ±   2.587033
+Mean PPL(Q)/PPL(base)         :   0.999891
+Mean    KLD:   0.000264
+Same top p: 99.020 %
+=== Ternary-Bonsai-2-4B-Q2_0 act=q8_0
+perplexity: 510 tokens scored in 418.1 s
+Mean PPL(Q)                   :  16.681610 ±   2.589460
+Mean PPL(Q)/PPL(base)         :   1.000372
+Mean    KLD:   0.000191
+Same top p: 99.216 %

@@ -1,0 +1,184 @@
+# phone-ab 2026-11-24T22:26:49+0530: b8-fix2-phone-speed-2026-11-24.txt; 3 rounds, alternated
+# old_1.7b_tg64: AETHER_ONEBIT_ACT=q8_0 ./aether-b8 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# new_1.7b_tg64: ./aether-b8 bench -m Bonsai-1.7B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# old_8b_tg64: AETHER_ONEBIT_ACT=q8_0 ./aether-b8 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# new_8b_tg64: ./aether-b8 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# old_t2_4b_tg64: AETHER_ONEBIT_ACT=q8_0 ./aether-b8 bench -m Ternary-Bonsai-2-4B-Q2_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# new_t2_4b_tg64: ./aether-b8 bench -m Ternary-Bonsai-2-4B-Q2_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -n 64 -r 1 -o md
+# cool below 42 C (zone0) and 40 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 22:26:50 39 C board 36.6 C caps 2.75/2.65 GHz
+
+## old_1.7b_tg64 round 0 22:26:50 start 39 C board 36.6 C caps 2.75/2.65 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 64.61 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:27:00 39 C board 36.7 C caps 1.79/1.02 GHz; exit 0
+# cooling 22:27:00 39 C board 36.7 C caps 1.79/1.02 GHz
+# cooling 22:27:21 38 C board 36.8 C caps 1.79/1.02 GHz
+# cooling 22:27:41 38 C board 36.8 C caps 2.75/2.65 GHz
+
+## new_1.7b_tg64 round 0 22:27:41 start 38 C board 36.8 C caps 2.75/2.65 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 88.83 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:27:52 39 C board 36.9 C caps 2.75/2.65 GHz; exit 0
+# cooling 22:27:52 39 C board 36.9 C caps 2.75/2.65 GHz
+
+## old_8b_tg64 round 0 22:27:52 start 39 C board 36.9 C caps 2.75/2.65 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 15.47 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:28:02 45 C board 37.3 C caps 2.75/2.65 GHz; exit 0
+# cooling 22:28:02 45 C board 37.3 C caps 2.75/2.65 GHz
+# cooling 22:28:22 39 C board 37.6 C caps 2.75/2.65 GHz
+
+## new_8b_tg64 round 0 22:28:22 start 39 C board 37.6 C caps 2.75/2.65 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 23.39 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:28:33 42 C board 37.8 C caps 2.75/2.65 GHz; exit 0
+# cooling 22:28:33 42 C board 37.8 C caps 2.75/2.65 GHz
+# cooling 22:28:53 39 C board 37.8 C caps 2.75/2.65 GHz
+
+## old_t2_4b_tg64 round 0 22:28:53 start 39 C board 37.8 C caps 2.75/2.65 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.71 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:29:03 46 C board 38.1 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:29:03 46 C board 38.1 C caps 2.40/2.44 GHz
+# cooling 22:29:24 40 C board 38.3 C caps 2.40/2.44 GHz
+
+## new_t2_4b_tg64 round 0 22:29:24 start 40 C board 38.3 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.50 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:29:34 43 C board 38.4 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:29:34 43 C board 38.4 C caps 2.40/2.44 GHz
+# cooling 22:29:54 40 C board 38.4 C caps 2.40/2.44 GHz
+
+## new_t2_4b_tg64 round 1 22:29:55 start 40 C board 38.4 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.64 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:30:05 42 C board 38.5 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:30:05 42 C board 38.5 C caps 2.40/2.44 GHz
+# cooling 22:30:25 40 C board 38.4 C caps 2.40/2.44 GHz
+
+## old_t2_4b_tg64 round 1 22:30:26 start 40 C board 38.4 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.00 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:30:36 43 C board 38.6 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:30:36 43 C board 38.6 C caps 2.40/2.44 GHz
+# cooling 22:30:56 48 C board 38.5 C caps 2.40/2.44 GHz
+# cooling 22:31:16 40 C board 38.6 C caps 2.40/2.44 GHz
+
+## new_8b_tg64 round 1 22:31:16 start 40 C board 38.6 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 21.27 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:31:27 44 C board 38.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:31:27 44 C board 38.8 C caps 2.40/2.44 GHz
+# cooling 22:31:47 40 C board 38.7 C caps 2.40/2.44 GHz
+
+## old_8b_tg64 round 1 22:31:47 start 40 C board 38.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 14.56 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:31:57 45 C board 38.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:31:58 45 C board 38.9 C caps 2.40/2.44 GHz
+# cooling 22:32:18 41 C board 38.9 C caps 2.40/2.44 GHz
+
+## new_1.7b_tg64 round 1 22:32:18 start 40 C board 38.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 81.33 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:32:28 41 C board 38.9 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:32:28 40 C board 38.9 C caps 2.40/2.44 GHz
+
+## old_1.7b_tg64 round 1 22:32:28 start 40 C board 38.9 C caps 2.40/2.44 GHz; AC powered: false;   level: 84;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 59.03 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:32:39 40 C board 38.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:32:39 40 C board 38.8 C caps 2.40/2.44 GHz
+
+## old_1.7b_tg64 round 2 22:32:39 start 41 C board 38.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 56.33 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:32:49 40 C board 38.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:32:49 40 C board 38.8 C caps 2.40/2.44 GHz
+
+## new_1.7b_tg64 round 2 22:32:49 start 41 C board 38.8 C caps 2.40/2.44 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model               |       size |    params | backend | threads | test |          t/s |
+| ------------------- | ---------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 1.7B ftype 40 | 231.13 MiB | 1720.03 M | CPU     |       6 | tg64 | 81.38 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:33:00 41 C board 38.8 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:33:00 41 C board 38.8 C caps 2.40/2.44 GHz
+
+## old_8b_tg64 round 2 22:33:00 start 41 C board 38.8 C caps 2.92/3.51 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 12.61 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:33:10 47 C board 39.2 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:33:10 47 C board 39.2 C caps 2.40/2.44 GHz
+# cooling 22:33:31 41 C board 39.3 C caps 2.40/2.44 GHz
+
+## new_8b_tg64 round 2 22:33:31 start 41 C board 39.3 C caps 2.40/2.44 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg64 | 21.60 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:33:41 43 C board 39.4 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:33:41 43 C board 39.4 C caps 2.40/2.44 GHz
+# cooling 22:34:01 40 C board 39.2 C caps 2.40/2.44 GHz
+
+## old_t2_4b_tg64 round 2 22:34:02 start 40 C board 39.1 C caps 2.40/2.44 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.09 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:34:12 43 C board 39.3 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:34:12 43 C board 39.3 C caps 2.40/2.44 GHz
+# cooling 22:34:32 40 C board 39.1 C caps 2.40/2.44 GHz
+
+## new_t2_4b_tg64 round 2 22:34:32 start 40 C board 39.1 C caps 2.40/2.44 GHz; AC powered: false;   level: 83;   Capacity level: -1
+| model              |        size |    params | backend | threads | test |          t/s |
+| ------------------ | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen35 4B ftype 41 | 1145.43 MiB | 4205.75 M | CPU     |       6 | tg64 | 16.75 ± 0.00 |
+
+build: ade4a8d04-dirty (aether)
+# end 22:34:43 43 C board 39.2 C caps 2.40/2.44 GHz; exit 0
