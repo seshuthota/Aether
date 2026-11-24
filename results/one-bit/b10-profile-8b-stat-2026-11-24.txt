@@ -1,0 +1,191 @@
+# phone-ab 2026-11-24T23:30:03+0530: b10-profile-8b-stat-2026-11-24.txt; 1 rounds, alternated
+# hot: simpleperf report -i perf8b.data --symbols aether::kernels::neon_quant::dot4_q1_0t_q8_k --sort vaddr_in_file 2>&1 | head -140
+# stat16: simpleperf stat -e cpu-cycles:u,instructions:u,stalled-cycles-backend:u,stalled-cycles-frontend:u,raw-ase-sve-inst-spec:u,raw-ase-sve-int-dot-spec:u,raw-ase-sve-ld-spec:u -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 16
+# stat144: simpleperf stat -e cpu-cycles:u,instructions:u,stalled-cycles-backend:u,stalled-cycles-frontend:u,raw-ase-sve-inst-spec:u,raw-ase-sve-int-dot-spec:u,raw-ase-sve-ld-spec:u -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 144
+# cool below 42 C (zone0) and 40 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 23:30:03 38 C board 36.7 C caps 2.75/2.65 GHz
+
+## hot round 0 23:30:03 start 38 C board 36.7 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf8b.data -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 128
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0x0, config1 0x0, config2: 0x0)
+Samples: 111758
+Event count: 73928040096
+
+Overhead  VaddrInFile
+2.25%     0x19b1e4
+2.11%     0x19b168
+2.05%     0x19b1dc
+2.05%     0x19b12c
+1.98%     0x19b178
+1.93%     0x19b1d4
+1.90%     0x19b144
+1.89%     0x19b13c
+1.89%     0x19b1cc
+1.85%     0x19b180
+1.84%     0x19b188
+1.83%     0x19b1b4
+1.83%     0x19b170
+1.82%     0x19b1c4
+1.81%     0x19b1ec
+1.81%     0x19b154
+1.81%     0x19b134
+1.80%     0x19b190
+1.78%     0x19b1bc
+1.76%     0x19b14c
+1.70%     0x19b1b0
+1.68%     0x19b198
+1.68%     0x19b118
+1.49%     0x19b250
+1.43%     0x19b110
+1.42%     0x19b1f4
+1.37%     0x19b1a0
+1.34%     0x19b104
+1.30%     0x19b278
+1.28%     0x19b0b4
+1.28%     0x19b0cc
+1.25%     0x19b0d4
+1.11%     0x19b15c
+1.11%     0x19b108
+1.10%     0x19b128
+1.08%     0x19b258
+1.08%     0x19b268
+1.08%     0x19b164
+1.04%     0x19b244
+1.03%     0x19b1a8
+1.01%     0x19b120
+1.00%     0x19b1fc
+0.97%     0x19b264
+0.96%     0x19b0a4
+0.96%     0x19b0ac
+0.96%     0x19b0fc
+0.95%     0x19b204
+0.94%     0x19b22c
+0.94%     0x19b0ec
+0.93%     0x19b288
+0.93%     0x19b0c4
+0.93%     0x19b248
+0.92%     0x19b0e4
+0.91%     0x19b20c
+0.91%     0x19b270
+0.91%     0x19b23c
+0.90%     0x19b280
+0.90%     0x19b25c
+0.90%     0x19b0bc
+0.89%     0x19b224
+0.88%     0x19b0f4
+0.88%     0x19b0dc
+0.87%     0x19b21c
+0.86%     0x19b214
+0.84%     0x19b234
+0.35%     0x19b174
+0.35%     0x19b1b8
+0.35%     0x19b16c
+0.33%     0x19b140
+0.33%     0x19b17c
+0.32%     0x19b138
+0.32%     0x19b160
+0.32%     0x19b114
+0.31%     0x19b18c
+0.29%     0x19b130
+0.29%     0x19b148
+0.29%     0x19b158
+0.28%     0x19b1e0
+0.28%     0x19b184
+0.28%     0x19b1c0
+0.28%     0x19b1c8
+0.28%     0x19b1d8
+0.27%     0x19b150
+0.26%     0x19b1d0
+0.25%     0x19b1a4
+0.24%     0x19b100
+0.24%     0x19b1e8
+0.24%     0x19b11c
+0.23%     0x19b124
+0.23%     0x19b1ac
+0.22%     0x19b0d0
+0.21%     0x19b194
+0.21%     0x19b19c
+0.18%     0x19b0c0
+0.18%     0x19b1f0
+0.18%     0x19b0f0
+0.17%     0x19b218
+0.17%     0x19b0d8
+0.17%     0x19b0f8
+0.17%     0x19b10c
+0.16%     0x19b0b0
+0.16%     0x19b284
+0.15%     0x19b210
+0.15%     0x19b27c
+0.15%     0x19b0c8
+0.15%     0x19b0e0
+0.15%     0x19b0b8
+0.14%     0x19b0e8
+0.14%     0x19b0a8
+0.14%     0x19b220
+0.14%     0x19b240
+0.14%     0x19b208
+0.13%     0x19b230
+0.13%     0x19b200
+0.13%     0x19b0a0
+0.13%     0x19b274
+0.13%     0x19b26c
+0.13%     0x19b1f8
+0.13%     0x19b260
+0.13%     0x19b24c
+0.13%     0x19b254
+0.12%     0x19b228
+0.12%     0x19b238
+0.06%     0x19b084
+0.05%     0x19b28c
+0.05%     0x19b034
+0.05%     0x19b05c
+0.05%     0x19b024
+0.05%     0x19b298
+0.05%     0x19b064
+0.04%     0x19b054
+0.04%     0x19b044
+0.04%     0x19b094
+# end 23:30:16 37 C board 36.5 C caps 2.75/2.65 GHz; exit 0
+# cooling 23:30:16 37 C board 36.5 C caps 2.75/2.65 GHz
+
+## stat16 round 0 23:30:16 start 37 C board 36.5 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+| model               |        size |    params | backend | threads | test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ---: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg16 | 22.98 ± 0.00 |
+
+build: 4f69d0224-dirty (aether)
+Performance counter statistics:
+
+#          count  event_name                   # count / runtime
+  13,615,280,427  cpu-cycles:u                 # 2.471624 GHz 
+  40,476,414,427  instructions:u               # 7.348 G/sec  
+   3,351,820,213  stalled-cycles-backend:u     # 608.466 M/sec
+   2,346,368,601  stalled-cycles-frontend:u    # 425.944 M/sec
+               0  raw-ase-sve-inst-spec:u      # 0.000 /sec   
+               0  raw-ase-sve-int-dot-spec:u   # 0.000 /sec   
+               0  raw-ase-sve-ld-spec:u        # 0.000 /sec   
+
+Total test time: 1.786658 seconds.
+# end 23:30:32 37 C board 36.4 C caps 2.75/2.65 GHz; exit 0
+# cooling 23:30:32 37 C board 36.4 C caps 2.75/2.65 GHz
+
+## stat144 round 0 23:30:32 start 37 C board 36.4 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+| model               |        size |    params | backend | threads |  test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ----: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg144 | 22.43 ± 0.00 |
+
+build: 4f69d0224-dirty (aether)
+Performance counter statistics:
+
+#           count  event_name                   # count / runtime
+  104,140,616,250  cpu-cycles:u                 # 2.623225 GHz 
+  304,850,411,811  instructions:u               # 7.679 G/sec  
+   27,387,363,621  stalled-cycles-backend:u     # 689.868 M/sec
+   15,217,924,341  stalled-cycles-frontend:u    # 383.328 M/sec
+                0  raw-ase-sve-inst-spec:u      # 0.000 /sec   
+                0  raw-ase-sve-int-dot-spec:u   # 0.000 /sec   
+                0  raw-ase-sve-ld-spec:u        # 0.000 /sec   
+
+Total test time: 7.423120 seconds.
+# end 23:30:44 45 C board 36.9 C caps 2.75/2.65 GHz; exit 0

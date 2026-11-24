@@ -1,0 +1,72 @@
+# phone-ab 2026-11-24T23:28:46+0530: b10-profile-8b-2026-11-24.txt; 1 rounds, alternated
+# record: simpleperf record -e cpu-cycles:u -o perf8b.data -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 128 && simpleperf report -i perf8b.data --sort symbol 2>&1 | head -45
+# stat16: simpleperf stat -e cpu-cycles,instructions,stalled-cycles-backend,stalled-cycles-frontend,raw-ase-sve-inst-spec,raw-ase-sve-int-dot-spec,raw-ase-sve-ld-spec -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 16
+# stat144: simpleperf stat -e cpu-cycles,instructions,stalled-cycles-backend,stalled-cycles-frontend,raw-ase-sve-inst-spec,raw-ase-sve-int-dot-spec,raw-ase-sve-ld-spec -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 144
+# cool below 42 C (zone0) and 40 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 23:28:46 38 C board 36.1 C caps 2.75/2.65 GHz
+
+## record round 0 23:28:46 start 38 C board 36.1 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+| model               |        size |    params | backend | threads |  test |          t/s |
+| ------------------- | ----------: | --------: | ------- | ------: | ----: | -----------: |
+| qwen3 8.2B ftype 40 | 1099.30 MiB | 8188.55 M | CPU     |       6 | tg128 | 22.23 ± 0.00 |
+
+build: 4f69d0224-dirty (aether)
+simpleperf I cmd_record.cpp:864] Recorded for 6.90942 seconds. Start post processing.
+simpleperf I cmd_record.cpp:965] Samples recorded: 142,696. Samples lost: 0.
+Cmdline: /system/bin/simpleperf record -e cpu-cycles:u -o perf8b.data -- ./aether-b9 bench -m Bonsai-8B-Q1_0.gguf -dev cpu --cores 2-7 -t 6 -p 0 -r 1 -o md -n 128
+Arch: arm64
+Event: cpu-cycles:u (type 0, config 0x0, config1 0x0, config2: 0x0)
+Samples: 142696
+Event count: 93375102824
+
+Overhead  Symbol
+79.17%    aether::kernels::neon_quant::dot4_q1_0t_q8_k
+9.69%     std::sys::backtrace::__rust_begin_short_backtrace::<<aether::pool::ThreadPool>::new::{closure#1}::{closure#0}, ()>
+5.27%     aether::kernels::quant_rows
+1.38%     aether::model::transformer::attention_chunked::{closure#0}
+1.27%     <aether::pool::ThreadPool>::run
+0.99%     aether::quant::repack_q1_0_into
+0.52%     aether::quant::quantize_q8_k
+0.46%     aether::kernels::neon::attention_group::<aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#0}, aether::kernels::attention_group_window<aether::model::transformer::attention_whole::{closure#0}::{closure#0}, aether::model::transformer::attention_whole::{closure#0}::{closure#1}>::{closure#1}>
+0.15%     <aether::pool::ThreadPool>::for_blocks::{closure#0}
+0.15%     aether::kernels::scalar::rmsnorm
+0.13%     aether::kernels::neon::swiglu
+0.11%     scudo::HybridMutex::tryLock()
+0.06%     <aether::model::transformer::Transformer>::step::<aether::model::transformer::NoTrace>
+0.05%     scudo::HybridMutex::unlock()
+0.05%     <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+0.03%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::allocate(unsigned long, scudo::Chunk::Origin, unsigned long, bool)
+0.03%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::quarantineOrDeallocateChunk(scudo::Options const&, void*, scudo::Chunk::UnpackedHeader*, unsigned long)
+0.03%     scudo::Allocator<scudo::AndroidNormalConfig, &scudo_malloc_postinit>::deallocate(void*, unsigned char, unsigned long, unsigned long)
+0.03%     malloc
+0.03%     __memcpy_aarch64_nt
+0.02%     aether::kernels::linear_many_batch_on::{closure#13}
+0.02%     core::str::converts::from_utf8
+0.02%     aether::kernels::quantize_q8_k_activations
+0.02%     aether::kernels::linear_batch_on::{closure#6}
+0.02%     <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&str>
+0.02%     .tiny_end
+0.02%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::populateFreeListAndPopBlocks(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::RegionInfo*, unsigned int*, unsigned short)
+0.01%     <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&(usize, usize)>
+0.01%     aether::kernels::scalar::rope_halves_pairs_div
+0.01%     aether::tokenizer::bytelevel::merge_ranks::{closure#0}
+0.01%     core::iter::adapters::try_process::<core::iter::adapters::map::Map<core::ops::range::Range<usize>, <aether::format::gguf::Reader>::value::{closure#1}>, aether::format::gguf::Value, core::result::Result<core::convert::Infallible, core::io::error::Error>, <core::result::Result<alloc::vec::Vec<aether::format::gguf::Value>, core::io::error::Error> as core::iter::traits::collect::FromIterator<core::result::Result<aether::format::gguf::Value, core::io::error::Error>>>::from_iter<core::iter::adapters::map::Map<core::ops::range::Range<usize>, <aether::format::gguf::Reader>::value::{closure#1}>>::{closure#0}, alloc::vec::Vec<aether::format::gguf::Value>>
+0.01%     aether::model::transformer::attention
+0.01%     <aether::format::gguf::Reader>::value
+0.01%     scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>::pushBlocks(scudo::SizeClassAllocatorLocalCache<scudo::SizeClassAllocator64<scudo::PrimaryConfig<scudo::AndroidNormalConfig>>>*, unsigned long, unsigned int*, unsigned int)
+0.01%     aether::tokenizer::bytelevel::merge_ranks
+0.01%     @plt
+0.01%     sincosf
+0.01%     free
+# end 23:28:57 45 C board 36.8 C caps 2.75/2.65 GHz; exit 0
+# cooling 23:28:57 45 C board 36.8 C caps 2.75/2.65 GHz
+# cooling 23:29:20 39 C board 37.2 C caps 2.75/2.65 GHz
+
+## stat16 round 0 23:29:20 start 39 C board 37.2 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+simpleperf E event_selection_set.cpp:312] Can't record kernel samples. Please try `-e cpu-cycles:u` instead.
+# end 23:29:32 38 C board 37.0 C caps 2.75/2.65 GHz; exit 1
+# cooling 23:29:32 38 C board 37.0 C caps 2.75/2.65 GHz
+
+## stat144 round 0 23:29:33 start 38 C board 37.0 C caps 2.75/2.65 GHz; AC powered: false;   level: 78;   Capacity level: -1
+simpleperf E event_selection_set.cpp:312] Can't record kernel samples. Please try `-e cpu-cycles:u` instead.
+# end 23:29:45 38 C board 36.8 C caps 2.75/2.65 GHz; exit 1
