@@ -1,0 +1,39 @@
+# phone-ab 2026-11-24T22:54:55+0530: b9-phone-kl-2026-11-24.txt; 1 rounds, alternated
+# t2_4b_kl: ./aether-b9 perplexity -m Ternary-Bonsai-2-4B-Q2_0.gguf -f wiki.test.raw -c 512 --chunks 2 -t 6 --cores 2-7 --kl-divergence --kl-divergence-base kl-base-llama-q2_0-t2-4b-wiki2.bin
+# t1_7b_kl: ./aether-b9 perplexity -m Ternary-Bonsai-1.7B-Q2_0_g64.gguf -f wiki.test.raw -c 512 --chunks 2 -t 6 --cores 2-7 --kl-divergence --kl-divergence-base kl-base-llama-q2_0-wiki2.bin
+# cool below 42 C (zone0) and 40 C (board, quiet_therm); cap floor 2.40 GHz; screen on
+# cooling 22:54:56 37 C board 34.9 C caps 2.92/3.07 GHz
+
+## t2_4b_kl round 0 22:54:56 start 38 C board 34.9 C caps 2.92/3.07 GHz; AC powered: false;   level: 82;   Capacity level: -1
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q2_0-t2-4b-wiki2.bin), weights q2_0 1201.0 MB, 6 threads
+[1]10.7538,[2]16.6795,
+perplexity: 510 tokens scored in 24.2 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  16.679536 ±   2.588541
+Mean PPL(base)                :  16.675411
+Mean PPL(Q)/PPL(base)         :   1.000247
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000186
+
+====== Token probability statistics ======
+Same top p: 99.216 %
+# end 22:55:32 46 C board 38.6 C caps 2.40/2.44 GHz; exit 0
+# cooling 22:55:32 46 C board 38.6 C caps 2.40/2.44 GHz
+# cooling 22:55:52 40 C board 38.2 C caps 2.40/2.44 GHz
+
+## t1_7b_kl round 0 22:55:52 start 40 C board 38.2 C caps 2.40/2.44 GHz; AC powered: false;   level: 82;   Capacity level: -1
+perplexity: calculating perplexity and KL over 2 chunks, n_ctx=512 (from kl-base-llama-q2_0-wiki2.bin), weights q2_0 484.2 MB, 6 threads
+[1]11.3229,[2]15.6959,
+perplexity: 510 tokens scored in 8.7 s
+====== Perplexity statistics ======
+Mean PPL(Q)                   :  15.695880 ±   2.501631
+Mean PPL(base)                :  15.616673
+Mean PPL(Q)/PPL(base)         :   1.005072
+
+====== KL divergence statistics ======
+Mean    KLD:   0.000240
+
+====== Token probability statistics ======
+Same top p: 99.216 %
+# end 22:56:11 44 C board 38.9 C caps 2.40/2.44 GHz; exit 0
