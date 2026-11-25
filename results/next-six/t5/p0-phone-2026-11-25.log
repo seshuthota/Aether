@@ -1,0 +1,178 @@
+zone0 35300 cpu0 2745600 cpu6 2649600
+  AC powered: false
+  level: 69
+  Capacity level: -1
+=== gemma-4-E2B-it-Q4_0
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 32 tokens per depth | fence slept on
+depth,wall_ms,tok_s,gpu_ms,cpu_before_ms,rest_ms
+0,46.38,21.6,41.76,1.40,3.22
+512,50.96,19.6,46.13,1.52,3.32
+2048,70.88,14.1,66.38,1.46,3.04
+# depth 0: GPU 41.76 ms per token
+#   rmsnorm                    0.673 ms   1.6 %
+#   q/k/v                      2.191 ms   5.2 %
+#   q/k/v norm + RoPE + cache   0.300 ms   0.7 %
+#   attention                  1.558 ms   3.7 %
+#   attention merge            0.263 ms   0.6 %
+#   wo                         2.757 ms   6.6 %
+#   post-attention norm + add   0.337 ms   0.8 %
+#   gate/up                   11.741 ms  28.1 %
+#   gelu                       0.171 ms   0.4 %
+#   down                      10.347 ms  24.8 %
+#   post-FFN norm + add        0.344 ms   0.8 %
+#   per-layer gate             1.565 ms   3.7 %
+#   per-layer gelu             0.125 ms   0.3 %
+#   per-layer proj             0.428 ms   1.0 %
+#   per-layer norm + add + scale   0.333 ms   0.8 %
+#   classifier                 8.556 ms  20.5 %
+#   soft-cap                   0.028 ms   0.1 %
+#   argmax                     0.042 ms   0.1 %
+# depth 512: GPU 46.13 ms per token
+#   rmsnorm                    0.675 ms   1.5 %
+#   q/k/v                      2.194 ms   4.8 %
+#   q/k/v norm + RoPE + cache   0.296 ms   0.6 %
+#   attention                  5.574 ms  12.1 %
+#   attention merge            0.592 ms   1.3 %
+#   wo                         2.758 ms   6.0 %
+#   post-attention norm + add   0.338 ms   0.7 %
+#   gate/up                   11.779 ms  25.5 %
+#   gelu                       0.169 ms   0.4 %
+#   down                      10.359 ms  22.5 %
+#   post-FFN norm + add        0.343 ms   0.7 %
+#   per-layer gate             1.553 ms   3.4 %
+#   per-layer gelu             0.123 ms   0.3 %
+#   per-layer proj             0.421 ms   0.9 %
+#   per-layer norm + add + scale   0.332 ms   0.7 %
+#   classifier                 8.555 ms  18.5 %
+#   soft-cap                   0.028 ms   0.1 %
+#   argmax                     0.041 ms   0.1 %
+# depth 2048: GPU 66.38 ms per token
+#   rmsnorm                    0.668 ms   1.0 %
+#   q/k/v                      2.154 ms   3.2 %
+#   q/k/v norm + RoPE + cache   0.296 ms   0.4 %
+#   attention                 26.036 ms  39.2 %
+#   attention merge            0.903 ms   1.4 %
+#   wo                         2.735 ms   4.1 %
+#   post-attention norm + add   0.336 ms   0.5 %
+#   gate/up                   11.501 ms  17.3 %
+#   gelu                       0.168 ms   0.3 %
+#   down                      10.294 ms  15.5 %
+#   post-FFN norm + add        0.341 ms   0.5 %
+#   per-layer gate             1.555 ms   2.3 %
+#   per-layer gelu             0.123 ms   0.2 %
+#   per-layer proj             0.423 ms   0.6 %
+#   per-layer norm + add + scale   0.331 ms   0.5 %
+#   classifier                 8.447 ms  12.7 %
+#   soft-cap                   0.027 ms   0.0 %
+#   argmax                     0.041 ms   0.1 %
+zone0 51900 cpu0 2745600 cpu6 2649600
+  AC powered: false
+  level: 68
+  Capacity level: -1
+=== LFM3-1.7B-Q4_K_M
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | 32 tokens per depth | fence slept on
+depth,wall_ms,tok_s,gpu_ms,cpu_before_ms,rest_ms
+0,28.63,34.9,27.94,0.05,0.64
+512,28.96,34.5,31.06,0.05,-2.14
+2048,35.98,27.8,39.24,0.05,-3.32
+# depth 0: GPU 27.94 ms per token
+#   rmsnorm                    0.570 ms   2.0 %
+#   in_proj                    2.100 ms   7.5 %
+#   short conv                 0.131 ms   0.5 %
+#   out_proj                   0.987 ms   3.5 %
+#   post-attention norm + add   0.285 ms   1.0 %
+#   gate/up                    8.128 ms  29.1 %
+#   silu                       0.107 ms   0.4 %
+#   down                       7.382 ms  26.4 %
+#   post-FFN norm + add        0.293 ms   1.0 %
+#   q/k/v                      1.297 ms   4.6 %
+#   q/k/v norm + RoPE + cache   0.096 ms   0.3 %
+#   attention                  0.285 ms   1.0 %
+#   attention merge            0.065 ms   0.2 %
+#   output gate                0.041 ms   0.1 %
+#   wo                         0.826 ms   3.0 %
+#   classifier                 5.304 ms  19.0 %
+#   argmax                     0.042 ms   0.1 %
+# depth 512: GPU 31.06 ms per token
+#   rmsnorm                    0.585 ms   1.9 %
+#   in_proj                    2.296 ms   7.4 %
+#   short conv                 0.137 ms   0.4 %
+#   out_proj                   1.004 ms   3.2 %
+#   post-attention norm + add   0.292 ms   0.9 %
+#   gate/up                    9.329 ms  30.0 %
+#   silu                       0.110 ms   0.4 %
+#   down                       7.831 ms  25.2 %
+#   post-FFN norm + add        0.301 ms   1.0 %
+#   q/k/v                      1.320 ms   4.3 %
+#   q/k/v norm + RoPE + cache   0.099 ms   0.3 %
+#   attention                  1.232 ms   4.0 %
+#   attention merge            0.119 ms   0.4 %
+#   output gate                0.044 ms   0.1 %
+#   wo                         0.845 ms   2.7 %
+#   classifier                 5.485 ms  17.7 %
+#   argmax                     0.026 ms   0.1 %
+# depth 2048: GPU 39.24 ms per token
+#   rmsnorm                    0.595 ms   1.5 %
+#   in_proj                    2.366 ms   6.0 %
+#   short conv                 0.141 ms   0.4 %
+#   out_proj                   1.031 ms   2.6 %
+#   post-attention norm + add   0.297 ms   0.8 %
+#   gate/up                    9.711 ms  24.7 %
+#   silu                       0.112 ms   0.3 %
+#   down                       8.005 ms  20.4 %
+#   post-FFN norm + add        0.305 ms   0.8 %
+#   q/k/v                      1.341 ms   3.4 %
+#   q/k/v norm + RoPE + cache   0.100 ms   0.3 %
+#   attention                  8.477 ms  21.6 %
+#   attention merge            0.196 ms   0.5 %
+#   output gate                0.045 ms   0.1 %
+#   wo                         0.866 ms   2.2 %
+#   classifier                 5.610 ms  14.3 %
+#   argmax                     0.044 ms   0.1 %
+zone0 50300 cpu0 2400000 cpu6 2438400
+  AC powered: false
+  level: 68
+  Capacity level: -1
+=== qwen
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | profiled | fence: slept on | x for the products: int8 where the GPU has it
+depth 0: 10.16 ms per token wall (98.5 tok/s), 8.80 ms on the GPU
+  rmsnorm                0.414 ms    4.7 %
+  q/k/v                  0.657 ms    7.5 %
+  bias + RoPE + cache    0.178 ms    2.0 %
+  attention              0.496 ms    5.6 %
+  attention merge        0.131 ms    1.5 %
+  wo + add               0.588 ms    6.7 %
+  gate/up                2.842 ms   32.3 %
+  swiglu + down + add    1.739 ms   19.8 %
+  classifier             1.729 ms   19.6 %
+  argmax                 0.028 ms    0.3 %
+depth 256: 10.33 ms per token wall (96.8 tok/s), 9.07 ms on the GPU
+  rmsnorm                0.414 ms    4.6 %
+  q/k/v                  0.657 ms    7.2 %
+  bias + RoPE + cache    0.178 ms    2.0 %
+  attention              0.758 ms    8.4 %
+  attention merge        0.167 ms    1.8 %
+  wo + add               0.583 ms    6.4 %
+  gate/up                2.820 ms   31.1 %
+  swiglu + down + add    1.740 ms   19.2 %
+  classifier             1.725 ms   19.0 %
+  argmax                 0.028 ms    0.3 %
+depth 1024: 11.52 ms per token wall (86.8 tok/s), 10.10 ms on the GPU
+  rmsnorm                0.416 ms    4.1 %
+  q/k/v                  0.660 ms    6.5 %
+  bias + RoPE + cache    0.178 ms    1.8 %
+  attention              1.622 ms   16.1 %
+  attention merge        0.267 ms    2.6 %
+  wo + add               0.588 ms    5.8 %
+  gate/up                2.848 ms   28.2 %
+  swiglu + down + add    1.754 ms   17.4 %
+  classifier             1.735 ms   17.2 %
+  argmax                 0.028 ms    0.3 %
+# testdata/gguf/qwen2.5-0.5b-q4_0.gguf on Adreno (TM) 830 | plain | fence: slept on | x for the products: int8 where the GPU has it
+depth 0: 9.90 ms per token wall (101.0 tok/s)
+depth 256: 10.30 ms per token wall (97.1 tok/s)
+depth 1024: 11.34 ms per token wall (88.2 tok/s)
+zone0 48400 cpu0 2400000 cpu6 2438400
+  AC powered: false
+  level: 68
+  Capacity level: -1
