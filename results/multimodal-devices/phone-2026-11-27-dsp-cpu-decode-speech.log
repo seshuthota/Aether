@@ -1,0 +1,36 @@
+== cpu | -p 'What is the capital of France?' [temp 41900]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.24 s of speech in 2.65 s (1.60x real time); prompt 29 tokens in 291 ms; first text after 293 ms, first audio after 532 ms; 70 slots; loaded in 1.6 s
+== cpu | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 43800]
+That line is from John F. Kennedy’s 1961 State of the Union address. Basically, he’s saying don’t just wait around for your country to fix you—you’ve got to take responsibility and step up to help your nation. It’s all about civic duty and being pr
+speak --chat: /data/local/tmp/aether/dcd.wav: 17.44 s of speech in 10.17 s (1.71x real time); prompt 170 tokens in 1454 ms; first text after 1455 ms, first audio after 1599 ms; 281 slots; loaded in 1.2 s
+== dsp | -p 'What is the capital of France?' [temp 47600]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.16 s of speech in 4.35 s (0.96x real time); prompt 29 tokens in 414 ms; first text after 415 ms, first audio after 679 ms; 69 slots; loaded in 0.9 s
+== dsp | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 46500]
+That line is from John F. Kennedy’s 1961 speech. Basically, he’s saying don’t just wait around for your government to fix your problems—you’ve got to take action yourself. It’s a call to get involved, make your own choices, and push for change from
+speak --chat: /data/local/tmp/aether/dcd.wav: 15.84 s of speech in 13.70 s (1.16x real time); prompt 170 tokens in 894 ms; first text after 894 ms, first audio after 1151 ms; 260 slots; loaded in 0.8 s
+== dsp --cpu-decode | -p 'What is the capital of France?' [temp 48000]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.40 s of speech in 2.65 s (1.66x real time); prompt 29 tokens in 408 ms; first text after 411 ms, first audio after 557 ms; 72 slots; loaded in 2.0 s
+== dsp --cpu-decode | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 47300]
+That line is from John F. Kennedy’s 1961 State of the Union address. Basically, he’s saying don’t just wait around for your country to fix you—you’ve got to take responsibility and figure out what you can actually do to help your nation, whether that
+speak --chat: /data/local/tmp/aether/dcd.wav: 21.68 s of speech in 11.63 s (1.86x real time); prompt 170 tokens in 719 ms; first text after 720 ms, first audio after 862 ms; 350 slots; loaded in 1.6 s
+== cpu | -p 'What is the capital of France?' [temp 49600]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.24 s of speech in 2.55 s (1.66x real time); prompt 29 tokens in 320 ms; first text after 320 ms, first audio after 470 ms; 70 slots; loaded in 1.1 s
+== cpu | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 48400]
+That line is from John F. Kennedy’s 1961 State of the Union address. Basically, he’s saying don’t just wait around for your country to fix you—you’ve got to take responsibility and step up to help your nation. It’s all about civic duty and being pr
+speak --chat: /data/local/tmp/aether/dcd.wav: 17.44 s of speech in 10.48 s (1.66x real time); prompt 170 tokens in 1450 ms; first text after 1450 ms, first audio after 1604 ms; 281 slots; loaded in 1.1 s
+== dsp | -p 'What is the capital of France?' [temp 49600]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.16 s of speech in 4.25 s (0.98x real time); prompt 29 tokens in 412 ms; first text after 412 ms, first audio after 678 ms; 69 slots; loaded in 0.9 s
+== dsp | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 48000]
+That line is from John F. Kennedy’s 1961 speech. Basically, he’s saying don’t just wait around for your government to fix your problems—you’ve got to take action yourself. It’s a call to get involved, make your own choices, and push for change from
+speak --chat: /data/local/tmp/aether/dcd.wav: 15.84 s of speech in 15.27 s (1.04x real time); prompt 170 tokens in 908 ms; first text after 908 ms, first audio after 1168 ms; 260 slots; loaded in 0.9 s
+== dsp --cpu-decode | -p 'What is the capital of France?' [temp 49600]
+The capital of France is Paris. Would you like to know more about the city?
+speak --chat: /data/local/tmp/aether/dcd.wav: 4.40 s of speech in 2.69 s (1.64x real time); prompt 29 tokens in 402 ms; first text after 402 ms, first audio after 552 ms; 72 slots; loaded in 1.8 s
+== dsp --cpu-decode | --audio jfk.wav -p 'Who said this, and what does it mean?' [temp 48000]
+That line is from John F. Kennedy’s 1961 State of the Union address. Basically, he’s saying don’t just wait around for your country to fix you—you’ve got to take responsibility and figure out what you can actually do to help your nation, whether that
+speak --chat: /data/local/tmp/aether/dcd.wav: 21.68 s of speech in 13.12 s (1.65x real time); prompt 170 tokens in 720 ms; first text after 721 ms, first audio after 871 ms; 350 slots; loaded in 1.8 s

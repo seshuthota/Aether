@@ -1,0 +1,40 @@
+== cpu [temp 41500]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill: 275 tokens in 2670.7 ms (103.0 tok/s) | decode: 63 tokens in 1280.8 ms (49.2 tok/s) | peak RSS 1531592 kB
+== dsp [temp 42600]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1533.9 ms (179.3 tok/s) | decode: 63 tokens in 2464.6 ms (25.6 tok/s) | peak RSS 1357940 kB
+== dsp --cpu-decode [temp 42300]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1670.2 ms (164.7 tok/s) | decode on the CPU: 63 tokens in 1294.9 ms (48.7 tok/s) | peak RSS 2526636 kB
+== dsp --cpu-decode --mmproj-gpu [temp 42600]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1566.5 ms (175.5 tok/s) | decode on the CPU: 63 tokens in 1307.3 ms (48.2 tok/s) | peak RSS 2843152 kB
+== cpu --mmproj-gpu [temp 43000]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill: 275 tokens in 2265.0 ms (121.4 tok/s) | decode: 63 tokens in 1283.8 ms (49.1 tok/s) | peak RSS 1809304 kB
+== cpu [temp 43800]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill: 275 tokens in 2709.2 ms (101.5 tok/s) | decode: 63 tokens in 1287.1 ms (48.9 tok/s) | peak RSS 1530332 kB
+== dsp [temp 44200]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1676.0 ms (164.1 tok/s) | decode: 63 tokens in 2478.1 ms (25.4 tok/s) | peak RSS 1357148 kB
+== dsp --cpu-decode [temp 43800]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1556.2 ms (176.7 tok/s) | decode on the CPU: 63 tokens in 1292.8 ms (48.7 tok/s) | peak RSS 2585024 kB
+== dsp --cpu-decode --mmproj-gpu [temp 43800]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill (DSP): 275 tokens in 1528.5 ms (179.9 tok/s) | decode on the CPU: 63 tokens in 1290.0 ms (48.8 tok/s) | peak RSS 2850668 kB
+== cpu --mmproj-gpu [temp 43800]
+The user wants a one-sentence description of the image. Let me carefully observe the image to capture all key elements accurately.
+Looking at the image: there's a blue sky background with a yellow circle (sun) in the upper right. There are two triangular mountains—one lighter green on the left and one darker green
+prefill: 275 tokens in 2213.9 ms (124.2 tok/s) | decode: 63 tokens in 1277.6 ms (49.3 tok/s) | peak RSS 1809836 kB
