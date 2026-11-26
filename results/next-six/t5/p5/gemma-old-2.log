@@ -1,0 +1,72 @@
+zone0 36500 cpu0 2745600 cpu6 2649600 gpu  wake Awake
+  AC powered: false
+  level: 68
+  Capacity level: -1
+target/aarch64-linux-android/release/examples/vk_gemma_decode: 1 file pushed, 0 skipped. 318.8 MB/s (9954744 bytes in 0.030s)
+/home/curious/.cache/aether-testdata-sync/./: 1 file pushed, 2561 skipped. 0.0 MB/s (7805 bytes in 0.400s)
+# testdata/gguf/gemma-4-E2B-it-Q4_0.gguf on Adreno (TM) 830 | 32 tokens per depth | fence slept on | attention per query head | Q4_0 products unsplit | other products x in int8 where the GPU has it
+depth,wall_ms,tok_s,gpu_ms,cpu_before_ms,rest_ms
+0,46.10,21.7,37.52,1.36,7.22
+512,54.09,18.5,44.28,1.40,8.40
+2048,72.22,13.8,68.95,1.51,1.76
+# depth 0: GPU 37.52 ms per token
+#   rmsnorm                    0.621 ms   1.7 %
+#   q/k/v                      1.952 ms   5.2 %
+#   q/k/v norm + RoPE + cache   0.272 ms   0.7 %
+#   attention                  1.405 ms   3.7 %
+#   attention merge            0.237 ms   0.6 %
+#   wo                         2.488 ms   6.6 %
+#   post-attention norm + add   0.312 ms   0.8 %
+#   gate/up                   10.174 ms  27.1 %
+#   gelu                       0.155 ms   0.4 %
+#   down                       9.331 ms  24.9 %
+#   post-FFN norm + add        0.318 ms   0.8 %
+#   per-layer gate             1.409 ms   3.8 %
+#   per-layer gelu             0.117 ms   0.3 %
+#   per-layer proj             0.384 ms   1.0 %
+#   per-layer norm + add + scale   0.307 ms   0.8 %
+#   classifier                 7.971 ms  21.2 %
+#   soft-cap                   0.026 ms   0.1 %
+#   argmax                     0.036 ms   0.1 %
+# depth 512: GPU 44.28 ms per token
+#   rmsnorm                    0.664 ms   1.5 %
+#   q/k/v                      2.084 ms   4.7 %
+#   q/k/v norm + RoPE + cache   0.292 ms   0.7 %
+#   attention                  5.721 ms  12.9 %
+#   attention merge            0.585 ms   1.3 %
+#   wo                         2.669 ms   6.0 %
+#   post-attention norm + add   0.333 ms   0.8 %
+#   gate/up                   10.851 ms  24.5 %
+#   gelu                       0.166 ms   0.4 %
+#   down                      10.056 ms  22.7 %
+#   post-FFN norm + add        0.339 ms   0.8 %
+#   per-layer gate             1.527 ms   3.4 %
+#   per-layer gelu             0.123 ms   0.3 %
+#   per-layer proj             0.414 ms   0.9 %
+#   per-layer norm + add + scale   0.329 ms   0.7 %
+#   classifier                 8.065 ms  18.2 %
+#   soft-cap                   0.026 ms   0.1 %
+#   argmax                     0.039 ms   0.1 %
+# depth 2048: GPU 68.95 ms per token
+#   rmsnorm                    0.697 ms   1.0 %
+#   q/k/v                      2.252 ms   3.3 %
+#   q/k/v norm + RoPE + cache   0.308 ms   0.4 %
+#   attention                 26.967 ms  39.1 %
+#   attention merge            0.943 ms   1.4 %
+#   wo                         2.841 ms   4.1 %
+#   post-attention norm + add   0.352 ms   0.5 %
+#   gate/up                   12.069 ms  17.5 %
+#   gelu                       0.176 ms   0.3 %
+#   down                      10.669 ms  15.5 %
+#   post-FFN norm + add        0.358 ms   0.5 %
+#   per-layer gate             1.619 ms   2.3 %
+#   per-layer gelu             0.129 ms   0.2 %
+#   per-layer proj             0.441 ms   0.6 %
+#   per-layer norm + add + scale   0.345 ms   0.5 %
+#   classifier                 8.710 ms  12.6 %
+#   soft-cap                   0.028 ms   0.0 %
+#   argmax                     0.043 ms   0.1 %
+zone0 52600 cpu0 2400000 cpu6 2438400 gpu  wake Awake
+  AC powered: false
+  level: 68
+  Capacity level: -1

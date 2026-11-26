@@ -1,0 +1,7 @@
+# ./aether-gd bench -m testdata/gguf/qwen2.5-0.5b-q4_0.gguf -p 0 -n 32 -d 0,512,2048 -r 2 --cores 2-7 -dev gpu -o csv
+zone0 41900 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 76  Capacity level: -1
+build_commit,build_number,cpu_info,gpu_info,backends,model_filename,model_type,model_size,model_n_params,n_batch,n_threads,cpu_mask,n_gpu_layers,n_prompt,n_gen,n_depth,test_time,avg_ns,stddev_ns,avg_ts,stddev_ts
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","256","6","0xfc","99","0","32","0","2026-11-26T19:40:58Z","403192578","48114822","79.935712","9.539096"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","256","6","0xfc","99","0","32","512","2026-11-26T19:40:59Z","349109635","16971741","91.770193","4.461349"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","256","6","0xfc","99","0","32","2048","2026-11-26T19:41:08Z","471949688","1012562","67.803994","0.145473"
+zone0 50300 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 76  Capacity level: -1

@@ -1,0 +1,12 @@
+zone0 41100 cpu0 1996800 cpu6 2246400 gpu  wake Awake
+  AC powered: false
+  level: 68
+  Capacity level: -1
+build_commit,build_number,cpu_info,gpu_info,backends,model_filename,model_type,model_size,model_n_params,n_batch,n_threads,cpu_mask,n_gpu_layers,n_prompt,n_gen,n_depth,test_time,avg_ns,stddev_ns,avg_ts,stddev_ts
+"51e0243b2-dirty","0","SUN","","CPU","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","2147483648","6","0xfc","0","0","32","0","2026-11-26T18:11:48Z","177748333","2350540","180.045560","2.380919"
+"51e0243b2-dirty","0","SUN","","CPU","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","2147483648","6","0xfc","0","0","32","512","2026-11-26T18:11:50Z","197442422","642326","162.073424","0.527262"
+"51e0243b2-dirty","0","SUN","","CPU","testdata/gguf/qwen2.5-0.5b-q4_0.gguf","qwen2 0.5B Q4_0","278139392","494032768","2147483648","6","0xfc","0","0","32","2048","2026-11-26T18:12:04Z","255427136","2100990","125.284585","1.030516"
+zone0 42300 cpu0 1996800 cpu6 2246400 gpu  wake Awake
+  AC powered: false
+  level: 68
+  Capacity level: -1

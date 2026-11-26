@@ -1,0 +1,69 @@
+zone0 38000 cpu0 2400000 cpu6 2438400 gpu  wake Awake
+  AC powered: false
+  level: 68
+  Capacity level: -1
+target/aarch64-linux-android/release/examples/vk_gemma_decode: 1 file pushed, 0 skipped. 511.8 MB/s (9954744 bytes in 0.019s)
+/home/curious/.cache/aether-testdata-sync/./: 0 files pushed, 2562 skipped.
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | 32 tokens per depth | fence slept on | attention per K/V head where it fits | Q4_0 products split by rows | other products x in int8 where the GPU has it
+depth,wall_ms,tok_s,gpu_ms,cpu_before_ms,rest_ms
+0,24.85,40.2,23.33,0.04,1.48
+512,29.33,34.1,27.57,0.05,1.71
+2048,37.87,26.4,34.68,0.07,3.12
+# depth 0: GPU 23.33 ms per token
+#   rmsnorm                    0.568 ms   2.4 %
+#   in_proj                    1.882 ms   8.1 %
+#   short conv                 0.132 ms   0.6 %
+#   out_proj                   0.840 ms   3.6 %
+#   post-attention norm + add   0.284 ms   1.2 %
+#   gate/up                    7.680 ms  32.9 %
+#   silu                       0.106 ms   0.5 %
+#   down                       5.399 ms  23.1 %
+#   post-FFN norm + add        0.289 ms   1.2 %
+#   q/k/v                      1.034 ms   4.4 %
+#   q/k/v norm + RoPE + cache   0.096 ms   0.4 %
+#   attention                  0.686 ms   2.9 %
+#   attention merge            0.067 ms   0.3 %
+#   output gate                0.041 ms   0.2 %
+#   wo                         0.704 ms   3.0 %
+#   classifier                 3.494 ms  15.0 %
+#   argmax                     0.024 ms   0.1 %
+# depth 512: GPU 27.57 ms per token
+#   rmsnorm                    0.582 ms   2.1 %
+#   in_proj                    2.038 ms   7.4 %
+#   short conv                 0.137 ms   0.5 %
+#   out_proj                   0.878 ms   3.2 %
+#   post-attention norm + add   0.291 ms   1.1 %
+#   gate/up                    8.497 ms  30.8 %
+#   silu                       0.109 ms   0.4 %
+#   down                       5.960 ms  21.6 %
+#   post-FFN norm + add        0.296 ms   1.1 %
+#   q/k/v                      1.075 ms   3.9 %
+#   q/k/v norm + RoPE + cache   0.098 ms   0.4 %
+#   attention                  2.717 ms   9.9 %
+#   attention merge            0.113 ms   0.4 %
+#   output gate                0.043 ms   0.2 %
+#   wo                         0.736 ms   2.7 %
+#   classifier                 3.976 ms  14.4 %
+#   argmax                     0.025 ms   0.1 %
+# depth 2048: GPU 34.68 ms per token
+#   rmsnorm                    0.594 ms   1.7 %
+#   in_proj                    2.229 ms   6.4 %
+#   short conv                 0.142 ms   0.4 %
+#   out_proj                   0.934 ms   2.7 %
+#   post-attention norm + add   0.296 ms   0.9 %
+#   gate/up                    9.412 ms  27.1 %
+#   silu                       0.112 ms   0.3 %
+#   down                       6.522 ms  18.8 %
+#   post-FFN norm + add        0.303 ms   0.9 %
+#   q/k/v                      1.150 ms   3.3 %
+#   q/k/v norm + RoPE + cache   0.101 ms   0.3 %
+#   attention                  7.372 ms  21.3 %
+#   attention merge            0.194 ms   0.6 %
+#   output gate                0.044 ms   0.1 %
+#   wo                         0.817 ms   2.4 %
+#   classifier                 4.427 ms  12.8 %
+#   argmax                     0.026 ms   0.1 %
+error: protocol fault (couldn't read status): Success
+* daemon not running; starting now at tcp:5037
+* daemon started successfully
+adb: device '192.168.29.11:43081' not found

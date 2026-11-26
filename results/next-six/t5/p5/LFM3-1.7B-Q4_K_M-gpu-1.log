@@ -1,0 +1,7 @@
+# ./aether-gd bench -m testdata/gguf/LFM3-1.7B-Q4_K_M.gguf -p 0 -n 32 -d 0,512,2048 -r 2 --cores 2-7 -dev gpu -o csv
+zone0 41900 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 70  Capacity level: -1
+build_commit,build_number,cpu_info,gpu_info,backends,model_filename,model_type,model_size,model_n_params,n_batch,n_threads,cpu_mask,n_gpu_layers,n_prompt,n_gen,n_depth,test_time,avg_ns,stddev_ns,avg_ts,stddev_ts
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/LFM3-1.7B-Q4_K_M.gguf","lfm3 1.7B Q4_K - Medium","1091380480","1728801600","256","6","0xfc","99","0","32","0","2026-11-26T19:18:53Z","873005547","52080073","36.720320","2.190590"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/LFM3-1.7B-Q4_K_M.gguf","lfm3 1.7B Q4_K - Medium","1091380480","1728801600","256","6","0xfc","99","0","32","512","2026-11-26T19:19:14Z","936468932","23338539","34.181530","0.851867"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/LFM3-1.7B-Q4_K_M.gguf","lfm3 1.7B Q4_K - Medium","1091380480","1728801600","256","6","0xfc","99","0","32","2048","2026-11-26T19:20:37Z","1197952005","20458993","26.716152","0.456267"
+zone0 46500 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 71  Capacity level: -1

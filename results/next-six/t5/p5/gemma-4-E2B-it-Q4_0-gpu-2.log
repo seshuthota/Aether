@@ -1,0 +1,7 @@
+# ./aether-gd bench -m testdata/gguf/gemma-4-E2B-it-Q4_0.gguf -p 0 -n 32 -d 0,512,2048 -r 2 --cores 2-7 -dev gpu -o csv
+zone0 42300 cpu0 1785600 cpu6 1958400 gpu  wake Awake   AC powered: true  level: 72  Capacity level: -1
+build_commit,build_number,cpu_info,gpu_info,backends,model_filename,model_type,model_size,model_n_params,n_batch,n_threads,cpu_mask,n_gpu_layers,n_prompt,n_gen,n_depth,test_time,avg_ns,stddev_ns,avg_ts,stddev_ts
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/gemma-4-E2B-it-Q4_0.gguf","gemma4 4.6B Q4_0","2825664652","4628569635","256","6","0xfc","99","0","32","0","2026-11-26T19:27:38Z","1616156094","2301338","19.800088","0.028194"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/gemma-4-E2B-it-Q4_0.gguf","gemma4 4.6B Q4_0","2825664652","4628569635","256","6","0xfc","99","0","32","512","2026-11-26T19:27:47Z","1712384297","194540874","18.808775","2.136831"
+"51e0243b2-dirty","0","SUN","GPU: Adreno (TM) 830","Vulkan","testdata/gguf/gemma-4-E2B-it-Q4_0.gguf","gemma4 4.6B Q4_0","2825664652","4628569635","256","6","0xfc","99","0","32","2048","2026-11-26T19:28:12Z","2004729427","6327723","15.962333","0.050383"
+zone0 54600 cpu0 1785600 cpu6 1958400 gpu  wake Awake   AC powered: true  level: 72  Capacity level: -1

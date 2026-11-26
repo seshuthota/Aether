@@ -1,0 +1,62 @@
+# ./vk_gemma_decode-gd testdata/gguf/LFM3-1.7B-Q4_K_M.gguf 0,512,2048 32 per-head unsplit dec-f32
+zone0 41500 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 65  Capacity level: -1
+# testdata/gguf/LFM3-1.7B-Q4_K_M.gguf on Adreno (TM) 830 | 32 tokens per depth | fence slept on | attention per query head | Q4_0 products unsplit | other products x in f32
+depth,wall_ms,tok_s,gpu_ms,cpu_before_ms,rest_ms
+0,32.71,30.6,30.22,0.05,2.44
+512,33.83,29.6,32.58,0.04,1.20
+2048,41.19,24.3,40.07,0.05,1.07
+# depth 0: GPU 30.22 ms per token
+#   rmsnorm                    0.610 ms   2.0 %
+#   in_proj                    2.278 ms   7.5 %
+#   short conv                 0.142 ms   0.5 %
+#   out_proj                   1.047 ms   3.5 %
+#   post-attention norm + add   0.305 ms   1.0 %
+#   gate/up                    8.881 ms  29.4 %
+#   silu                       0.116 ms   0.4 %
+#   down                       8.001 ms  26.5 %
+#   post-FFN norm + add        0.313 ms   1.0 %
+#   q/k/v                      1.379 ms   4.6 %
+#   q/k/v norm + RoPE + cache   0.103 ms   0.3 %
+#   attention                  0.307 ms   1.0 %
+#   attention merge            0.071 ms   0.2 %
+#   output gate                0.045 ms   0.1 %
+#   wo                         0.880 ms   2.9 %
+#   classifier                 5.723 ms  18.9 %
+#   argmax                     0.026 ms   0.1 %
+# depth 512: GPU 32.58 ms per token
+#   rmsnorm                    0.628 ms   1.9 %
+#   in_proj                    2.389 ms   7.3 %
+#   short conv                 0.148 ms   0.5 %
+#   out_proj                   1.065 ms   3.3 %
+#   post-attention norm + add   0.312 ms   1.0 %
+#   gate/up                    9.608 ms  29.5 %
+#   silu                       0.118 ms   0.4 %
+#   down                       8.270 ms  25.4 %
+#   post-FFN norm + add        0.320 ms   1.0 %
+#   q/k/v                      1.387 ms   4.3 %
+#   q/k/v norm + RoPE + cache   0.105 ms   0.3 %
+#   attention                  1.328 ms   4.1 %
+#   attention merge            0.125 ms   0.4 %
+#   output gate                0.047 ms   0.1 %
+#   wo                         0.895 ms   2.7 %
+#   classifier                 5.811 ms  17.8 %
+#   argmax                     0.026 ms   0.1 %
+# depth 2048: GPU 40.07 ms per token
+#   rmsnorm                    0.629 ms   1.6 %
+#   in_proj                    2.390 ms   6.0 %
+#   short conv                 0.148 ms   0.4 %
+#   out_proj                   1.065 ms   2.7 %
+#   post-attention norm + add   0.312 ms   0.8 %
+#   gate/up                    9.624 ms  24.0 %
+#   silu                       0.118 ms   0.3 %
+#   down                       8.277 ms  20.7 %
+#   post-FFN norm + add        0.320 ms   0.8 %
+#   q/k/v                      1.385 ms   3.5 %
+#   q/k/v norm + RoPE + cache   0.105 ms   0.3 %
+#   attention                  8.709 ms  21.7 %
+#   attention merge            0.208 ms   0.5 %
+#   output gate                0.047 ms   0.1 %
+#   wo                         0.896 ms   2.2 %
+#   classifier                 5.814 ms  14.5 %
+#   argmax                     0.027 ms   0.1 %
+zone0 44900 cpu0 1996800 cpu6 2246400 gpu  wake Awake   AC powered: true  level: 66  Capacity level: -1
