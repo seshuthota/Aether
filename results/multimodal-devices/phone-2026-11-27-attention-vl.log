@@ -1,0 +1,49 @@
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL cpu [caps 2400000/2438400 temp 40700 wake Awake ac  true]
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill: 275 tokens in 2447.7 ms (112.4 tok/s) | decode: 15 tokens in 312.3 ms (48.0 tok/s) | peak RSS 1529024 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL dsp [caps 2400000/2438400 temp 42600 wake Awake ac  true]
+DSP: Hexagon
+vision encoder made on the DSP in 178 ms
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill (DSP): 275 tokens in 1743.6 ms (157.7 tok/s) | decode: 15 tokens in 593.3 ms (25.3 tok/s) | peak RSS 1357304 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL cpu --mmproj-gpu [caps 2400000/2438400 temp 42300 wake Awake ac  true]
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill: 275 tokens in 1991.0 ms (138.1 tok/s) | decode: 15 tokens in 312.3 ms (48.0 tok/s) | peak RSS 1805016 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL dsp --mmproj-gpu [caps 2400000/2438400 temp 42600 wake Awake ac  true]
+DSP: Hexagon
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill (DSP): 275 tokens in 1522.8 ms (180.6 tok/s) | decode: 15 tokens in 586.4 ms (25.6 tok/s) | peak RSS 1623420 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL cpu [caps 2400000/2438400 temp 42600 wake Awake ac  true]
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill: 275 tokens in 2310.5 ms (119.0 tok/s) | decode: 15 tokens in 332.3 ms (45.1 tok/s) | peak RSS 1531036 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL dsp [caps 2400000/2438400 temp 44200 wake Awake ac  true]
+DSP: Hexagon
+vision encoder made on the DSP in 77 ms
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill (DSP): 275 tokens in 1648.0 ms (166.9 tok/s) | decode: 15 tokens in 588.4 ms (25.5 tok/s) | peak RSS 1357348 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL cpu --mmproj-gpu [caps 2400000/2438400 temp 43000 wake Awake ac  true]
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill: 275 tokens in 1924.7 ms (142.9 tok/s) | decode: 15 tokens in 310.7 ms (48.3 tok/s) | peak RSS 1810408 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+== VL dsp --mmproj-gpu [caps 2400000/2438400 temp 43400 wake Awake ac  true]
+DSP: Hexagon
+The user wants a one-sentence description of the image. Let me carefully observe
+prefill (DSP): 275 tokens in 1518.7 ms (181.1 tok/s) | decode: 15 tokens in 582.3 ms (25.8 tok/s) | peak RSS 1623228 kB
+Failed to write while dumping service power: Broken pipe
+Failed to write while dumping service power: Broken pipe
+end [caps 2400000/2438400 temp 43400 wake Awake ac  true]
