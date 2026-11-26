@@ -52,9 +52,15 @@ replies part between routes after the first words (different numerics).
 | DSP + CPU decode | 462 ms | 29.3 tok/s | 3.22 GB |
 
 The DSP and DSP + CPU decode texts are the same; the CPU's parts from them
-at the second sentence. The CPU decode here is below a CPU session's,
-probably the CPU copy's weight pages faulting in during the first steps
-(not measured further).
+at the second sentence. The CPU decode here is below a CPU session's:
+the first steps page in the CPU copy's weights. Over 200 tokens
+(`Write a long story about a lighthouse keeper.`, greedy, alternated,
+38–44 °C at the starts) it is the same:
+
+| Route | Decode, 199 tokens | Peak RSS |
+| --- | --- | --- |
+| CPU | 34.2, 34.8 tok/s | 1.70 GB |
+| DSP + CPU decode | 33.6, 35.1 tok/s | 3.16–3.24 GB |
 
 ## Test
 
