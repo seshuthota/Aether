@@ -1,0 +1,50 @@
+Failed to write while dumping service power: Broken pipe
+== aether-supra Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  221.18 ± 2.94 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  402.16 ± 0.84 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 925.19 ± 62.53 |
+Failed to write while dumping service power: Broken pipe
+== aether-s1 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   284.59 ± 0.38 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   506.20 ± 4.74 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1054.14 ± 15.70 |
+Failed to write while dumping service power: Broken pipe
+== aether-s1 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   284.75 ± 0.40 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   507.54 ± 5.75 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1041.00 ± 32.08 |
+Failed to write while dumping service power: Broken pipe
+== aether-supra Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  224.01 ± 0.39 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  400.40 ± 4.65 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 952.23 ± 27.01 |
+Failed to write while dumping service power: Broken pipe
+== aether-supra Q8_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 | 270.27 ± 0.14 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 | 453.41 ± 2.35 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 650.20 ± 1.15 |
+Failed to write while dumping service power: Broken pipe
+== aether-s1 Q8_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 |  372.52 ± 0.93 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 |  549.04 ± 2.66 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 652.95 ± 10.19 |
+Failed to write while dumping service power: Broken pipe
+== aether-s1 Q8_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 |  375.75 ± 1.20 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 |  544.34 ± 1.54 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 648.69 ± 16.91 |
+Failed to write while dumping service power: Broken pipe
+== aether-supra Q8_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 | 270.62 ± 1.30 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 | 455.67 ± 1.28 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 651.36 ± 6.80 |
+Failed to write while dumping service power: Broken pipe
+== aether-supra Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 | 182.33 ± 1.67 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 331.82 ± 1.16 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 777.23 ± 4.36 |
+Failed to write while dumping service power: Broken pipe
+== aether-s1 Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  222.87 ± 2.54 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 384.44 ± 18.79 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 813.27 ± 14.81 |
