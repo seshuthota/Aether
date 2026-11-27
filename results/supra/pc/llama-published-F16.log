@@ -1,0 +1,11 @@
+0.00.057.708 I cmn          init: llama threadpool init, n_threads = 8
+0.00.069.286 W llama_perplexity: model was trained on only 512 context tokens (2048 specified)
+0.00.069.288 I 
+0.00.069.356 I system_info: n_threads = 8 (n_threads_batch = 8) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.00.069.365 I perplexity: tokenizing the input ..
+0.00.538.937 I perplexity: tokenization took 469.565 ms
+0.00.539.104 I perplexity: calculating perplexity over 40 chunks, n_ctx=512, batch_size=2048, n_seq=4
+0.01.391.664 I perplexity: 0.85 seconds per pass - ETA 0.13 minutes
+[1]16.7935,[2]17.8645,[3]21.2423,[4]22.5119,[5]24.3333,[6]24.7580,[7]24.3195,[8]24.0886,[9]22.9647,[10]24.1888,[11]25.3866,[12]26.2655,[13]26.5576,[14]26.3841,[15]26.4265,[16]26.8931,[17]27.7631,[18]27.9580,[19]28.6360,[20]28.7211,[21]29.0940,[22]27.6839,[23]27.6635,[24]28.2684,[25]28.4593,[26]28.4312,[27]27.8374,[28]27.3836,[29]27.0961,[30]26.0068,[31]25.0285,[32]23.9991,[33]23.6851,[34]22.8677,[35]22.4776,[36]22.3446,[37]22.4768,[38]22.1861,[39]22.3302,[40]22.1156,
+0.09.022.656 I Final estimate: PPL = 22.1156 +/- 0.66634
+
