@@ -1,0 +1,17 @@
+# gemv_bench, cores [2]
+kernel,rows,cols,weight_bytes,median_us,median_gbps,best_gbps,what
+Q8_0_b_sdot_x4,640,640,435200,20.4,21.37,21.53,Supra wq (Q4_0 230 KB, L2)
+Q4_0_b_sdot_x4,640,640,230400,25.6,8.99,9.05,Supra wq (Q4_0 230 KB, L2)
+Q5_0_b_sdot_x4,640,640,281600,35.7,7.89,7.92,Supra wq (Q4_0 230 KB, L2)
+Q8_0_b_sdot_x4,1600,640,1088000,50.9,21.38,21.87,Supra gate (Q4_0 576 KB, L2)
+Q4_0_b_sdot_x4,1600,640,576000,63.5,9.07,9.16,Supra gate (Q4_0 576 KB, L2)
+Q5_0_b_sdot_x4,1600,640,704000,88.2,7.98,7.99,Supra gate (Q4_0 576 KB, L2)
+Q8_0_b_sdot_x4,640,1600,1088000,40.2,27.09,27.31,Supra down (Q4_0 576 KB, L2)
+Q4_0_b_sdot_x4,640,1600,576000,53.1,10.85,10.87,Supra down (Q4_0 576 KB, L2)
+Q5_0_b_sdot_x4,640,1600,704000,78.1,9.01,9.02,Supra down (Q4_0 576 KB, L2)
+Q8_0_b_sdot_x4,16384,640,11141120,505.2,22.05,22.11,Supra classifier (Q8_0 11 MB)
+Q4_0_b_sdot_x4,16384,640,5898240,649.0,9.09,9.21,Supra classifier (Q8_0 11 MB)
+Q5_0_b_sdot_x4,16384,640,7208960,909.2,7.93,8.02,Supra classifier (Q8_0 11 MB)
+Q8_0_b_sdot_x4,8192,8192,71303168,2223.4,32.07,32.14,synthetic (Q4_0 36 MB, DRAM)
+Q4_0_b_sdot_x4,8192,8192,37748736,3071.9,12.29,12.34,synthetic (Q4_0 36 MB, DRAM)
+Q5_0_b_sdot_x4,8192,8192,46137344,4736.1,9.74,9.78,synthetic (Q4_0 36 MB, DRAM)
