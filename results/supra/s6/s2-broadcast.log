@@ -1,0 +1,35 @@
+== aether-s1 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  285.14 ± 0.26 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  509.37 ± 3.79 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1047.56 ± 7.18 |
+== aether-s2 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  327.45 ± 0.91 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  549.39 ± 4.81 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 935.77 ± 27.32 |
+== aether-s2 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  327.65 ± 0.78 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  557.87 ± 6.74 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 965.17 ± 11.39 |
+== aether-s1 Q4_0 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |  284.81 ± 0.72 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |  504.38 ± 2.79 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1038.75 ± 7.15 |
+== aether-s1 Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 | 224.71 ± 0.73 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 394.09 ± 4.60 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 841.35 ± 3.89 |
+== aether-s2 Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  240.66 ± 0.11 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 415.58 ± 11.40 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 695.12 ± 65.89 |
+== aether-s2 Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 | 239.50 ± 0.26 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 416.14 ± 1.59 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 792.70 ± 9.95 |
+== aether-s1 Q4_K_M 2400000 2438400 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 | 224.89 ± 0.29 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 | 395.45 ± 5.61 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 815.47 ± 5.46 |
+DONE
+
+[exited with code 0]

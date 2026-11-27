@@ -1,0 +1,49 @@
+== aether-s1 Q4_0 2918400 3072000 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   334.70 ± 9.43 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   598.25 ± 2.19 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1022.56 ± 32.97 |
+== aether-s2 Q4_0 2918400 3072000 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   315.15 ± 2.86 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   557.65 ± 8.74 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1023.89 ± 42.55 |
+== aether-s2 Q4_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   321.86 ± 1.63 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   559.32 ± 6.71 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1109.97 ± 14.10 |
+== aether-s1 Q4_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 |   325.39 ± 0.51 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       2 | tg128 |   577.22 ± 3.91 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 | 1130.31 ± 14.38 |
+== aether-s1 Q8_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 | 423.76 ± 1.27 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 | 605.48 ± 6.72 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 696.04 ± 7.31 |
+== aether-s2 Q8_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 | 241.03 ± 14.30 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 |  430.70 ± 8.72 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 |  709.44 ± 8.62 |
+== aether-s2 Q8_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 |  240.60 ± 7.45 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 |  431.45 ± 9.87 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 711.46 ± 13.42 |
+== aether-s1 Q8_0 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 | 421.61 ± 2.50 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       2 | tg128 | 610.59 ± 1.97 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 | 696.89 ± 6.00 |
+== aether-s1 Q4_K_M 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  255.65 ± 0.96 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 |  452.51 ± 3.94 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 868.81 ± 16.32 |
+== aether-s2 Q4_K_M 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  204.79 ± 0.59 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 |  380.17 ± 5.06 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 736.94 ± 10.60 |
+== aether-s2 Q4_K_M 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  205.65 ± 0.80 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 |  382.51 ± 7.73 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 720.21 ± 13.25 |
+== aether-s1 Q4_K_M 2745600 2649600 mWakefulness=Awake   AC powered: false
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       1 | tg128 |  247.00 ± 0.51 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       2 | tg128 |  435.78 ± 4.16 |
+| qwen3 65M Q4_K - Medium | 50.83 MiB | 67.03 M | CPU     |       6 | tg128 | 668.69 ± 15.63 |
+DONE
