@@ -1,0 +1,64 @@
+== aether-s3 f32 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |   375.91 ± 0.46 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |  263.29 ± 13.08 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1280.25 ± 24.26 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  768.29 ± 60.76 |
+== aether-merged f32 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |   372.71 ± 0.90 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |   271.00 ± 0.59 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1265.30 ± 43.32 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |   799.51 ± 3.37 |
+== aether-merged f16 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |   375.70 ± 2.22 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |   262.64 ± 0.40 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1282.64 ± 28.32 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |   942.97 ± 2.47 |
+== aether-merged f16 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |   374.48 ± 2.18 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |   266.96 ± 1.91 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1301.22 ± 60.30 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  934.88 ± 22.52 |
+Failed to write while dumping service power: Broken pipe
+== aether-merged f32 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |  363.02 ± 16.81 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |   272.15 ± 1.47 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1273.59 ± 32.36 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  801.70 ± 17.04 |
+== aether-s3 f32 Q4_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 |        tg128 |   374.72 ± 0.42 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |   277.57 ± 0.38 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 |        tg128 | 1266.62 ± 47.91 |
+| qwen3 65M Q4_0 | 36.01 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  794.69 ± 22.47 |
+Failed to write while dumping service power: Broken pipe
+== aether-s3 f32 Q8_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 | 427.50 ± 1.38 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 | 301.38 ± 1.64 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 | 773.49 ± 5.19 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 | 552.99 ± 9.63 |
+== aether-merged f32 Q8_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 |  427.37 ± 2.12 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |  300.01 ± 0.51 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 |  773.32 ± 8.05 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 | 550.78 ± 13.57 |
+== aether-merged f16 Q8_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 |  421.75 ± 1.38 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |  282.69 ± 1.14 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 | 801.03 ± 22.06 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  622.48 ± 3.20 |
+Failed to write while dumping service power: Broken pipe
+== aether-merged f16 Q8_0 2745600/2649600 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 | 418.29 ± 2.36 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 | 284.84 ± 1.36 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 | 803.28 ± 9.98 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 | 620.86 ± 7.55 |
+== aether-merged f32 Q8_0 2400000/2438400 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 |  378.55 ± 0.75 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 |  258.80 ± 1.15 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 | 734.59 ± 11.45 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 |  536.24 ± 2.64 |
+== aether-s3 f32 Q8_0 2400000/2438400 mWakefulness=Awake
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 |        tg128 | 383.14 ± 1.10 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       1 | tg128 @ d256 | 268.94 ± 1.21 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 |        tg128 | 739.18 ± 0.68 |
+| qwen3 65M Q8_0 | 67.97 MiB | 67.03 M | CPU     |       6 | tg128 @ d256 | 542.34 ± 1.20 |
+DONE

@@ -57,3 +57,43 @@ caps 2.40 GHz, Q4_0 / Q8_0 at 6 threads: none 1060 / 691, 32 KB 1119 / 710,
 | --- | ---: | ---: |
 | Supra Q4_0 | 1086, 1129 | 1235, 1232 |
 | LFM3-1.7B Q4_K_M | 48.6, 49.7 | 48.1, 49.4 |
+
+## The f16 KV cache (PR #9, `kv-f16`)
+
+`kvf16-pr9.log`: PR #9's own binary (no S6 steps), Supra Q4_0, f32 and f16
+alternated (the first f32 round ran throttled, 1.79 / 1.02 GHz, and is
+discarded). 6 threads, depth 256: f32 684-709, f16 759-775 (+10 %); depth
+0 even; 1 thread, depth 256: f16 about 3 % slower.
+
+`kvf16-merged.log` (`kvf16-merged.sh`, 2026-11-27): `kv-f16` merged into
+`supra` (`9a932b3`) against `supra` before it (`aether-s3`, `f3eda52`),
+order s3 / merged f32 / f16 / f16 / merged f32 / s3, depths 0 and 256, cores
+2-7. Q4_0 at caps 2.75 / 2.65 GHz throughout:
+
+| Q4_0 | s3 (f32) | merged f32 | merged f16 |
+| --- | ---: | ---: | ---: |
+| 1 thread, d0 | 376, 375 | 373, 363 | 376, 374 |
+| 1 thread, d256 | 263, 278 | 271, 272 | 263, 267 |
+| 6 threads, d0 | 1280, 1267 | 1265, 1274 | 1283, 1301 |
+| 6 threads, d256 | 768, 795 | 800, 802 | **943, 935** |
+
+Q8_0 (first three runs at 2.75 GHz; the last two dropped to 2.40 and are
+not compared): 6 threads d256 s3 553, merged f32 551, f16 622 / 621
+(+13 %); 1 thread d256 f16 283-285 against 300-301 (−6 %). The merge
+leaves f32 where it was; the f16 cache pays where attention reads a deep
+cache on many threads, and costs a little on one.
+
+Quality (`kvf16-ppl/`, wikitext-2 40 × 512, KL against llama.cpp's F16
+logits, llama.cpp `d02b4c0d6`): F16 PPL 26.2073 (f32 cache) / 26.2076 (f16;
+llama.cpp, whose cache is f16, 26.2076); KLD Q4_K_M 0.02644 / 0.02637, Q4_0
+0.15550 / 0.15567; same top token Q4_0 76.5 / 76.4 %.
+
+Open, found on the way, older than PR #9 and S6: on the phone, Gemma 3
+270M Q8_0's decode and batch logits differ at every position past the
+first two (2-16 % of the largest logit; `kvcache::tests::
+f16_cache_decode_matches_batch` fails there, with the f32 cache, on `kv-f16`
+alone too). Position 0 matches the PC on both paths and position 1 on
+decode, so the matrices agree; it starts when attention spans 2-3 keys,
+which points at a NEON attention path at head size 256. Same numbers on the
+`supra` build (`logits`, "The capital of France is": "." 86.9 % on the
+phone against 90.5 % on the PC).
