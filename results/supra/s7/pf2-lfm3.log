@@ -1,0 +1,9 @@
+== aether-a2 LFM3 2400000/2438400
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | tg64 | 49.38 ± 1.32 |
+== aether-pf2 LFM3 2400000/2438400
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | tg64 | 50.34 ± 0.32 |
+== aether-pf2 LFM3 2400000/2438400
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | tg64 | 50.37 ± 0.32 |
+== aether-a2 LFM3 2400000/2438400
+| lfm3 1.7B Q4_K - Medium | 1040.82 MiB | 1728.80 M | CPU     |       6 | tg64 | 50.19 ± 0.50 |
+DONE

@@ -88,12 +88,16 @@ logits, llama.cpp `d02b4c0d6`): F16 PPL 26.2073 (f32 cache) / 26.2076 (f16;
 llama.cpp, whose cache is f16, 26.2076); KLD Q4_K_M 0.02644 / 0.02637, Q4_0
 0.15550 / 0.15567; same top token Q4_0 76.5 / 76.4 %.
 
-Open, found on the way, older than PR #9 and S6: on the phone, Gemma 3
-270M Q8_0's decode and batch logits differ at every position past the
-first two (2-16 % of the largest logit; `kvcache::tests::
-f16_cache_decode_matches_batch` fails there, with the f32 cache, on `kv-f16`
-alone too). Position 0 matches the PC on both paths and position 1 on
-decode, so the matrices agree; it starts when attention spans 2-3 keys,
-which points at a NEON attention path at head size 256. Same numbers on the
-`supra` build (`logits`, "The capital of France is": "." 86.9 % on the
-phone against 90.5 % on the PC).
+Closed (2026-11-28), found on the way: `kvcache::tests::
+f16_cache_decode_matches_batch` failed on the phone with the f32 cache,
+on Gemma 3 270M and then LFM3 (on `kv-f16` alone too). First read as a NEON
+attention suspect; not a kernel fault. The phone's decode and prompt paths
+differ by design (K-quant prompts quantize activations to Q8_0 for
+`smmla`, decode to Q8_K for `sdot`), and a last-bit difference can round a
+Q8_0 block's f16 scale the other way; the test's random tokens amplify it
+(on the PC the f16 cache alone moves Gemma 3's logits by 0.26). The
+`smmla` path equals dequant(Q8_0(x)) @ W from gguf-py on LFM3's matrices;
+LFM3 Q4_K_M KL against BF16, 20 chunks, on the phone: 0.1150 with `smmla`,
+0.1182 without (the PC: 0.1150). The test now bounds the f16 run against
+the f32 run's own distance (aether-infer `084d49e`); plans/supra.md has the
+detail.
